@@ -387,3 +387,53 @@ depends on an untracked research snapshot and overlaps the existing scanner.
 No extra maintenance tool or asset data is shipped. Evidence:
 `F:/GP32/results/resume20-library/REPORT.md`, `titles-runA.json`, and
 `F:/GP32/results/resume20-installed-library.json`.
+
+## Korean library visual evidence (resume28, 2026-10-03)
+
+The live device still contains the 20 Korea-labelled owned games. Current
+Windows core f46ddac produced a 2,400-frame autopulse capture and an isolated
+state for every title (20 process exits=0). This replaces neither gameplay
+acceptance nor language verification: a loading/black/intro frame remains
+unresolved. Six selected games were advanced with explicit input; short taps
+were replaced with bounded held presses where menu navigation missed them.
+No ROM download or user-save edit occurred.
+
+| # | Title | Observed screen/progress | Hangul visible in captured evidence |
+|---|---|---|---|
+| 1 | Astonishia Story R | Title, then room/bed scene | Not established |
+| 2 | Dooly Soccer 2002 | Loading screen only | Not established |
+| 3 | Dungeon & Guarder - Dragon Gore | Difficulty menu, then stage background; active play unresolved | Not established |
+| 4 | Dyhard - With Infinite Stairs | Korean new/load/save/return menu | Yes |
+| 5 | GP Fight | Black at this capture; not a failure verdict | Not established |
+| 6 | Hany Party Game | English start/options menu | Not established |
+| 7 | Her Knights - All for Princess - Deadline | Korean game title | Yes |
+| 8 | Kimchiman GP32 | Combat/HUD changes after movement and attack input | Not established |
+| 9 | Little Girl Mill of a Gingko, The | Loading screen only | Not established |
+| 10 | Little Wizard | Character selection | Not established |
+| 11 | OneShot Voca | Korean learning/search UI | Yes |
+| 12 | Princess Maker 2 | Korean name entry | Yes |
+| 13 | Rally Pop | Level selection | Not established |
+| 14 | Raphael | Intro background only | Not established |
+| 15 | Tanggle's Magic Square | Puzzle field with Korean mode text | Yes |
+| 16 | Therapy | Korean subtitle on intro/title | Yes |
+| 17 | Tomak - Save the Earth, Again | Shooting stage with enemies and HUD | Not established |
+| 18 | W.B.W. - Wanna Be Wizard_ | English publisher intro | Not established |
+| 19 | Wizard Slayer | Korean stage name and health/magic HUD, then action scene | Yes |
+| 20 | Woody & Kunta - Treasure Island | Korean character dialogue | Yes |
+
+Screenshots and exact replay commands: `F:/GP32/results/resume28-korea/`
+(`inventory.json`, `contact.png`, numbered folders, `advance-contact.png`).
+Eight titles have direct Hangul evidence in this pass; it does not prove all
+of their content is localized. The other labels alone are not language proof.
+
+New PC/H700 replays begin from observed Kimchiman, Tomak and Wizard Slayer
+action scenes. With the same state/input and 300 warmup + 600 measured frames,
+all seven CPU/video/audio fields match on all three. H700 raw throughput was
+90.787/71.320/120.741 fps respectively, but clocks ramped during the runs: these
+are neither a controlled ranking nor proof of stable real-frontend 60fps.
+Audio delivery/physical input latency and later-game compatibility remain open.
+Evidence: `F:/GP32/results/resume28-korea/combat-equivalence.json`. Kimchiman
+uses the f46ddac Windows core; Tomak/Wizard Slayer use the callback-exit candidate.
+The H700 executable is f46ddac for all three.
+
+The six missing Korean releases listed above still need owned game files.

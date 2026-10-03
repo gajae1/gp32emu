@@ -2028,3 +2028,50 @@ physical-speaker/input-lag guarantee. Evidence: `resume27-audio-runtime-verified
 Installed production SHA-256: `ec4477077d9e9b53f8f0ee635d4dccbda0ee0c238ae8492b24d7d110294b27df`.
 Previous core retained at `/mnt/SDCARD/gp32-dev/resume27-installed-core-before.so`;
 record: `F:/GP32/results/resume27-core-installed.json`.
+
+### Precise x64 single/half memory callback exits (resume28)
+
+MMU-off byte/half/word transfers previously used bare bus helpers on a RAM
+miss and could execute the following guest instruction before a callback-raised
+IRQ was sampled. The existing checked whole-instruction memory path is now
+shared by MMU-on and physical accesses. Physical range rejection happens before
+any guest mutation, and the helper commits transfer/writeback exactly once
+before validating its exit state. Direct RAM needs no per-op tracing check.
+Unused single/half emitter paths are removed; partially completed block
+transfers retain their existing path and are outside this bounded change.
+
+A focused regression stores r6 in the IRQ handler before the following
+MOV r6,#1. All eight single/half load/store forms incorrectly stored 1 in the
+baseline, and correctly store 0 after the fix (16 mismatches to zero). Each
+commits one transfer/writeback/acknowledgement and exposes PC+4 to the callback.
+The reference explicitly uses per-instruction execution rather than portable
+block batching, which otherwise masks this timing difference. Profile-enabled
+focused tests confirm native execution. Existing callback-PC and loop-fence
+cases pass; integrated Windows full native differential passes with 114,622
+dispatch events and four fallbacks, as does arena recycle/wrap.
+Evidence: `F:/GP32/results/resume28-x64-callback/EVIDENCE.md`, `evidence.json`.
+
+BIOS reads and PC loads now use the semantic helper; no PC speedup is claimed.
+An uncontrolled Windows Wizard ABBA sample measured baseline 654.3430 fps and
+candidate 641.9925 fps (-1.89%). Baseline itself drifted from
+669.545 to 639.141 fps, so this is a retained performance caveat rather than
+a reliable causal regression estimate. All seven architectural/audio/video
+fields match. Evidence: `F:/GP32/results/resume28-winperf/wizard-abba.json`.
+
+Windows, H700, Android arm64-v8a and armeabi-v7a builds pass. H700's stripped
+CPU object is unchanged from resume27 (1b4f949394764a4390eb2a8fab59337500ea0f51ebf29cd24085853593481b26),
+so its verified installed core remains ec4477077d9e9b53f8f0ee635d4dccbda0ee0c238ae8492b24d7d110294b27df.
+No device setting or core replacement was needed for this x64-only change.
+
+The Korean library gained 20 current visual captures and three additional
+PC/H700 scene comparisons; details and unresolved screens are recorded in
+GP32_LOCAL_GAME_MATRIX.md. All three new scene comparisons preserve all seven
+fields. A stalled SFTP transfer was isolated to an unchanged partial developer
+state file with ample disk space; after stopping only the owned local transfer,
+bounded non-pipelined uploads completed and their hashes were checked. This
+was not classified as an emulator/game failure.
+
+Input source review confirms polling and button publication precede same-run
+CPU execution. No input-latency patch is justified by that path; physical
+controller-to-screen latency remains unmeasured. External key-interrupt
+semantics require a verified GP32 hardware source before any implementation.
