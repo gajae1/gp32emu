@@ -2817,3 +2817,37 @@ fields match the corresponding reference prefix, all audio was accepted, and
 protected file hashes remained unchanged. Menu pause affects the number of
 completed core frames, so this run is an integration check, not a new pacing
 comparison (`installed-menu.json`, `p2-menu.png`).
+
+### Rejected AArch64 last-page mapping cache (resume44)
+
+A native MMU-on prototype cached the last validated 4 KiB VA tag and RAM XOR
+offset in callee-saved x26/x27. It seeded an invalid tag at block entry and
+after every continuing helper, preserving the current-table lookup on misses.
+The native differential suite passed on H700 (9,067 JIT events, 21 fallbacks),
+including existing colliding-page, MMU-mode, state-load and loop-fence cases.
+The focused review found no concrete frame/invalidation defect, but these tests
+do not directly require the new helper-continuation seed or independently check
+the caller's x26/x27 values. Any revival needs those targeted cases before
+adoption; passing the existing suite is not complete coverage of the prototype.
+
+The emitted hit path uses four instructions instead of seven, but a miss adds
+four instructions, blocks gain save/restore/seed overhead, and emitted code
+grows. Ignoring the block overhead and branch timing, instruction-count
+break-even requires reuse above 4/7, not the initial review's 30% estimate.
+The first implementation included block-transfer lookups through the common
+helper as well as single/halfword transfers. No public profiling API changed.
+
+Wizard's qualified 1,512-MHz ABBA measured baseline 113.582/113.919 fps versus
+candidate 113.764/113.901 fps. The median ratio was 1.0007, within the observed
+run variation, so this is not a speedup. Tomak's first baseline included both
+1,416 and 1,512 MHz and disqualified that sequence for a speed claim. Its warm
+candidate scores (111.647/111.862) also did not exceed the final warm baseline
+(112.474). Both games retained all seven CPU/video/audio result fields.
+
+The prototype was reverted without installation. Source/patch, candidate
+executable and results remain under `F:/GP32/results/resume44-pagecache/`.
+Rebuilding after restoration reproduced the production core SHA-256
+`37884295e3f0a6c149be1ea1c91e835aa997325eff7e1615394e2ec21a3a6b0f`
+and benchmark SHA-256
+`4a59071c413c76f5b3a2a9db465c7673afe7e043c1022e31f65e01d10cb7ba0f`.
+The resume43 GP32-only presentation profile remains the installed policy.
