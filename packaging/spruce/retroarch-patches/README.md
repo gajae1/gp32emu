@@ -267,3 +267,34 @@ errors/recoveries. This was an integration check with private config/save paths,
 not another performance or physical audio-quality comparison. Evidence:
 `F:/GP32/results/resume37-final/{runtime-verified.json,active-status.txt,
 frontend.exit,function.log}`.
+
+## Optional diagnostic: distinguish FIFO padding from silent game audio
+
+`69a4f0e-alsa-padding-trace.patch` applies after the FIFO wakeup correction to
+the pinned RetroArch source. It is a diagnostic patch, not part of the
+installed production frontend. Build it in a separate artifact and set
+`GP32_ALSA_PADDING_LOG` to a writable private CSV path for one bounded run.
+
+The playback worker records the FIFO's available bytes, real bytes consumed,
+period bytes, explicitly zero-padded bytes and `snd_pcm_writei` result.
+`monotonic_ns` is sampled before acquiring the FIFO mutex; it is not a core
+frame timestamp or an input-latency measurement. The trace uses a 4,096-entry
+array and writes the file only when the worker ends. Check `allocated=1` and
+`overflow=0` in its first line before interpreting the full run. One worker
+lifecycle overwrites the path; use a distinct file per run and do not infer
+complete coverage after a driver restart or crash.
+
+The H700 diagnostic was built and exercised with the existing 900-frame Tomak
+replay. All 1,034 writes returned a full 768 frames, without errors; every
+per-frame guest PC, source-audio count/nonzero count and IIS state matched the
+standalone reference. The trace allocated successfully and did not overflow.
+Within output frames 96,000 through 719,999 (a central 13-second window at
+48 kHz), explicitly padded bytes were zero. Small all-zero PCM sample counts
+therefore do not imply FIFO padding in this run. Padding did occur around
+the beginning and end of this bounded session. This is not a physical
+listening test or evidence about every game or the earlier two-core runs.
+
+Evidence: `F:/GP32/results/resume38-audio/{padding.csv,padding-summary.json}`
+and `F:/GP32/results/resume38-padding-audio-{runtime-verified,summary}.json`.
+The installed frontend/core, platform config and emulator config retained
+their pre-run hashes; MainUI returned normally.

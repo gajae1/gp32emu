@@ -1,0 +1,75 @@
+--- a/audio/drivers/alsathread.c
++++ b/audio/drivers/alsathread.c
+@@ -17,4 +17,7 @@
+ 
+ #include <stdlib.h>
++#include <stdio.h>
++#include <stdint.h>
++#include <time.h>
+ #include <boolean.h>
+ 
+@@ -442,4 +445,16 @@
+    uintptr_t thread_id = sthread_get_current_thread_id();
+ 
++   /* Diagnostic only: bounded memory, no file I/O during playback. */
++   struct padding_event {
++      uint64_t ns;
++      size_t available, real_bytes, period_bytes;
++      snd_pcm_sframes_t written;
++   };
++   const char *trace_path = getenv("GP32_ALSA_PADDING_LOG");
++   const size_t capacity = 4096;
++   struct padding_event *events = trace_path
++      ? (struct padding_event *)calloc(capacity, sizeof(*events)) : NULL;
++   size_t event_count = 0, overflow = 0;
++
+    if (!buf)
+    {
+@@ -454,4 +469,7 @@
+       size_t fifo_size;
+       snd_pcm_sframes_t frames;
++      struct timespec stamp = {0, 0};
++      if (events)
++         clock_gettime(CLOCK_MONOTONIC, &stamp);
+       slock_lock(alsa->info.fifo_lock);
+       avail     = FIFO_READ_AVAIL(alsa->info.buffer);
+@@ -465,4 +483,16 @@
+ 
+       frames = snd_pcm_writei(alsa->info.pcm, buf, alsa->info.stream_info.period_frames);
++      if (events && event_count < capacity)
++      {
++         struct padding_event *ev = &events[event_count++];
++         ev->ns = (uint64_t)stamp.tv_sec * 1000000000u + stamp.tv_nsec;
++         ev->available = avail;
++         ev->real_bytes = fifo_size;
++         ev->period_bytes = alsa->info.stream_info.period_size;
++         ev->written = frames;
++      }
++      else if (events)
++         overflow++;
++
+ 
+       if (     frames == -EPIPE
+@@ -494,4 +524,22 @@
+    scond_signal(alsa->info.cond);
+    slock_unlock(alsa->info.fifo_lock);
++   if (trace_path)
++   {
++      FILE *trace = fopen(trace_path, "w");
++      if (trace)
++      {
++         size_t i;
++         fprintf(trace, "# allocated=%d overflow=%zu\n", events != NULL, overflow);
++         fprintf(trace, "monotonic_ns,available_bytes,real_bytes,period_bytes,padded_bytes,written_frames\n");
++         for (i = 0; i < event_count; ++i)
++            fprintf(trace, "%llu,%zu,%zu,%zu,%zu,%ld\n",
++               (unsigned long long)events[i].ns, events[i].available,
++               events[i].real_bytes, events[i].period_bytes,
++               events[i].period_bytes - events[i].real_bytes,
++               (long)events[i].written);
++         fclose(trace);
++      }
++   }
++   free(events);
+    free(buf);
+    RARCH_DBG("[ALSA] [playback thread %p] Ending playback worker thread...\n", thread_id);

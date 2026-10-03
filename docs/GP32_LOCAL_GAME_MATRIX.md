@@ -1,5 +1,40 @@
 # GP32 local game matrix (owned files, deduplicated)
 
+## Current Korean device library (2026-10-04)
+
+The installed `Roms/GP32` contains exactly the 20 unique Korea-labelled game
+payloads supplied locally. Fresh SHA-256 comparison found no missing, extra or
+different payloads. The menu shows 20 games; the BIOS is not a game entry.
+No ROM, save or configuration change was needed for this verification.
+
+Language evidence is cumulative across the captures below, not just the last
+autopulse pass. Twelve titles have at least one captured screen containing
+Hangul: Dooly Soccer 2002, Dyhard, GP Fight, Her Knights, Little Girl Mill,
+OneShot Voca, Princess Maker 2, Tanggle's Magic Square, Therapy, W.B.W., Wizard
+Slayer, and Woody & Kunta. The other eight remain Korea-region-labelled with
+their displayed language unverified. This does not establish complete
+localization or full-game compatibility for any title.
+
+In particular, the resume28 loading-only Mill capture does **not** supersede
+the earlier controlled room movement, village progression and Korean dialogue
+evidence in resume13/resume16. Similarly, GP Fight's resume28 black capture
+does not supersede the resume17 match capture with Korean player names. Those
+older images were reopened during this audit; no new gameplay run is implied.
+
+The six catalogued Korean releases still missing from the supplied files are
+Funny Soccer 2002, Holeman Battle Race 2002, Story of Bug eyed Monster, Winter
+Is, Tales of Windy Land, and Tears - Another Story. They require additional
+owned dumps; the installed 20 are not the complete GP32 catalog.
+
+Current device evidence: `F:/GP32/results/resume38-library/verified.json`,
+`installed-sha256.txt`, and `F:/GP32/results/resume38-ui-korean-list.png`.
+The system-selection capture `resume38-ui-awake.png` shows the GP32 image
+inside its tile, with the other systems and labels unobscured. Its deployed
+canvas is 120 x 130 pixels and alpha bounds are `(0,25)-(120,83)`, matching
+the neighboring systems' canvas dimensions. The selected icon is `gp32.png`.
+
+## Historical inventory and replay evidence
+
 Generated 2026-10-03 (resume12). Files owned by this pass:
 docs/GP32_LOCAL_GAME_MATRIX.md and scripts/bench_catalog.py. The earlier
 inventory worker failed before writing, so the list below comes from one scripted

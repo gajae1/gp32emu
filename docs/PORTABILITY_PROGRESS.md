@@ -2587,3 +2587,35 @@ counter values are not a fifth comparable ABBA row or proof of improved sound.
 Evidence: `F:/GP32/results/resume37-final/{runtime-verified.json,
 active-status.txt,frontend.exit,function.log}`. Broader game pacing and physical
 input/audio acceptance remain open.
+
+### Korean library recheck and exact audio-padding trace (resume38, 2026-10-04)
+
+A fresh local inventory and on-device SHA-256 pass agree on all 20 unique
+Korea-labelled game payloads, with no missing or extra games in the installed
+set. The live menu reports 20 titles. The GP32 selection image is visibly
+contained in its tile on the 720 x 480 menu; the deployed 120 x 130 asset's
+hash matches the packaged asset. No ROM, save or setting edit was necessary.
+The game matrix now consolidates earlier language evidence so that a later
+loading-only capture does not erase previously demonstrated gameplay or
+Korean dialogue. Twelve titles have captured Hangul; eight still have only
+region-label evidence. Six catalogued Korean releases lack supplied dumps.
+
+Rate-control review found no mismatch in the threaded ALSA FIFO capacity or
+availability contract. Added an optional, bounded playback-worker diagnostic
+patch to distinguish explicit FIFO padding from zero-valued game/resampler
+samples, without file I/O during playback. A separately built frontend ran
+the existing 900-frame Tomak replay; its trace contains 1,034 full ALSA writes
+with no errors, allocation failure or event overflow. Core/audio reference
+fields match on every replay frame, and all 661,990 submitted stereo frames
+were accepted by the frontend. There was no explicit padding in output
+frames [96,000,720,000), although the older zero-sample observer counted small
+numbers of zeros in this central interval. Padding was present at the
+session edges. This does not establish physical audio quality, nor explain
+the earlier two-core run's different zero-sample counts.
+
+The production frontend/core and both checked configuration files retained
+their exact hashes; the diagnostic binary was not promoted. Source patch and
+usage are in `packaging/spruce/retroarch-patches/`. Evidence is under
+`F:/GP32/results/resume38-library/`, `resume38-audio/`, and the
+`resume38-padding-audio-*` result files. This turn does not claim a gameplay
+speedup or complete compatibility.
