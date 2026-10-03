@@ -254,3 +254,36 @@ Evidence: `F:/GP32/results/resume16-mmu-her-primed-abba.json`,
 comparison is `F:/GP32/results/resume16-mmu-her-abba.json`) and
 `F:/GP32/results/resume16-mill/README.md`. Final integrated CPU fixes and
 frontend/device validation are recorded separately in [portability progress](PORTABILITY_PROGRESS.md).
+
+
+## resume17: shifted-register instruction folding
+
+AArch64 shifted-register ALU instructions now absorb the separate shift for
+non-flag-setting logical operations and supported ADD/SUB/CMP/CMN operands.
+RRX, encoded LSR/ASR #32, reversed-subtraction operands, ADC/SBC/RSC, and logical
+shifter-carry updates retain the explicit path. Guest state is still committed
+after each instruction; no register cache or deferred flags were introduced.
+
+At the same observed 1.512 GHz, primed ABBA Her Knights (1200/1200) measured
+106.172 -> 106.7275 core fps (+0.52%); Korean Little Wizard combat (1200/1200)
+measured 147.178 -> 147.9575 (+0.53%). Both comparisons preserve all seven
+CPU/video/PCM fields. These small scene-specific changes do not imply a large
+whole-game gain or a frame-rate floor. The candidate was
+`0081c5132f78b190133b8e80c680eeef3e506115dec67316865ecdb359907d7d`, baseline
+`3f4197cb57707d63cade51dbf246e2be2bfe1cbbdf9d0afb151de7782759fdb9`.
+Evidence: `F:/GP32/results/resume17-shift-{her,wizard}-abba.json` and
+`resume17-shift-jit-h700.json`. The native H700 differential includes flags
+and per-instruction result snapshots for all immediate-shift forms, including
+zero-field boundaries and both input carries; 39,128 events passed with four
+expected fallbacks.
+
+The final integrated resume17 build also measured GP Fight's Korean classroom
+match (0 warmup / 2400 measured frames, scripted movement). Primed ABBA at an
+observed steady 1512 MHz gave baseline 168.072/168.218 and candidate
+171.704/170.837 core fps: medians 168.145 -> 171.2705 (+1.86%). All seven
+CPU/video/PCM fields matched, with all 52 clock samples steady and the governor
+unchanged. This comparison includes the CPU correctness fixes as well as shift
+folding; it does not isolate a single optimization or establish displayed fps.
+The final candidate bench SHA-256 is
+`36020feaedb425b2ce232d41b171c15142cfba4f006956032db8d1ef103fc81f`.
+Evidence: `F:/GP32/results/resume17-gpfight-abba.json`.

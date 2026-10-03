@@ -374,7 +374,7 @@ static uint32_t block_insn(unsigned p, unsigned u, unsigned s, unsigned w,
 }
 
 /* LDM with PC in the list.  Even (bit0 clear) ARM targets stay on the native
- * in-RAM path; write_pc_x's odd (Thumb) targets and every span-guard failure
+ * in-RAM path; odd PC targets and every span-guard failure
  * bail to the classified helper before any guest register changes, so the
  * oracle and JIT must stay in lockstep either way.  SP-based pops cover the
  * common function-return shape; the BL-inlined leaf wrapper must keep its
@@ -406,7 +406,7 @@ static void case_ldm_pc(void) {
     CHECK(arm920t_get_pc(cpu_ref) == CODE_ADDR + 0x18u, "LDM pc did not park on target loop");
     teardown_pair();
 
-    /* pc word with bit1 set (even but halfword-aligned): write_pc_x masks ~3. */
+    /* pc word with bit1 set (even but halfword-aligned): ARMv4T masks both low bits. */
     const uint32_t misaligned[] = {
         0xE3A0140Cu, 0xE2811A01u,
         block_insn(0, 1, 0, 1, 1, 1, 0x8010u),  /* LDMIA r1!, {r4, pc}         */
@@ -465,25 +465,25 @@ static void case_ldm_pc(void) {
           "LDMDB pc ordering/writeback");
     teardown_pair();
 
-    /* Odd target: write_pc_x sets T and r15 = v & ~1.  The native preload
-     * must bail to the helper before any guest store, so r4 still arrives
-     * and Thumb entry is exact. */
-    const uint32_t thumb[] = {
+    /* ARMv4T LDM PC ignores both low bits and retains ARM state, unlike
+     * ARMv5 interworking. Keep the loaded data and writeback checks too. */
+    const uint32_t odd_pc[] = {
         0xE3A0140Cu, 0xE2811A01u,
-        block_insn(0, 1, 0, 1, 1, 1, 0x8010u),  /* LDMIA r1!, {r4, pc}         */
-        0xEAFFFFFEu,                            /* B . ; dead                  */
-        /* +0x10: Thumb halfwords: movs r7, #0x77 ; b . */
-        0xE7FE2777u,
+        block_insn(0, 1, 0, 1, 1, 1, 0x8010u), /* LDMIA r1!, {r4, pc} */
+        0xEAFFFFFEu,
+        0xE3A07077u, /* +0x10: ARM MOV r7,#0x77 */
+        0xEAFFFFFEu,
     };
-    current_case = "ldm-pc-thumb";
+    current_case = "ldm-pc-odd-armv4";
     setup_pair();
-    load_both(thumb, GP32_ARRAY_COUNT(thumb));
+    load_both(odd_pc, GP32_ARRAY_COUNT(odd_pc));
     set_mem_both(DATA_ADDR + 0u, 0x44444444u);
     set_mem_both(DATA_ADDR + 4u, (CODE_ADDR + 0x10u) | 1u);
     run_chunks();
-    CHECK(ref_reg(4) == 0x44444444u, "Thumb bail lost the r4 load");
-    CHECK(ref_reg(7) == 0x77u, "Thumb code did not run");
-    CHECK((arm920t_get_cpsr(cpu_ref) & 0x20u) != 0u, "LDM pc odd did not enter Thumb");
+    CHECK(ref_reg(4) == 0x44444444u, "odd PC load lost the r4 load");
+    CHECK(ref_reg(7) == 0x77u, "ARM target code did not run");
+    CHECK((arm920t_get_cpsr(cpu_ref) & 0x20u) == 0u, "LDM pc must retain ARM state");
+    CHECK(arm920t_get_pc(cpu_ref) == CODE_ADDR + 0x14u, "LDM pc low-bit mask");
     teardown_pair();
 
     /* Conditional forms: LDMNE must skip loads+writeback+branch entirely,
@@ -536,7 +536,7 @@ static void case_ldm_pc(void) {
 
     /* Span crossing the 8 MiB RAM end: the PC word reads outside the direct
      * window, so the helper must run; its bus read returns 0xFFFFFFFF, an odd
-     * value, so write_pc_x enters Thumb at a deterministic nonsense address. */
+     * value, which ARMv4T aligns to 0xFFFFFFFC without changing state. */
     const uint32_t mmio[] = {
         0xE3A0140Cu,                            /* MOV  r1, #0x0C000000        */
         0xE2811502u,                            /* ADD  r1, r1, #0x800000      */
@@ -553,9 +553,9 @@ static void case_ldm_pc(void) {
     compare_state();
     CHECK(ref_reg(4) == 0xDEADBEEFu, "RAM-end LDM pc lost the in-window word");
     CHECK(ref_reg(1) == RAM_BASE + 0x800004u, "RAM-end LDM writeback");
-    CHECK((arm920t_get_cpsr(cpu_ref) & 0x20u) != 0u,
-          "out-of-window PC did not enter Thumb via helper");
-    /* Later undefined Thumb instructions enter an ARM exception handler. */
+    CHECK((arm920t_get_cpsr(cpu_ref) & 0x20u) == 0u &&
+          arm920t_get_pc(cpu_ref) == 0xfffffffcu,
+          "out-of-window PC must remain word-aligned ARM via helper");
     run_chunks();
     teardown_pair();
 
@@ -924,6 +924,43 @@ static void case_native_immediates(void) {
     }
 }
 
+/* Compare shifted ALU results and flags after each instruction, including
+ * the ARM encodings for LSR/ASR #32 and RRX (amount field zero). */
+static void case_native_immshift(void) {
+    const unsigned amounts[] = {0u, 1u, 31u};
+    for (unsigned carry = 0; carry < 2u; ++carry) {
+        for (unsigned type = 0; type < 4u; ++type) {
+            for (unsigned a = 0; a < GP32_ARRAY_COUNT(amounts); ++a) {
+                uint32_t program[161];
+                unsigned n = 0;
+                current_case = "native-immshift";
+                setup_pair();
+                set_reg_both(0, 0x7fffffffu);
+                set_reg_both(1, 0x80000001u);
+                set_reg_both(10, DATA_ADDR);
+                set_reg_both(11, carry ? 0xb0000000u : 0x90000000u);
+                for (unsigned code = 0; code < 16u; ++code) {
+                    for (unsigned flags = 0; flags < 2u; ++flags) {
+                        if (code >= 8u && code <= 11u && !flags) continue;
+                        program[n++] = 0xe128f00bu; /* MSR CPSR_f,r11 */
+                        program[n++] = 0xe0002001u | (code << 21) | (flags << 20) |
+                                       (amounts[a] << 7) | (type << 5);
+                        program[n++] = 0xe48a2004u; /* STR r2,[r10],#4 */
+                        program[n++] = 0xe10f3000u; /* MRS r3,CPSR */
+                        program[n++] = 0xe48a3004u; /* STR r3,[r10],#4 */
+                    }
+                }
+                program[n++] = 0xeafffffeu;
+                load_both(program, n);
+                CHECK(arm920t_run(cpu_jit, 256u) == arm920t_run(cpu_ref, 256u),
+                      "shifted ALU instruction budget");
+                compare_state();
+                teardown_pair();
+            }
+        }
+    }
+}
+
 static void case_native_regshift(void) {
     const unsigned amounts[] = {0, 1, 31, 32, 33, 255, 256};
     for (unsigned carry = 0; carry != 2; ++carry) {
@@ -1014,7 +1051,7 @@ static void case_native_mapped_block(void) {
             0xe592c000u, /* LDR r12,[r2]: fill second-page TLB */
             0,          /* LDM/STMIA r0[!],{r0,r3,pc} */
             0xeafffffeu,
-            odd ? 0xe7fe2777u : 0xe3a07077u,
+            0xe3a07077u, /* ARMv4T LDM PC stays ARM even for odd targets. */
             0xeafffffeu
         };
         current_case = mode == 0 ? "mapped-block-load" : mode == 1 ? "mapped-block-odd" :
@@ -1046,6 +1083,8 @@ static void case_native_mapped_block(void) {
             CHECK(ref_reg(0) == 0x11223344u && ref_reg(3) == 0x55667788u,
                   "LDM noncontiguous pages and base-in-list");
             CHECK(ref_reg(7) == 0x77u, "LDM mapped PC target");
+            CHECK(!(arm920t_get_cpsr(cpu_ref) & 0x20u) &&
+                  arm920t_get_pc(cpu_ref) == CODE_ADDR + 28u, "LDM mapped PC state/alignment");
         }
         teardown_pair();
     }
@@ -1367,6 +1406,7 @@ int main(int argc, char **argv) {
     case_native_alu_region();
     case_native_forwarding();
     case_native_immediates();
+    case_native_immshift();
     case_native_regshift();
     case_native_longmul_psr();
     case_native_mapped_block();

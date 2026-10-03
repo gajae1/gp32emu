@@ -1262,3 +1262,105 @@ SHA-256 `759e3d8b690c9e86b50853d5ff33034e9de65695d70d2b8b9f6c6a03588c6cb6`.
 The prior core is preserved at `gp32-dev/resume16-installed-core-before.so`;
 configuration hashes remain unchanged. Deployment record:
 `F:/GP32/results/resume16-core-installed.json`.
+
+
+## resume17: shifted operands and remaining CPU edge cases
+
+The AArch64 shifted-register optimization and its small matched-clock gains are
+recorded in [the performance strategy](GP32_PERFORMANCE_STRATEGY.md). It preserves
+per-instruction guest-state publication and all existing slow paths.
+
+Exception entry now honors CP15 c1.V (bit 13): the selected base is zero or
+0xffff0000, with the exception offset added. This follows the
+[ARM920T TRM DDI 0151C, table 2-10, printed page 2-12](https://documentation-service.arm.com/static/5e8e2a5b88295d1e18d381bb).
+The previous core failed both JIT modes of the high-vector SWI oracle by
+entering 0x00000008 instead of 0xffff0008. The fixed low/high-vector and
+Thumb exception-return cases pass on H700 (`resume17-vector-h700.json`).
+Reset still follows the existing explicit reset-vector API; this change does
+not claim full MMU fault/abort accuracy or enable a new guest-clock setting.
+
+
+### ARMv4T instruction-state and privilege rules
+
+Thumb POP PC now retains Thumb state, including even target values, while ARM
+LDM/LDR PC retain ARM state and ignore the low two address bits. BX retains its
+interworking behavior. This corrects ARMv5-style behavior previously applied
+to the ARM920T; the x86 inline LDR path also disagreed with its interpreter.
+Both interpreter/classified LDM and x86 native load sites are corrected.
+The source rule is [ARM DDI0100I](https://developer.arm.com/documentation/ddi0100/i),
+POP A7.1.49 (A7-82/83), LDM A4.1.20 (A4-36/37), LDR A4.1.23 (A4-43/44).
+The old LDM tests expecting Thumb entry were corrected to assert word alignment,
+ARM state, the loaded registers and the ARM target marker, rather than removing
+the assertions. New POP/LDR oracles cover both low-bit patterns and JIT modes.
+
+MSR in User mode now ignores CPSR bits 23:0 while leaving the flag byte writable.
+Previously a guest User-mode control write could switch to Supervisor and mask
+interrupts. The shared helper fix follows
+[DDI0100E MSR, A4-63/A4-65](https://www.cl.cam.ac.uk/teaching/0506/ECADArch/datasheets/arm.pdf).
+The external reproducer failed seven assertions before the fix and none after;
+the integrated oracle covers immediate/register writes, privileged entry to
+User mode and subsequent flag writes. AArch64 only inlines flag-byte writes,
+so its control-field operations use the corrected helper as well.
+
+External reproduction records: `resume17-thumb/REPORT.md` and
+`resume17-msr/FINDINGS.md` under `F:/GP32/results/`.
+
+### x86-64 MMU-on RAM fast path
+
+The x86 backend now checks the packed TLB entry, full virtual tag, supported
+page size, aligned physical base and complete RAM span before inlining MMU-on
+loads/stores. A full writable RAM window is required for stores. Cold entries,
+BIOS/MMIO, tiny pages, page-crossing block transfers and PC loads retain the
+whole-instruction helper. Helpers check PC, status, IRQ/FIQ, generation and
+memory-base changes before continuing the trace, and native entry checks its
+instruction budget. Win64 shadow space and SysV argument placement are preserved.
+
+A 100-million-guest-cycle MMU RAM loop was compared in eight alternating A/B
+pairs against the pre-fast-path x86 emitter. Median throughput was 301.97 vs
+889.34 million guest cycles/s (2.95x). Every timing run matched the interpreter's
+complete CPU state, RAM and BIOS image. This is a synthetic memory-loop gain,
+not an H700 or whole-game speed claim. Artifacts:
+`F:/GP32/results/resume17-x64-build/mmu-loop-ab.json` and `x64-emitter.patch`.
+
+Integrated Windows CTest passed twelve tests on its first run. The remaining
+ARM JIT case exposed another old ARMv5-style mapped-PC fixture; after correcting
+its ARM target and adding state/alignment assertions, the affected test passed.
+No production code or assertion was relaxed to make that fixture pass. H700
+native differential passes 40,459 events with four expected fallbacks; the
+expanded instruction/exception oracle passes too. Android ARM64/ARMv7 builds
+pass. Final Windows GP Fight input replay matches the earlier 49ae3d5 endpoint
+image byte-for-byte (SHA-256 `2aa4aae04e6461c28ae70a5c1def1fba0966a01cf000519d905287b8f6ba2a3c`).
+
+The final H700 bench also reproduced all seven CPU/video/PCM fields for the
+existing Her Knights, Korean Little Wizard and Mill scripts. These were one
+exactness replay each, not new A/B performance claims
+(`F:/GP32/results/resume17-final-scenes.json`). GP Fight's separately measured
+primed ABBA comparison improved median core throughput by 1.86% with exact
+state/video/PCM; see [performance strategy](GP32_PERFORMANCE_STRATEGY.md).
+
+### GP Fight frontend and audio delivery
+
+The final integrated core, wrapped only for diagnostic counters/scripted input,
+ran the Korean GP Fight match through the normal MainUI -> RetroArch -> MainUI
+path for 2400 frames. RetroArch exited successfully after 43 seconds including
+startup/shutdown (content runtime 39 seconds); its endpoint overlay reported
+60.02 fps. The screenshot shows the classroom scene and Korean HUD names.
+The diagnostic overlay was confined to the separate measurement configuration.
+
+All 1,762,032 offered stereo sample frames were accepted, with no partial/zero
+returns or pending samples. The ALSA probe recorded zero EPIPE/ESTRPIPE/EAGAIN,
+other write errors or recovery calls. This proves delivery in this window, not
+physical speaker quality or absence of emulated audio defects. Threaded video
+reported 2392 pushed / 9 dropped frames, so this is not a zero-drop claim.
+Attack/guard response, later matches and physical input latency remain open.
+The normal GP32 launch configuration and user RetroArch configuration hashes
+were unchanged. Evidence: `F:/GP32/results/resume17-runtime-verified.json`,
+`resume17-runtime.log`, and `resume17-runtime.png`.
+
+The production core (without the diagnostic wrapper) was then atomically
+installed at `/mnt/SDCARD/Emu/GP32/gp32emu_libretro.so`, SHA-256
+`38726f6f2c9fdbd6e29c7855eb84995fb639198358790aa9cb389cd3c49622f6`.
+The previous resume16 core is retained at
+`/mnt/SDCARD/gp32-dev/resume17-installed-core-before.so`. MainUI was running,
+RetroArch was stopped, and both configuration hashes remained unchanged.
+Deployment evidence: `F:/GP32/results/resume17-core-installed.json`.

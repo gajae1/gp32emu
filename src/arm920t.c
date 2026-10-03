@@ -493,7 +493,7 @@ static void exception_enter(arm920t_t *c, uint32_t m, uint32_t vector, uint32_t 
     if (spsr) *spsr = old;
     c->r[14] = lr;
     c->cpsr = (c->cpsr & ~(T_FLAG | MODE_MASK)) | m | I_FLAG | extra_flags;
-    c->r[15] = vector;
+    c->r[15] = vector | ((c->cp15[1] & (1u << 13)) ? 0xffff0000u : 0u);
 }
 static void maybe_irq(arm920t_t *c) {
     if (c->fiq_line && !(c->cpsr & F_FLAG)) exception_enter(c, MODE_FIQ, 0x1c, c->r[15] + 4, F_FLAG);
@@ -731,6 +731,8 @@ static void op_psr(arm920t_t *c, uint32_t insn) {
         if (!mask) mask = 0xf0000000u;
         if (insn & (1u << 22)) { uint32_t *s = spsr_ptr(c, mode(c)); if (s) *s = (*s & ~mask) | (val & mask); }
         else {
+            /* User-mode MSR can write the flags byte only (DDI0100E A4-65). */
+            if (mode(c) == MODE_USR) mask &= 0xff000000u;
             uint32_t newc = (c->cpsr & ~mask) | (val & mask);
             set_cpsr_full(c, newc);
         }
@@ -830,7 +832,7 @@ static void op_block_dt(arm920t_t *c, uint32_t insn) {
         if (l) {
             uint32_t v = rb32(c, addr);
             if (user_transfer) write_user_r(c, r, v);
-            else if (r == 15) { if (exception_return) loaded_pc = v; else write_pc_x(c, v); } else c->r[r] = v;
+            else if (r == 15) { if (exception_return) loaded_pc = v; else write_r(c, 15u, v); } else c->r[r] = v;
         } else {
             uint32_t v = user_transfer ? read_user_r(c, r) : ((r == 15) ? c->r[15] + 4u : c->r[r]);
             wb32(c, addr, v);
@@ -1043,7 +1045,7 @@ static void exec_thumb(arm920t_t *c) {
     if ((op & 0xff00u) == 0xb000u) { uint32_t imm=(op&0x7fu)<<2; if(op&0x80)c->r[13]-=imm; else c->r[13]+=imm; return; }
     if ((op & 0xf600u) == 0xb400u) { /* push/pop */
         uint32_t list=op&0xffu; int pop=!!(op&0x0800), pc_lr=!!(op&0x0100);
-        if(pop){ for(unsigned r=0;r<8;r++) if(list&(1u<<r)){c->r[r]=rb32(c,c->r[13]); c->r[13]+=4;} if(pc_lr){uint32_t v=rb32(c,c->r[13]); c->r[13]+=4; write_pc_x(c,v);} }
+        if(pop){ for(unsigned r=0;r<8;r++) if(list&(1u<<r)){c->r[r]=rb32(c,c->r[13]); c->r[13]+=4;} if(pc_lr){uint32_t v=rb32(c,c->r[13]); c->r[13]+=4; write_r(c,15u,v);} }
         else { if(pc_lr){c->r[13]-=4; wb32(c,c->r[13],c->r[14]);} for(int r=7;r>=0;r--) if(list&(1u<<r)){c->r[13]-=4; wb32(c,c->r[13],c->r[r]);} }
         return;
     }
@@ -1713,7 +1715,7 @@ ARM_FORCE_INLINE void op_block_dt_bc(arm920t_t *c, const arm_jit_op_t *op) {
         if (l) {
             uint32_t v = arm_bc_ld_word(c, addr);
             if (user_transfer) write_user_r(c, r, v);
-            else if (r == 15u) { if (exception_return) loaded_pc = v; else write_pc_x(c, v); } else c->r[r] = v;
+            else if (r == 15u) { if (exception_return) loaded_pc = v; else write_r(c, 15u, v); } else c->r[r] = v;
         } else {
             uint32_t v = user_transfer ? read_user_r(c, r) : ((r == 15u) ? c->r[15] + 4u : c->r[r]);
             arm_bc_st_word(c, addr, v);
@@ -1985,8 +1987,28 @@ typedef struct x64_emit {
     uint8_t *b;
     size_t cap;
     size_t pos;
-    int fail, mmu;
+    int fail, mmu, ram_read, ram_write;
+    uint32_t expected_next, generation, done;
 } x64_emit_t;
+
+static void arm_x64_write_pc_load_helper(arm920t_t *c, uint32_t v) {
+    ARM_PROF_INC(c, helper_write_pc);
+    write_r(c, 15u, v);
+}
+
+static int arm_x64_exec_checked(arm920t_t *c, const arm_jit_op_t *op,
+                                uint32_t expected_next, uint32_t generation) {
+    int stop = op->stop;
+    uint32_t status = c->cpsr & 0xffu;
+    uint8_t *ram_base = c->jit_ram_base, *bios_base = c->jit_bios_base;
+    arm_jit_exec_classified(c, op);
+    return !stop && !c->halted && !thumb(c) && !c->trace &&
+           c->jit_generation == generation && c->jit_ram_base == ram_base &&
+           c->jit_bios_base == bios_base && (c->cpsr & 0xffu) == status &&
+           (c->r[15] & ~3u) == expected_next &&
+           !(c->irq_line && !(c->cpsr & I_FLAG)) &&
+           !(c->fiq_line && !(c->cpsr & F_FLAG));
+}
 
 static void x64_u8(x64_emit_t *e, uint8_t v) { if (e->pos < e->cap) e->b[e->pos++] = v; else e->fail = 1; }
 static void x64_u32(x64_emit_t *e, uint32_t v) { for (unsigned i = 0; i < 4; ++i) x64_u8(e, (uint8_t)(v >> (i * 8u))); }
@@ -2047,12 +2069,16 @@ static void x64_call_abs(x64_emit_t *e, uintptr_t fn) {
 #define X64_HOST_ARG0 X64_ECX
 #define X64_HOST_ARG1 X64_EDX
 #define X64_HOST_ARG2 X64_R8D
+#define X64_HOST_ARG3 X64_R9D
 #define X64_NATIVE_ARG0 X64_ECX
+#define X64_NATIVE_ARG1 X64_EDX
 #else
 #define X64_HOST_ARG0 X64_EDI
 #define X64_HOST_ARG1 X64_ESI
 #define X64_HOST_ARG2 X64_EDX
+#define X64_HOST_ARG3 X64_ECX
 #define X64_NATIVE_ARG0 X64_EDI
+#define X64_NATIVE_ARG1 X64_ESI
 #endif
 
 static void x64_emit_arg0_cpu(x64_emit_t *e) { x64_mov_r64_r64(e, X64_HOST_ARG0, X64_EBX); }
@@ -2088,7 +2114,13 @@ static void x64_emit_call_helper_op(x64_emit_t *e, const arm_jit_op_t *op) {
     x64_mov_mem_cpu_imm(e, arm_reg_off(15), op->pc + 4u);
     x64_emit_arg0_cpu(e);
     x64_emit_arg1_ptr_imm(e, (uintptr_t)op);
-    x64_call_abs(e, (uintptr_t)arm_jit_exec_classified);
+    x64_mov_r32_imm(e, X64_HOST_ARG2, e->expected_next);
+    x64_mov_r32_imm(e, X64_HOST_ARG3, e->generation);
+    x64_call_abs(e, (uintptr_t)arm_x64_exec_checked);
+    x64_alu_r32_r32(e, 0x85, X64_EAX, X64_EAX);
+    size_t next = x64_jcc32(e, 0x5);
+    x64_emit_return_imm(e, e->done);
+    x64_patch32(e, next, e->pos);
 }
 
 static void x64_emit_nzcv_from_x86_flags(x64_emit_t *e, int invert_carry) {
@@ -2509,6 +2541,105 @@ static void x64_emit_add_signed_imm_to_eax(x64_emit_t *e, int32_t off) {
     else if (off < 0) x64_alu_r32_imm(e, 5, X64_EAX, (uint32_t)(-off));
 }
 
+/* EDX is the VA (word callers align it first), and becomes a RAM offset.
+ * R9/R10 survive for writeback and the original unaligned address. Use the
+ * shared packed mirror: the A64-only derived page table is not available here.
+ * Like that table, reject cold entries, tiny pages and unusual saved masks or
+ * bases. Matching the complete masked VA prevents colliding TLB-index aliases.
+ * All rejections precede guest mutations and re-execute the classified op. */
+static void x64_emit_mmu_ram_offset(x64_emit_t *e, unsigned bytes,
+                                   size_t *slow, unsigned *nslow) {
+    _Static_assert(sizeof(arm_tlb_entry_t) == 16u, "x64 packed TLB stride");
+    x64_mov_r32_r32(e, X64_R8D, X64_EDX);
+    x64_shift_r32_imm(e, 5, X64_R8D, 12);
+    x64_alu_r32_imm(e, 4, X64_R8D, 0xfffu);
+    x64_shift_r32_imm(e, 4, X64_R8D, 4);
+    /* mov dst, [rbx + r8 + offsetof(tlb_entry) + field] */
+#define X64_TLB_LOAD(dst, field) do { \
+    x64_rex(e, 0, (dst), X64_R8D, X64_EBX); x64_u8(e, 0x8b); \
+    x64_modrm(e, 2, (dst), X64_ESP); x64_sib(e, 0, X64_R8D, X64_EBX); \
+    x64_u32(e, (uint32_t)(offsetof(arm920t_t, tlb_entry) + offsetof(arm_tlb_entry_t, field))); \
+} while (0)
+    X64_TLB_LOAD(X64_EAX, valid);
+    x64_alu_r32_r32(e, 0x85, X64_EAX, X64_EAX);
+    slow[(*nslow)++] = x64_jcc32(e, 0x4);
+    X64_TLB_LOAD(X64_R11D, mask);
+    x64_alu_r32_imm(e, 7, X64_R11D, 0xfffu);
+    size_t small = x64_jcc32(e, 0x4);
+    x64_alu_r32_imm(e, 7, X64_R11D, 0xffffu);
+    size_t large = x64_jcc32(e, 0x4);
+    x64_alu_r32_imm(e, 7, X64_R11D, 0xfffffu);
+    slow[(*nslow)++] = x64_jcc32(e, 0x5);
+    x64_patch32(e, small, e->pos);
+    x64_patch32(e, large, e->pos);
+    X64_TLB_LOAD(X64_EAX, va_base);
+    x64_mov_r32_r32(e, X64_ECX, X64_EDX);
+    x64_not_r32(e, X64_R11D);
+    x64_alu_r32_r32(e, 0x21, X64_ECX, X64_R11D);
+    x64_alu_r32_r32(e, 0x39, X64_ECX, X64_EAX);
+    slow[(*nslow)++] = x64_jcc32(e, 0x5);
+    x64_not_r32(e, X64_R11D);
+    X64_TLB_LOAD(X64_EAX, pa_base);
+#undef X64_TLB_LOAD
+    x64_alu_r32_r32(e, 0x85, X64_EAX, X64_R11D);
+    slow[(*nslow)++] = x64_jcc32(e, 0x5); /* preserve OR-based saved-state semantics */
+    x64_alu_r32_r32(e, 0x21, X64_EDX, X64_R11D);
+    x64_alu_r32_r32(e, 0x09, X64_EDX, X64_EAX);
+    x64_alu_r32_imm(e, 5, X64_EDX, ARM_JIT_RAM_BASE_ADDR);
+    x64_alu_r32_imm(e, 7, X64_EDX, ARM_JIT_RAM_SIZE_BYTES - bytes);
+    slow[(*nslow)++] = x64_jcc32(e, 0x7);
+}
+
+static void x64_emit_mmu_slow(x64_emit_t *e, const arm_jit_op_t *op,
+                             size_t *slow, unsigned nslow) {
+    size_t next = x64_jmp32(e);
+    for (unsigned i = 0; i < nslow; ++i) x64_patch32(e, slow[i], e->pos);
+    x64_emit_call_helper_op(e, op);
+    x64_patch32(e, next, e->pos);
+}
+
+/* Prove the entire aligned span before the first transfer/writeback. A span
+ * crossing a virtual page stays on the helper, which can translate each word
+ * independently (the next page need not be contiguous, cached, or RAM). */
+static int x64_emit_mmu_block_dt(x64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
+    uint32_t list = op->imm;
+    unsigned rn = op->a, count = op->g;
+    int l = !!(op->d & 1u), w = !!(op->d & 2u);
+    int u = !!(op->d & 8u), p = !!(op->d & 16u);
+    if (op->reserved || (op->d & 4u) || !list || !count || rn == 15u ||
+        (l && (list & 0x8000u)) ||
+        !(l ? e->ram_read : e->ram_write)) return 0;
+    size_t slow[8];
+    unsigned nslow = 0;
+    x64_emit_load_arm_reg(e, X64_EAX, rn, op->pc);
+    x64_mov_r32_r32(e, X64_R9D, X64_EAX);
+    if (w) x64_alu_r32_imm(e, u ? 0 : 5, X64_R9D, 4u * count);
+    x64_emit_add_signed_imm_to_eax(e, u ? (p ? 4 : 0) : -(int32_t)(4u * count) + (p ? 0 : 4));
+    x64_mov_r32_r32(e, X64_R10D, X64_EAX);
+    x64_test_r32_imm(e, X64_EAX, 3u);
+    slow[nslow++] = x64_jcc32(e, 0x5);
+    x64_alu_r32_imm(e, 4, X64_EAX, 0xfffu);
+    x64_alu_r32_imm(e, 7, X64_EAX, 0x1000u - 4u * count);
+    slow[nslow++] = x64_jcc32(e, 0x7);
+    x64_mov_r32_r32(e, X64_EDX, X64_R10D);
+    x64_emit_mmu_ram_offset(e, 4u * count, slow, &nslow);
+    for (unsigned r = 0; r < 16u; ++r) {
+        if (!(list & (1u << r))) continue;
+        if (l) {
+            x64_mov_r32_membase_index(e, X64_EAX, X64_R14D, X64_EDX);
+            x64_emit_store_arm_reg(e, r, X64_EAX);
+        } else {
+            x64_emit_load_arm_reg(e, X64_ECX, r, op->pc);
+            x64_mov_membase_index_r32(e, X64_R14D, X64_EDX, X64_ECX);
+        }
+        x64_alu_r32_imm(e, 0, X64_EDX, 4u);
+    }
+    if (w && (!l || !(list & (1u << rn)))) x64_emit_store_arm_reg(e, rn, X64_R9D);
+    x64_emit_mmu_slow(e, op, slow, nslow);
+    GP32_UNUSED(done);
+    return 1;
+}
+
 static int x64_emit_mul(x64_emit_t *e, const arm_jit_op_t *op) {
     const uint32_t insn = op->insn;
     if (insn & (1u << 23)) return 0; /* long multiply stays on precise C path */
@@ -2565,7 +2696,7 @@ static int x64_emit_block_dt(x64_emit_t *e, const arm_jit_op_t *op, uint32_t don
             if (r == 15u) {
                 x64_emit_arg0_cpu(e);
                 x64_emit_arg1_u32_from(e, X64_EAX);
-                x64_call_abs(e, (uintptr_t)arm_jit_write_pc_x_helper);
+                x64_call_abs(e, (uintptr_t)arm_x64_write_pc_load_helper);
                 x64_emit_return_imm(e, done);
                 return 1;
             }
@@ -2639,6 +2770,58 @@ static int x64_emit_addrmode2_offset_to_ecx(x64_emit_t *e, uint32_t insn, uint32
     }
 }
 
+/* MMU-on single/half transfers commit only after a proved RAM hit. BIOS,
+ * devices, cold misses and rejected spans retain the whole-op helper. Word
+ * translation aligns the VA before lookup and rotates by the original VA;
+ * halfwords instead access contiguous physical bytes, including page edges.
+ * PC loads remain on the whole-op helper to commit their control-flow exit. */
+static int x64_emit_mmu_dt(x64_emit_t *e, const arm_jit_op_t *op) {
+    const uint32_t insn = op->insn;
+    unsigned rn = (insn >> 16) & 15u, rd = (insn >> 12) & 15u;
+    int half = op->kind == ARM_JIT_OP_HALF;
+    int p = GP32_BIT(insn,24), u = GP32_BIT(insn,23), w = GP32_BIT(insn,21), l = GP32_BIT(insn,20);
+    unsigned sh = (insn >> 5) & 3u;
+    unsigned bytes = half ? ((l && sh == 2u) ? 1u : 2u) : (GP32_BIT(insn,22) ? 1u : 4u);
+    if (!(l ? e->ram_read : e->ram_write) || (l && rd == 15u) ||
+        ((!p || w) && rn == 15u) || (half && (rd == 15u || (l ? !sh : sh != 1u)))) return 0;
+    if (half) {
+        if (GP32_BIT(insn,22)) x64_mov_r32_imm(e, X64_ECX, op->imm);
+        else if (op->c == 15u) x64_mov_r32_imm(e, X64_ECX, op->pc + 4u);
+        else x64_emit_load_arm_reg(e, X64_ECX, op->c, op->pc);
+    } else if (!x64_emit_addrmode2_offset_to_ecx(e, insn, op->pc)) return 0;
+    x64_emit_load_arm_reg(e, X64_EAX, rn, op->pc);
+    x64_mov_r32_r32(e, X64_R9D, X64_EAX);
+    x64_alu_r32_r32(e, u ? 0x01 : 0x29, X64_R9D, X64_ECX); /* final base survives lookup */
+    x64_mov_r32_r32(e, X64_R10D, p ? X64_R9D : X64_EAX);
+    x64_mov_r32_r32(e, X64_EDX, X64_R10D);
+    if (bytes == 4u) x64_alu_r32_imm(e, 4, X64_EDX, ~3u);
+    size_t slow[5];
+    unsigned nslow = 0;
+    x64_emit_mmu_ram_offset(e, bytes, slow, &nslow);
+    if (l) {
+        if (bytes == 4u) {
+            x64_mov_r32_membase_index(e, X64_EAX, X64_R14D, X64_EDX);
+            x64_mov_r32_r32(e, X64_ECX, X64_R10D);
+            x64_alu_r32_imm(e, 4, X64_ECX, 3u);
+            x64_shift_r32_imm(e, 4, X64_ECX, 3);
+            x64_shift_r32_cl(e, 1, X64_EAX);
+        } else if (bytes == 2u) {
+            if (sh == 3u) x64_movsx_r32_membase_index16(e, X64_EAX, X64_R14D, X64_EDX);
+            else x64_movzx_r32_membase_index16(e, X64_EAX, X64_R14D, X64_EDX);
+        } else if (half) x64_movsx_r32_membase_index8(e, X64_EAX, X64_R14D, X64_EDX);
+        else x64_movzx_r32_membase_index8(e, X64_EAX, X64_R14D, X64_EDX);
+        x64_emit_store_arm_reg(e, rd, X64_EAX);
+    } else {
+        x64_emit_load_arm_reg(e, X64_ECX, rd, op->pc);
+        if (bytes == 4u) x64_mov_membase_index_r32(e, X64_R14D, X64_EDX, X64_ECX);
+        else if (bytes == 2u) x64_mov_membase_index16_r32(e, X64_R14D, X64_EDX, X64_ECX);
+        else x64_mov_membase_index8_r32(e, X64_R14D, X64_EDX, X64_ECX);
+    }
+    if (!p || w) x64_emit_store_arm_reg(e, rn, X64_R9D);
+    x64_emit_mmu_slow(e, op, slow, nslow);
+    return 1;
+}
+
 static int x64_emit_single_dt(x64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
     const uint32_t insn = op->insn;
     unsigned rn = (insn >> 16) & 0xfu, rd = (insn >> 12) & 0xfu;
@@ -2654,7 +2837,7 @@ static int x64_emit_single_dt(x64_emit_t *e, const arm_jit_op_t *op, uint32_t do
         if (rd == 15u) {
             x64_emit_arg0_cpu(e);
             x64_emit_arg1_u32_from(e, X64_EAX);
-            x64_call_abs(e, (uintptr_t)arm_jit_write_pc_x_helper);
+            x64_call_abs(e, (uintptr_t)arm_x64_write_pc_load_helper);
             x64_emit_return_imm(e, done);
         } else x64_emit_store_arm_reg(e, rd, X64_EAX);
     } else {
@@ -2767,14 +2950,9 @@ static int x64_emit_one(x64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
     switch ((arm_jit_kind_t)op->kind) {
     case ARM_JIT_OP_DATA: return x64_emit_data_proc(e, op, done);
     case ARM_JIT_OP_MUL: return x64_emit_mul(e, op);
-    /* These inline memory paths treat guest addresses as physical. A RAM or
-     * BIOS range check cannot establish an identity mapping with the MMU on.
-     * Keep translated accesses in the classified path until this backend has
-     * a validated TLB lookup like AArch64. CP15 control writes end the block
-     * and invalidate its generation, so this mode is a compile-time constant. */
-    case ARM_JIT_OP_HALF: return !e->mmu && x64_emit_halfword(e, op, done);
-    case ARM_JIT_OP_SINGLE_DT: return !e->mmu && x64_emit_single_dt(e, op, done);
-    case ARM_JIT_OP_BLOCK_DT: return !e->mmu && x64_emit_block_dt(e, op, done);
+    case ARM_JIT_OP_HALF: return e->mmu ? x64_emit_mmu_dt(e, op) : x64_emit_halfword(e, op, done);
+    case ARM_JIT_OP_SINGLE_DT: return e->mmu ? x64_emit_mmu_dt(e, op) : x64_emit_single_dt(e, op, done);
+    case ARM_JIT_OP_BLOCK_DT: return e->mmu ? x64_emit_mmu_block_dt(e, op, done) : x64_emit_block_dt(e, op, done);
     case ARM_JIT_OP_BRANCH: {
         int32_t off = gp32_sign_extend((op->insn & 0x00ffffffu) << 2, 26);
         if (op->insn & (1u << 24)) x64_mov_mem_cpu_imm(e, arm_reg_off(14), op->pc + 4u);
@@ -2806,6 +2984,10 @@ static void arm_jit_compile_native(arm920t_t *c, arm_jit_block_t *b) {
     e.b = tmp;
     e.cap = sizeof(tmp);
     e.mmu = !!(c->cp15[1] & 1u);
+    e.generation = b->generation;
+    /* A read pointer alone does not authorize stores or a complete window. */
+    e.ram_read = c->jit_ram_base && fastmem(c, ARM_JIT_RAM_BASE_ADDR, ARM_JIT_RAM_SIZE_BYTES, 0) == c->jit_ram_base;
+    e.ram_write = c->jit_ram_base && fastmem(c, ARM_JIT_RAM_BASE_ADDR, ARM_JIT_RAM_SIZE_BYTES, 1) == c->jit_ram_base;
     x64_u8(&e, 0x53);                         /* push rbx */
     x64_u8(&e, 0x41); x64_u8(&e, 0x56);       /* push r14 */
     x64_u8(&e, 0x41); x64_u8(&e, 0x57);       /* push r15 */
@@ -2814,10 +2996,16 @@ static void arm_jit_compile_native(arm920t_t *c, arm_jit_block_t *b) {
     x64_u8(&e, 0x57);                         /* push rdi: keep an odd push count and preserve nonvolatile */
 #endif
     x64_mov_r64_r64(&e, X64_EBX, X64_NATIVE_ARG0); /* rbx = cpu */
+    x64_alu_r32_imm(&e, 7, X64_NATIVE_ARG1, b->count);
+    size_t enough = x64_jcc32(&e, 0x3); /* unsigned budget >= block count */
+    x64_emit_return_imm(&e, 0);
+    x64_patch32(&e, enough, e.pos);
     x64_mov_r64_mem_cpu(&e, X64_R14D, jit_ram_base_off());
     x64_mov_r64_mem_cpu(&e, X64_R15D, jit_bios_base_off());
     for (uint8_t i = 0; i < b->count; ++i) {
         const arm_jit_op_t *op = &arm_jit_ops(c, b)[i];
+        e.expected_next = i + 1u < b->count ? arm_jit_ops(c, b)[i + 1u].pc : op->pc + 4u;
+        e.done = (uint32_t)i + 1u;
         size_t patches[3];
         unsigned npatch = 0;
         if (arm_jit_is_side_effect_free_nop(op->insn)) continue;

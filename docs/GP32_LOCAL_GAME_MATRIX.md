@@ -273,6 +273,25 @@ Local evidence: `F:/GP32/results/resume16-mill/README.md`,
 States and game content remain outside Git. The measured H700 run and its
 limits are recorded in [the performance strategy](GP32_PERFORMANCE_STRATEGY.md).
 
+## resume17: GP Fight Korean match entry
+
+The owned Korean payload `a72ba21a0433baa7...` now has a reproducible classroom
+match state: four fighters, TIME 120, Korean names and a player marker.
+Two independent cold-boot input replays produced identical captured frames and
+state bytes. The frame-5400 state is
+`F:/GP32/results/resume17-gpfight/gpfight-match.state`, SHA-256
+`14271b040adbc46eff8220e9c36b7876660e3698fef49a458c051c8088cd1e62`.
+The frozen runner was 49ae3d5 (SHA-256
+`af81fd0595c0d6d4ccd6c6f97a45cdeb8eb0d8369d700200fb71828c4fd2a09a`).
+
+`match-input.txt` holds RIGHT from frame 60 to 300, then releases it. Direction
+input changes the rendered simulation compared with an idle replay; START
+shows Pause. Attack/guard inputs remain unresolved: A/B/L/R holds in this early
+window matched idle. Do not label this a completed compatibility pass or proven
+attack response. Round completion, later scenes and physical sound remain open.
+Full commands and screenshots are in `resume17-gpfight/README.md` and `shots/`.
+ROMs and saved states remain outside Git.
+
 ## Open items
 
 - Korean Her Knights and Little Wizard now have H700 combat measurements;
