@@ -339,3 +339,30 @@ cost estimates. The effects are disabled in the current default frontend path,
 so this candidate cannot improve that path. No device benchmark or deployment
 was justified for this candidate. Artifacts:
 `F:/GP32/results/resume18-video/REPORT.md`, `final-o3.txt`, and `cand_src.c`.
+
+
+## resume20: smaller AArch64 leaf frames
+
+Native ALU/branch-only traces omit the x29/x30 frame and save just x19 with a
+16-byte-aligned SP. Memory/helper traces keep the old frame; any unexpected
+helper in a leaf candidate prevents native publication. Per-instruction guest
+state and cycle accounting are unchanged.
+
+Primed H700 ABBA at an observed 1512 MHz, with the governor unchanged:
+
+| Scene | Baseline core fps | Candidate core fps | Median change |
+| --- | --- | --- | --- |
+| Her Knights Korean combat, 1200 warmup / 1200 measured | 110.219 / 110.189 | 113.032 / 113.101 | 110.204 -> 113.0665 (+2.60%) |
+| Little Wizard selection, 2400 warmup / 300 measured | 60.595 / 60.361 | 60.773 / 61.255 | 60.478 -> 61.014 (+0.89%) |
+
+All seven CPU/video/PCM fields match. The Her comparison has 40 steady-clock
+samples and Wizard has 20. Wizard's gain is small and the menu window still
+has little frontend headroom; these are core throughput results, not minimum
+displayed fps or physical audio/input-latency claims.
+
+Baseline bench SHA-256:
+`12739009cc093f7e7d00d5d808a40986d4da37505957568c0ffb6f41000f870e`;
+candidate:
+`8cb9b887fdcf73bb5d11b5ef7eee28b6feec0fed1c128909d2fb114468e12d85`.
+Evidence: `F:/GP32/results/resume20-leaf-her-abba.json` and
+`F:/GP32/results/resume20-leaf-wizard-menu-abba.json`.

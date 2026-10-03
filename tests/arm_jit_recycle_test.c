@@ -41,6 +41,15 @@ int main(void) {
         if (failures) break;
     }
     compare_state();
+    /* Invoke the native entry directly with insufficient budget: its early
+     * return must unwind the host frame without changing guest state. */
+    arm_jit_block_t *short_block = &cpu_jit->jit_blocks[(addresses[1] >> 2) & ARM_JIT_BLOCK_MASK];
+    CHECK(short_block->native && short_block->native_ok, "short-budget block unavailable");
+    if (short_block->native && short_block->native_ok) {
+        CHECK(short_block->native(cpu_jit, short_block->count - 1u) == 0u,
+              "native short-budget entry executed guest instructions");
+        compare_state();
+    }
     CHECK(cpu_jit->jit_generation != initial_generation, "arena never recycled");
     /* Exercise the same churn-triggered reset across the generation wrap. */
     cpu_jit->jit_generation = UINT32_MAX;

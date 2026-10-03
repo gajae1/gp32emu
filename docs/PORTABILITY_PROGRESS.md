@@ -1427,3 +1427,50 @@ The prior core remains at `/mnt/SDCARD/gp32-dev/resume18-installed-core-before.s
 both user configuration hashes were preserved. Android ARM64 and ARMv7 builds
 also passed after the frontend integration. Device deployment record:
 `F:/GP32/results/resume18-core-installed.json`.
+
+
+### AArch64 ALU/branch leaf frames (resume20)
+
+Pure native non-register-shift DATA/BRANCH traces now save only x19 in a
+16-byte-aligned stack slot. They leave x29/x30 untouched; memory, helper and
+other instruction shapes retain the existing full frame. If a supposedly leaf
+trace reaches the helper emitter, compilation fails before native publication.
+Guest state commits, condition flags and cycle accounting are unchanged.
+
+The native H700 differential passed (42,769 events, four expected fallbacks),
+as did arena churn/generation wrap and a direct insufficient-budget native call
+that checks no guest state changes. The pre/post-index stack opcodes were
+checked against assembler output. Android ARM64 built successfully; this is
+build evidence, not Android runtime acceptance. Sol's concrete diff review
+found no blocking issue. Evidence:
+`F:/GP32/results/resume20-leaf-{jit,recycle}-h700.json`.
+
+A separate audio lifecycle probe found no stale pending PCM across reset,
+unload, load or successful state load. Partial batches remain ordered; failed
+state load and serialization preserve the pending stream. The existing frontend
+audio regression also passed. No audio lifecycle source change was warranted.
+This is a scripted frontend-boundary check, not physical sound acceptance.
+Evidence: `F:/GP32/results/resume20-audio/evidence.md` and `probe-out.txt`.
+
+
+The Windows native cache/short-budget regression also passed. Qualified ABBA
+measured +2.60% core throughput for Her Knights combat and +0.89% for the
+Little Wizard selection window; see the performance strategy for exact inputs,
+binaries and clock evidence.
+
+The candidate completed 2400 combat frames through Spruce/RetroArch, exiting
+successfully in 43 seconds including startup/shutdown (39 content seconds).
+All 1,763,445 offered stereo frames were accepted, with zero partial/zero
+returns or queued tails; ALSA reported zero errors/recoveries. Threaded video
+reported 2384 pushed / 17 dropped. The final capture shows combat at 60.46 fps.
+Its FIFO-near-empty OSD metric reads 35.39%, illustrating that it is not a
+physical audible-dropout measurement. Physical sound quality and button-to-screen
+latency remain open. Settings hashes were unchanged and MainUI returned.
+Evidence: `F:/GP32/results/resume20-runtime-verified.json`,
+`resume20-runtime.log`, `resume20-runtime.png`.
+
+The production core was atomically installed with SHA-256
+`4aef80826cb348c96231a42e29937bbf555612515f5d064672b3dbda041c6b36`.
+The previous core is backed up at
+`/mnt/SDCARD/gp32-dev/resume20-installed-core-before.so`.
+Installation record: `F:/GP32/results/resume20-core-installed.json`.

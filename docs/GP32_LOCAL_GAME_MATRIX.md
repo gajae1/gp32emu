@@ -363,3 +363,27 @@ whole-game translation or completion claim is made.
   supplied; catalog entries alone do not establish availability or compatibility.
 - Later areas, bosses, complete playthroughs and physical audio/input latency
   remain unverified.
+
+
+## Library coverage recheck (resume20)
+
+A fresh local inventory reuses `scripts/korean_library.py` and its shared
+payload/archive scanner. The top-level owned set contains 28 game variants,
+grouped into 21 titles using the existing local MAME catalog snapshot's clone
+relationships. Twenty titles have a Korea-labelled dump. This snapshot lists
+26 Korea titles, leaving the same six unavailable locally: Funny Soccer 2002,
+Holeman Battle Race 2002, Story of Bug eyed Monster, Tales of Windy Land,
+Tears - Another Story and Winter Is. This is coverage of the recorded catalog,
+not a claim that it exhausts every GP32 release or homebrew.
+
+A fresh SFTP directory inventory confirms 20 ROM containers in the device's
+`/mnt/SDCARD/Roms/GP32`, all labelled `(Korea)`. Nothing was added, downloaded,
+renamed or removed from that library in this pass. Region labels still do not
+prove Korean text throughout each game; the visual language evidence above
+remains the narrower verified set.
+
+The title grouping/report prototype stays outside the repository because it
+depends on an untracked research snapshot and overlaps the existing scanner.
+No extra maintenance tool or asset data is shipped. Evidence:
+`F:/GP32/results/resume20-library/REPORT.md`, `titles-runA.json`, and
+`F:/GP32/results/resume20-installed-library.json`.
