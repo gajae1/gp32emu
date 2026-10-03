@@ -1,7 +1,10 @@
 CC ?= cc
 AR ?= ar
+
+include cmake/c_standard.mk
+
 SDL_CONFIG ?= sdl-config
-CFLAGS ?= -std=c11 -O3 -g -Wall -Wextra -Wpedantic
+CFLAGS ?= $(GP32EMU_C_STD_FLAG) -O3 -g -Wall -Wextra -Wpedantic
 CPPFLAGS += -Iinclude -Isrc
 GP32EMU_ENABLE_THREADS ?= 1
 CPPFLAGS += -DGP32EMU_ENABLE_THREADS=$(GP32EMU_ENABLE_THREADS)

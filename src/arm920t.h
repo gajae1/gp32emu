@@ -2,6 +2,8 @@
 #define GP32EMU_ARM920T_H
 
 #include "common.h"
+#include "state_io.h"
+#include "gp32emu/gp32.h" /* gp32_cpu_profile_t */
 
 typedef struct arm920t arm920t_t;
 
@@ -26,6 +28,9 @@ typedef struct arm_bus {
     arm_write32_fn write32;
     arm_fastmem_fn fastmem;
     void *user;
+    /* Optional: aligned physical word reads which are side-effect-free and
+     * constant until arm920t_run returns (no peripheral ticks within a run). */
+    int (*is_stable_read32)(void *user, uint32_t addr);
 } arm_bus_t;
 
 arm920t_t *arm920t_create(const arm_bus_t *bus);
@@ -49,7 +54,11 @@ uint32_t arm920t_get_cp15(const arm920t_t *cpu, unsigned reg);
 uint64_t arm920t_get_jit_hits(const arm920t_t *cpu);
 uint64_t arm920t_get_jit_misses(const arm920t_t *cpu);
 uint64_t arm920t_get_jit_fallbacks(const arm920t_t *cpu);
+void arm920t_get_cpu_profile(const arm920t_t *cpu, gp32_cpu_profile_t *out);
+void arm920t_reset_cpu_profile(arm920t_t *cpu);
 int arm920t_state_save(const arm920t_t *cpu, FILE *f);
 int arm920t_state_load(arm920t_t *cpu, FILE *f);
+int arm920t_state_save_io(const arm920t_t *cpu, state_io_t *io);
+int arm920t_state_load_io(arm920t_t *cpu, state_io_t *io);
 
 #endif

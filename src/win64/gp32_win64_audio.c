@@ -52,6 +52,8 @@ struct gp32_win64_audio {
     uint32_t frame_cap;
     int16_t *tmp;
     uint32_t tmp_cap_frames;
+    /* Producer-owned: only the submit/create/reset thread touches the
+     * resampler.  The pump thread uses the locked a->underrun flag instead. */
     gp32_audio_resampler_t resampler;
     int underrun;
     int playback_started;
@@ -222,6 +224,7 @@ int gp32_win64_audio_submit(gp32_win64_audio_t *a, const gp32_audio_desc_t *audi
     uint32_t queued_frames = a->frame_count;
     audio_unlock(a);
     if (had_underrun) {
+        /* Consume pump underruns here, on the resampler's owner thread. */
         gp32_audio_resampler_mark_gap(&a->resampler, dst_rate);
     }
     int32_t adjust_ppm = queue_rate_adjust_ppm(queued_frames);
@@ -438,7 +441,9 @@ static int wasapi_pump(gp32_win64_audio_t *a) {
         a->playback_started = 0;
         a->underrun = 1;
         audio_unlock(a);
-        gp32_audio_resampler_mark_gap(&a->resampler, a->sample_rate);
+        /* Signal through a->underrun only; the gap mark belongs to the
+         * producer thread, which consumes this flag before resuming output,
+         * so the resampler is never reset from this thread. */
         return 0;
     }
 

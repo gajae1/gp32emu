@@ -117,37 +117,76 @@ size_t gp32_audio_resampler_process(gp32_audio_resampler_t *r,
     size_t intervals = total_samples - 1u;
     uint64_t limit_q32 = (uint64_t)intervals << 32;
     uint64_t step = step_q32(src_rate_hz, dst_rate_hz, rate_adjust_ppm);
-    size_t produced = 0;
+    uint64_t phase = r->phase_q32;
+    uint32_t fade_left = r->fade_left;
+    uint32_t fade_total = r->fade_total;
+    int have_last = r->have_last_out;
+    int16_t last_l = r->last_out_l;
+    int16_t last_r = r->last_out_r;
+    int16_t *dst = dst_s16_stereo;
+    size_t room = dst_cap_frames;
 
-    while (r->phase_q32 < limit_q32 && produced < dst_cap_frames) {
-        size_t idx = (size_t)(r->phase_q32 >> 32);
-        uint32_t frac = (uint32_t)r->phase_q32;
+    /* Peeled prefix: the fade ramp (at most GP32_AUDIO_FADE_MAX_FRAMES outputs
+     * after a gap) and the carried sample prev, which is only addressed while
+     * phase still sits at virtual index 0.  Borrowing from the previous block
+     * stays here so the steady loop below never re-tests it. */
+    while (room != 0u && phase < limit_q32 &&
+           ((fade_left != 0u && fade_total != 0u) ||
+            (have_prev && (uint32_t)(phase >> 32) == 0u))) {
+        size_t idx = (size_t)(phase >> 32);
         int16_t l0, r0, l1, r1;
         get_sample(r, src_s16_stereo, input_frames, have_prev, idx, &l0, &r0);
         get_sample(r, src_s16_stereo, input_frames, have_prev, idx + 1u, &l1, &r1);
-        int16_t l = lerp_s16_q32(l0, l1, frac);
-        int16_t rr = lerp_s16_q32(r0, r1, frac);
+        int16_t l = lerp_s16_q32(l0, l1, (uint32_t)phase);
+        int16_t rr = lerp_s16_q32(r0, r1, (uint32_t)phase);
 
-        if (r->fade_left && r->fade_total) {
-            uint32_t done = r->fade_total - r->fade_left + 1u;
-            uint32_t den = r->fade_total + 1u;
-            int16_t from_l = r->have_last_out ? r->last_out_l : 0;
-            int16_t from_r = r->have_last_out ? r->last_out_r : 0;
+        if (fade_left && fade_total) {
+            uint32_t done = fade_total - fade_left + 1u;
+            uint32_t den = fade_total + 1u;
+            int16_t from_l = have_last ? last_l : 0;
+            int16_t from_r = have_last ? last_r : 0;
             l = fade_s16(from_l, l, done, den);
             rr = fade_s16(from_r, rr, done, den);
-            r->fade_left--;
+            fade_left--;
         }
 
-        dst_s16_stereo[produced * 2u + 0u] = l;
-        dst_s16_stereo[produced * 2u + 1u] = rr;
-        r->last_out_l = l;
-        r->last_out_r = rr;
-        r->have_last_out = 1;
-        produced++;
-        r->phase_q32 += step;
+        dst[0] = l;
+        dst[1] = rr;
+        dst += 2;
+        --room;
+        last_l = l;
+        last_r = rr;
+        have_last = 1;
+        phase += step;
     }
 
-    if (r->phase_q32 >= limit_q32) r->phase_q32 -= limit_q32;
+    /* Steady state: phase < limit_q32 keeps the integer part at or below
+     * intervals - 1, so virtual indices idx and idx + 1 are both real samples
+     * of this block and adjacent in memory.  Without prev they are src[idx]
+     * and src[idx + 1]; with prev, virtual idx >= 1 maps to src[idx - 1] and
+     * src[idx].  Neither case needs a bound test or a prev branch per output. */
+    size_t lead = have_prev ? 1u : 0u;
+    while (room != 0u && phase < limit_q32) {
+        const int16_t *p = src_s16_stereo + (((size_t)(phase >> 32) - lead) * 2u);
+        uint32_t frac = (uint32_t)phase;
+        int16_t l = lerp_s16_q32(p[0], p[2], frac);
+        int16_t rr = lerp_s16_q32(p[1], p[3], frac);
+        dst[0] = l;
+        dst[1] = rr;
+        dst += 2;
+        --room;
+        last_l = l;
+        last_r = rr;
+        have_last = 1;
+        phase += step;
+    }
+
+    r->fade_left = fade_left;
+    r->last_out_l = last_l;
+    r->last_out_r = last_r;
+    r->have_last_out = have_last;
+
+    if (phase >= limit_q32) r->phase_q32 = phase - limit_q32;
     else {
         /* Output capacity was too small.  Do not carry a phase beyond this
          * block without retaining the full input; clamp to the final interval
@@ -159,5 +198,5 @@ size_t gp32_audio_resampler_process(gp32_audio_resampler_t *r,
     r->prev_l = src_s16_stereo[(input_frames - 1u) * 2u + 0u];
     r->prev_r = src_s16_stereo[(input_frames - 1u) * 2u + 1u];
     r->have_prev = 1;
-    return produced;
+    return (size_t)((dst - dst_s16_stereo) / 2);
 }

@@ -28,6 +28,10 @@ typedef struct sdl12_audio_backend {
     uint32_t sample_rate_hz;
     gp32_audio_resampler_t resampler;
     int underrun;
+    /* Last frame handed to the device; zero while it heard the silence fill. */
+    int16_t last_played_l;
+    int16_t last_played_r;
+    int have_last_played;
     int started;
     char error[160];
 } sdl12_audio_backend_t;
@@ -104,6 +108,25 @@ static int32_t audio_queue_rate_adjust_ppm(uint32_t queued) {
     return ppm;
 }
 
+/* Dropping queued frames makes the device play samples that are not adjacent
+ * in the source stream.  Ramp the new head from the frame the device actually
+ * played last, over the same ~1 ms window the resampler uses for gap recovery,
+ * so a latency trim is a short glide instead of a full-scale step. */
+static void ramp_queue_head_from_last_played(sdl12_audio_backend_t *a) {
+    if (!a->have_last_played || a->frame_cap == 0u || a->frame_count == 0u) return;
+    uint32_t fade = a->sample_rate_hz ? a->sample_rate_hz / 1000u : 44u;
+    if (fade < 16u) fade = 16u;
+    if (fade > 96u) fade = 96u;
+    if (fade > a->frame_count) fade = a->frame_count;
+    for (uint32_t i = 0; i < fade; ++i) {
+        int16_t *p = a->queue + (uint64_t)((a->read_frame + i) % a->frame_cap) * 2u;
+        int32_t num = (int32_t)(i + 1u);
+        int32_t den = (int32_t)fade;
+        p[0] = (int16_t)((int32_t)a->last_played_l + ((int32_t)p[0] - (int32_t)a->last_played_l) * num / den);
+        p[1] = (int16_t)((int32_t)a->last_played_r + ((int32_t)p[1] - (int32_t)a->last_played_r) * num / den);
+    }
+}
+
 static void sdl12_audio_callback(void *userdata, Uint8 *stream, int len) {
     sdl12_audio_backend_t *a = (sdl12_audio_backend_t *)userdata;
     int16_t *out = (int16_t *)(void *)stream;
@@ -119,6 +142,14 @@ static void sdl12_audio_callback(void *userdata, Uint8 *stream, int len) {
         a->frame_count -= n;
         copied += n;
     }
+    if (frames_copy > 0u && frames_copy == frames_req) {
+        a->last_played_l = out[(frames_copy - 1u) * 2u + 0u];
+        a->last_played_r = out[(frames_copy - 1u) * 2u + 1u];
+    } else {
+        a->last_played_l = 0;
+        a->last_played_r = 0;
+    }
+    a->have_last_played = 1;
     if (frames_copy < frames_req) {
         a->underrun = 1;
         memset(out + (uint64_t)frames_copy * 2u, 0, (size_t)(frames_req - frames_copy) * 2u * sizeof(int16_t));
@@ -178,6 +209,7 @@ static gp32_status_t sdl12_audio_submit(gp32_audio_backend_t *backend, const gp3
     uint32_t q = queued_frames(a);
     if (q + out_frames > GP32_AUDIO_MAX_LATENCY_FRAMES) {
         drop_oldest_frames(a, q + out_frames - GP32_AUDIO_MAX_LATENCY_FRAMES);
+        ramp_queue_head_from_last_played(a);
     }
     if (!ensure_queue_capacity(a, out_frames)) {
         SDL_UnlockAudio();

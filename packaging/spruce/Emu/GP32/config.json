@@ -1,0 +1,36 @@
+{
+  "label": "GP32",
+  "icon": "gp32.png",
+  "iconsel": "gp32.png",
+  "themecolor": "F0A020",
+  "launch": "../../spruce/scripts/emu/standard_launch.sh",
+  "extlist": "smc|fxe|fpk|zip",
+  "launchlist": [],
+  "menuOptions": {
+    "Governor": {
+      "display": "CPU Mode",
+      "options": ["Smart", "Performance"],
+      "selected": "Smart",
+      "overrides": {}
+    },
+    "Emulator": {
+      "display": "Retroarch Core",
+      "options": ["gp32emu"],
+      "selected": "gp32emu",
+      "overrides": {}
+    },
+    "raBuild": {
+      "display": "RetroArch Build",
+      "options": ["64-bit"],
+      "selected": "64-bit",
+      "overrides": {}
+    }
+  },
+  "sortOrder": 1900,
+  "brand": "Game Park",
+  "type": "handheld",
+  "releaseYear": 2001,
+  "default_emulator": "gp32emu",
+  "scaling_min_freq": 816000,
+  "alternativeFolderNames": []
+}

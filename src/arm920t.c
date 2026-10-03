@@ -6,7 +6,52 @@
  */
 #include "arm920t.h"
 
-#if defined(__x86_64__) || defined(_M_X64)
+#if (defined(__aarch64__) || defined(_M_ARM64)) && !defined(__AARCH64EB__)
+#define ARM_JIT_NATIVE_A64 1
+#endif
+
+/*
+ * Optional low-overhead workload counters.  GP32EMU_CPU_PROFILE is a PUBLIC
+ * compile definition on the gp32emu target (CMake option GP32EMU_CPU_PROFILE),
+ * so the library and benchmark agree on the ABI.  When it is absent every
+ * ARM_PROF_INC hook compiles to nothing and the per-instruction dispatch
+ * path keeps its uninstrumented cost.
+ */
+#if defined(GP32EMU_CPU_PROFILE) && GP32EMU_CPU_PROFILE
+#define ARM920T_PROFILING 1
+#else
+#define ARM920T_PROFILING 0
+#endif
+#if defined(ARM_JIT_NATIVE_A64)
+#define ARM920T_NATIVE_BACKEND 2u
+#elif defined(__x86_64__) || defined(_M_X64)
+#define ARM920T_NATIVE_BACKEND 1u
+#else
+#define ARM920T_NATIVE_BACKEND 0u
+#endif
+#if ARM920T_NATIVE_BACKEND == 2u
+#define ARM_JIT_NATIVE_MAX_BYTES 65536u
+#else
+#define ARM_JIT_NATIVE_MAX_BYTES 16384u
+#endif
+#if ARM920T_PROFILING
+#define ARM_PROF_INC(c, field) do { (c)->prof.field++; } while (0)
+#else
+#define ARM_PROF_INC(c, field) ((void)0)
+#endif
+
+/* Cause tags for arm920t_jit_invalidate_all, folded into the profile. */
+enum arm_jit_inv_cause {
+    ARM_JIT_INV_RESET,
+    ARM_JIT_INV_JIT_DISABLE,
+    ARM_JIT_INV_API_FLUSH,
+    ARM_JIT_INV_STATE_LOAD,
+    ARM_JIT_INV_CP15_MMU,
+    ARM_JIT_INV_CP15_CACHE,
+    ARM_JIT_INV_CODE_RECYCLE
+};
+
+#if defined(__x86_64__) || defined(_M_X64) || defined(ARM_JIT_NATIVE_A64)
 #if defined(_WIN32)
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN 1
@@ -47,7 +92,7 @@
  * PC/CPSR/CP15/control-flow edges, and never translate ARM926/ARMv5TE-only
  * operations.  Every ARM block is first decoded into portable C11 bytecode;
  * the no-JIT interpreter executes that bytecode on any host architecture.
- * On x86_64, safe bytecode blocks may additionally receive native host code;
+ * On x86_64 and little-endian AArch64, blocks may receive native host code;
  * unsupported or sensitive instructions fall through to the exact interpreter
  * for one instruction.
  */
@@ -59,6 +104,9 @@
 #define ARM_JIT_MAX_INSNS   96u
 #endif
 #define ARM_JIT_PAGE_MASK   0x3ffu
+#define ARM_JIT_RAM_BASE_ADDR 0x0c000000u
+#define ARM_JIT_RAM_SIZE_BYTES 0x00800000u
+#define ARM_JIT_BIOS_SIZE_BYTES 0x00080000u
 
 #if defined(_MSC_VER)
 #define ARM_FORCE_INLINE static __forceinline
@@ -115,15 +163,38 @@ typedef uint32_t (*arm_jit_native_fn)(arm920t_t *cpu, uint32_t cycles);
 
 typedef struct arm_jit_block {
     uint32_t tag_pc;
-    uint32_t tag_cpsr_bits;
+    uint32_t tag_cache_epoch;
     uint32_t valid;
     uint32_t generation;
     uint8_t count;
     uint8_t native_ok;
-    uint16_t reserved;
+    uint8_t poll_prefix;
+    uint8_t poll_backedge;
     arm_jit_native_fn native;
     arm_jit_op_t op[ARM_JIT_MAX_INSNS];
 } arm_jit_block_t;
+
+/* Packed mirror of tlb_va_base/tlb_pa_base/tlb_mask/tlb_valid: one 16-byte
+ * entry per TLB index so a hit stays inside a single cache line instead of
+ * touching four separately strided arrays.  It is a derived cache only; the
+ * SoA arrays above stay authoritative, including for state images. */
+typedef struct arm_tlb_entry {
+    uint32_t va_base;
+    uint32_t pa_base;
+    uint32_t mask;
+    uint32_t valid;
+} arm_tlb_entry_t;
+
+#if defined(ARM_JIT_NATIVE_A64)
+/* Derived RAM-only page lookup for native accesses. A tag outside the 20-bit
+ * VA-page range rejects invalid, tiny-page and non-RAM entries with one compare.
+ * xor_offset maps a matching VA directly to an offset in the direct RAM window.
+ * The authoritative TLB retains its original mask and saved-state layout. */
+typedef struct arm_jit_tlb_page {
+    uint32_t va_page;
+    uint32_t xor_offset;
+} arm_jit_tlb_page_t;
+#endif
 
 struct arm920t {
     uint32_t r[16];
@@ -140,6 +211,13 @@ struct arm920t {
     uint32_t tlb_pa_base[4096];
     uint32_t tlb_mask[4096];
     uint8_t tlb_valid[4096];
+    /* Entries are 16 bytes wide and the member starts on a 16-byte boundary of
+     * the calloc'd struct, so a lookup stays inside one cache line.  Keep any
+     * new small fields after this member to preserve that alignment. */
+    arm_tlb_entry_t tlb_entry[4096];
+#if defined(ARM_JIT_NATIVE_A64)
+    arm_jit_tlb_page_t jit_tlb_page[4096];
+#endif
     arm_bus_t bus;
     uint64_t cycles_total;
     int irq_line, fiq_line;
@@ -156,15 +234,18 @@ struct arm920t {
     size_t jit_code_size;
     size_t jit_code_used;
     uint32_t jit_generation;
+    uint32_t jit_cache_epoch;
     int jit_enabled;
     uint64_t jit_hits;
     uint64_t jit_misses;
     uint64_t jit_fallbacks;
+    /* Transient workload counters (GP32EMU_CPU_PROFILE); never serialized. */
+    gp32_cpu_profile_t prof;
 };
 
 static uint32_t mode(const arm920t_t *c) { return c->cpsr & MODE_MASK; }
 static int thumb(const arm920t_t *c) { return (c->cpsr & T_FLAG) != 0; }
-static void arm920t_jit_invalidate_all(arm920t_t *c);
+static void arm920t_jit_invalidate_all(arm920t_t *c, unsigned cause);
 
 static uint32_t *spsr_ptr(arm920t_t *c, uint32_t m) {
     switch (m) {
@@ -235,20 +316,85 @@ ARM_FORCE_INLINE uint32_t raw32(arm920t_t *c, uint32_t a) {
     return p ? gp32_ld32le(p) : c->bus.read32(c->bus.user, a);
 }
 
+#if defined(ARM_JIT_NATIVE_A64)
+static void tlb_rebuild_jit_page(arm920t_t *c, unsigned idx) {
+    const arm_tlb_entry_t *e = &c->tlb_entry[idx];
+    arm_jit_tlb_page_t *p = &c->jit_tlb_page[idx];
+    p->va_page = UINT32_MAX;
+    p->xor_offset = 0u;
+    /* Only the three full-page descriptor shapes are provable here. In
+     * particular, do not widen a 1 KiB mapping to its containing 4 KiB page.
+     * Alignment/index checks also keep unusual loaded TLB payloads on the
+     * original helper path rather than changing their OR-based semantics. */
+    uint32_t mask = e->mask;
+    if (!e->valid || (mask != 0xfffu && mask != 0xffffu && mask != 0xfffffu) ||
+        (e->va_base & mask) || (e->pa_base & mask)) return;
+    uint32_t page_bits = ((uint32_t)idx << 12) & mask;
+    uint32_t va = e->va_base | page_bits, pa = e->pa_base | page_bits;
+    if (((va >> 12) & 0xfffu) != idx || pa < ARM_JIT_RAM_BASE_ADDR ||
+        pa - ARM_JIT_RAM_BASE_ADDR > ARM_JIT_RAM_SIZE_BYTES - 0x1000u) return;
+    p->va_page = va >> 12;
+    p->xor_offset = va ^ (pa - ARM_JIT_RAM_BASE_ADDR);
+}
+#endif
+
+/* Every path that clears tlb_valid must clear the mirror together with it, and
+ * tlb_store must keep the matching entry in sync; mmu_translate then never
+ * needs to fall back to the SoA arrays. */
+static void tlb_flush_all(arm920t_t *c) {
+    memset(c->tlb_valid, 0, sizeof(c->tlb_valid));
+    memset(c->tlb_entry, 0, sizeof(c->tlb_entry));
+#if defined(ARM_JIT_NATIVE_A64)
+    memset(c->jit_tlb_page, 0xff, sizeof(c->jit_tlb_page));
+#endif
+}
+
+static void tlb_rebuild_mirror(arm920t_t *c) {
+    for (unsigned i = 0; i < 4096u; i++) {
+        arm_tlb_entry_t e;
+        /* Clear the payload too when the entry is dead: the SoA arrays keep
+         * stale values for invalid indices, so copying them verbatim would
+         * make the mirror depend on history rather than on live TLB state. */
+        if (c->tlb_valid[i]) {
+            e.va_base = c->tlb_va_base[i];
+            e.pa_base = c->tlb_pa_base[i];
+            e.mask = c->tlb_mask[i];
+            e.valid = 1u;
+        } else {
+            e.va_base = 0u;
+            e.pa_base = 0u;
+            e.mask = 0u;
+            e.valid = 0u;
+        }
+        c->tlb_entry[i] = e;
+#if defined(ARM_JIT_NATIVE_A64)
+        tlb_rebuild_jit_page(c, i);
+#endif
+    }
+}
+
 static void tlb_store(arm920t_t *c, uint32_t va, uint32_t pa_base, uint32_t mask) {
     unsigned idx = (va >> 12) & 0xfffu;
     c->tlb_valid[idx] = 1;
     c->tlb_va_base[idx] = va & ~mask;
     c->tlb_pa_base[idx] = pa_base;
     c->tlb_mask[idx] = mask;
+    c->tlb_entry[idx].va_base = c->tlb_va_base[idx];
+    c->tlb_entry[idx].pa_base = pa_base;
+    c->tlb_entry[idx].mask = mask;
+    c->tlb_entry[idx].valid = 1;
+#if defined(ARM_JIT_NATIVE_A64)
+    tlb_rebuild_jit_page(c, idx);
+#endif
 }
 
 ARM_FORCE_INLINE uint32_t mmu_translate(arm920t_t *c, uint32_t va) {
     if (!(c->cp15[1] & 1u)) return va;
     unsigned idx = (va >> 12) & 0xfffu;
-    if (c->tlb_valid[idx]) {
-        uint32_t mask = c->tlb_mask[idx];
-        if ((va & ~mask) == c->tlb_va_base[idx]) return c->tlb_pa_base[idx] | (va & mask);
+    const arm_tlb_entry_t *e = &c->tlb_entry[idx];
+    if (e->valid) {
+        uint32_t mask = e->mask;
+        if ((va & ~mask) == e->va_base) return e->pa_base | (va & mask);
     }
     uint32_t ttb = c->cp15[2] & 0xffffc000u;
     uint32_t l1a = ttb | ((va >> 18) & 0x3ffcu);
@@ -357,7 +503,7 @@ arm920t_t *arm920t_create(const arm_bus_t *bus) {
     arm920t_reset(c, 0);
     return c;
 }
-#if defined(__x86_64__) || defined(_M_X64)
+#if defined(__x86_64__) || defined(_M_X64) || defined(ARM_JIT_NATIVE_A64)
 static uint8_t *arm_jit_alloc_exec(size_t bytes) {
     if (!bytes) return NULL;
 #if defined(_WIN32)
@@ -384,6 +530,12 @@ static void arm_jit_flush_exec(void *ptr, size_t bytes) {
     FlushInstructionCache(GetCurrentProcess(), ptr, bytes);
 #elif defined(__GNUC__) || defined(__clang__)
     __builtin___clear_cache((char *)ptr, (char *)ptr + bytes);
+#if defined(ARM_JIT_NATIVE_A64)
+    /* Zig 0.13's A64 __clear_cache omits the completion DSB after IC IVAU.
+     * Complete invalidation before synchronizing instruction fetch, including
+     * when a new block overwrites code from an earlier cache generation. */
+    __asm__ volatile("dsb ish\n\tisb" ::: "memory");
+#endif
 #else
     GP32_UNUSED(ptr);
     GP32_UNUSED(bytes);
@@ -393,7 +545,7 @@ static void arm_jit_flush_exec(void *ptr, size_t bytes) {
 
 void arm920t_destroy(arm920t_t *c) {
     if (!c) return;
-#if defined(__x86_64__) || defined(_M_X64)
+#if defined(__x86_64__) || defined(_M_X64) || defined(ARM_JIT_NATIVE_A64)
     arm_jit_free_exec(c->jit_code, c->jit_code_size);
 #endif
     free(c->jit_blocks);
@@ -413,7 +565,7 @@ void arm920t_reset(arm920t_t *c, uint32_t vector) {
     memset(c->bank_irq, 0, sizeof(c->bank_irq));
     memset(c->bank_und, 0, sizeof(c->bank_und));
     memset(c->cp15, 0, sizeof(c->cp15));
-    memset(c->tlb_valid, 0, sizeof(c->tlb_valid));
+    tlb_flush_all(c);
     c->cpsr = MODE_SVC | I_FLAG | F_FLAG;
     c->cp15[0] = 0x41129200u; /* ARM920T-ish */
     c->cp15[1] = 0x00000070u; /* control */
@@ -421,7 +573,7 @@ void arm920t_reset(arm920t_t *c, uint32_t vector) {
     c->cp15[3] = 0;
     c->r[15] = vector & ~3u;
     c->irq_line = c->fiq_line = c->halted = 0;
-    arm920t_jit_invalidate_all(c);
+    arm920t_jit_invalidate_all(c, ARM_JIT_INV_RESET);
 }
 void arm920t_set_irq(arm920t_t *c, int state) { if (c) c->irq_line = state != 0; }
 void arm920t_set_fiq(arm920t_t *c, int state) { if (c) c->fiq_line = state != 0; }
@@ -432,10 +584,10 @@ void arm920t_set_jit(arm920t_t *c, int enabled) {
             c->jit_ram_base = fastmem(c, 0x0c000000u, 1u, 0);
             c->jit_bios_base = fastmem(c, 0x00000000u, 1u, 0);
             if (!c->jit_ram_base || !c->jit_bios_base) c->jit_enabled = 0;
-        } else arm920t_jit_invalidate_all(c);
+        } else arm920t_jit_invalidate_all(c, ARM_JIT_INV_JIT_DISABLE);
     }
 }
-void arm920t_flush_jit(arm920t_t *c) { arm920t_jit_invalidate_all(c); }
+void arm920t_flush_jit(arm920t_t *c) { arm920t_jit_invalidate_all(c, ARM_JIT_INV_API_FLUSH); }
 uint32_t arm920t_get_pc(const arm920t_t *c) { return c ? c->r[15] : 0; }
 uint64_t arm920t_get_cycles(const arm920t_t *c) { return c ? c->cycles_total : 0; }
 void arm920t_add_idle_cycles(arm920t_t *c, uint32_t cycles) { if (c) c->cycles_total += cycles; }
@@ -701,15 +853,16 @@ static void cp15_write(arm920t_t *c, unsigned crn, unsigned crm, unsigned op1, u
     GP32_UNUSED(op1);
     c->cp15[crn & 15u] = v;
     if (crn == 1 || crn == 2 || crn == 8 || crm == 8) {
-        memset(c->tlb_valid, 0, sizeof(c->tlb_valid));
-        arm920t_jit_invalidate_all(c);
+        tlb_flush_all(c);
+        arm920t_jit_invalidate_all(c, ARM_JIT_INV_CP15_MMU);
     } else if (crn == 7) {
         /* ARM920T c7 is cache/write-buffer maintenance.  D-cache clean/
            invalidate and write-buffer drain operations do not change the
            instruction stream or software TLB, so they should not discard the
-           translated-code cache.  I-cache/all-cache/prefetch operations still
-           invalidate native blocks for self-modifying code. */
-        if (crm == 5u || crm == 7u || (crm == 0u && op2 == 0u)) arm920t_jit_invalidate_all(c);
+           translated-code cache.  Keep the broad conservative I-cache/
+           all-cache opcode handling for self-modifying code; this is not a
+           claim that every c7 prefetch operation invalidates ARM920T caches. */
+        if (crm == 5u || crm == 7u || (crm == 0u && op2 == 0u)) arm920t_jit_invalidate_all(c, ARM_JIT_INV_CP15_CACHE);
     }
 }
 static void op_coproc(arm920t_t *c, uint32_t insn) {
@@ -901,22 +1054,69 @@ static void exec_thumb(arm920t_t *c) {
     exception_enter(c, MODE_UND, 0x04, pc + 2, 0);
 }
 
-static void arm920t_jit_invalidate_all(arm920t_t *c) {
+/* Prove every recorded fetch, including stitched branches and inlined leaves.
+ * Unlike mmu_translate/rb32 this never walks page tables, refills the TLB,
+ * updates fault registers or calls an MMIO read callback. A missing mapping
+ * or fastmem word is unprovable, even when identity memory happens to match. */
+static int arm_jit_fetch_unchanged(arm920t_t *c, const arm_jit_block_t *b) {
+    if (!b->count || b->count > ARM_JIT_MAX_INSNS) return 0;
+    for (unsigned i = 0; i < b->count; ++i) {
+        const arm_jit_op_t *op = &b->op[i];
+        uint32_t pa = op->pc;
+        if (pa & 3u) return 0;
+        if (c->cp15[1] & 1u) {
+            const arm_tlb_entry_t *e = &c->tlb_entry[(pa >> 12) & 0xfffu];
+            if (!e->valid || (pa & ~e->mask) != e->va_base || e->mask < 3u ||
+                (pa & e->mask) > e->mask - 3u) return 0;
+            pa = e->pa_base | (pa & e->mask);
+        }
+        const uint8_t *p = fastmem(c, pa, 4u, 0);
+        if (!p || gp32_ld32le(p) != op->insn) return 0;
+    }
+    return 1;
+}
+
+static void arm920t_jit_invalidate_all(arm920t_t *c, unsigned cause) {
     if (!c) return;
+    ARM_PROF_INC(c, jit_invalidations);
+#if ARM920T_PROFILING
+    /* Snapshot pre-flush occupancy so the high-water mark survives the
+     * jit_code_used reset on every backend, including the AArch64 in-inc
+     * reserve path that bypasses arm_jit_code_reserve. */
+    if (c->jit_code_used > c->prof.jit_code_highwater)
+        c->prof.jit_code_highwater = c->jit_code_used;
+    switch (cause) {
+    case ARM_JIT_INV_RESET: c->prof.jit_inv_reset++; break;
+    case ARM_JIT_INV_JIT_DISABLE: c->prof.jit_inv_jit_disable++; break;
+    case ARM_JIT_INV_API_FLUSH: c->prof.jit_inv_api_flush++; break;
+    case ARM_JIT_INV_STATE_LOAD: c->prof.jit_inv_state_load++; break;
+    case ARM_JIT_INV_CP15_MMU: c->prof.jit_inv_cp15_mmu++; break;
+    case ARM_JIT_INV_CP15_CACHE: c->prof.jit_inv_cp15_cache++; break;
+    case ARM_JIT_INV_CODE_RECYCLE: c->prof.jit_inv_code_recycle++; break;
+    default: break;
+    }
+#endif
+    if (cause == ARM_JIT_INV_CP15_CACHE) {
+        /* Native memory helpers also depend on the cached physical windows.
+         * A changed bus window needs the ordinary full flush and fresh bases. */
+        uint8_t *ram = fastmem(c, 0x0c000000u, 1u, 0);
+        uint8_t *bios = fastmem(c, 0x00000000u, 1u, 0);
+        if (ram == c->jit_ram_base && bios == c->jit_bios_base) {
+            /* MCR ends the active trace. Defer byte checks until a block is
+             * next dispatched, while preserving its arena and baked native
+             * generation. A wrapping epoch takes the full-flush path below. */
+            if (++c->jit_cache_epoch) return;
+        }
+        c->jit_ram_base = ram;
+        c->jit_bios_base = bios;
+    }
+    c->jit_cache_epoch = 1;
     c->jit_generation++;
     if (!c->jit_generation) {
         c->jit_generation = 1;
         if (c->jit_blocks) memset(c->jit_blocks, 0, ARM_JIT_BLOCK_COUNT * sizeof(c->jit_blocks[0]));
     }
     c->jit_code_used = 0;
-}
-
-static uint32_t arm_jit_cpsr_tag(const arm920t_t *c) {
-    GP32_UNUSED(c);
-    /* Conditions and banked-register mode are evaluated at execution time by
-       the ARM920T helpers.  Unlike Firebird's native backend, this C11 block
-       cache does not bake condition flags into generated host branches. */
-    return 0;
 }
 
 static int arm_jit_is_safe_cp15_mrc(uint32_t insn);
@@ -1124,11 +1324,23 @@ static int arm_jit_alloc(arm920t_t *c) {
 static void arm_jit_compile_native(arm920t_t *c, arm_jit_block_t *b);
 
 static arm_jit_block_t *arm_jit_translate(arm920t_t *c, uint32_t pc) {
-    if (!arm_jit_alloc(c)) return NULL;
+    if (!arm_jit_alloc(c)) { ARM_PROF_INC(c, jit_translate_failures); return NULL; }
+    /* No native block is executing here. Invalidate before binding the slot:
+     * generation wrap clears the table, and old code pointers must be stale
+     * before reusing the arena. Reserve the emitter's bound plus alignment. */
+    if (c->jit_enabled && c->jit_code && c->jit_code_used &&
+        c->jit_code_size > ARM_JIT_NATIVE_MAX_BYTES + 15u &&
+        (c->jit_code_used > c->jit_code_size ||
+         c->jit_code_size - c->jit_code_used < ARM_JIT_NATIVE_MAX_BYTES + 15u))
+        arm920t_jit_invalidate_all(c, ARM_JIT_INV_CODE_RECYCLE);
     arm_jit_block_t *b = &c->jit_blocks[(pc >> 2) & ARM_JIT_BLOCK_MASK];
+#if ARM920T_PROFILING
+    /* Overwriting a still-valid same-generation slot is block-table pressure. */
+    if (b->valid && b->generation == c->jit_generation) c->prof.jit_block_conflicts++;
+#endif
     b->valid = 0;
     b->tag_pc = pc;
-    b->tag_cpsr_bits = arm_jit_cpsr_tag(c);
+    b->tag_cache_epoch = c->jit_cache_epoch;
     b->generation = c->jit_generation;
     b->count = 0;
     b->native_ok = 0;
@@ -1201,18 +1413,49 @@ static arm_jit_block_t *arm_jit_translate(arm920t_t *c, uint32_t pc) {
         if (op->stop || op->kind == ARM_JIT_OP_UNDEFINED || (op->kind == ARM_JIT_OP_COPROC && op->reserved != 6u) || op->kind == ARM_JIT_OP_SWI) break;
         cur += 4u;
     }
-    if (!b->count) return NULL;
+    if (!b->count) { ARM_PROF_INC(c, jit_translate_failures); return NULL; }
+    /* A polling candidate may only read stable words and change ordinary
+     * registers/flags. The runtime still proves a fixed point before skipping
+     * complete repetitions; stores, exceptions and status writes are excluded. */
+    b->poll_prefix = 0;
+    b->poll_backedge = 0;
+    for (uint8_t i = 0; i < b->count; ++i) {
+        const arm_jit_op_t *op = &b->op[i];
+        if (op->kind == ARM_JIT_OP_DATA) {
+            if (op->c == 15u) break;
+        } else if (op->kind == ARM_JIT_OP_SINGLE_DT) {
+            if ((op->d & ~(ARM_BC_SD_U)) != (ARM_BC_SD_P | ARM_BC_SD_L) || op->b == 15u) break;
+        } else if (op->kind == ARM_JIT_OP_BRANCH) {
+            if ((op->insn & (1u << 24)) && op->reserved != 2u) break;
+        } else if (op->kind == ARM_JIT_OP_BLOCK_DT) {
+            /* Only the already-classified balanced leaf wrapper. Its push
+             * writes the same BL return address on each complete iteration. */
+            if (op->reserved != 4u && op->reserved != 5u) break;
+        } else break;
+        b->poll_prefix = (uint8_t)(i + 1u);
+        /* Only a non-link branch back to this trace's entry can close a
+         * polling repetition. A data-only prefix or an unrelated branch is
+         * not enough to select portable execution. NV never takes an edge. */
+        if (op->kind == ARM_JIT_OP_BRANCH && op->cond != 15u &&
+            !(op->insn & (1u << 24)) &&
+            arm_jit_branch_target(op->pc, op->insn) == b->tag_pc)
+            b->poll_backedge = 1;
+    }
     b->valid = 1;
-    if (c->jit_enabled) arm_jit_compile_native(c, b);
+    ARM_PROF_INC(c, jit_blocks_compiled);
+    if (c->jit_enabled && !(c->bus.is_stable_read32 && b->poll_backedge)) {
+        arm_jit_compile_native(c, b);
+#if ARM920T_PROFILING && ARM920T_NATIVE_BACKEND
+        /* Both backends count actual reserve failures at the allocation site. */
+        if (b->native_ok) c->prof.jit_native_compiled++;
+        else c->prof.jit_native_failed++;
+#endif
+    }
     return b;
 }
 
 
 
-
-#define ARM_JIT_RAM_BASE_ADDR 0x0c000000u
-#define ARM_JIT_RAM_SIZE_BYTES 0x00800000u
-#define ARM_JIT_BIOS_SIZE_BYTES 0x00080000u
 
 ARM_FORCE_INLINE int arm_jit_addr_in_ram(uint32_t addr, size_t bytes) {
     return addr >= ARM_JIT_RAM_BASE_ADDR && bytes <= ARM_JIT_RAM_SIZE_BYTES &&
@@ -1255,7 +1498,10 @@ ARM_FORCE_INLINE uint32_t arm_bc_ld_half_phys(arm920t_t *c, uint32_t addr) {
     if (c->jit_ram_base && arm_jit_addr_in_ram(addr, 2u)) return gp32_ld16le(c->jit_ram_base + (addr - ARM_JIT_RAM_BASE_ADDR));
     if (c->jit_bios_base && arm_jit_addr_in_bios(addr, 2u)) return gp32_ld16le(c->jit_bios_base + addr);
     if (arm_jit_addr_in_identity_io(addr, 2u)) return c->bus.read16(c->bus.user, addr);
-    return rb16(c, addr);
+    /* arm_bc_ld_half already translated the VA. A failed direct-window
+     * probe must read this PA, not translate it a second time as a VA. */
+    uint8_t *p = fastmem(c, addr, 2u, 0);
+    return p ? gp32_ld16le(p) : c->bus.read16(c->bus.user, addr);
 }
 ARM_FORCE_INLINE void arm_bc_st_word_phys(arm920t_t *c, uint32_t addr, uint32_t v) {
     uint32_t a = addr & ~3u;
@@ -1271,7 +1517,10 @@ ARM_FORCE_INLINE void arm_bc_st_byte_phys(arm920t_t *c, uint32_t addr, uint32_t 
 ARM_FORCE_INLINE void arm_bc_st_half_phys(arm920t_t *c, uint32_t addr, uint32_t v) {
     if (c->jit_ram_base && arm_jit_addr_in_ram(addr, 2u)) { gp32_st16le(c->jit_ram_base + (addr - ARM_JIT_RAM_BASE_ADDR), (uint16_t)v); return; }
     if (arm_jit_addr_in_identity_io(addr, 2u)) { c->bus.write16(c->bus.user, addr, (uint16_t)v); return; }
-    wb16(c, addr, (uint16_t)v);
+    /* addr is physical even when a halfword straddles the RAM window. */
+    uint8_t *p = fastmem(c, addr, 2u, 1);
+    if (p) gp32_st16le(p, (uint16_t)v);
+    else c->bus.write16(c->bus.user, addr, (uint16_t)v);
 }
 ARM_FORCE_INLINE uint32_t arm_bc_ld_word(arm920t_t *c, uint32_t addr) { return arm_bc_ld_word_phys(c, arm_bc_phys_word_addr(c, addr)); }
 ARM_FORCE_INLINE uint32_t arm_bc_ld_byte(arm920t_t *c, uint32_t addr) { return arm_bc_ld_byte_phys(c, mmu_translate(c, addr)); }
@@ -1461,7 +1710,7 @@ ARM_FORCE_INLINE void op_block_dt_bc(arm920t_t *c, const arm_jit_op_t *op) {
     }
 }
 
-ARM_FORCE_INLINE void arm_jit_exec_classified(arm920t_t *c, const arm_jit_op_t *op) {
+ARM_FORCE_INLINE void arm_jit_exec_classified_bc(arm920t_t *c, const arm_jit_op_t *op) {
     const uint32_t pc = op->pc;
     const uint32_t insn = op->insn;
     c->r[15] = pc + 4u;
@@ -1498,14 +1747,152 @@ ARM_FORCE_INLINE void arm_jit_exec_classified(arm920t_t *c, const arm_jit_op_t *
     case ARM_JIT_OP_INTERP:
     default:
         c->jit_fallbacks++;
+        ARM_PROF_INC(c, jit_fallbacks);
         (void)exec_arm_at(c, pc, insn);
         return;
     }
 }
 
+/* Entry reached from generated native code (x64 call-helper op and the AArch64
+ * arm_a64_exec_checked slow path) for insns the emitters cannot inline.  The
+ * portable dispatcher loop calls arm_jit_exec_classified_bc directly, so
+ * helper-call counts and portable-loop counts stay attributable. */
+#if ARM920T_PROFILING && defined(ARM_JIT_NATIVE_A64)
+/* Read-only TLB probe for the slow-reason classifier: mirrors the valid/tag
+ * check of a64_translate/mmu_translate without walking tables or touching
+ * CP15 fault registers. */
+static uint32_t arm_prof_lookup_phys(const arm920t_t *c, uint32_t va, uint32_t *mask_out) {
+    if (!(c->cp15[1] & 1u)) { if (mask_out) *mask_out = 0xffffffffu; return va; }
+    const arm_tlb_entry_t *e = &c->tlb_entry[(va >> 12) & 0xfffu];
+    if (e->valid && (va & ~e->mask) == e->va_base) {
+        if (mask_out) *mask_out = e->mask;
+        return e->pa_base | (va & e->mask);
+    }
+    if (mask_out) *mask_out = 0u;
+    return va; /* unknown mapping; callers treat as a TLB miss */
+}
+static int arm_prof_tlb_hit(const arm920t_t *c, uint32_t va) {
+    if (!(c->cp15[1] & 1u)) return 1;
+    const arm_tlb_entry_t *e = &c->tlb_entry[(va >> 12) & 0xfffu];
+    return e->valid && (va & ~e->mask) == e->va_base;
+}
+/* Attribute each native slow-op call to a compile-time gate or the first
+ * runtime guard it would have failed, replicating the a64_* emitter gates.
+ * Runs only in profile builds; pre-op guest state is already committed. */
+static void arm_profile_helper_reason(arm920t_t *c, const arm_jit_op_t *op) {
+    if (op->cond != 14u && !cond_pass_cpsr(c->cpsr, op->cond)) return;
+    switch ((arm_jit_kind_t)op->kind) {
+    case ARM_JIT_OP_DATA: {
+        int test = op->a >= 8u && op->a <= 11u;
+        int flags = test || (op->d & ARM_BC_DATA_S);
+        if ((op->d & ARM_BC_DATA_REGSHIFT) && (op->e == 15u || op->f == 15u))
+            c->prof.slow_gate_data_regshift++;
+        else if (!test && op->c == 15u && flags) c->prof.slow_gate_data_r15flags++;
+        else c->prof.slow_bail_other++;
+        return;
+    }
+    case ARM_JIT_OP_MUL: {
+        int pc_reg = ((op->insn >> 16) & 0xfu) == 15u || ((op->insn >> 12) & 0xfu) == 15u ||
+                     ((op->insn >> 8) & 0xfu) == 15u || (op->insn & 0xfu) == 15u;
+        if (pc_reg) c->prof.slow_gate_mul++;
+        else c->prof.slow_bail_other++;
+        return;
+    }
+    case ARM_JIT_OP_SINGLE_DT: {
+        unsigned d = op->d;
+        int wb = !(d & ARM_BC_SD_P) || (d & ARM_BC_SD_W);
+        if (!c->jit_ram_base || (wb && op->a == 15u)) { c->prof.slow_gate_single_shape++; return; }
+        uint32_t base = (op->a == 15u) ? op->pc + 8u : c->r[op->a];
+        uint32_t off = (d & ARM_BC_SD_REGOFF) ? arm_bc_addr_mode2_offset(c, op) : op->imm;
+        uint32_t addr = (d & ARM_BC_SD_P) ? ((d & ARM_BC_SD_U) ? base + off : base - off) : base;
+        unsigned bytes = (d & ARM_BC_SD_B) ? 1u : 4u;
+        if (bytes == 4u) addr &= ~3u;
+        if (!arm_prof_tlb_hit(c, addr)) { c->prof.slow_bail_single_tlbmiss++; return; }
+        uint32_t phys = arm_prof_lookup_phys(c, addr, NULL);
+        /* A64 single transfers currently inline RAM only, including for reads. */
+        if (!arm_jit_addr_in_ram(phys, bytes)) {
+            c->prof.slow_bail_single_nonram++;
+            c->prof.single_nonram_regions[phys >> 24]++;
+            unsigned slot;
+            for (slot = 0; slot < GP32_CPU_PROFILE_MEMORY_SLOTS; ++slot) {
+                gp32_memory_profile_t *entry = &c->prof.single_nonram_addresses[slot];
+                if (!(entry->reads | entry->writes)) {
+                    entry->physical_address = phys;
+                    entry->first_pc = op->pc;
+                } else if (entry->physical_address != phys) continue;
+                if (d & ARM_BC_SD_L) entry->reads++; else entry->writes++;
+                break;
+            }
+            if (slot == GP32_CPU_PROFILE_MEMORY_SLOTS) c->prof.single_nonram_address_overflow++;
+        } else c->prof.slow_bail_single_other++;
+        return;
+    }
+    case ARM_JIT_OP_BLOCK_DT: {
+        unsigned d = op->d, rn = op->a;
+        uint32_t list = op->imm;
+        int load = !!(d & 0x01u), p = !!(d & 0x10u), u = !!(d & 0x08u);
+        int pc_load = load && (list & 0x8000u);
+        if ((op->reserved && op->reserved != 3u && op->reserved != 4u && op->reserved != 5u) ||
+            (d & 0x04u) || !list || rn == 15u || !op->g || !c->jit_ram_base)
+            { c->prof.slow_gate_block_shape++; return; }
+        unsigned count = op->g;
+        uint32_t base = c->r[rn];
+        uint32_t addr = u ? (p ? base + 4u : base)
+                          : base - 4u * count + (p ? 0u : 4u);
+        uint32_t last = addr + 4u * count - 4u;
+        if (addr & 3u) { c->prof.slow_bail_block_unaligned++; return; }
+        int split = !!((addr ^ last) & ~0xfffu);
+        unsigned first_bytes = split ? 0x1000u - (addr & 0xfffu) : 4u * count;
+        if (!arm_prof_tlb_hit(c, addr)) { c->prof.slow_bail_block_tlbmiss++; return; }
+        uint32_t mask;
+        uint32_t phys = arm_prof_lookup_phys(c, addr, &mask);
+        if (mask < 4095u) { c->prof.slow_bail_block_tinypage++; return; }
+        uint32_t phys1 = 0u;
+        if (split) {
+            uint32_t next_page = addr + first_bytes;
+            if (!arm_prof_tlb_hit(c, next_page)) { c->prof.slow_bail_block_tlbmiss++; return; }
+            phys1 = arm_prof_lookup_phys(c, next_page, &mask);
+            if (mask < 4095u) { c->prof.slow_bail_block_tinypage++; return; }
+        }
+        if (!arm_jit_addr_in_ram(phys, first_bytes) ||
+            (split && !arm_jit_addr_in_ram(phys1, 4u * count - first_bytes)))
+            { c->prof.slow_bail_block_nonram++; return; }
+        if (pc_load && c->jit_ram_base) {
+            uint32_t pc_phys = split ? phys1 + 4u * count - first_bytes - 4u
+                                     : phys + 4u * (count - 1u);
+            uint32_t pcw = gp32_ld32le(c->jit_ram_base + (pc_phys - ARM_JIT_RAM_BASE_ADDR));
+            if (pcw & 1u) { c->prof.slow_bail_block_pcodd++; return; }
+        }
+        c->prof.slow_bail_block_other++;
+        return;
+    }
+    default:
+        c->prof.slow_bail_other++;
+        return;
+    }
+}
+#endif
+static inline void arm_profile_helper_op(arm920t_t *c, const arm_jit_op_t *op) {
+    ARM_PROF_INC(c, helper_interp_ops);
+#if ARM920T_PROFILING
+    c->prof.helper_op_kinds[op->kind < GP32_CPU_PROFILE_OP_KINDS ? op->kind : 0u]++;
+#if defined(ARM_JIT_NATIVE_A64)
+    arm_profile_helper_reason(c, op);
+#endif
+#else
+    GP32_UNUSED(c);
+    GP32_UNUSED(op);
+#endif
+}
+ARM_FORCE_INLINE void arm_jit_exec_classified(arm920t_t *c, const arm_jit_op_t *op) {
+    arm_profile_helper_op(c, op);
+    arm_jit_exec_classified_bc(c, op);
+}
+
 
 
 static uint32_t arm_jit_ld_word_helper(arm920t_t *c, uint32_t addr) {
+    ARM_PROF_INC(c, helper_ld_word);
     uint32_t a = addr & ~3u;
     uint32_t v;
     if (c->jit_ram_base && arm_jit_addr_in_ram(a, 4u)) v = gp32_ld32le(c->jit_ram_base + (a - ARM_JIT_RAM_BASE_ADDR));
@@ -1514,37 +1901,56 @@ static uint32_t arm_jit_ld_word_helper(arm920t_t *c, uint32_t addr) {
     else v = rb32(c, a);
     return (addr & 3u) ? gp32_ror32(v, (addr & 3u) * 8u) : v;
 }
-static uint32_t arm_jit_ld_byte_helper(arm920t_t *c, uint32_t addr) {
+/* Shared bodies stay uncounted so the sign-extending helpers can reuse them
+ * without charging a second kind for one guest access. */
+ARM_FORCE_INLINE uint32_t arm_jit_ld_byte_impl(arm920t_t *c, uint32_t addr) {
     if (c->jit_ram_base && arm_jit_addr_in_ram(addr, 1u)) return c->jit_ram_base[addr - ARM_JIT_RAM_BASE_ADDR];
     if (c->jit_bios_base && arm_jit_addr_in_bios(addr, 1u)) return c->jit_bios_base[addr];
     if (arm_jit_addr_in_identity_io(addr, 1u)) return c->bus.read8(c->bus.user, addr);
     return rb8(c, addr);
 }
-static uint32_t arm_jit_ld_sbyte_helper(arm920t_t *c, uint32_t addr) { return (uint32_t)(int32_t)(int8_t)arm_jit_ld_byte_helper(c, addr); }
-static uint32_t arm_jit_ld_half_helper(arm920t_t *c, uint32_t addr) {
+static uint32_t arm_jit_ld_byte_helper(arm920t_t *c, uint32_t addr) {
+    ARM_PROF_INC(c, helper_ld_byte);
+    return arm_jit_ld_byte_impl(c, addr);
+}
+static uint32_t arm_jit_ld_sbyte_helper(arm920t_t *c, uint32_t addr) {
+    ARM_PROF_INC(c, helper_ld_sbyte);
+    return (uint32_t)(int32_t)(int8_t)arm_jit_ld_byte_impl(c, addr);
+}
+ARM_FORCE_INLINE uint32_t arm_jit_ld_half_impl(arm920t_t *c, uint32_t addr) {
     if (c->jit_ram_base && arm_jit_addr_in_ram(addr, 2u)) return gp32_ld16le(c->jit_ram_base + (addr - ARM_JIT_RAM_BASE_ADDR));
     if (c->jit_bios_base && arm_jit_addr_in_bios(addr, 2u)) return gp32_ld16le(c->jit_bios_base + addr);
     if (arm_jit_addr_in_identity_io(addr, 2u)) return c->bus.read16(c->bus.user, addr);
     return rb16(c, addr);
 }
-static uint32_t arm_jit_ld_shalf_helper(arm920t_t *c, uint32_t addr) { return (uint32_t)(int32_t)(int16_t)arm_jit_ld_half_helper(c, addr); }
+static uint32_t arm_jit_ld_half_helper(arm920t_t *c, uint32_t addr) {
+    ARM_PROF_INC(c, helper_ld_half);
+    return arm_jit_ld_half_impl(c, addr);
+}
+static uint32_t arm_jit_ld_shalf_helper(arm920t_t *c, uint32_t addr) {
+    ARM_PROF_INC(c, helper_ld_shalf);
+    return (uint32_t)(int32_t)(int16_t)arm_jit_ld_half_impl(c, addr);
+}
 static void arm_jit_st_word_helper(arm920t_t *c, uint32_t addr, uint32_t v) {
+    ARM_PROF_INC(c, helper_st_word);
     uint32_t a = addr & ~3u;
     if (c->jit_ram_base && arm_jit_addr_in_ram(a, 4u)) { gp32_st32le(c->jit_ram_base + (a - ARM_JIT_RAM_BASE_ADDR), v); return; }
     if (arm_jit_addr_in_identity_io(a, 4u)) { c->bus.write32(c->bus.user, a, v); return; }
     wb32(c, a, v);
 }
 static void arm_jit_st_byte_helper(arm920t_t *c, uint32_t addr, uint32_t v) {
+    ARM_PROF_INC(c, helper_st_byte);
     if (c->jit_ram_base && arm_jit_addr_in_ram(addr, 1u)) { c->jit_ram_base[addr - ARM_JIT_RAM_BASE_ADDR] = (uint8_t)v; return; }
     if (arm_jit_addr_in_identity_io(addr, 1u)) { c->bus.write8(c->bus.user, addr, (uint8_t)v); return; }
     wb8(c, addr, (uint8_t)v);
 }
 static void arm_jit_st_half_helper(arm920t_t *c, uint32_t addr, uint32_t v) {
+    ARM_PROF_INC(c, helper_st_half);
     if (c->jit_ram_base && arm_jit_addr_in_ram(addr, 2u)) { gp32_st16le(c->jit_ram_base + (addr - ARM_JIT_RAM_BASE_ADDR), (uint16_t)v); return; }
     if (arm_jit_addr_in_identity_io(addr, 2u)) { c->bus.write16(c->bus.user, addr, (uint16_t)v); return; }
     wb16(c, addr, (uint16_t)v);
 }
-static void arm_jit_write_pc_x_helper(arm920t_t *c, uint32_t v) { write_pc_x(c, v); }
+static void arm_jit_write_pc_x_helper(arm920t_t *c, uint32_t v) { ARM_PROF_INC(c, helper_write_pc); write_pc_x(c, v); }
 
 #if defined(__x86_64__) || defined(_M_X64)
 #ifndef ARM_JIT_CODE_SIZE
@@ -2104,7 +2510,14 @@ static int x64_emit_mul(x64_emit_t *e, const arm_jit_op_t *op) {
 }
 
 static int x64_emit_block_dt(x64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
-    if (op->reserved == 4u || op->reserved == 5u) { GP32_UNUSED(done); return 1; }
+    if (op->reserved == 3u || op->reserved == 4u || op->reserved == 5u) {
+        /* A balanced leaf can alias its saved return through another register.
+         * Preserve the real stack transfers and return at the loaded PC; the
+         * dispatcher then validates state before selecting the next block. */
+        x64_emit_call_helper_op(e, op);
+        if (op->reserved != 4u) x64_emit_return_imm(e, done);
+        return 1;
+    }
     const uint32_t insn = op->insn;
     const unsigned rn = (insn >> 16) & 0xfu;
     uint32_t list = insn & 0xffffu;
@@ -2133,7 +2546,6 @@ static int x64_emit_block_dt(x64_emit_t *e, const arm_jit_op_t *op, uint32_t don
         if (l) {
             x64_emit_fast_ld_word_eax_addr(e);
             if (r == 15u) {
-                if (op->reserved == 3u) continue;
                 x64_emit_arg0_cpu(e);
                 x64_emit_arg1_u32_from(e, X64_EAX);
                 x64_call_abs(e, (uintptr_t)arm_jit_write_pc_x_helper);
@@ -2296,10 +2708,10 @@ static void *arm_jit_code_reserve(arm920t_t *c, size_t bytes) {
     if (!c->jit_code) {
         c->jit_code_size = ARM_JIT_CODE_SIZE;
         c->jit_code = arm_jit_alloc_exec(c->jit_code_size);
-        if (!c->jit_code) { c->jit_code_size = c->jit_code_used = 0; return NULL; }
+        if (!c->jit_code) { c->jit_code_size = c->jit_code_used = 0; ARM_PROF_INC(c, jit_code_alloc_failures); return NULL; }
     }
     size_t p = (c->jit_code_used + align - 1u) & ~(align - 1u);
-    if (bytes > c->jit_code_size || p > c->jit_code_size - bytes) return NULL;
+    if (bytes > c->jit_code_size || p > c->jit_code_size - bytes) { ARM_PROF_INC(c, jit_code_full_events); return NULL; }
     c->jit_code_used = p + bytes;
     return c->jit_code + p;
 }
@@ -2308,7 +2720,11 @@ static int x64_emit_bx(x64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
     const uint32_t insn = op->insn;
     if ((insn & 0x0ffffff0u) != 0x012fff10u) return 0;
     x64_emit_arg0_cpu(e);
-    x64_emit_load_arm_reg(e, X64_HOST_ARG1, insn & 0xfu, op->pc);
+    /* Interpreter semantics: exec_arm_at commits r15 = pc+4 before executing
+     * and BX reads that raw value, so BX r15 targets pc+4 rather than the
+     * architectural pc+8 a register operand would produce. */
+    if ((insn & 0xfu) == 15u) x64_mov_r32_imm(e, X64_HOST_ARG1, op->pc + 4u);
+    else x64_emit_load_arm_reg(e, X64_HOST_ARG1, insn & 0xfu, op->pc);
     x64_call_abs(e, (uintptr_t)arm_jit_write_pc_x_helper);
     x64_emit_return_imm(e, done);
     return 1;
@@ -2362,7 +2778,7 @@ static int x64_emit_one(x64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
 
 static void arm_jit_compile_native(arm920t_t *c, arm_jit_block_t *b) {
     if (!c || !b || !b->count) return;
-    uint8_t tmp[16384];
+    uint8_t tmp[ARM_JIT_NATIVE_MAX_BYTES];
     x64_emit_t e;
     memset(&e, 0, sizeof(e));
     e.b = tmp;
@@ -2414,15 +2830,38 @@ static void arm_jit_compile_native(arm920t_t *c, arm_jit_block_t *b) {
     b->native = cvt.f;
     b->native_ok = 1;
 }
+#elif defined(ARM_JIT_NATIVE_A64)
+#include "arm920t_jit_a64.inc"
 #else
 static void arm_jit_compile_native(arm920t_t *c, arm_jit_block_t *b) { GP32_UNUSED(c); GP32_UNUSED(b); }
 #endif
+
+static int arm_poll_read_stable(arm920t_t *c, const arm_jit_op_t *op) {
+    if (op->kind == ARM_JIT_OP_BLOCK_DT) {
+        /* The leaf wrapper's idempotent stack write must target ordinary RAM,
+         * never a device register whose repeated writes may have effects. */
+        uint32_t addr = c->r[13] - (op->reserved == 4u ? 4u : 0u);
+        uint32_t phys = mmu_translate(c, addr);
+        return !(addr & 3u) && arm_jit_addr_in_ram(phys, 4u) &&
+               fastmem(c, phys, 4u, 1) != NULL;
+    }
+    if (op->kind != ARM_JIT_OP_SINGLE_DT) return 1;
+    /* Evaluate the actual address before this instruction, including literal
+     * loads and pointer chains. A restored base alone is not a proof that
+     * intermediate accesses are side-effect-free. */
+    uint32_t base = op->a == 15u ? op->pc + 8u : c->r[op->a];
+    uint32_t addr = (op->d & ARM_BC_SD_U) ? base + op->imm : base - op->imm;
+    return !(addr & 3u) && c->bus.is_stable_read32 &&
+           c->bus.is_stable_read32(c->bus.user, mmu_translate(c, addr));
+}
 
 static uint32_t arm_jit_run(arm920t_t *c, uint32_t cycles) {
     if (!c || !cycles || thumb(c) || c->trace) return 0;
     if (!c->jit_ram_base) c->jit_ram_base = fastmem(c, ARM_JIT_RAM_BASE_ADDR, 1u, 0);
     if (!c->jit_bios_base) c->jit_bios_base = fastmem(c, 0x00000000u, 1u, 0);
     uint32_t total = 0;
+    uint32_t poll_pc = UINT32_MAX, poll_count = 0, poll_cpsr = 0;
+    uint32_t poll_regs[16];
     while (total < cycles && !c->halted && !thumb(c)) {
         if (total && (c->irq_line || c->fiq_line)) {
             maybe_irq(c);
@@ -2430,18 +2869,45 @@ static uint32_t arm_jit_run(arm920t_t *c, uint32_t cycles) {
         }
         uint32_t pc = c->r[15] & ~3u;
         arm_jit_block_t *b = c->jit_blocks ? &c->jit_blocks[(pc >> 2) & ARM_JIT_BLOCK_MASK] : NULL;
-        uint32_t tag = arm_jit_cpsr_tag(c);
-        if (!b || !b->valid || b->tag_pc != pc || b->tag_cpsr_bits != tag || b->generation != c->jit_generation) {
-            c->jit_misses++;
-            b = arm_jit_translate(c, pc);
-            if (!b) break;
+        uint32_t tag = c->jit_cache_epoch;
+        /* Check the allocated header together so native dispatch can load it
+         * once. Keep the null check short-circuited; nonzero valid and all
+         * three tags are still required before executing the cached block. */
+        if (!b || !((b->valid != 0u) & (b->tag_pc == pc) &
+                    (b->tag_cache_epoch == tag) & (b->generation == c->jit_generation))) {
+            if (b && b->valid && b->tag_pc == pc &&
+                b->generation == c->jit_generation && arm_jit_fetch_unchanged(c, b)) {
+                b->tag_cache_epoch = tag;
+                c->jit_hits++;
+                ARM_PROF_INC(c, jit_hits);
+            } else {
+                c->jit_misses++;
+                ARM_PROF_INC(c, jit_misses);
+                b = arm_jit_translate(c, pc);
+                if (!b) break;
+            }
         } else {
             c->jit_hits++;
+            ARM_PROF_INC(c, jit_hits);
         }
 
         uint32_t done = 0;
-        if (b->native_ok && b->native && (cycles - total) >= b->count) {
+        int stable_reads = c->bus.is_stable_read32 && b->poll_prefix;
+        if (b->native_ok && b->native && (cycles - total) >= b->count &&
+            /* Let eligible wait loops collect two portable fixed-point samples
+             * from their first repetition on every host. All other blocks, and
+             * buses without a stability callback, retain native execution.
+             * Static eligibility never skips work: the existing runtime
+             * stability/state/IRQ checks still must pass. */
+            !(c->bus.is_stable_read32 && b->poll_backedge)
+        ) {
             done = b->native(c, cycles - total);
+#if ARM920T_PROFILING
+            c->prof.native_block_calls++;
+            c->prof.native_arm_insns += done;
+            if (!done) c->prof.native_bail_calls++;
+#endif
+            if (done) stable_reads = 0; /* Native code did not record read addresses. */
         }
 
         if (!done) {
@@ -2449,13 +2915,35 @@ static uint32_t arm_jit_run(arm920t_t *c, uint32_t cycles) {
                 const arm_jit_op_t *op = &b->op[i];
                 if ((c->r[15] & ~3u) != op->pc || thumb(c)) break;
                 uint32_t expected_next = (i + 1u < b->count) ? (b->op[i + 1u].pc & ~3u) : (op->pc + 4u);
-                arm_jit_exec_classified(c, op);
+                if (stable_reads && (i >= b->poll_prefix || !arm_poll_read_stable(c, op))) stable_reads = 0;
+                arm_jit_exec_classified_bc(c, op);
+                ARM_PROF_INC(c, block_interp_arm_insns);
                 done++;
                 if (op->stop || thumb(c) || c->halted || (c->r[15] & ~3u) != expected_next) break;
             }
         }
         if (!done) break;
         total += done;
+        if (stable_reads && done <= b->poll_prefix && c->r[15] == pc && !thumb(c) && !c->halted &&
+            !(c->irq_line && !(c->cpsr & I_FLAG)) && !(c->fiq_line && !(c->cpsr & F_FLAG))) {
+            if (poll_pc == pc && poll_count == done && poll_cpsr == c->cpsr &&
+                memcmp(poll_regs, c->r, sizeof(poll_regs)) == 0) {
+                uint32_t repeats = (cycles - total) / done;
+                total += repeats * done;
+                c->jit_hits += repeats;
+#if ARM920T_PROFILING
+                c->prof.jit_hits += repeats;
+                c->prof.poll_skip_events++;
+                c->prof.poll_skipped_insns += (uint64_t)repeats * done;
+#endif
+            }
+            poll_pc = pc;
+            poll_count = done;
+            poll_cpsr = c->cpsr;
+            memcpy(poll_regs, c->r, sizeof(poll_regs));
+        } else {
+            poll_pc = UINT32_MAX;
+        }
     }
     return total;
 }
@@ -2468,10 +2956,40 @@ uint32_t arm920t_run(arm920t_t *c, uint32_t cycles) {
         uint32_t batch = 0;
         if (!thumb(c)) batch = arm_jit_run(c, cycles - done);
         if (batch) done += batch;
-        else { if (thumb(c)) exec_thumb(c); else exec_arm(c); done += 1; }
+        else if (thumb(c)) { ARM_PROF_INC(c, interp_thumb_insns); exec_thumb(c); done += 1; }
+        else { ARM_PROF_INC(c, interp_arm_insns); exec_arm(c); done += 1; }
     }
     c->cycles_total += done;
     return done;
+}
+
+void arm920t_get_cpu_profile(const arm920t_t *c, gp32_cpu_profile_t *out) {
+    if (!out) return;
+    memset(out, 0, sizeof(*out));
+    out->supported = ARM920T_PROFILING;
+    out->native_backend = ARM920T_NATIVE_BACKEND;
+    if (!c) return;
+    out->jit_code_size = c->jit_code_size;
+    out->jit_code_used = c->jit_code_used;
+    out->jit_block_capacity = ARM_JIT_BLOCK_COUNT;
+#if ARM920T_PROFILING
+    uint64_t used = out->jit_code_used;
+    *out = c->prof;
+    out->supported = 1;
+    out->native_backend = ARM920T_NATIVE_BACKEND;
+    out->jit_code_size = c->jit_code_size;
+    out->jit_code_used = used;
+    out->jit_code_highwater = c->prof.jit_code_highwater > used ? c->prof.jit_code_highwater : used;
+    out->jit_block_capacity = ARM_JIT_BLOCK_COUNT;
+#endif
+}
+
+void arm920t_reset_cpu_profile(arm920t_t *c) {
+#if ARM920T_PROFILING
+    if (c) memset(&c->prof, 0, sizeof(c->prof));
+#else
+    GP32_UNUSED(c);
+#endif
 }
 
 typedef struct arm920t_state_image {
@@ -2494,8 +3012,8 @@ typedef struct arm920t_state_image {
     int halted;
 } arm920t_state_image_t;
 
-int arm920t_state_save(const arm920t_t *c, FILE *f) {
-    if (!c || !f) return 0;
+int arm920t_state_save_io(const arm920t_t *c, state_io_t *io) {
+    if (!c || !io) return 0;
     arm920t_state_image_t st;
     memset(&st, 0, sizeof(st));
     memcpy(st.r, c->r, sizeof(st.r));
@@ -2514,13 +3032,13 @@ int arm920t_state_save(const arm920t_t *c, FILE *f) {
     memcpy(st.tlb_valid, c->tlb_valid, sizeof(st.tlb_valid));
     st.cycles_total = c->cycles_total;
     st.irq_line = c->irq_line; st.fiq_line = c->fiq_line; st.halted = c->halted;
-    return fwrite(&st, 1, sizeof(st), f) == sizeof(st);
+    return state_io_write(io, &st, sizeof(st));
 }
 
-int arm920t_state_load(arm920t_t *c, FILE *f) {
-    if (!c || !f) return 0;
+int arm920t_state_load_io(arm920t_t *c, state_io_t *io) {
+    if (!c || !io) return 0;
     arm920t_state_image_t st;
-    if (fread(&st, 1, sizeof(st), f) != sizeof(st)) return 0;
+    if (!state_io_read(io, &st, sizeof(st))) return 0;
     memcpy(c->r, st.r, sizeof(c->r));
     c->cpsr = st.cpsr;
     memcpy(c->bank_usr, st.bank_usr, sizeof(c->bank_usr));
@@ -2535,6 +3053,7 @@ int arm920t_state_load(arm920t_t *c, FILE *f) {
     memcpy(c->tlb_pa_base, st.tlb_pa_base, sizeof(c->tlb_pa_base));
     memcpy(c->tlb_mask, st.tlb_mask, sizeof(c->tlb_mask));
     memcpy(c->tlb_valid, st.tlb_valid, sizeof(c->tlb_valid));
+    tlb_rebuild_mirror(c);
     c->cycles_total = st.cycles_total;
     c->irq_line = st.irq_line; c->fiq_line = st.fiq_line; c->halted = st.halted;
     /* The SoC savestate loader can replace the RAM allocation after the CPU
@@ -2543,6 +3062,16 @@ int arm920t_state_load(arm920t_t *c, FILE *f) {
      * pointers through the bus instead of writing into freed state-load RAM. */
     c->jit_ram_base = NULL;
     c->jit_bios_base = NULL;
-    arm920t_flush_jit(c);
+    arm920t_jit_invalidate_all(c, ARM_JIT_INV_STATE_LOAD);
     return 1;
+}
+
+int arm920t_state_save(const arm920t_t *c, FILE *f) {
+    state_io_t io = state_io_file(f);
+    return arm920t_state_save_io(c, &io);
+}
+
+int arm920t_state_load(arm920t_t *c, FILE *f) {
+    state_io_t io = state_io_file(f);
+    return arm920t_state_load_io(c, &io);
 }

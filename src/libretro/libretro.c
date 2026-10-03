@@ -15,6 +15,14 @@
 #define GP32_FPS 60.0
 #define GP32_AUDIO_RATE 44100u
 #define GP32_AUDIO_FRAMES_PER_VIDEO 735u
+#define GP32_AUDIO_QUEUE_LIMIT (GP32_AUDIO_RATE / 4u)
+
+/* The bundled libretro.h only declares the environment commands this core
+ * uses. GET_CAN_DUPE is standard ABI value 3: the frontend sets the boolean to
+ * true when it accepts a NULL video frame as "repeat the previous frame". */
+#ifndef RETRO_ENVIRONMENT_GET_CAN_DUPE
+#define RETRO_ENVIRONMENT_GET_CAN_DUPE 3
+#endif
 
 static retro_environment_t environ_cb;
 static retro_video_refresh_t video_cb;
@@ -31,13 +39,18 @@ static gp32_video_effects_t effects;
 static gp32_audio_resampler_t audio_resampler;
 static int16_t *audio_resample_buf;
 static size_t audio_resample_cap;
+static size_t audio_pending_frames;
+static uint64_t last_video_frame = UINT64_MAX;
+static const uint32_t *last_video_ptr;
+static int have_last_video;
+static int can_dupe;
 static int effects_ready;
 static char system_dir[4096];
 static char save_dir[4096];
 static char content_dir[4096];
 static char content_path[4096];
 static char smartmedia_save_path[4096];
-static char state_temp_path[4096];
+static size_t state_capacity;
 static int use_jit;
 static int use_lcd_persistence;
 static int use_frame_interpolation;
@@ -184,9 +197,40 @@ static void make_runtime_paths(const char *game_path) {
     snprintf(stem, sizeof(stem), "%s", path_basename(game_path));
     strip_ext(stem);
     char smc_name[1200];
+    /* RetroArch-convention name: <save dir>/<rom basename>.gp32.smc.
+     * Known limitation: ROMs sharing a basename in different folders share
+     * one save file. */
     snprintf(smc_name, sizeof(smc_name), "%s.gp32.smc", stem);
     join_path(smartmedia_save_path, sizeof(smartmedia_save_path), save_dir, smc_name);
-    join_path(state_temp_path, sizeof(state_temp_path), save_dir, "gp32emu_libretro_state.tmp");
+}
+
+/* Flush the persisted SmartMedia image before releasing the emulator. Used by
+ * every teardown path so a game replaced mid-session keeps its NAND writes. */
+static void destroy_emu_with_save(void) {
+    state_capacity = 0;
+    if (!emu) return;
+    if (smartmedia_save_path[0]) gp32_save_smartmedia(emu, smartmedia_save_path);
+    gp32_destroy(emu);
+    emu = NULL;
+}
+
+/* A persisted SmartMedia image, when present, supersedes the original media.
+ * Returns 1 if the save was mounted, 0 if absent, -1 if present but unreadable.
+ * The -1 case fails the content load instead of silently mounting the pristine
+ * ROM, which would overwrite the save on exit. */
+static int mount_saved_smartmedia(gp32_t *g, int use_direct) {
+    if (!smartmedia_save_path[0] || !file_exists(smartmedia_save_path)) return 0;
+    gp32_status_t st = use_direct ? gp32_load_smartmedia_direct(g, smartmedia_save_path)
+                                  : gp32_load_smartmedia(g, smartmedia_save_path);
+    if (st != GP32_OK) {
+        const char *err = gp32_get_error(g);
+        lr_log(RETRO_LOG_ERROR, "[gp32emu] saved SmartMedia image %s is unreadable: %s\n",
+               smartmedia_save_path, (err && err[0]) ? err : "invalid image");
+        lr_message("GP32emu: saved SmartMedia image is unreadable; load aborted to protect it");
+        return -1;
+    }
+    lr_log(RETRO_LOG_INFO, "[gp32emu] restored saved SmartMedia image: %s\n", smartmedia_save_path);
+    return 1;
 }
 
 static int try_bios_path(char *out, size_t outsz, const char *dir, const char *name) {
@@ -233,6 +277,10 @@ void retro_set_environment(retro_environment_t cb) {
         memset(&logging, 0, sizeof(logging));
         if (environ_cb(RETRO_ENVIRONMENT_GET_LOG_INTERFACE, &logging) && logging.log) log_cb = logging.log;
     }
+    /* Default to refusing NULL frames unless the frontend explicitly allows
+     * them, so an older frontend never gets an unnegotiated duplicate. */
+    bool dupe = false;
+    can_dupe = (environ_cb && environ_cb(RETRO_ENVIRONMENT_GET_CAN_DUPE, &dupe) && dupe) ? 1 : 0;
     bool no_game = false;
     if (environ_cb) environ_cb(RETRO_ENVIRONMENT_SET_SUPPORT_NO_GAME, &no_game);
     static const struct retro_variable vars[] = {
@@ -287,21 +335,37 @@ void retro_get_system_av_info(struct retro_system_av_info *info) {
     info->timing.fps = GP32_FPS;
     info->timing.sample_rate = GP32_AUDIO_RATE;
 }
+
+static void reset_audio(void) {
+    audio_pending_frames = 0;
+    gp32_audio_resampler_init(&audio_resampler);
+}
+
+/* Frame-identity state only describes the game session that produced it. Any
+ * load, reset or state restore can replay a frame counter whose pixels differ
+ * from what this run already presented, so the duplicate decision is voided. */
+static void invalidate_last_video(void) {
+    last_video_frame = UINT64_MAX;
+    last_video_ptr = NULL;
+    have_last_video = 0;
+}
+
 void retro_init(void) {
     set_default_dirs();
-    gp32_audio_resampler_init(&audio_resampler);
+    reset_audio();
     if (!effects_ready) effects_ready = gp32_video_effects_init(&effects);
     refresh_variables();
 }
 void retro_deinit(void) {
-    if (emu) { if (smartmedia_save_path[0]) gp32_save_smartmedia(emu, smartmedia_save_path); gp32_destroy(emu); emu = NULL; }
+    destroy_emu_with_save();
+    invalidate_last_video();
     if (effects_ready) { gp32_video_effects_shutdown(&effects); effects_ready = 0; }
     free(audio_resample_buf);
     audio_resample_buf = NULL;
     audio_resample_cap = 0;
-    gp32_audio_resampler_reset(&audio_resampler);
+    reset_audio();
 }
-void retro_reset(void) { if (emu) { gp32_reset(emu); gp32_video_effects_reset(&effects); gp32_audio_resampler_reset(&audio_resampler); } }
+void retro_reset(void) { if (emu) { gp32_reset(emu); gp32_video_effects_reset(&effects); reset_audio(); invalidate_last_video(); } }
 void retro_set_controller_port_device(unsigned port, unsigned device) { (void)port; (void)device; }
 
 static uint32_t read_buttons(void) {
@@ -344,10 +408,18 @@ static int stage_frame_320x240(const gp32_framebuffer_desc_t *fb, uint32_t *dst)
          * landscape, so rotate 90 degrees counter-clockwise to expose the
          * standard libretro 320x240 display. This matches the SDL/Win64/media
          * presenter path and fixes the earlier cropped/scrambled 240x320 copy. */
-        for (uint32_t y = 0; y < GP32_H; ++y) {
-            uint32_t sx = GP32_RAW_W - 1u - y;
-            uint32_t *out = dst + (size_t)y * GP32_W;
-            for (uint32_t x = 0; x < GP32_W; ++x) out[x] = force_xrgb(src[(size_t)x * stride + sx]);
+        /* Keep both sides of the transpose in cache. A full output row reads
+         * 320 different source rows; small tiles reuse those source cache
+         * lines before advancing to the next part of the image. */
+        for (uint32_t by = 0; by < GP32_H; by += 8u) {
+            for (uint32_t bx = 0; bx < GP32_W; bx += 8u) {
+                for (uint32_t y = by; y < by + 8u; ++y) {
+                    uint32_t sx = GP32_RAW_W - 1u - y;
+                    uint32_t *out = dst + (size_t)y * GP32_W;
+                    for (uint32_t x = bx; x < bx + 8u; ++x)
+                        out[x] = force_xrgb(src[(size_t)x * stride + sx]);
+                }
+            }
         }
         return 1;
     }
@@ -368,45 +440,94 @@ static int stage_frame_320x240(const gp32_framebuffer_desc_t *fb, uint32_t *dst)
     return 1;
 }
 
-static void submit_audio_resampled(const gp32_audio_desc_t *aud) {
-    if (!aud || !aud->samples_s16_interleaved || !aud->frame_count) return;
+static void flush_audio(void);
+
+static int submit_audio_resampled(const gp32_audio_desc_t *aud) {
+    if (!aud || !aud->samples_s16_interleaved || !aud->frame_count) return 0;
+    if (!audio_batch_cb && !audio_cb) return 1;
     uint32_t src_rate = aud->sample_rate_hz ? aud->sample_rate_hz : GP32_AUDIO_RATE;
     uint32_t dst_rate = GP32_AUDIO_RATE;
-    if (!src_rate || aud->frame_count > SIZE_MAX / (2u * sizeof(int16_t))) return;
+    const size_t max_frames = SIZE_MAX / (2u * sizeof(int16_t));
+    if (aud->frame_count > max_frames) return 0;
 
     size_t in_frames = (size_t)aud->frame_count;
-    const int16_t *out = aud->samples_s16_interleaved;
+    size_t need = in_frames;
+    if (src_rate != dst_rate) {
+        need = gp32_audio_resampler_max_output_frames(&audio_resampler, in_frames, src_rate, dst_rate, 0);
+    }
+    if (!need) return 0;
+    /* Bound memory and latency if the frontend stops consuming audio. Short
+     * backpressure remains lossless; a sustained stall retains recent sound. */
+    if (need > GP32_AUDIO_QUEUE_LIMIT) {
+        audio_pending_frames = 0;
+        gp32_audio_resampler_reset(&audio_resampler);
+        return 1;
+    }
+    /* A recovered frontend may consume the backlog before any PCM needs to
+     * be discarded. Keep the normal, non-overflow delivery path unchanged. */
+    if (need > GP32_AUDIO_QUEUE_LIMIT - audio_pending_frames) flush_audio();
+    if (need > GP32_AUDIO_QUEUE_LIMIT - audio_pending_frames) {
+        size_t drop = audio_pending_frames + need - GP32_AUDIO_QUEUE_LIMIT;
+        audio_pending_frames -= drop;
+        memmove(audio_resample_buf, audio_resample_buf + drop * 2u,
+                audio_pending_frames * 2u * sizeof(int16_t));
+    }
+    size_t total = audio_pending_frames + need;
+    if (total > audio_resample_cap) {
+        size_t cap = total;
+        if (audio_resample_cap <= max_frames / 2u && cap < audio_resample_cap * 2u) cap = audio_resample_cap * 2u;
+        if (cap > GP32_AUDIO_QUEUE_LIMIT) cap = GP32_AUDIO_QUEUE_LIMIT;
+        int16_t *p = (int16_t *)realloc(audio_resample_buf, cap * 2u * sizeof(int16_t));
+        if (!p) {
+            lr_log(RETRO_LOG_ERROR, "[gp32emu] libretro audio allocation failed (%zu frames).\n", cap);
+            return 0;
+        }
+        audio_resample_buf = p;
+        audio_resample_cap = cap;
+    }
+    int16_t *out = audio_resample_buf + audio_pending_frames * 2u;
     size_t out_frames = in_frames;
 
     if (src_rate != dst_rate) {
-        size_t need = gp32_audio_resampler_max_output_frames(&audio_resampler, in_frames, src_rate, dst_rate, 0);
-        if (!need) return;
-        if (need > audio_resample_cap) {
-            int16_t *p = (int16_t *)realloc(audio_resample_buf, need * 2u * sizeof(int16_t));
-            if (!p) {
-                lr_log(RETRO_LOG_ERROR, "[gp32emu] libretro audio resample allocation failed (%zu frames).\n", need);
-                return;
-            }
-            audio_resample_buf = p;
-            audio_resample_cap = need;
-        }
         out_frames = gp32_audio_resampler_process(&audio_resampler,
                                                   aud->samples_s16_interleaved,
                                                   in_frames,
                                                   src_rate,
                                                   dst_rate,
                                                   0,
-                                                  audio_resample_buf,
-                                                  audio_resample_cap);
-        out = audio_resample_buf;
+                                                  out,
+                                                  need);
     } else {
         gp32_audio_resampler_reset(&audio_resampler);
+        memcpy(out, aud->samples_s16_interleaved, in_frames * 2u * sizeof(int16_t));
     }
+    audio_pending_frames += out_frames;
+    return 1;
+}
 
-    if (!out || !out_frames) return;
-    if (audio_batch_cb) audio_batch_cb(out, out_frames);
-    else if (audio_cb) {
-        for (size_t i = 0; i < out_frames; ++i) audio_cb(out[i * 2u], out[i * 2u + 1u]);
+static void flush_audio(void) {
+    size_t sent = 0;
+    if (audio_batch_cb) {
+        while (sent < audio_pending_frames) {
+            size_t remaining = audio_pending_frames - sent;
+            size_t accepted = audio_batch_cb(audio_resample_buf + sent * 2u, remaining);
+            /* A frontend may stop accepting audio until the next retro_run. */
+            if (!accepted) break;
+            if (accepted > remaining) accepted = remaining;
+            sent += accepted;
+        }
+    } else {
+        if (audio_cb) {
+            for (size_t i = 0; i < audio_pending_frames; ++i) {
+                audio_cb(audio_resample_buf[i * 2u], audio_resample_buf[i * 2u + 1u]);
+            }
+        }
+        sent = audio_pending_frames;
+    }
+    audio_pending_frames -= sent;
+    if (sent && audio_pending_frames) {
+        memmove(audio_resample_buf, audio_resample_buf + sent * 2u,
+                audio_pending_frames * 2u * sizeof(int16_t));
     }
 }
 
@@ -419,26 +540,67 @@ static uint32_t frame_cycles(void) {
     return c ? c : 1u;
 }
 
+/* libretro only accepts a NULL frame when the frontend returned true from
+ * RETRO_ENVIRONMENT_GET_CAN_DUPE. Other frontends must be handed real pixels
+ * again; after an effect pass those pixels live in effect_rgb, so the last
+ * presented pointer is tracked instead of assuming frame_rgb. */
+static void present_duplicate_frame(void) {
+    if (!video_cb) return;
+    if (can_dupe) {
+        video_cb(NULL, 0, 0, 0);
+        return;
+    }
+    if (have_last_video) {
+        video_cb(last_video_ptr, GP32_W, GP32_H, GP32_W * sizeof(uint32_t));
+        return;
+    }
+    /* Nothing has been presented yet, so a blank frame is the only ABI-valid
+     * alternative to NULL for a frontend that cannot dupe. */
+    for (size_t i = 0; i < GP32_W * GP32_H; ++i) frame_rgb[i] = 0xff000000u;
+    video_cb(frame_rgb, GP32_W, GP32_H, GP32_W * sizeof(uint32_t));
+}
+
 void retro_run(void) {
     bool updated = false;
     if (environ_cb && environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE, &updated) && updated) refresh_variables();
-    if (!emu) { if (video_cb) video_cb(NULL, GP32_W, GP32_H, 0); return; }
+    if (!emu) { present_duplicate_frame(); return; }
     if (input_poll_cb) input_poll_cb();
     gp32_set_buttons(emu, read_buttons());
     gp32_run_cycles(emu, frame_cycles());
     gp32_framebuffer_desc_t fb;
-    if (gp32_get_framebuffer(emu, &fb) == GP32_OK && stage_frame_320x240(&fb, frame_rgb)) {
+    int have_fb = gp32_get_framebuffer(emu, &fb) == GP32_OK;
+    int effects_active = effects_ready && gp32_video_effects_active(&effects);
+    if (have_fb && fb.frame_counter == last_video_frame && !effects_active) {
+        /* The emulated LCD produced no new frame this run (for example while
+         * the panel is disabled). Present a duplicate instead of restaging and
+         * repushing identical pixels; the frontend re-shows the last frame when
+         * it can dupe, otherwise the identical pixels are resent.
+         * Time-varying filters are exempt because their output still changes. */
+        present_duplicate_frame();
+    } else if (have_fb && stage_frame_320x240(&fb, frame_rgb)) {
         const uint32_t *src = frame_rgb;
-        if (effects_ready && gp32_video_effects_active(&effects)) {
-            if (gp32_video_effects_process_320x240(&effects, frame_rgb, effect_rgb)) src = effect_rgb;
-        }
+        if (effects_active && gp32_video_effects_process_320x240(&effects, frame_rgb, effect_rgb)) src = effect_rgb;
         if (video_cb) video_cb(src, GP32_W, GP32_H, GP32_W * sizeof(uint32_t));
+        last_video_frame = fb.frame_counter;
+        last_video_ptr = src;
+        have_last_video = 1;
+    } else {
+        present_duplicate_frame();
     }
     gp32_audio_desc_t aud;
-    if (gp32_get_audio(emu, &aud) == GP32_OK && aud.samples_s16_interleaved && aud.frame_count) {
-        submit_audio_resampled(&aud);
-        gp32_clear_audio(emu);
+    if (gp32_get_audio(emu, &aud) == GP32_OK) {
+        if (aud.frame_count) {
+            /* Clear the core's borrowed PCM only after retaining all output. */
+            if (submit_audio_resampled(&aud)) gp32_clear_audio(emu);
+        } else {
+            /* Keep audio-driven frontend pacing alive while emulated audio is
+             * idle. Never pad short active blocks or alter their sample rate. */
+            static const int16_t silence[GP32_AUDIO_FRAMES_PER_VIDEO * 2u] = {0};
+            gp32_audio_desc_t silent = {silence, GP32_AUDIO_FRAMES_PER_VIDEO, GP32_AUDIO_RATE};
+            submit_audio_resampled(&silent);
+        }
     }
+    flush_audio();
 }
 
 static int load_content(gp32_t *g, const struct retro_game_info *game, int use_direct) {
@@ -453,6 +615,8 @@ static int load_content(gp32_t *g, const struct retro_game_info *game, int use_d
         if (ext_fxe) return gp32_load_fxe_data(g, data, size, label) == GP32_OK;
         if (ext_fpk) return gp32_load_fpk_data(g, data, size, label) == GP32_OK;
         if (ext_smc || (!ext_fxe && !ext_fpk)) {
+            int saved = mount_saved_smartmedia(g, use_direct);
+            if (saved) return saved > 0;
             if (use_direct) return gp32_load_smartmedia_direct_data(g, data, size, label) == GP32_OK;
             return gp32_load_smartmedia_data(g, data, size) == GP32_OK;
         }
@@ -461,6 +625,8 @@ static int load_content(gp32_t *g, const struct retro_game_info *game, int use_d
     if (ext_fxe) return gp32_load_fxe(g, path) == GP32_OK;
     if (ext_fpk) return gp32_load_fpk(g, path) == GP32_OK;
     if (ext_smc) {
+        int saved = mount_saved_smartmedia(g, use_direct);
+        if (saved) return saved > 0;
         if (use_direct) return gp32_load_smartmedia_direct(g, path) == GP32_OK;
         return gp32_load_smartmedia(g, path) == GP32_OK;
     }
@@ -480,8 +646,10 @@ static gp32_t *create_core_with_optional_bios(const char *bios_path) {
 bool retro_load_game(const struct retro_game_info *game) {
     set_default_dirs();
     refresh_variables();
-    if (emu) { gp32_destroy(emu); emu = NULL; }
-    content_path[0] = smartmedia_save_path[0] = state_temp_path[0] = 0;
+    destroy_emu_with_save();
+    reset_audio();
+    invalidate_last_video();
+    content_path[0] = smartmedia_save_path[0] = 0;
     if (game && game->path) snprintf(content_path, sizeof(content_path), "%s", game->path);
     make_runtime_paths(content_path[0] ? content_path : "gp32");
     unsigned fmt = RETRO_PIXEL_FORMAT_XRGB8888;
@@ -508,7 +676,6 @@ bool retro_load_game(const struct retro_game_info *game) {
         if (emu && load_content(emu, game, 0)) {
             gp32_set_jit(emu, use_jit);
             gp32_video_effects_reset(&effects);
-            gp32_audio_resampler_reset(&audio_resampler);
             cycle_accum = 0;
             return true;
         }
@@ -548,46 +715,41 @@ bool retro_load_game(const struct retro_game_info *game) {
         return false;
     }
     gp32_video_effects_reset(&effects);
-    gp32_audio_resampler_reset(&audio_resampler);
     cycle_accum = 0;
     return true;
 }
 
 void retro_unload_game(void) {
-    if (emu) { if (smartmedia_save_path[0]) gp32_save_smartmedia(emu, smartmedia_save_path); gp32_destroy(emu); emu = NULL; }
+    destroy_emu_with_save();
     content_path[0] = 0;
+    reset_audio();
+    invalidate_last_video();
 }
 unsigned retro_get_region(void) { return RETRO_REGION_NTSC; }
 bool retro_load_game_special(unsigned game_type, const struct retro_game_info *info, size_t num_info) { (void)game_type; (void)info; (void)num_info; return false; }
 size_t retro_serialize_size(void) {
     if (!emu) return 0;
-    if (gp32_save_state(emu, state_temp_path) != GP32_OK) return 0;
-    FILE *f = fopen(state_temp_path, "rb");
-    if (!f) return 0;
-    fseek(f, 0, SEEK_END);
-    long n = ftell(f);
-    fclose(f);
-    return n > 0 ? (size_t)n : 0;
+    /* Libretro must never report a larger size during one loaded game. Normal
+     * retro_run drains captured PCM; latch the first exact payload size and
+     * reject later growth that cannot fit the frontend's supplied buffer. */
+    if (!state_capacity) state_capacity = gp32_state_size(emu);
+    return state_capacity;
 }
 bool retro_serialize(void *data, size_t size) {
     if (!emu || !data) return false;
-    if (gp32_save_state(emu, state_temp_path) != GP32_OK) return false;
-    FILE *f = fopen(state_temp_path, "rb");
-    if (!f) return false;
-    size_t got = fread(data, 1, size, f);
-    fclose(f);
-    return got == size;
+    size_t capacity = retro_serialize_size();
+    if (!capacity || size < capacity) return false;
+    return gp32_save_state_data(emu, data, size) == GP32_OK;
 }
 bool retro_unserialize(const void *data, size_t size) {
     if (!emu || !data || !size) return false;
-    FILE *f = fopen(state_temp_path, "wb");
-    if (!f) return false;
-    int ok = fwrite(data, 1, size, f) == size;
-    if (fclose(f) != 0) ok = 0;
-    if (!ok) return false;
+    if (gp32_load_state_data(emu, data, size) != GP32_OK) return false;
     gp32_video_effects_reset(&effects);
-    gp32_audio_resampler_reset(&audio_resampler);
-    return gp32_load_state(emu, state_temp_path) == GP32_OK;
+    reset_audio();
+    /* A loaded state can restore a frame counter this run already presented,
+     * so equality alone cannot prove the pixels are unchanged. */
+    invalidate_last_video();
+    return true;
 }
 void *retro_get_memory_data(unsigned id) { (void)id; return NULL; }
 size_t retro_get_memory_size(unsigned id) { (void)id; return 0; }
