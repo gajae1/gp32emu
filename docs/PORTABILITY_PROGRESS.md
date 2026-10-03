@@ -3151,3 +3151,20 @@ Nested guest callbacks still advance CPU time without fully settling the
 peripheral clocks; pending-event and activation-order handling remain needed
 before that separate defect can be fixed safely. Evidence and hashes are in
 the resume58 performance section and `F:/GP32/results/resume58-time/`.
+
+### SDK streaming buffer refill ordering (resume59)
+
+SDK audio rendering now stops at half-buffer boundaries to run refills before
+reusing old samples, and retains the regular polling phase across partial
+slices. Previously one pre-batch check could miss buffer transitions and
+produce different PCM for the same time partitioned differently. Metadata
+is rechecked after callbacks; no new saved-state fields are required.
+
+A guest ARM refill fixture verifies sample-identical batch/split rendering
+and expected fresh data for 32-, 64- and 70-sample halves. Windows/H700 PCM,
+timer and state checks pass, Android ARM64/ARMv7 builds pass, and the existing
+Her Knights/Tomak replay fields remain exact. The H700 core is installed
+with a backup and unchanged settings. Actual speaker continuity, whole-game
+SDK coverage and nested-callback peripheral time accounting remain open.
+Evidence: `F:/GP32/results/resume59-refill/` and the resume59 performance
+section.

@@ -930,3 +930,39 @@ record. Installed core SHA-256 is
 `c089d6c238eaccfeea4062492f7554646ac6f67092199d9604f259a6e5c1530b`;
 previous core backup is `gp32-dev/resume58-installed-core-before.so`.
 Protected device settings remain unchanged.
+
+## resume59: SDK PCM refill follows buffer boundaries
+
+The SDK mixer previously checked the streaming refill callback once before
+rendering the entire elapsed sample batch. Rendering could cross and wrap
+both buffer halves without a refill. It also reset the 64-sample poll phase
+instead of retaining the remainder. Thus identical elapsed time split into
+different host slices could produce different PCM and stale buffer content.
+
+Mix spans now stop at the recognized half-buffer edge or the next ordinary
+poll boundary. A released half is refilled before its samples are reused;
+the poll phase survives partial slices. Small halves and halves not aligned
+to 64 samples are handled. Metadata is inspected again after a guest refill,
+and a failed callback is retried at a boundary rather than on every short
+host slice. Shift/range checks reject malformed half-buffer dimensions.
+No runtime address cache or saved-state format change is introduced.
+
+The regression runs a real ARM refill callback with JIT enabled and compares
+one 10-ms batch against 100 smaller slices. Half sizes of 32, 64 and 70
+samples all yield identical 441-frame stereo PCM, expected callback counts,
+and the newly refilled samples on reuse. The original 64-sample fixture fails
+on the old code. Windows and native H700 PCM, timer and state checks pass;
+Windows and Android ARM64/ARMv7 core builds pass.
+
+Her Knights and Tomak H700 replays retain exact CPU/video/PCM fields from
+the prior baseline. They do not establish whole-game or physical-speaker
+acceptance of the SDK streaming path. This is a refill-order correction,
+not a measured FPS gain. Nested callback cycles still need proper peripheral
+time settlement; that separate defect remains open.
+
+Evidence: `F:/GP32/results/resume59-refill/` contains regression/build logs,
+native test results, game equivalence and guarded deployment records.
+Installed core SHA-256 is
+`aea83fb1a649550162c670184543ac93ed13f3c7546a0ff4082cae4ccaf85c2e`;
+the previous core is backed up as `gp32-dev/resume59-installed-core-before.so`.
+Protected settings remain unchanged.
