@@ -1118,6 +1118,29 @@ static inline void lcd_row16(const uint8_t *src, uint32_t *dst,
     }
 }
 
+/* An indexed byte is one whole pixel. Specialize the four byte orders
+ * once per row span instead of shifting a variable-width pixel loop. */
+static inline void lcd_row8(const uint8_t *src, uint32_t *dst, uint32_t words,
+                            const uint32_t *palette, uint32_t mode) {
+#define LCD8_ROW(A, B, C, D)                         \
+    do {                                             \
+        while (words--) {                            \
+            dst[0] = palette[src[A]];                 \
+            dst[1] = palette[src[B]];                 \
+            dst[2] = palette[src[C]];                 \
+            dst[3] = palette[src[D]];                 \
+            src += 4; dst += 4;                       \
+        }                                            \
+    } while (0)
+    switch (mode) {
+    case 0u: LCD8_ROW(3, 2, 1, 0); break;
+    case 1u: LCD8_ROW(0, 1, 2, 3); break;
+    case 2u: LCD8_ROW(1, 0, 3, 2); break;
+    default: LCD8_ROW(2, 3, 0, 1); break;
+    }
+#undef LCD8_ROW
+}
+
 /* Whole-run contiguous scanout.  With OFFSIZE == 0 no read is ever displaced:
  * halfword N of the run sits at start + 2*N no matter where the page counter
  * wraps, so the words the frame consumes are one straight RAM block.  The
@@ -1182,23 +1205,31 @@ static int lcd_render_contiguous(s3c2400_t *s, uint32_t w, uint32_t h, uint32_t 
          * chasing lcd_palette -> color16_lut per pixel. */
         uint32_t pal_lut[256];
         for (uint32_t k = 0; k < 256u; ++k) pal_lut[k] = color16_lut[s->lcd_palette[k]];
-        while (y < h && i + wprow <= words) {
-            const uint8_t *p = src + (size_t)i * 4u;
-            uint32_t *dst = row;
-            for (uint32_t k = 0; k < wprow; ++k, p += 4, dst += ppw) {
-                uint32_t d = gp32_ld32le(p);
-                d = lcd_word_permute(d, mode);
-                for (uint32_t q = 0; q < ppw; ++q) { dst[q] = pal_lut[(d >> shift) & mask]; d <<= bits; }
+        if (bits == 8u) {
+            while (y < h && i + wprow <= words) {
+                lcd_row8(src + (size_t)i * 4u, row, wprow, pal_lut, mode);
+                i += wprow; ++y; row += 240u;
             }
-            i += wprow; ++y; row += 240u;
-        }
-        uint32_t *dst = row;
-        while (i < words) {
-            uint32_t d = gp32_ld32le(src + (size_t)i * 4u);
-            d = lcd_word_permute(d, mode);
-            ++i;
-            for (uint32_t q = 0; q < ppw; ++q) { dst[q] = pal_lut[(d >> shift) & mask]; d <<= bits; }
-            dst += ppw;
+            lcd_row8(src + (size_t)i * 4u, row, words - i, pal_lut, mode);
+        } else {
+            while (y < h && i + wprow <= words) {
+                const uint8_t *p = src + (size_t)i * 4u;
+                uint32_t *dst = row;
+                for (uint32_t k = 0; k < wprow; ++k, p += 4, dst += ppw) {
+                    uint32_t d = gp32_ld32le(p);
+                    d = lcd_word_permute(d, mode);
+                    for (uint32_t q = 0; q < ppw; ++q) { dst[q] = pal_lut[(d >> shift) & mask]; d <<= bits; }
+                }
+                i += wprow; ++y; row += 240u;
+            }
+            uint32_t *dst = row;
+            while (i < words) {
+                uint32_t d = gp32_ld32le(src + (size_t)i * 4u);
+                d = lcd_word_permute(d, mode);
+                ++i;
+                for (uint32_t q = 0; q < ppw; ++q) { dst[q] = pal_lut[(d >> shift) & mask]; d <<= bits; }
+                dst += ppw;
+            }
         }
     }
     s->lcd.vramaddr_cur = (uint32_t)((uint64_t)cur0 + 4u * run);

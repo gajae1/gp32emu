@@ -2125,3 +2125,62 @@ The library followup also resolves Dooly's loading screen into an observed
 match and W.B.W.'s publisher screen into a Hangul-labelled scene; see the
 local game matrix. Full-game stability, speaker listening, physical input
 latency and Android runtime acceptance remain open.
+
+### Indexed scanout and x64 block callback completion (resume30, 2026-10-03)
+
+The contiguous 8-bpp path now converts four indexed bytes directly, selecting
+the DMA byte order once per row span. It no longer runs a variable-width
+shift loop for every pixel. Palette contents are still expanded for each
+scanout; partial rows, DMA counters and other formats keep their semantics.
+Existing LCD differential checks pass 868 H700 cases and 168 Windows cases.
+
+In a clock-qualified H700 Little Wizard ABBA comparison, baseline
+111.566/111.888 fps becomes 112.525/112.440 fps: means 111.7270 -> 112.4825,
+**+0.68%**. This is a small core-throughput improvement, not a new frame-rate
+guarantee. All seven CPU/video/audio fields match. Tomak also matches all
+seven fields, but its first baseline clock window ramped, so its timing is
+not used to claim a gain. Evidence: `F:/GP32/results/resume30-lcd/`,
+`resume30-lcd-wizard-abba.json`, `resume30-lcd-tomak-abba.json`.
+
+The real RetroArch Wizard replay completes 2,401 runs with 1,763,356 stereo
+frames offered and accepted, no pending/partial/zero delivery, and no ALSA
+errors or recovery. Per-frame CPU/IIS/source-audio observations match the
+established standalone replay. Late-300 core mean is 7.853 ms and interval
+p99 17.277 ms; this single run does not establish universal frame pacing or
+physical speaker quality. The screenshot is intact and MainUI resumes.
+Settings and saves are unchanged. The installed production core is
+`2f72fd91c7c1979dab700b13522649ffc3dafbd415bc6b5dcec0c99f3c96c9ed`,
+with the prior version backed up under `gp32-dev/resume30-installed-core-before.so`.
+Evidence: `F:/GP32/results/resume30-core-installed.json`,
+`resume30-audio-runtime-verified.json`, `resume30-audio-summary.json`.
+
+Separately, x64 non-MMU LDM/STM used to expose early base writeback to bus
+callbacks and continue into stale native instructions after callback IRQ,
+JIT flush or JIT disable. The emitter now proves the entire aligned RAM
+span before any transfer or writeback. Rejected spans use the existing
+checked whole-instruction helper, which completes every lane and final
+writeback before deciding whether execution may continue. Direct RAM keeps
+native transfers. BIOS BLOCK reads, PC loads and unusual forms remain on
+the semantic helper; no PC performance gain is claimed from this change.
+
+A native Windows regression exercises LDM/STM, all four address modes, and
+IRQ/flush/disable on the first or last lane. It checks actual callback order,
+PC, values, original base, final writeback, interrupt-handler observations and
+replacement of the following instruction. Baseline has 240 mismatches;
+all 48 cases pass after the fix. Existing callback-PC, single-transfer IRQ
+and loop-fence cases pass. The integrated full Windows native differential
+passes with 115,374 dispatch events and four fallbacks; arena recycling and
+generation wrap also pass. Evidence:
+`F:/GP32/results/resume30-x64-block/EVIDENCE.md`, `integrated-full.log`.
+
+A bounded PC Wizard ABBA check also preserves all seven fields. Baseline
+639.247/612.450 fps and candidate 617.308/668.686 fps show substantial host
+variation, so this unqualified sample supports neither a reliable speedup
+nor a causal regression estimate. Evidence:
+`F:/GP32/results/resume30-winperf/wizard-abba.json`.
+
+Windows, H700, Android arm64-v8a and armeabi-v7a builds pass. The later x64
+source change leaves the stripped AArch64 CPU object byte-identical
+(`1b4f949394764a4390eb2a8fab59337500ea0f51ebf29cd24085853593481b26`),
+so the tested and installed LCD core above is retained. Full-game, physical
+input latency and Android runtime coverage are still incomplete.
