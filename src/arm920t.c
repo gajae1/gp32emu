@@ -2062,10 +2062,12 @@ static int arm_x64_exec_checked(arm920t_t *c, const arm_jit_op_t *op,
                                 uint32_t expected_next, uint32_t generation) {
     int stop = op->stop;
     uint32_t status = c->cpsr & 0xffu;
+    uint32_t epoch = c->jit_cache_epoch;
     uint8_t *ram_base = c->jit_ram_base, *bios_base = c->jit_bios_base;
     arm_jit_exec_classified(c, op);
-    return !stop && !c->halted && !thumb(c) && !c->trace &&
-           c->jit_generation == generation && c->jit_ram_base == ram_base &&
+    return !stop && !c->halted && !thumb(c) && !c->trace && c->jit_enabled &&
+           c->jit_generation == generation && c->jit_cache_epoch == epoch &&
+           c->jit_ram_base == ram_base &&
            c->jit_bios_base == bios_base && (c->cpsr & 0xffu) == status &&
            (c->r[15] & ~3u) == expected_next &&
            !(c->irq_line && !(c->cpsr & I_FLAG)) &&
@@ -2186,12 +2188,10 @@ static void x64_emit_call_helper_op(x64_emit_t *e, const arm_jit_op_t *op) {
     x64_patch32(e, next, e->pos);
 }
 
-/* The fast load/store emitters call bare bus helpers on a RAM/BIOS miss, and
- * such a callback can enable tracing mid-block. Emit this guard once the whole
- * guest instruction is committed: the helper path already materialized r15 at
- * the next PC, so returning done hands a clean resume to arm920t_run, whose
- * interpreter logs the following instructions. Direct RAM/BIOS hits cannot
- * run a callback and always fall through. */
+/* Non-MMU block transfers retain per-lane bus helpers. Check tracing only
+ * after the whole instruction commits; a partially transferred register list
+ * must never be re-executed through the whole-op helper. Single/half transfers
+ * instead use the checked whole-op miss path below. */
 static void x64_emit_trace_bail(x64_emit_t *e, uint32_t done) {
     x64_mov_r32_mem_cpu(e, X64_EAX, trace_off());
     x64_alu_r32_r32(e, 0x85, X64_EAX, X64_EAX); /* test eax,eax */
@@ -2498,29 +2498,6 @@ static void x64_emit_fast_ld_word_eax_addr(x64_emit_t *e) {
     x64_patch32(e, done, e->pos);
 }
 
-static void x64_emit_fast_ld_byte_eax_addr(x64_emit_t *e) {
-    size_t not_ram, done, not_bios;
-    x64_mov_r32_r32(e, X64_R10D, X64_EAX);
-    x64_mov_r32_r32(e, X64_EDX, X64_EAX);
-    x64_alu_r32_imm(e, 5, X64_EDX, ARM_JIT_RAM_BASE_ADDR);
-    x64_alu_r32_imm(e, 7, X64_EDX, ARM_JIT_RAM_SIZE_BYTES - 1u);
-    not_ram = x64_jcc32(e, 0x7);
-    x64_movzx_r32_membase_index8(e, X64_EAX, X64_R14D, X64_EDX);
-    done = x64_jmp32(e);
-    x64_patch32(e, not_ram, e->pos);
-    x64_alu_r32_imm(e, 7, X64_R10D, ARM_JIT_BIOS_SIZE_BYTES - 1u);
-    not_bios = x64_jcc32(e, 0x7);
-    x64_movzx_r32_membase_index8(e, X64_EAX, X64_R15D, X64_R10D);
-    x64_patch32(e, done, e->pos);
-    done = x64_jmp32(e);
-    x64_patch32(e, not_bios, e->pos);
-    x64_mov_mem_cpu_imm(e, arm_reg_off(15), e->guest_pc + 4u);
-    x64_emit_arg0_cpu(e);
-    x64_emit_arg1_u32_from(e, X64_R10D);
-    x64_call_abs(e, (uintptr_t)arm_jit_ld_byte_helper);
-    x64_patch32(e, done, e->pos);
-}
-
 static void x64_emit_fast_st_word_eax_addr_ecx_value(x64_emit_t *e) {
     size_t unaligned, not_ram, done;
     x64_mov_r32_r32(e, X64_R10D, X64_EAX);
@@ -2540,92 +2517,6 @@ static void x64_emit_fast_st_word_eax_addr_ecx_value(x64_emit_t *e) {
     x64_emit_arg1_u32_from(e, X64_R10D);
     x64_emit_arg2_u32_from(e, X64_R9D);
     x64_call_abs(e, (uintptr_t)arm_jit_st_word_helper);
-    x64_patch32(e, done, e->pos);
-}
-
-static void x64_emit_fast_st_byte_eax_addr_ecx_value(x64_emit_t *e) {
-    size_t not_ram, done;
-    x64_mov_r32_r32(e, X64_R10D, X64_EAX);
-    x64_mov_r32_r32(e, X64_R9D, X64_ECX);
-    x64_mov_r32_r32(e, X64_EDX, X64_EAX);
-    x64_alu_r32_imm(e, 5, X64_EDX, ARM_JIT_RAM_BASE_ADDR);
-    x64_alu_r32_imm(e, 7, X64_EDX, ARM_JIT_RAM_SIZE_BYTES - 1u);
-    not_ram = x64_jcc32(e, 0x7);
-    x64_mov_membase_index8_r32(e, X64_R14D, X64_EDX, X64_R9D);
-    done = x64_jmp32(e);
-    x64_patch32(e, not_ram, e->pos);
-    x64_mov_mem_cpu_imm(e, arm_reg_off(15), e->guest_pc + 4u);
-    x64_emit_arg0_cpu(e);
-    x64_emit_arg1_u32_from(e, X64_R10D);
-    x64_emit_arg2_u32_from(e, X64_R9D);
-    x64_call_abs(e, (uintptr_t)arm_jit_st_byte_helper);
-    x64_patch32(e, done, e->pos);
-}
-
-static void x64_emit_fast_ld_sbyte_eax_addr(x64_emit_t *e) {
-    size_t not_ram, done, not_bios;
-    x64_mov_r32_r32(e, X64_R10D, X64_EAX);
-    x64_mov_r32_r32(e, X64_EDX, X64_EAX);
-    x64_alu_r32_imm(e, 5, X64_EDX, ARM_JIT_RAM_BASE_ADDR);
-    x64_alu_r32_imm(e, 7, X64_EDX, ARM_JIT_RAM_SIZE_BYTES - 1u);
-    not_ram = x64_jcc32(e, 0x7);
-    x64_movsx_r32_membase_index8(e, X64_EAX, X64_R14D, X64_EDX);
-    done = x64_jmp32(e);
-    x64_patch32(e, not_ram, e->pos);
-    x64_alu_r32_imm(e, 7, X64_R10D, ARM_JIT_BIOS_SIZE_BYTES - 1u);
-    not_bios = x64_jcc32(e, 0x7);
-    x64_movsx_r32_membase_index8(e, X64_EAX, X64_R15D, X64_R10D);
-    x64_patch32(e, done, e->pos);
-    done = x64_jmp32(e);
-    x64_patch32(e, not_bios, e->pos);
-    x64_mov_mem_cpu_imm(e, arm_reg_off(15), e->guest_pc + 4u);
-    x64_emit_arg0_cpu(e);
-    x64_emit_arg1_u32_from(e, X64_R10D);
-    x64_call_abs(e, (uintptr_t)arm_jit_ld_sbyte_helper);
-    x64_patch32(e, done, e->pos);
-}
-
-static void x64_emit_fast_ld_half_eax_addr(x64_emit_t *e, int sign) {
-    size_t not_ram, done, not_bios;
-    x64_mov_r32_r32(e, X64_R10D, X64_EAX);
-    x64_mov_r32_r32(e, X64_EDX, X64_EAX);
-    x64_alu_r32_imm(e, 5, X64_EDX, ARM_JIT_RAM_BASE_ADDR);
-    x64_alu_r32_imm(e, 7, X64_EDX, ARM_JIT_RAM_SIZE_BYTES - 2u);
-    not_ram = x64_jcc32(e, 0x7);
-    if (sign) x64_movsx_r32_membase_index16(e, X64_EAX, X64_R14D, X64_EDX);
-    else x64_movzx_r32_membase_index16(e, X64_EAX, X64_R14D, X64_EDX);
-    done = x64_jmp32(e);
-    x64_patch32(e, not_ram, e->pos);
-    x64_alu_r32_imm(e, 7, X64_R10D, ARM_JIT_BIOS_SIZE_BYTES - 2u);
-    not_bios = x64_jcc32(e, 0x7);
-    if (sign) x64_movsx_r32_membase_index16(e, X64_EAX, X64_R15D, X64_R10D);
-    else x64_movzx_r32_membase_index16(e, X64_EAX, X64_R15D, X64_R10D);
-    x64_patch32(e, done, e->pos);
-    done = x64_jmp32(e);
-    x64_patch32(e, not_bios, e->pos);
-    x64_mov_mem_cpu_imm(e, arm_reg_off(15), e->guest_pc + 4u);
-    x64_emit_arg0_cpu(e);
-    x64_emit_arg1_u32_from(e, X64_R10D);
-    x64_call_abs(e, sign ? (uintptr_t)arm_jit_ld_shalf_helper : (uintptr_t)arm_jit_ld_half_helper);
-    x64_patch32(e, done, e->pos);
-}
-
-static void x64_emit_fast_st_half_eax_addr_ecx_value(x64_emit_t *e) {
-    size_t not_ram, done;
-    x64_mov_r32_r32(e, X64_R10D, X64_EAX);
-    x64_mov_r32_r32(e, X64_R9D, X64_ECX);
-    x64_mov_r32_r32(e, X64_EDX, X64_EAX);
-    x64_alu_r32_imm(e, 5, X64_EDX, ARM_JIT_RAM_BASE_ADDR);
-    x64_alu_r32_imm(e, 7, X64_EDX, ARM_JIT_RAM_SIZE_BYTES - 2u);
-    not_ram = x64_jcc32(e, 0x7);
-    x64_mov_membase_index16_r32(e, X64_R14D, X64_EDX, X64_R9D);
-    done = x64_jmp32(e);
-    x64_patch32(e, not_ram, e->pos);
-    x64_mov_mem_cpu_imm(e, arm_reg_off(15), e->guest_pc + 4u);
-    x64_emit_arg0_cpu(e);
-    x64_emit_arg1_u32_from(e, X64_R10D);
-    x64_emit_arg2_u32_from(e, X64_R9D);
-    x64_call_abs(e, (uintptr_t)arm_jit_st_half_helper);
     x64_patch32(e, done, e->pos);
 }
 
@@ -2683,7 +2574,7 @@ static void x64_emit_mmu_ram_offset(x64_emit_t *e, unsigned bytes,
     slow[(*nslow)++] = x64_jcc32(e, 0x7);
 }
 
-static void x64_emit_mmu_slow(x64_emit_t *e, const arm_jit_op_t *op,
+static void x64_emit_memory_slow(x64_emit_t *e, const arm_jit_op_t *op,
                              size_t *slow, unsigned nslow) {
     size_t next = x64_jmp32(e);
     for (unsigned i = 0; i < nslow; ++i) x64_patch32(e, slow[i], e->pos);
@@ -2728,7 +2619,7 @@ static int x64_emit_mmu_block_dt(x64_emit_t *e, const arm_jit_op_t *op, uint32_t
         x64_alu_r32_imm(e, 0, X64_EDX, 4u);
     }
     if (w && (!l || !(list & (1u << rn)))) x64_emit_store_arm_reg(e, rn, X64_R9D);
-    x64_emit_mmu_slow(e, op, slow, nslow);
+    x64_emit_memory_slow(e, op, slow, nslow);
     GP32_UNUSED(done);
     return 1;
 }
@@ -2804,42 +2695,6 @@ static int x64_emit_block_dt(x64_emit_t *e, const arm_jit_op_t *op, uint32_t don
     return 1;
 }
 
-static int x64_emit_halfword(x64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
-    const uint32_t insn = op->insn;
-    unsigned rn = (insn >> 16) & 0xfu, rd = (insn >> 12) & 0xfu, rm = insn & 0xfu;
-    int p = GP32_BIT(insn,24), u = GP32_BIT(insn,23), imm = GP32_BIT(insn,22), w = GP32_BIT(insn,21), l = GP32_BIT(insn,20);
-    unsigned sh = (insn >> 5) & 3u;
-    if (rd == 15u) return 0;
-    if (!l && sh != 1u) return 0;
-    if (l && sh == 0u) return 0;
-    if ((!p || w) && (rn == rd || rn == 15u)) return 0;
-    if (!imm && l && (!p || w) && rm == rd) return 0;
-    if (imm) x64_mov_r32_imm(e, X64_ECX, ((insn >> 4) & 0xf0u) | (insn & 0xfu));
-    else x64_emit_load_arm_reg(e, X64_ECX, rm, op->pc);
-    x64_emit_load_arm_reg(e, X64_EAX, rn, op->pc);
-    if (p) x64_alu_r32_r32(e, u ? 0x01 : 0x29, X64_EAX, X64_ECX);
-    if (l) {
-        if (sh == 1u) x64_emit_fast_ld_half_eax_addr(e, 0);
-        else if (sh == 2u) x64_emit_fast_ld_sbyte_eax_addr(e);
-        else x64_emit_fast_ld_half_eax_addr(e, 1);
-        x64_emit_store_arm_reg(e, rd, X64_EAX);
-    } else {
-        x64_mov_r32_r32(e, X64_EDX, X64_EAX);
-        x64_emit_load_arm_reg(e, X64_ECX, rd, op->pc);
-        x64_mov_r32_r32(e, X64_EAX, X64_EDX);
-        x64_emit_fast_st_half_eax_addr_ecx_value(e);
-    }
-    if (!p || w) {
-        if (imm) x64_mov_r32_imm(e, X64_ECX, ((insn >> 4) & 0xf0u) | (insn & 0xfu));
-        else x64_emit_load_arm_reg(e, X64_ECX, rm, op->pc);
-        x64_emit_load_arm_reg(e, X64_EAX, rn, op->pc);
-        x64_alu_r32_r32(e, u ? 0x01 : 0x29, X64_EAX, X64_ECX);
-        x64_emit_store_arm_reg(e, rn, X64_EAX);
-    }
-    x64_emit_trace_bail(e, done);
-    return 1;
-}
-
 static int x64_emit_addrmode2_offset_to_ecx(x64_emit_t *e, uint32_t insn, uint32_t pc) {
     if (!(insn & (1u << 25))) {
         x64_mov_r32_imm(e, X64_ECX, insn & 0xfffu);
@@ -2864,12 +2719,12 @@ static int x64_emit_addrmode2_offset_to_ecx(x64_emit_t *e, uint32_t insn, uint32
     }
 }
 
-/* MMU-on single/half transfers commit only after a proved RAM hit. BIOS,
+/* Single/half transfers commit only after a proved RAM hit. BIOS,
  * devices, cold misses and rejected spans retain the whole-op helper. Word
  * translation aligns the VA before lookup and rotates by the original VA;
  * halfwords instead access contiguous physical bytes, including page edges.
  * PC loads remain on the whole-op helper to commit their control-flow exit. */
-static int x64_emit_mmu_dt(x64_emit_t *e, const arm_jit_op_t *op) {
+static int x64_emit_ram_dt(x64_emit_t *e, const arm_jit_op_t *op) {
     const uint32_t insn = op->insn;
     unsigned rn = (insn >> 16) & 15u, rd = (insn >> 12) & 15u;
     int half = op->kind == ARM_JIT_OP_HALF;
@@ -2891,7 +2746,15 @@ static int x64_emit_mmu_dt(x64_emit_t *e, const arm_jit_op_t *op) {
     if (bytes == 4u) x64_alu_r32_imm(e, 4, X64_EDX, ~3u);
     size_t slow[5];
     unsigned nslow = 0;
-    x64_emit_mmu_ram_offset(e, bytes, slow, &nslow);
+    if (e->mmu) x64_emit_mmu_ram_offset(e, bytes, slow, &nslow);
+    else {
+        /* Reject the entire physical access before any guest mutation. A miss
+         * executes the whole instruction once and checks callback exit state;
+         * callback-free RAM hits need no per-instruction trace/status check. */
+        x64_alu_r32_imm(e, 5, X64_EDX, ARM_JIT_RAM_BASE_ADDR);
+        x64_alu_r32_imm(e, 7, X64_EDX, ARM_JIT_RAM_SIZE_BYTES - bytes);
+        slow[nslow++] = x64_jcc32(e, 0x7);
+    }
     if (l) {
         if (bytes == 4u) {
             x64_mov_r32_membase_index(e, X64_EAX, X64_R14D, X64_EDX);
@@ -2912,43 +2775,7 @@ static int x64_emit_mmu_dt(x64_emit_t *e, const arm_jit_op_t *op) {
         else x64_mov_membase_index8_r32(e, X64_R14D, X64_EDX, X64_ECX);
     }
     if (!p || w) x64_emit_store_arm_reg(e, rn, X64_R9D);
-    x64_emit_mmu_slow(e, op, slow, nslow);
-    return 1;
-}
-
-static int x64_emit_single_dt(x64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
-    const uint32_t insn = op->insn;
-    unsigned rn = (insn >> 16) & 0xfu, rd = (insn >> 12) & 0xfu;
-    int p = GP32_BIT(insn,24), u = GP32_BIT(insn,23), b = GP32_BIT(insn,22), w = GP32_BIT(insn,21), l = GP32_BIT(insn,20);
-    if ((!p || w) && (rn == rd || rn == 15u || (l && rd == 15u))) return 0;
-    if ((insn & (1u << 25)) && l && (!p || w) && ((insn & 0xfu) == rd)) return 0;
-    if (!x64_emit_addrmode2_offset_to_ecx(e, insn, op->pc)) return 0;
-    x64_emit_load_arm_reg(e, X64_EAX, rn, op->pc);
-    if (p) x64_alu_r32_r32(e, u ? 0x01 : 0x29, X64_EAX, X64_ECX); /* add/sub eax,ecx */
-    if (l) {
-        if (b) x64_emit_fast_ld_byte_eax_addr(e);
-        else x64_emit_fast_ld_word_eax_addr(e);
-        if (rd == 15u) {
-            x64_emit_arg0_cpu(e);
-            x64_emit_arg1_u32_from(e, X64_EAX);
-            x64_call_abs(e, (uintptr_t)arm_x64_write_pc_load_helper);
-            x64_emit_return_imm(e, done);
-        } else x64_emit_store_arm_reg(e, rd, X64_EAX);
-    } else {
-        x64_mov_r32_r32(e, X64_EDX, X64_EAX); /* save addr */
-        if (rd == 15u) x64_mov_r32_imm(e, X64_ECX, op->pc + 8u);
-        else x64_emit_load_arm_reg(e, X64_ECX, rd, op->pc);
-        x64_mov_r32_r32(e, X64_EAX, X64_EDX);
-        if (b) x64_emit_fast_st_byte_eax_addr_ecx_value(e);
-        else x64_emit_fast_st_word_eax_addr_ecx_value(e);
-    }
-    if (!p || w) {
-        if (!x64_emit_addrmode2_offset_to_ecx(e, insn, op->pc)) return 0;
-        x64_emit_load_arm_reg(e, X64_EAX, rn, op->pc);
-        x64_alu_r32_r32(e, u ? 0x01 : 0x29, X64_EAX, X64_ECX);
-        x64_emit_store_arm_reg(e, rn, X64_EAX);
-    }
-    x64_emit_trace_bail(e, done);
+    x64_emit_memory_slow(e, op, slow, nslow);
     return 1;
 }
 
@@ -3051,8 +2878,8 @@ static int x64_emit_one(x64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
     switch ((arm_jit_kind_t)op->kind) {
     case ARM_JIT_OP_DATA: return x64_emit_data_proc(e, op, done);
     case ARM_JIT_OP_MUL: return x64_emit_mul(e, op);
-    case ARM_JIT_OP_HALF: return e->mmu ? x64_emit_mmu_dt(e, op) : x64_emit_halfword(e, op, done);
-    case ARM_JIT_OP_SINGLE_DT: return e->mmu ? x64_emit_mmu_dt(e, op) : x64_emit_single_dt(e, op, done);
+    case ARM_JIT_OP_HALF:
+    case ARM_JIT_OP_SINGLE_DT: return x64_emit_ram_dt(e, op);
     case ARM_JIT_OP_BLOCK_DT: return e->mmu ? x64_emit_mmu_block_dt(e, op, done) : x64_emit_block_dt(e, op, done);
     case ARM_JIT_OP_BRANCH: {
         int32_t off = gp32_sign_extend((op->insn & 0x00ffffffu) << 2, 26);

@@ -1820,6 +1820,64 @@ static void case_loop_framed_leaf(void) {
     }
 }
 
+/* A callback-raised IRQ must see the instruction immediately after a complete
+ * transfer, including post-index writeback, before the following MOV retires.
+ * The handler captures r6 in RAM so delayed IRQ delivery remains observable
+ * even after both engines return to the idle branch. */
+static void case_callback_irq_commit(void) {
+    const uint32_t transfers[] = {
+        0xe4942004u, 0xe4d42004u, /* LDR/LDRB r2,[r4],#4 */
+        0xe0d420b4u, 0xe0d420d4u, 0xe0d420f4u, /* LDRH/LDRSB/LDRSH */
+        0xe4842004u, 0xe4c42004u, 0xe0c420b4u, /* STR/STRB/STRH */
+    };
+    const uint32_t handler[] = {
+        0xe5896000u, /* STR r6,[r9]: capture state before next guest MOV */
+        0xe5883000u, /* STR r3,[r8]: acknowledge IRQ */
+        0xe25ef004u, /* SUBS pc,lr,#4: resume after the transfer */
+    };
+    current_case = "callback-irq-commit";
+    for (unsigned t = 0; t < GP32_ARRAY_COUNT(transfers); ++t) {
+        uint32_t program[] = {transfers[t], 0xe3a06001u, 0xeafffffeu};
+        setup_pair();
+        arm920t_set_trace(cpu_ref, 1, NULL, NULL); /* instruction-by-instruction oracle */
+        load_both(program, GP32_ARRAY_COUNT(program));
+        for (unsigned i = 0; i < GP32_ARRAY_COUNT(handler); ++i)
+            set_mem_both(0x18u + 4u * i, handler[i]);
+        set_reg_both(2u, 0x12345678u);
+        set_reg_both(4u, IO_ADDR);
+        set_reg_both(8u, IO_ADDR + 4u);
+        set_reg_both(9u, DATA_ADDR);
+        set_mem_both(DATA_ADDR, 0xdeadbeefu);
+        arm920t_set_cpsr(cpu_jit, 0x1fu);
+        arm920t_set_cpsr(cpu_ref, 0x1fu);
+        bus_jit.observe_cpu = cpu_jit; bus_ref.observe_cpu = cpu_ref;
+        bus_jit.io_raise_at = bus_ref.io_raise_at = 1u;
+        CHECK(arm920t_run(cpu_jit, 32u) == arm920t_run(cpu_ref, 32u), "IRQ transfer budget");
+        compare_state();
+        CHECK(gp32_ld32le(bus_ptr(&bus_ref, DATA_ADDR, 4u)) == 0u,
+              "oracle IRQ must precede the following MOV");
+        CHECK(gp32_ld32le(bus_ptr(&bus_jit, DATA_ADDR, 4u)) == 0u,
+              "native IRQ must precede the following MOV");
+        CHECK(ref_reg(4u) == IO_ADDR + 4u && arm920t_get_reg(cpu_jit, 4u) == IO_ADDR + 4u,
+              "post-index writeback must commit once");
+        CHECK(bus_ref.io_count == 1u && bus_jit.io_count == 1u &&
+              bus_ref.io_acks == 1u && bus_jit.io_acks == 1u, "one transfer and IRQ acknowledge");
+        CHECK(bus_ref.io_pc[0] == CODE_ADDR + 4u && bus_jit.io_pc[0] == CODE_ADDR + 4u,
+              "callback sees transfer PC+4");
+        CHECK(ref_reg(6u) == 1u && arm920t_get_pc(cpu_ref) == CODE_ADDR + 8u,
+              "IRQ returns to the instruction after the committed transfer");
+        gp32_cpu_profile_t profile;
+        arm920t_get_cpu_profile(cpu_jit, &profile);
+        if (profile.supported && profile.native_backend)
+            CHECK(profile.native_block_calls != 0u, "regression requires native execution");
+        printf("callback-irq transfer=%08" PRIx32 " captured=%08" PRIx32
+               " pc=%08" PRIx32 " wb=%08" PRIx32 " native_calls=%" PRIu64 "\n",
+               transfers[t], gp32_ld32le(bus_ptr(&bus_jit, DATA_ADDR, 4u)),
+               bus_jit.io_pc[0], arm920t_get_reg(cpu_jit, 4u), profile.native_block_calls);
+        teardown_pair();
+    }
+}
+
 int main(int argc, char **argv) {
     /* Native gate triage can isolate this mapped physical-boundary case
      * without rerunning unrelated differential workloads. */
@@ -1828,7 +1886,10 @@ int main(int argc, char **argv) {
     int chain_only = argc == 2 && !strcmp(argv[1], "--branch-chain");
     int callback_only = argc == 2 && !strcmp(argv[1], "--callback-pc");
     int loops_only = argc == 2 && !strcmp(argv[1], "--loop-fences");
-    if (loops_only) {
+    int irq_only = argc == 2 && !strcmp(argv[1], "--callback-irq");
+    if (irq_only) {
+        case_callback_irq_commit();
+    } else if (loops_only) {
         case_loop_irq_fence();
         case_loop_smc_epoch();
         case_loop_callback_flush();
@@ -1859,6 +1920,7 @@ int main(int argc, char **argv) {
     case_native_mapped_block();
     case_unframed_leaf();
     case_callback_pc();
+    case_callback_irq_commit();
     case_flags();
     case_shift();
     case_branch();
@@ -1886,7 +1948,7 @@ int main(int argc, char **argv) {
         return 1;
     }
     printf("PASS: arm jit differential (%s), jit events=%" PRIu64 " fallbacks=%" PRIu64 "\n",
-           chain_only ? "branch-chain" : callback_only ? "callback-PC" : (leaf_only ? "unframed-leaf" : (ram_end_only ? "mapped-page-RAM-end" : (loops_only ? "loop-fences" : "flags/shift/branch/mem/half/block/mul/seeded/budget/loop-fences"))),
+           irq_only ? "callback-IRQ" : chain_only ? "branch-chain" : callback_only ? "callback-PC" : (leaf_only ? "unframed-leaf" : (ram_end_only ? "mapped-page-RAM-end" : (loops_only ? "loop-fences" : "flags/shift/branch/mem/half/block/mul/seeded/budget/loop-fences"))),
            jit_events, jit_fallbacks);
     return 0;
 }
