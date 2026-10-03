@@ -252,7 +252,7 @@ static void direct_hle_audio_tick(gp32_t *g, uint32_t cycles);
 static void direct_hle_gpos_timer_tick(gp32_t *g, uint32_t cycles);
 static gp32_status_t gp32_load_fxe_image_internal(gp32_t *g, fxe_image_t *img, int update_reset_image, int scan_file_hle, int init_smc_gpio, int preserve_hle_options);
 static int direct_handle_swi_gpos_timer(gp32_t *g, arm920t_t *cpu, uint32_t pc);
-static void direct_tick_sdk_task_sleepers(gp32_t *g, uint32_t first_task, uint32_t last_task);
+static void direct_tick_sdk_task_sleepers(gp32_t *g, uint32_t first_task, uint32_t last_task, uint32_t ticks);
 static int direct_resume_ready_sdk_task(gp32_t *g, uint32_t pc, uint32_t first_task, uint32_t last_task);
 static int direct_task_record_plausible(gp32_t *g, uint32_t task_addr);
 
@@ -1789,8 +1789,8 @@ static void direct_hle_gpos_timer_tick(gp32_t *g, uint32_t cycles) {
             g->direct_hle_gpos_timer[i].callback != cb || g->direct_hle_gpos_timer[i].tps != tps) continue;
         if (direct_gpos_callback_is_scheduler(g, cb)) {
             direct_gpos_neutralize_internal_timer_tasks(g);
-            uint32_t ticks = fires > 64u ? 64u : fires;
-            for (uint32_t n = 0; n < ticks; ++n) direct_tick_sdk_task_sleepers(g, g->direct_hle_gpos_task_first, g->direct_hle_gpos_task_last);
+            direct_tick_sdk_task_sleepers(g, g->direct_hle_gpos_task_first,
+                                          g->direct_hle_gpos_task_last, fires);
             continue;
         }
         if (direct_try_emulate_gpos_counter_callback(g, cb, fires)) continue;
@@ -2844,7 +2844,7 @@ static int direct_try_file_hle(gp32_t *g) {
 }
 
 static int direct_restore_saved_context(gp32_t *g, uint32_t task_addr);
-static void direct_tick_sdk_task_sleepers(gp32_t *g, uint32_t first_task, uint32_t last_task);
+static void direct_tick_sdk_task_sleepers(gp32_t *g, uint32_t first_task, uint32_t last_task, uint32_t ticks);
 static int direct_resume_ready_sdk_task(gp32_t *g, uint32_t pc, uint32_t first_task, uint32_t last_task);
 
 static int direct_fxe_swi(void *user, arm920t_t *cpu, uint32_t imm, uint32_t pc, int thumb) {
@@ -2946,7 +2946,7 @@ static int direct_fxe_swi(void *user, arm920t_t *cpu, uint32_t imm, uint32_t pc,
         uint32_t cmd = direct_read32_if_ram(g, cmdp);
         if (direct_ram_range(g, cmdp, 4u) &&
             (cmd == 0x20u || cmd == 0x80u || cmd == 0x1000u || cmd == 0x2000u || cmd == 0x4010u)) {
-            direct_tick_sdk_task_sleepers(g, arm920t_get_reg(cpu, 2), arm920t_get_reg(cpu, 3));
+            direct_tick_sdk_task_sleepers(g, arm920t_get_reg(cpu, 2), arm920t_get_reg(cpu, 3), 1u);
             if (direct_resume_ready_sdk_task(g, pc, arm920t_get_reg(cpu, 2), arm920t_get_reg(cpu, 3))) return 1;
         }
         return direct_handle_swi_iis(g, cpu);
@@ -3534,8 +3534,8 @@ static void direct_task_scan_bounds(gp32_t *g, uint32_t first_task, uint32_t las
     if (image_end > GP32_RAM_BASE && image_end < ram_end) *end = image_end;
 }
 
-static void direct_tick_sdk_task_sleepers(gp32_t *g, uint32_t first_task, uint32_t last_task) {
-    if (!g || !g->direct_fxe_mode) return;
+static void direct_tick_sdk_task_sleepers(gp32_t *g, uint32_t first_task, uint32_t last_task, uint32_t ticks) {
+    if (!g || !g->direct_fxe_mode || !ticks) return;
     uint32_t start = GP32_RAM_BASE, end = GP32_RAM_BASE, step = 4u;
     direct_task_scan_bounds(g, first_task, last_task, &start, &end, &step);
     for (uint32_t t = start; t + 0x34u <= end; t += step) {
@@ -3548,12 +3548,15 @@ static void direct_tick_sdk_task_sleepers(gp32_t *g, uint32_t first_task, uint32
         if (!direct_ram_range(g, saved_pc & ~1u, 4u)) continue;
         uint32_t elapsed = s3c2400_debug_read32(g->soc, t + 0x20u);
         uint32_t limit = s3c2400_debug_read32(g->soc, t + 0x24u);
-        if (limit == 0u || elapsed + 1u >= limit) {
+        /* No guest task runs between these ticks. Advance once per task,
+         * retaining every expiry without repeated table scans or overflow. */
+        uint64_t total = (uint64_t)elapsed + ticks;
+        if (total >= limit) {
             if (direct_trace_enabled()) fprintf(stderr, "[direct-hle] task wake t=%08x saved_pc=%08x limit=%u\n", t, saved_pc, limit);
             direct_write32_if_ram(g, t + 0x20u, 0u);
             direct_write32_if_ram(g, t + 0x14u, 2u);
         } else {
-            direct_write32_if_ram(g, t + 0x20u, elapsed + 1u);
+            direct_write32_if_ram(g, t + 0x20u, (uint32_t)total);
         }
     }
 }
