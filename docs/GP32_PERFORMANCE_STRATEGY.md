@@ -203,3 +203,54 @@ state/video/PCM checks. Wizard still measures 50.493 core fps, so CPU/JIT execut
 remains an open target. Validate actual RetroArch pacing and audio before treating
 Blue's 66.806 core fps as frontend headroom. PC shares this cache-management
 improvement; architecture-specific emitters remain separately constrained.
+
+## resume16 AArch64 JIT MMU-state specialization (2026-10-03)
+
+The resume16 candidate removes the per-access MMU decision from translated
+memory operations: CP15 control writes and state loads already invalidate the
+block generation, so each block commits to the MMU enable state captured at
+translation time instead of reloading CP15 register 1 and branching on its M
+bit for every guest access. Memory blocks also pair the x19/x20 callee-save
+loads and stores without changing the stack frame or ABI. The TLB-hit tag
+check, RAM bounds check and slow/helper paths are unchanged. Matched-clock H700 A/B/B/A comparisons
+(baseline bench `cfdfe406f5b3d22f`; candidate `de590d745f667fa7` for Her
+Knights and Wizard, later candidate `b8f483fb84edc316` for Mill) measured
+these median core throughput changes:
+
+| Fixed scene (warmup + measured) | Baseline median core fps | Candidate median core fps | Change |
+| --- | ---: | ---: | ---: |
+| Her Knights, first palace battle (1200 + 1200) | 103.4295 | 106.4085 | +2.88% |
+| Little Wizard, combat state (1200 + 1200) | 142.9080 | 147.4280 | +3.16% |
+| Mill, room->village progression (0 + 1700) | 124.8520 | 130.0965 | +4.20% |
+
+Every run in the three primed comparisons matched all seven CPU/video/PCM
+fields (cycles, pc, cpsr, clock, audio_frames, video_hash, audio_hash),
+reported no disqualifiers or clock-monitor errors, and every measured
+frequency sample read 1512 MHz with the governor left on `conservative`.
+These are uncapped core throughput figures for fixed scenes, not displayed
+frame rates or all-game minimums, and they must not be multiplied with the
+other experimental gains above.
+
+The earlier non-primed Her Knights comparison is disqualified: its cold first
+baseline was still ramping (observed 1416 and 1512 MHz), so that comparison
+cannot establish a speed gain. The retained protocol passes `--prime`, one unscored
+invocation of the same workload before the A/B/B/A order, which allowed the
+device to reach a steady 1.512 GHz in these runs without changing the governor
+or relaxing the measured-clock qualification; the Mill scene's unscored prime run itself
+measured 78.4 fps before the scored runs settled at 124.84-130.38 fps.
+
+The Mill window is a real progression rather than a combat loop: from the
+resume13 in-room state it walks out behind the ginkgo tree into "ROOT Village /
+뿌리마을" and advances an NPC dialogue line by line with A. The canonical
+command re-ran verbatim with all seven dump frames byte-identical and the end
+state reloading in the village; the previous resume13 movement frames also
+reproduce byte-identically from the same runner. Coverage is one title, one
+room, one transition and one dialogue, with no combat, audio, save-game or
+full-game completion claim; the ROM, BIOS and states remain external.
+
+Evidence: `F:/GP32/results/resume16-mmu-her-primed-abba.json`,
+`F:/GP32/results/resume16-mmu-wizard-primed-abba.json`,
+`F:/GP32/results/resume16-mmu-mill-primed-abba.json` (the disqualified cold
+comparison is `F:/GP32/results/resume16-mmu-her-abba.json`) and
+`F:/GP32/results/resume16-mill/README.md`. Final integrated CPU fixes and
+frontend/device validation are recorded separately in [portability progress](PORTABILITY_PROGRESS.md).

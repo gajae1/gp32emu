@@ -16,6 +16,10 @@ every run is hash-exact, no clock monitor reported an error, every run has at
 least two measured frequency samples, and every measured sample across all
 runs reads the same host frequency, so a clock difference is never reported
 as a speed gain.
+
+Use --prime to run one unscored baseline invocation before ABBA when the
+device's normal governor needs more time to reach a steady frequency. This
+does not change the governor or relax the measured-clock qualification.
 """
 import argparse
 import hashlib
@@ -143,6 +147,8 @@ def main():
     parser.add_argument("--candidate", required=True, type=Path)
     parser.add_argument("--args", required=True, help="Identical benchmark arguments for both executables")
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--prime", action="store_true",
+                        help="Run one unscored baseline invocation before ABBA")
     options = parser.parse_args()
     password = os.environ.get("GP32_SSH_PASSWORD")
     if password is None:
@@ -213,6 +219,16 @@ def main():
         if command("sha256sum " + shlex.quote(remote), 10).split()[0] != digest:
             raise RuntimeError("Staged executable hash mismatch")
         command("test -x " + shlex.quote(remote), 10)
+        if options.prime:
+            prime_command = ("cd " + shlex.quote(options.root) + " && " +
+                             shlex.quote(options.baseline) + " " + arguments)
+            status, out, err = execute(prime_command)
+            if status:
+                raise RuntimeError(f"Priming run failed ({status}): {err.strip()}")
+            prime_result, _ = parse_result(out)
+            invocation["priming"] = {"command": prime_command, "result": prime_result,
+                                     "after": snapshot(), "scored": False}
+            print(json.dumps({"priming": invocation["priming"]}), flush=True)
         for label in EXPECTED_ORDER:
             executable = executables[label]
             samples, errors = [], []

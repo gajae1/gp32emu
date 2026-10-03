@@ -242,13 +242,47 @@ taps START for one frame. Full per-frame timelines, cluster measurements and
 hashes: F:/GP32/results/resume13-mil-log.md.
 
 
+## resume16: Mill room-to-village progression
+
+The Korean Mill payload above now has a reproducible 1,700-frame progression:
+walk around the tree, leave along the back wall, enter ROOT Village, and
+advance Korean NPC dialogue with A. This resolves the earlier room-exit
+uncertainty; it does not establish combat or full-game compatibility.
+
+The input sequence below starts from `resume13-mil-stage.state` (SHA-256
+`523eb8c4ddf647ca6bfdb7b8bd72a7191011fbfcf197af194920b3f9b646b743`):
+
+```text
+30f:=DOWN
+200f:=NONE
+220f:=RIGHT
+600f:=NONE
+620f:=UP
+860f:=NONE
+880f:=LEFT
+1300f:=NONE
+1400f:A
+1440f:A
+1480f:A
+1520f:A
+1560f:A
+```
+
+Local evidence: `F:/GP32/results/resume16-mill/README.md`,
+`canonical.txt`, `can-d1000.png`, `can-d1450.png`, and `can-village.state`.
+States and game content remain outside Git. The measured H700 run and its
+limits are recorded in [the performance strategy](GP32_PERFORMANCE_STRATEGY.md).
+
 ## Open items
 
-- The batch is complete (batch result section above). The integrated resume12
-  Her Knights Korea battle comparison passes with exact CPU/video/PCM at matched
-  1.512 GHz: 90.098 -> 101.2165 core fps (+12.34%). Little Wizard combat-entry
-  remains unmeasured on H700. Its European state must not be combined with the
-  newly installed Korean ROM; save states require the matching content.
+- Korean Her Knights and Little Wizard now have H700 combat measurements;
+  see the resume14-16 entries in [portability progress](PORTABILITY_PROGRESS.md)
+  and [performance strategy](GP32_PERFORMANCE_STRATEGY.md). The older character
+  selection and European combat-entry figures above are historical, distinct
+  scenes. Do not combine states and ROMs from different releases.
 - Homebrew and app enumeration is outside these asset roots (catalog doc section 4).
-- Ten catalog titles without a local payload stay hypothesis-only until an owned
-  copy exists; no ROM download will be attempted.
+- Six catalogued Korean releases remain absent from supplied local assets, listed
+  in [Spruce packaging](../packaging/spruce/README.md). Add owned dumps when
+  supplied; catalog entries alone do not establish availability or compatibility.
+- Later areas, bosses, complete playthroughs and physical audio/input latency
+  remain unverified.

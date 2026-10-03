@@ -1192,3 +1192,73 @@ The production H700 core with the input change is now installed, SHA-256
 The previous core is retained at `gp32-dev/resume15-installed-core-before.so`;
 settings are unchanged. The diagnostic wrappers remain separate developer
 artifacts. Deployment evidence: `resume15-core-installed.json`.
+
+
+## resume16: MMU specialization and exception-return correctness
+
+AArch64 translates memory operations for the MMU enable state captured at
+block compilation, removing its per-access control-register load and branch.
+CP15 control writes, reset and state loads invalidate the generation; checked
+helpers leave the block after a generation change. Memory blocks now use paired
+x19/x20 callee saves while preserving the aligned frame and x29/LR chain.
+Matched-clock H700 ABBA core throughput improved 2.88% in Her Knights, 3.16% in
+Little Wizard and 4.20% in Mill; see [the measured windows and qualifications](GP32_PERFORMANCE_STRATEGY.md).
+
+The new same-VA/different-physical-page regression exposed an existing x86-64
+JIT bug: inline memory accesses treated virtual addresses in the RAM/BIOS ranges
+as physical even with the MMU enabled. MMU-on byte, halfword, single and block
+transfers now use the existing translated helper path. Other native operations
+remain enabled. This is a correctness fix and may cost x86 MMU-on performance;
+a validated x86 TLB fast path is still future work. The test exercises guest
+control writes off/on/off, saved-state restoration in both directions, cold
+TLB misses and warm cached blocks.
+
+Separately, ARMv4T exception returns now restore CPSR before aligning the PC.
+LDM with S and PC uses the restored SPSR.T state instead of the loaded address's
+bit zero. Previously, Thumb SWI/IRQ returns could resume two bytes early or in
+ARM state. The fix covers both the interpreter and classified JIT helpers.
+The reproducer failed 22 assertions on the original core and now passes for
+MOVS PC,LR, SUBS PC,LR,#4 and LDM {...,PC}^ with JIT disabled/enabled.
+
+Final integrated validation: Windows CTest 13/13; native H700 exception return
+test and ARM differential test (36,392 events, four expected fallbacks) pass;
+Android ARM64/ARMv7 builds pass. One final H700 replay each of the measured Her,
+Wizard and Mill windows preserves all seven CPU/video/PCM fields after the
+exception fixes. These last replays are exactness checks, not another ABBA
+performance claim. Evidence: `resume16-final-exception-h700.json`,
+`resume16-final-jit-h700.json`, and `resume16-final-scenes.json` under
+`F:/GP32/results/`.
+
+A separate dispatch-counter batching proposal was not retained: no release
+speed improvement was demonstrated, and deferring statistics publication could
+change observations from public bus callbacks. No production audio policy or
+device clock setting was changed in this batch.
+
+
+### Mill through the actual Spruce/RetroArch path
+
+A diagnostic-only wrapper of the final core replayed the 1,700-frame Mill input
+script through Spruce's normal command handoff. The captured final frame shows
+the village and Korean resident dialogue at 60.27 OSD fps. This is one endpoint
+reading, not a minimum or a full-game claim; it also does not prove that every
+headless dialogue tap advanced identically through the frontend.
+
+All 1,249,029 offered stereo frames were accepted by the libretro callback;
+zero partial/zero returns and zero pending output after each run were recorded.
+ALSA accepted 1,453,824 output frames over 1,893 writes, with zero errors and
+zero recovery calls. Core and ALSA totals have different rates and accounting
+windows and must not be directly compared. Threaded video reported 1,687 frames
+pushed / 14 dropped. Physical speaker quality is still unverified.
+
+The bitmask path and script injection were active on all 1,700 runs. RetroArch
+exited normally, MainUI returned, and GP32/shared RetroArch configuration hashes
+were unchanged. Diagnostics remain in the developer directory, separate from
+the production core. Local records: `resume16-runtime-verified.json`,
+`resume16-runtime.log`, `resume16-runtime.png`, `resume16-delivery.json`,
+`resume16-alsa.json`, and the external `resume16_audio_probe.c`.
+
+The final production core is installed at `Emu/GP32/gp32emu_libretro.so`,
+SHA-256 `759e3d8b690c9e86b50853d5ff33034e9de65695d70d2b8b9f6c6a03588c6cb6`.
+The prior core is preserved at `gp32-dev/resume16-installed-core-before.so`;
+configuration hashes remain unchanged. Deployment record:
+`F:/GP32/results/resume16-core-installed.json`.
