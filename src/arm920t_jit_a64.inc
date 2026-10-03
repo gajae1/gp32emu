@@ -443,39 +443,51 @@ static int a64_single_dt(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
     if (!(load ? e->ram_read : e->ram_write) || (wb && op->a == 15u)) return 0;
     size_t slow[4];
     unsigned nslow = 0;
-    if (d & ARM_BC_SD_REGOFF) {
-        a64_guest(e, 1, op->c, op->pc);
-        if (op->e == 3u && !op->f) a64_load(e, 3, offsetof(arm920t_t, cpsr));
-        a64_shift(e, op->e, op->f, 0);
-    }
-    a64_guest(e, 0, op->a, op->pc);
-    /* A pre-indexed access without writeback never needs the base+offset sum
-     * as a guest value, so form it directly in the address register instead of
-     * copying w2 into w0. Post-indexed and writeback forms keep w2. */
-    int folded = (d & ARM_BC_SD_P) && !wb;
-    unsigned sum = folded ? 0u : 2u;
-    if (d & ARM_BC_SD_REGOFF)
-        a64_rr(e, (d & ARM_BC_SD_U) ? 0x0b000000u : 0x4b000000u, sum, 0, 1);
-    else if (op->imm)
-        /* ARM's 12-bit transfer offset fits ADD/SUB W immediate exactly.
-         * Neither form sets flags; W arithmetic preserves address wrap. */
-        a64_u32(e, ((d & ARM_BC_SD_U) ? 0x11000000u : 0x51000000u) |
-                   (op->imm << 10) | sum);
-    else if (!folded)
-        a64_mov(e, 2, 0); /* retain the original base for writeback */
-    if ((d & ARM_BC_SD_P) && !folded) a64_mov(e, 0, 2);
-    if (!byte) {
-        /* Retain the ARM unaligned word rotation. Only a load consumes it, and
-         * UBFIZ w11, w0, #3, #2 builds ((addr & 3) << 3) in one instruction. */
-        if (load) a64_u32(e, 0x53000000u | (29u << 16) | (1u << 10) | 11u);
-        a64_mask(e, 0, 0, ~3u);
+    /* PC-relative immediate addresses are fixed by the decoded instruction.
+     * Fold address/word alignment only, never the loaded memory contents. */
+    int literal = op->a == 15u && !(d & ARM_BC_SD_REGOFF);
+    uint32_t literal_addr = op->pc + 8u + ((d & ARM_BC_SD_U) ? op->imm : 0u - op->imm);
+    if (literal) {
+        a64_imm(e, 0, byte ? literal_addr : literal_addr & ~3u);
+    } else {
+        if (d & ARM_BC_SD_REGOFF) {
+            a64_guest(e, 1, op->c, op->pc);
+            if (op->e == 3u && !op->f) a64_load(e, 3, offsetof(arm920t_t, cpsr));
+            a64_shift(e, op->e, op->f, 0);
+        }
+        a64_guest(e, 0, op->a, op->pc);
+        /* A pre-indexed access without writeback never needs the base+offset sum
+         * as a guest value, so form it directly in the address register instead of
+         * copying w2 into w0. Post-indexed and writeback forms keep w2. */
+        int folded = (d & ARM_BC_SD_P) && !wb;
+        unsigned sum = folded ? 0u : 2u;
+        if (d & ARM_BC_SD_REGOFF)
+            a64_rr(e, (d & ARM_BC_SD_U) ? 0x0b000000u : 0x4b000000u, sum, 0, 1);
+        else if (op->imm)
+            /* ARM's 12-bit transfer offset fits ADD/SUB W immediate exactly.
+             * Neither form sets flags; W arithmetic preserves address wrap. */
+            a64_u32(e, ((d & ARM_BC_SD_U) ? 0x11000000u : 0x51000000u) |
+                       (op->imm << 10) | sum);
+        else if (!folded)
+            a64_mov(e, 2, 0); /* retain the original base for writeback */
+        if ((d & ARM_BC_SD_P) && !folded) a64_mov(e, 0, 2);
+        if (!byte) {
+            /* Retain the ARM unaligned word rotation. Only a load consumes it, and
+             * UBFIZ w11, w0, #3, #2 builds ((addr & 3) << 3) in one instruction. */
+            if (load) a64_u32(e, 0x53000000u | (29u << 16) | (1u << 10) | 11u);
+            a64_mask(e, 0, 0, ~3u);
+        }
     }
     a64_ram_offset(e, slow, &nslow, byte ? 1u : 4u);
     if (load) {
         /* w0 is already the in-RAM offset; register-offset addressing folds
          * the jit_ram_base add into the access itself. */
         a64_u32(e, (byte ? 0x38606800u : 0xb8606800u) | (0u << 16) | (21u << 5) | 1u);
-        if (!byte) a64_rr(e, 0x1ac02c00u, 1, 1, 11); /* rorv w1, w1, w11 */
+        if (!byte) {
+            if (!literal) a64_rr(e, 0x1ac02c00u, 1, 1, 11); /* rorv w1, w1, w11 */
+            else if (literal_addr & 3u)
+                a64_u32(e, 0x13810021u | (((literal_addr & 3u) * 8u) << 10)); /* ror w1 */
+        }
         /* Match bytecode LDR PC: ARM state, word alignment, no interworking. */
         if (op->b == 15u) a64_mask(e, 1, 1, ~3u);
         a64_put_guest(e, op->b, 1);

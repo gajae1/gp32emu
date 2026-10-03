@@ -551,3 +551,42 @@ These measurements do not establish physical input latency or panel refresh.
 All protected installed settings and binaries remained unchanged during the
 private run. Evidence: `resume47-poll/runtime-analysis.json` and
 `resume47-poll-runtime-verified.json` under the local results directory.
+
+## resume50: AArch64 PC-relative address folding
+
+For an immediate PC-relative transfer without writeback, the effective
+address is determined by the decoded PC and offset. The A64 emitter now
+folds its address arithmetic and word alignment during translation. An
+aligned word load also needs no rotate; an unaligned one uses the known
+immediate rotation. Actual memory contents, MMU/RAM validation, slow helper
+fallbacks and guest instruction accounting remain dynamic and unchanged.
+
+Native H700 differential passed (9,115 JIT events / 21 fallbacks), including
+new positive/negative literal offsets, all four byte lanes, stores and changed
+literal data between executions. The Windows test target compiles, and H700
+and Android ARM64 libretro builds pass. This changes only the A64 backend.
+
+Qualified ABBA at observed 1,512 MHz, with all seven CPU/video/PCM fields exact:
+
+| Korea scene | Baseline core fps | Candidate core fps | Median ratio |
+| --- | --- | --- | --- |
+| Her Knights combat, warm 1200 / measured 1200 | 121.962 / 121.954 | 122.560 / 122.466 | 1.0046x |
+| Tomak shooting, warm 300 / measured 600 | 110.901 / 110.636 | 112.057 / 111.298 | 1.0082x |
+
+These are small bounded throughput improvements (0.46% / 0.82%), not minimum
+displayed frame rates or whole-game gains. Both candidate runs exceeded both
+baseline runs in each scene. The same private two-prime/0.2-second sampling
+runner as resume47 was used, with qualification rules unchanged and no
+governor changes. Evidence: `F:/GP32/results/resume50-cpu/`.
+Baseline benchmark SHA-256:
+`9cdd288947d4d6e3a150322f43dde9b6a0e229e0fcd4321622a7ca8b1ae32834`;
+candidate: `1dcac1723555a9bd0ff02c3e81e4e3433917c94eadb057a07f788da9ff1bacf4`.
+
+The parallel LCD review found a possible palette expansion in the indexed
+fallback renderer. The measured scenes use the already optimized contiguous
+renderer, so that change was not implemented or presented as a game speedup.
+Her Knights disassembly also identifies a multi-block timer wait with a
+nested call and single-transfer stack wrappers; the existing bounded leaf
+poll accelerator does not cover that complete cycle. This is a future
+investigation target, not permission to skip those instructions without
+per-access stability and full-state proof.

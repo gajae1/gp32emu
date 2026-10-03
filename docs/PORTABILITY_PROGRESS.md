@@ -3018,3 +3018,13 @@ Existing Thumb/return-yield/timer cases, Windows PCM/save-state checks, and
 Windows/H700/Android ARM64/ARMv7 libretro builds pass. This fixes a concrete
 state-corruption path, not the still separate callback time-accounting issue.
 Evidence: `F:/GP32/results/resume49-banks/`.
+
+### AArch64 PC-relative transfer optimization (resume50)
+
+The native emitter precomputes immediate PC-relative addresses and their
+alignment/rotation while preserving runtime memory reads and mapping guards.
+H700 native differential and two qualified Korean-game ABBA comparisons
+passed with exact CPU/video/PCM results. Measured core throughput improved
+0.46% in Her Knights and 0.82% in Tomak; no displayed-FPS guarantee is implied.
+H700 and Android ARM64 cores build successfully. See the resume50 section in
+`GP32_PERFORMANCE_STRATEGY.md` for evidence, scope and the deferred LCD idea.
