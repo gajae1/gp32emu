@@ -7,6 +7,10 @@
 #include "gp32emu/gp32.h"
 #include "zip.h"
 #include <stdatomic.h>
+#if defined(__aarch64__) && defined(__ARM_NEON) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+#include <arm_neon.h>
+#define GP32_LCD_NEON 1
+#endif
 
 #define BIOS_SIZE 0x80000u
 #define RAM_BASE  0x0c000000u
@@ -1081,6 +1085,39 @@ static inline void lcd_pair16(uint32_t d, uint32_t mode, uint32_t *a, uint32_t *
     else           { *a = v >> 16;     *b = v & 0xffffu; }
 }
 
+/* Convert one bounded row span. AArch64 expands eight direct-color pixels
+ * at a time without random accesses to the 256 KiB color table. Byte loads
+ * accept unaligned guest addresses; the scalar tail never overreads a row. */
+static inline void lcd_row16(const uint8_t *src, uint32_t *dst,
+                             uint32_t words, uint32_t mode) {
+#ifdef GP32_LCD_NEON
+    while (words >= 4u) {
+        uint8x16_t raw = vld1q_u8(src);
+        if (!(mode & 2u)) raw = vreinterpretq_u8_u16(vrev32q_u16(vreinterpretq_u16_u8(raw)));
+        if (mode & 1u) raw = vrev32q_u8(raw);
+        const uint16x8_t v = vreinterpretq_u16_u8(raw);
+        const uint16x8_t intensity = vshlq_n_u16(vandq_u16(v, vdupq_n_u16(1u)), 2);
+        const uint16x8_t mask_hi = vdupq_n_u16(0xf8u);
+        const uint16x8_t mask_lo = vdupq_n_u16(3u);
+        const uint16x8_t r = vorrq_u16(intensity, vorrq_u16(
+            vandq_u16(vshrq_n_u16(v, 8), mask_hi), vandq_u16(vshrq_n_u16(v, 14), mask_lo)));
+        const uint16x8_t g = vorrq_u16(intensity, vorrq_u16(
+            vandq_u16(vshrq_n_u16(v, 3), mask_hi), vandq_u16(vshrq_n_u16(v, 9), mask_lo)));
+        const uint16x8_t b = vorrq_u16(intensity, vorrq_u16(
+            vandq_u16(vshlq_n_u16(v, 2), mask_hi), vandq_u16(vshrq_n_u16(v, 4), mask_lo)));
+        const uint8x8x4_t rgba = {{vmovn_u16(b), vmovn_u16(g), vmovn_u16(r), vdup_n_u8(0xffu)}};
+        vst4_u8((uint8_t *)dst, rgba);
+        src += 16; dst += 8; words -= 4u;
+    }
+#endif
+    while (words--) {
+        uint32_t a, b;
+        lcd_pair16(gp32_ld32le(src), mode, &a, &b);
+        dst[0] = color16_lut[a]; dst[1] = color16_lut[b];
+        src += 4; dst += 2;
+    }
+}
+
 /* Whole-run contiguous scanout.  With OFFSIZE == 0 no read is ever displaced:
  * halfword N of the run sits at start + 2*N no matter where the page counter
  * wraps, so the words the frame consumes are one straight RAM block.  The
@@ -1124,28 +1161,12 @@ static int lcd_render_contiguous(s3c2400_t *s, uint32_t w, uint32_t h, uint32_t 
 #define LCD16_SCANOUT(MODE)                                                  \
             do {                                                             \
                 while (y < h && i + wprow <= words) {                        \
-                    const uint8_t *p = src + (size_t)i * 4u;                 \
-                    uint32_t *dst = row;                                     \
-                    for (uint32_t k = 0; k < wprow; ++k, p += 4, dst += 2) { \
-                        uint32_t a, b;                                       \
-                        lcd_pair16(gp32_ld32le(p), MODE, &a, &b);            \
-                        dst[0] = color16_lut[a];                             \
-                        dst[1] = color16_lut[b];                             \
-                    }                                                        \
+                    lcd_row16(src + (size_t)i * 4u, row, wprow, MODE);         \
                     i += wprow; ++y; row += 240u;                            \
                 }                                                            \
                 /* Fewer words than one row are left, so this row can no     \
                  * longer wrap. */                                           \
-                uint32_t *dst = row;                                         \
-                while (i < words) {                                          \
-                    uint32_t a, b;                                           \
-                    lcd_pair16(gp32_ld32le(src + (size_t)i * 4u), MODE,      \
-                               &a, &b);                                      \
-                    ++i;                                                     \
-                    dst[0] = color16_lut[a];                                 \
-                    dst[1] = color16_lut[b];                                 \
-                    dst += 2;                                                \
-                }                                                            \
+                lcd_row16(src + (size_t)i * 4u, row, words - i, MODE);         \
             } while (0)
         case 0u: LCD16_SCANOUT(0u); break;
         case 1u: LCD16_SCANOUT(1u); break;
