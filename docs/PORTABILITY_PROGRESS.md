@@ -1554,3 +1554,76 @@ The previous core is backed up at
 `/mnt/SDCARD/gp32-dev/resume21-installed-core-before.so`.
 Settings remained unchanged. Installation record:
 `F:/GP32/results/resume21-core-installed.json`.
+
+
+### AArch64 memory addressing and Android page alignment (resume22)
+
+CommandCode's A64 candidate folds pre-indexed, non-writeback memory addresses
+directly into the address register and removes the redundant register copy.
+Word-load rotation uses one `UBFIZ` instead of mask-plus-shift; stores no longer
+compute an unused rotation count. Writeback order, PC behavior, guest flags,
+RAM/TLB guards and helper fallbacks remain unchanged. An ordinary pre-indexed
+word load emits two fewer instructions and a word store three fewer; these
+counts are not whole-game speed claims.
+
+Parent assembled `ubfiz w11, w0, #3, #2` and verified encoding `0x531d040b`.
+The H700 candidate passes the existing 42,769-event JIT differential (4 expected
+fallbacks) and native arena churn/generation-wrap regression. The existing
+memory tests exercise rotation, byte/halfword extensions, writeback and mapped
+RAM/MMIO boundary behavior. No new duplicate test suite was added.
+Evidence: `F:/GP32/results/resume22-a64-jit-h700.json`,
+`resume22-a64-recycle-h700.json`, `resume22-a64/ubfiz.o`.
+
+The independent portability review identified a build-setting dependency:
+Android 64-bit ELF alignment previously relied on the installed NDK default.
+The build now explicitly requests 16 KB max/common page alignment for arm64-v8a
+and x86_64 Android cores, following the official
+[Android page-size guidance](https://developer.android.com/guide/practices/page-sizes).
+NDK 28.2 ARM64 and ARMv7 builds pass; every ARM64 PT_LOAD has `Align 0x4000`.
+This is a build/ELF check, not Android device-runtime acceptance. No host-page
+assumption or publication failure was found in the reviewed A64 JIT path;
+manufacturer policy restrictions and actual Android execution remain untested.
+
+SWE's standalone source-audio probe identified a deliberate guest audio stop:
+IISCON changes from 0x27 to 0x0e, clearing the start bit after DMA2 drains.
+The same standalone replay on H700 produces 407,434 source stereo frames;
+its last nonzero frame is 2231 and silence begins at 2232, matching the PC
+probe. This explains that replay's source silence but does not establish
+physical speaker quality or explain other games' dropouts.
+
+The first libretro source-audio trace initially seemed inconsistent: its last
+nonzero frame was 2077, while the endpoint was one guest frame (987,500 cycles)
+behind the standalone replay. Frame zero revealed the cause: RetroArch runs a
+BIOS frame before loading the auto-state. The diagnostic input sequence had
+already begun, so a one-frame input-phase shift changed the fight and its
+music-stop time. The wrapper now resets/reloads its input script after a
+successful `retro_unserialize`; 2401 total frontend runs allow the initial BIOS
+frame plus 2400 replay frames. This is a diagnostic replay correction, not a
+production core input-behavior change. The stock libretro source is unchanged.
+Evidence: `F:/GP32/results/resume22-audio-h700.json`,
+`resume22-final.csv`, `resume22_aligned_probe.c`.
+
+The corrected runtime completed 2401 frontend runs (2400 after auto-state
+load). Every replay frame matches the standalone PC probe's guest PC, source
+stereo-frame count, nonzero-frame count and IISCON. Its final 5,559,005,000 guest
+cycles / PC 0x0c07788c match the H700 benchmark endpoint; total source frames
+are 407,434 and the final nonzero source frame is 2231 relative to state load.
+This confirms that the earlier source-audio timing difference was diagnostic
+input phase, not a demonstrated x64/A64 or audio transport discrepancy.
+
+All 1,763,356 offered frontend stereo frames were accepted, with no partial/
+zero returns or pending tails and no ALSA errors/recoveries. The image confirms
+actual gameplay with the diagnostic OSD disabled; this time all existing config
+keys were replaced, not appended. Average interval over the last 300 frames is
+17.17 ms, p99 19.02 ms, so sustained 60 fps everywhere is still unproven.
+The two diagnostic changes mean this is not an isolated OSD speed comparison.
+Physical sound quality/input latency and Android execution remain open.
+MainUI returned and user settings stayed unchanged.
+Evidence: `F:/GP32/results/resume22-aligned-summary.json`,
+`resume22-aligned-runtime-verified.json`, `resume22-aligned-runtime.png`.
+
+The production core was atomically installed with SHA-256
+`8375aea8a795c2025314822ca9f9a4af478496d8ebd5c9677bbdc3baca3a63c9`.
+The previous core is backed up at
+`/mnt/SDCARD/gp32-dev/resume22-installed-core-before.so`.
+Installation record: `F:/GP32/results/resume22-core-installed.json`.

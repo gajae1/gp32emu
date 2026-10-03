@@ -222,6 +222,12 @@ if (GP32EMU_BUILD_LIBRETRO)
         set_target_properties(gp32emu_libretro PROPERTIES SUFFIX "_android.so")
         # RetroArch Android loads cores with the .so extension, via the NDK.
         target_link_options(gp32emu_libretro PRIVATE "-Wl,--no-undefined")
+        # Android 15+ devices may use 16 KB pages. NDK r28 and newer align
+        # 64-bit libraries by default; keep NDK r27 and older compliant too.
+        if (ANDROID_ABI STREQUAL "arm64-v8a" OR ANDROID_ABI STREQUAL "x86_64")
+            target_link_options(gp32emu_libretro PRIVATE
+                "-Wl,-z,max-page-size=16384" "-Wl,-z,common-page-size=16384")
+        endif()
     endif()
 endif()
 

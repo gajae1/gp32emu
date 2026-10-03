@@ -414,3 +414,71 @@ Evidence: `F:/GP32/results/resume21-dispatch-{wizard-menu,her}-abba.json`.
 The Windows GP Fight replay was also exact for the outlining-only candidate,
 but its unmonitored short workstation runs are not a qualified performance
 comparison (`resume21-outline-pc-gpfight.json`). No PC speedup is claimed.
+
+
+## resume22: isolate the late Wizard slowdown
+
+The previous 56.74 fps screenshot did not identify which part of the match was
+slow. An external diagnostic wrapper now times each `retro_run`, the actual
+`gp32_run_cycles` call, video/audio callbacks and intervals between runs. It
+links the unchanged resume21 core; timings include scheduling and callback
+waits and do not measure physical button-to-display latency.
+
+In the Korean Wizard saved-state replay, frames 600-1800 spend about 2.5 ms on
+core execution per frame (p99 below 6.9 ms). Most of the remaining time is in
+the frontend's video callback, consistent with normal display pacing. The last
+600 frames, including the loss screen, rise to 11.29 ms mean / 16.42 ms median /
+17.59 ms p95 core time. In that window 183 frames exceed 16.67 ms in core work
+alone. The late audio callback averages 0.206 ms; its maximum is 0.503 ms.
+Thus average combat throughput conceals a late guest-CPU bottleneck.
+
+Measured-window SIGPROF on that late 2100-warmup / 300-frame workload collected
+584 samples: generated JIT 50.68%, `arm920t_run` 33.73%, benchmark hashing/main
+10.10%, LCD 3.25%. The full 1200/1200 combat window has a different mix (JIT
+39.90%, dispatcher 19.70%, hashing 23.17%, LCD 7.13%). Sampling is approximate
+and instrumented FPS is not a candidate speed comparison.
+
+The timing run completed 2400 frames, accepted all 1,762,933 stereo frames,
+and reported zero ALSA errors/recoveries. Settings were unchanged and MainUI
+returned. Diagnostic probes remain outside the repository and installed core.
+Evidence: `F:/GP32/results/resume22-timing-summary.json`,
+`resume22-timing-runtime-verified.json`, `resume22-sample-summary.json`.
+
+Outlining `arm_jit_fetch_unchanged` alone reduced the dispatcher's reserved
+stack from 240 to 224 bytes, but a primed, 1512 MHz ABBA measured only
+69.7685 -> 70.0385 core fps (+0.39%) in the late window. All seven exactness
+fields matched. This marginal candidate remains outside production at
+`F:/GP32/results/resume22-dispatch/`; comparison evidence is
+`resume22-dispatch-wizard-late-abba.json`. Its unscored prime was 52.127 fps
+and ended at 1320 MHz, motivating live runtime frequency observation before
+attributing the prior frontend slowdown entirely to core code.
+
+A follow-up runtime read `scaling_cur_freq` every 60 frames without changing
+the governor. All 40 observations were 1512 MHz, including the late slowdown.
+Late core time remained about 15.7-16.0 ms per frame, with frontend intervals
+about 17.5-17.7 ms. This falsifies governor downclocking as the explanation for
+that observed runtime. Standalone throughput and real frontend timing must not
+be conflated: scheduling, rendering and diagnostic OSD overhead remain possible
+contributors. Evidence: `F:/GP32/results/resume22-clock-summary.json` and
+`resume22-clock-runtime-verified.json`.
+
+An attempted no-OSD replay appended false values to the temporary config,
+but the captured image still shows statistics. The duplicate-key edit did not
+establish that OSD was disabled, so this comparison is invalid for ruling out
+OSD overhead. Its timing artifact is retained as another instrumented replay,
+not an OSD A/B result (`resume22-clean.csv`, `resume22-clean-runtime.png`).
+A future no-OSD run must replace all existing keys and verify the image.
+
+The A64 address-folding candidate subsequently measured 69.8835 -> 70.6575 core
+fps (+1.11%) in the late window under primed ABBA, with 16 matched 1512 MHz
+samples and all seven CPU/video/PCM fields identical. Baseline benchmark SHA:
+`834553a87ff73c75d3cace98520263c704aba8f8c864eb9a29099952d2b3648b`;
+candidate: `e368cf784a9de277e93d640673e016b7522392562bb9fcd12e9f86ef448107d4`.
+Evidence: `F:/GP32/results/resume22-a64-wizard-late-abba.json`.
+
+Her Knights Korean combat also improved: baseline 119.672/119.645, candidate
+120.981/121.087 core fps (medians 119.6585 -> 121.034, +1.15%). All seven fields
+match, with 38 steady 1512 MHz samples. Evidence:
+`F:/GP32/results/resume22-a64-her-abba.json`. These modest, repeatable core
+throughput gains are additional to resume21; they do not establish minimum
+displayed FPS across the library.

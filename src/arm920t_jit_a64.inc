@@ -381,11 +381,16 @@ static int a64_single_dt(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
         a64_shift(e, op->e, op->f, 0);
     } else a64_imm(e, 1, op->imm);
     a64_guest(e, 0, op->a, op->pc);
-    a64_rr(e, (d & ARM_BC_SD_U) ? 0x0b000000u : 0x4b000000u, 2, 0, 1);
-    if (d & ARM_BC_SD_P) a64_mov(e, 0, 2);
+    /* A pre-indexed access without writeback never needs the base+offset sum
+     * as a guest value, so form it directly in the address register instead of
+     * copying w2 into w0. Post-indexed and writeback forms keep w2. */
+    int folded = (d & ARM_BC_SD_P) && !wb;
+    a64_rr(e, (d & ARM_BC_SD_U) ? 0x0b000000u : 0x4b000000u, folded ? 0u : 2u, 0, 1);
+    if ((d & ARM_BC_SD_P) && !folded) a64_mov(e, 0, 2);
     if (!byte) {
-        a64_mask(e, 11, 0, 3u); /* retain ARM unaligned word rotation */
-        a64_lsl(e, 11, 11, 3);
+        /* Retain the ARM unaligned word rotation. Only a load consumes it, and
+         * UBFIZ w11, w0, #3, #2 builds ((addr & 3) << 3) in one instruction. */
+        if (load) a64_u32(e, 0x53000000u | (29u << 16) | (1u << 10) | 11u);
         a64_mask(e, 0, 0, ~3u);
     }
     a64_ram_offset(e, slow, &nslow, byte ? 1u : 4u);
@@ -433,8 +438,11 @@ static int a64_half(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
     else if (op->c == 15u) a64_imm(e, 1, op->pc + 4u);
     else a64_guest(e, 1, op->c, op->pc);
     a64_guest(e, 0, op->a, op->pc);
-    a64_rr(e, (d & ARM_BC_HALF_U) ? 0x0b000000u : 0x4b000000u, 2, 0, 1); /* w2 = base +/- off */
-    if (p) a64_mov(e, 0, 2); /* pre-indexed accesses target the offset address */
+    /* w2 = base +/- off; only a writeback ever republishes it, so pre-indexed
+     * accesses without writeback form the target address in w0 directly. */
+    int folded_half = p && !wb;
+    a64_rr(e, (d & ARM_BC_HALF_U) ? 0x0b000000u : 0x4b000000u, folded_half ? 0u : 2u, 0, 1);
+    if (p && !folded_half) a64_mov(e, 0, 2); /* pre-indexed accesses target the offset address */
     a64_ram_offset(e, slow, &nslow, (load && sh == 2u) ? 1u : 2u);
     if (load) {
         /* ldrh/ldrsb/ldrsh w1, [x21, x0]: A64 already yields the exact
