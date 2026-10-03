@@ -20,7 +20,7 @@ typedef struct a64_emit {
     uint32_t *code;
     size_t pos, cap;
     int fail;
-    int ram_read, ram_write, memory, mmu;
+    int ram_read, ram_write, memory, mmu, leaf;
     int nzcv_valid; /* host NZCV equals the committed guest flags */
     uint32_t expected_next, generation;
 } a64_emit_t;
@@ -193,14 +193,18 @@ static void a64_cmp_imm(a64_emit_t *e, unsigned rn, unsigned imm) {
 }
 static void a64_return(a64_emit_t *e, uint32_t done) {
     a64_imm(e, 0, done);
-    if (e->memory) {
+    if (e->leaf) {
+        a64_u32(e, 0xf84107f3u); /* ldr x19, [sp], #16 */
+    } else if (e->memory) {
         a64_u32(e, 0xa94153f3u); /* ldp x19, x20, [sp, #16] */
         a64_u32(e, 0xf94013f5u); /* ldr x21, [sp, #32] */
     } else a64_u32(e, 0xf9400bf3u); /* ldr x19, [sp, #16] */
-    a64_u32(e, 0xa8c37bfdu); /* ldp x29, x30, [sp], #48 */
+    if (!e->leaf) a64_u32(e, 0xa8c37bfdu); /* ldp x29, x30, [sp], #48 */
     a64_u32(e, 0xd65f03c0u); /* ret */
 }
 static void a64_slow(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
+    /* Fail closed if the leaf allowlist ever disagrees with an emitter. */
+    if (e->leaf) { e->fail = 1; return; }
     a64_rr(e, 0xaa000000u, 0, 31, 19);
     a64_ptr(e, 1, (uintptr_t)op);
     a64_imm(e, 2, e->expected_next);
@@ -710,15 +714,29 @@ static void arm_jit_compile_native(arm920t_t *c, arm_jit_block_t *b) {
             if (arm_jit_ops(c, b)[i].kind == ARM_JIT_OP_SINGLE_DT || arm_jit_ops(c, b)[i].kind == ARM_JIT_OP_HALF ||
                 arm_jit_ops(c, b)[i].kind == ARM_JIT_OP_BLOCK_DT) { e.memory = 1; break; }
     }
+    /* Only simple ALU/branch traces can omit the host frame/LR save. Memory
+     * guards can call helpers even when the usual runtime path hits RAM. */
+    e.leaf = !e.memory;
+    for (unsigned i = 0; e.leaf && i < b->count; ++i) {
+        const arm_jit_op_t *op = &arm_jit_ops(c, b)[i];
+        if (op->cond == 15u || op->kind == ARM_JIT_OP_BRANCH) continue;
+        int test = op->a >= 8u && op->a <= 11u;
+        if (op->kind != ARM_JIT_OP_DATA || (op->d & ARM_BC_DATA_REGSHIFT) ||
+            (!test && op->c == 15u && (op->d & ARM_BC_DATA_S))) e.leaf = 0;
+    }
     a64_u32(&e, 0xd503245fu); /* bti c (NOP on ARMv8.0) */
-    a64_u32(&e, 0xa9bd7bfdu); /* stp x29, x30, [sp, #-48]! */
-    /* Only memory fast paths use x20/x21; helpers preserve them by AAPCS64.
-     * Keep the same aligned frame and x19/LR slots even without their saves. */
-    if (e.memory) {
-        a64_u32(&e, 0xa90153f3u); /* stp x19, x20, [sp, #16] */
-        a64_u32(&e, 0xf90013f5u); /* str x21, [sp, #32] */
-    } else a64_u32(&e, 0xf9000bf3u); /* str x19, [sp, #16] */
-    a64_u32(&e, 0x910003fdu); /* mov x29, sp */
+    /* Leaf traces preserve x29/x30 without touching them. Other traces keep
+     * the aligned frame and x19/LR slots; only memory paths use x20/x21. */
+    if (e.leaf) {
+        a64_u32(&e, 0xf81f0ff3u); /* str x19, [sp, #-16]! */
+    } else {
+        a64_u32(&e, 0xa9bd7bfdu); /* stp x29, x30, [sp, #-48]! */
+        if (e.memory) {
+            a64_u32(&e, 0xa90153f3u); /* stp x19, x20, [sp, #16] */
+            a64_u32(&e, 0xf90013f5u); /* str x21, [sp, #32] */
+        } else a64_u32(&e, 0xf9000bf3u); /* str x19, [sp, #16] */
+        a64_u32(&e, 0x910003fdu); /* mov x29, sp */
+    }
     a64_rr(&e, 0xaa000000u, 19, 31, 0);
     if (e.memory) {
         /* x20 = &c->jit_tlb_page[0] for the whole block. */
