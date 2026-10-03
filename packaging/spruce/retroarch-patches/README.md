@@ -133,3 +133,34 @@ The optional patch is still not installed by the gp32emu package.
 Local evidence: `F:/GP32/results/resume34-frontend/build-manifest.json`,
 `runtime-abba.json`, `published-comparison.json`, `build-fixed-2.log`, and
 `F:/GP32/results/resume34-{base,fixed,fixed2,base2}-audio-runtime-verified.json`.
+
+## Preserving the Korean in-game menu
+
+`de0d03c-korean-igm.patch` translates the historical vendor `spruce_igm.c`
+directly. Apply it after the four Spruce patches above; the ALSA correction is
+independent. It preserves the installed menu's Korean labels and additionally
+translates the automatic slot label. It does not alter RetroArch's general
+translation tables, controller mappings or menu layout.
+
+The vendor file's LF SHA-256 before this patch is
+`0a5470818eb935fd9f61eb23182373a6f7d85087e8d247a382ee30958d42ecba`.
+The patched file's SHA-256 is
+`8a3111e08f7de86b32b438debd0a5f11c706c21ed0a4bbdbd285bd78991842fd`.
+Use `git apply --check` and `git apply` with its absolute patch path, as for
+the ALSA patch. The existing menu font must contain Korean glyphs.
+
+A full build containing both patches has SHA-256
+`e4a4ea8feebe9776b867a23f61380c7fb2b78605a4bcf6d8e31b6144d70e4b50`.
+On the H700's 720x480 display, the title, all six menu labels and numbered slot
+labels were visually checked without clipping. The existing network menu
+hotkey opened and closed the menu; gameplay resumed for 714 further core runs.
+All 863 replay frames matched the standalone reference prefix, and all 634,806
+offered audio frames were accepted with no ALSA errors/recoveries. The fixed
+presentation-frame cap includes paused frames, so this menu interaction run
+is not a 900 emulated-frame performance comparison.
+
+Evidence: `F:/GP32/results/resume35-frontend/{localization.json,build.log,
+preflight.json,menu.png,menu-validation.json}`. This closes the missing-label
+issue for the rebuilt in-game menu. The normal installed RetroArch still has
+not been replaced; physical button navigation, automatic-slot rendering and
+frontend adoption for the normal GP32 launcher remain separate acceptance work.

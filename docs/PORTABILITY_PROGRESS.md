@@ -2404,3 +2404,65 @@ runtime-abba.json,published-comparison.json,build-fixed-2.log}` and
 `F:/GP32/results/resume34-{base,fixed,fixed2,base2}-audio-{summary.json,
 runtime-verified.json,runtime.png}`. Private SDK files, third-party checkouts and
 diagnostic frontend binaries remain outside the repository.
+
+### Controller disconnect and Korean frontend menu (resume35, 2026-10-03)
+
+`retro_set_controller_port_device()` was a no-op, so disabling port 0 could
+still send held physical buttons to the guest. A focused extension of the
+existing GPIO-program input test reproduced this: after setting device NONE,
+the guest read all pressed GPIO bits and the core still queried the frontend
+mask. The core now tracks port 0's base device type, returns released buttons
+unless a joypad is selected, ignores irrelevant ports, and defaults to the
+joypad on initialization. Reconnection uses current input on the next run.
+The minimal libretro header now includes the standard NONE and device-mask
+constants.
+
+The existing input suite passed on Windows and native H700 with JIT off/on,
+bitmask and individual-button protocols, disconnect/reconnect and unrelated
+port changes. Windows, H700, Android arm64 and ARMv7 core builds succeeded.
+This is controller configuration correctness, not a measured physical input
+latency reduction. Native evidence:
+`F:/GP32/results/resume35-frontend/input-h700.json`.
+
+The production H700 core was backed up and replaced after verification.
+Installed SHA-256:
+`7f6111e5d492682ec2be3301cb9bdf007337843892febb4102e7d30e02ef243e`;
+backup: `/mnt/SDCARD/gp32-dev/resume35-installed-core-before.so`.
+The normal RetroArch binary and settings hashes stayed unchanged. Installation
+record: `F:/GP32/results/resume35-core-installed.json`.
+
+The rebuilt frontend now preserves the Korean in-game menu through a small
+source patch, `packaging/spruce/retroarch-patches/de0d03c-korean-igm.patch`,
+instead of edits at binary offsets. It also translates the automatic slot
+label without changing layout or input behavior. Only `spruce_igm.c` was
+recompiled before linking the already ALSA-corrected frontend. The resulting
+binary SHA-256 is
+`e4a4ea8feebe9776b867a23f61380c7fb2b78605a4bcf6d8e31b6144d70e4b50`.
+
+A real H700 screenshot confirms legible Korean title, six labels and numbered
+save/load slots at 720x480. The network menu hotkey opened and closed the menu;
+714 subsequent core runs confirm gameplay resumed. All 863 state-replay frames
+matched the standalone PC/source-audio/IIS reference prefix, and all 634,806
+offered stereo frames were accepted without ALSA errors or recoveries. The
+presentation cap counts paused frames too: 864 core calls is expected for this
+menu run, not the 901 calls required by the uninterrupted benchmark. The
+unchanged benchmark analyzer rejected that count; a separate interaction
+analysis checks the complete executed prefix and the observed 1.241 s pause.
+It makes no benchmark-endpoint or pacing comparison claim.
+
+Two earlier menu probes did not open the menu: a canonical-path case mismatch
+skipped the first, and a duplicate config key kept the second on the original
+command port. After correcting those diagnostic scripts, the third captured
+the actual menu. The command sender now specifies its temporary config; an
+automatically created default config stub from an earlier command was removed
+only after matching its contents and creation-time mtime. Production configs
+were preserved throughout. Evidence:
+`F:/GP32/results/resume35-frontend/{localization.json,build.log,preflight.json,
+menu.png,menu-validation.json}` and
+`F:/GP32/results/resume35-menu3-audio-runtime-verified.json`.
+
+The frontend remains a diagnostic build outside the normal launcher. Physical
+menu navigation, automatic-slot rendering, normal GP32 frontend integration
+and broader audio acceptance remain open. CommandCode's scoped input review
+failed with HTTP 429 before producing findings; the input fix above was
+reproduced and implemented by the parent.
