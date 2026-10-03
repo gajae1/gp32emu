@@ -3118,3 +3118,18 @@ background-only state through the title/menu into a playable-stage display.
 The captured menu/HUD is English; Hangul remains unverified. Cumulative
 language coverage stays at 14 of 20 installed Korea-labelled titles. This
 adds scene-entry evidence, not full gameplay, audio or device acceptance.
+
+### Hany directional response and rejected ALU load pairing (resume57)
+
+Hany Party Game (Korea) now has controlled START / EASY / stage-01 entry and
+visible directional-response evidence. Two Windows replays from the same
+stage state show the player near center without input and at the right side
+after holding RIGHT. No Hangul appears in these captures; cumulative language
+coverage remains 14 of 20. See the game matrix for exact commands and limits.
+
+A separate AArch64 ALU operand-pairing candidate passes H700 native and
+stable-poll checks and preserves exact game outputs. Qualified measurements
+are mixed and small (Her +0.86%, Tomak +0.78%, Wizard -0.58%), so it is not
+promoted. The source and rebuilt production artifacts are restored exactly
+to resume56. No device core or settings were changed in this step. Evidence:
+`F:/GP32/results/resume57-pair/` and `F:/GP32/results/resume57-hany/`.

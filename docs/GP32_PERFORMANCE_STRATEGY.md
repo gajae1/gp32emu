@@ -868,3 +868,30 @@ Installed core is `4d2e93cd8515f378e42c59ce21b94c9ac7b460331b3bcc8e517b49898db8c
 The prior core is backed up as `gp32-dev/resume56-installed-core-before.so`.
 RetroArch was absent during replacement, MainUI was available, and protected
 settings retain their hashes.
+
+## resume57: adjacent ALU operand loads not promoted
+
+A bounded AArch64 candidate replaces two host loads with one W-form LDP
+when an ordinary data-processing instruction reads adjacent guest register
+slots. PC operands, immediate operands and register-controlled shifts retain
+their existing paths; guest register/flag commits and all exit fences remain
+unchanged. This differs from the resume10 LDM/STM transfer experiment.
+
+H700 full native differential (9,510 events / 21 fallbacks) and stable-poll
+equivalence pass. Qualified ABBA at observed 1,512 MHz preserves all seven
+CPU/video/PCM fields, but produces only small mixed changes:
+
+| Korea scene | Baseline core fps | Candidate core fps | Median change |
+| --- | --- | --- | --- |
+| Her Knights, warm 1200 / measured 1200 | 160.432 / 160.386 | 162.254 / 161.309 | +0.86% |
+| Tomak, warm 300 / measured 600 | 112.933 / 112.780 | 113.181 / 114.286 | +0.78% |
+| Little Wizard, warm 2100 / measured 300 | 402.845 / 406.325 | 401.685 / 402.794 | -0.58% |
+
+The candidate was rejected: fewer emitted load instructions do not establish
+a useful end-to-end improvement here. It was never installed. Source is
+restored to resume56, and the rebuilt benchmark/core match the resume56
+SHA-256 values exactly. No additional full-suite run is needed for those
+identical restored artifacts. The candidate source/patch, binaries, qualified
+results, test logs, `rejected.json` and `restored.json` are retained under
+`F:/GP32/results/resume57-pair/`. Candidate benchmark SHA-256 is
+`dfdf624b33a1bf339028cb16695b3debc996f865b1db69298d51ceda74962527`.

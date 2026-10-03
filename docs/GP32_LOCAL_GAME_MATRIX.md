@@ -569,3 +569,26 @@ the commands, with private states and screenshots including `menu-0.png`,
 `menu-1.png` and `menu.png`. ROM SHA-256 is
 `fef67e4ef302a8726e54ee7655acbb9defeb5f97dc347a2593008134577abbd1`.
 No ROM, device library, user save or configuration was changed.
+
+## Hany Party Game stage and directional input (resume57, 2026-10-04)
+
+Three bounded Windows replays advance the private resume28 menu state using
+explicit A press/release: START, EASY, then stage 01. The third reaches a
+scrolling platform stage with the player, life/jump HUD and a decreasing
+timer. The prior menu capture was awaiting these selections, not evidence
+of a gameplay stall.
+
+Two further 300-frame replays start from the identical stage state. One has
+no input; the other holds RIGHT for 120 frames then releases it. At the
+120-frame capture the player remains near screen center without input and
+moves to the right side with RIGHT held. This establishes a directional
+response in this scene, not full controls, physical latency or whole-game
+acceptance. The captures contain English labels; no Hangul was observed.
+The cumulative language count therefore remains 14 of 20.
+
+Evidence: `F:/GP32/results/resume57-hany/` contains `start.json`, `easy.json`,
+`stage.json`, `idle.json`, `right.json`, the exact input scripts and private
+states/images. Compare `idle-120.png` with `right-120.png`. The existing
+Windows executable was used; no H700/audio test is implied. ROM SHA-256 is
+`73da9b61c576504088b92a168a35d39eeb91ba739721c1805bd43127b3b8af00`.
+No ROM, device library, user save or configuration was modified.
