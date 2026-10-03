@@ -644,3 +644,54 @@ Final native H700 differential passed (9,404 JIT events / 21 fallbacks), as
 did the existing stable-poll equivalence suite. Windows nested-call checks
 and Windows/H700/Android ARM64/ARMv7 libretro builds pass. No Android runtime
 or new speaker/input-latency measurement was performed in this step.
+
+## resume52: conditional entry into a call-containing loop
+
+A same-page forward conditional branch can now follow its taken target when
+that short source segment contains an unconditional call and a backedge to
+the current block entry. The lookup is bounded to eight source instructions
+and uses non-mutating code peeks. NV/AL branches, page crossings, already
+recorded targets and a missing successor slot retain the existing layout.
+
+Both native backends explicitly exit to the original PC+4 when the branch
+condition fails, counting that branch exactly once. Portable execution uses
+the same real branch and expected-successor check. AArch64 can keep this
+trace on its existing budgeted self-loop path; loaded stack returns and
+helper/IRQ/cache fences remain active. No guest instruction is skipped by
+the native loop and no new emulated-clock or audio policy is introduced.
+
+The unrestricted forward-loop prototype improved Her Knights but reduced
+Tomak throughput 13.39%. It was rejected. Plain loops keep their existing
+layout: joining them can expose a portable polling candidate where native
+execution was already effective. The final rule targets call-containing
+loops instead. Rejected records are `plain-loop-*` under
+`F:/GP32/results/resume52-branch/`; final qualification records are separate.
+
+Final qualified ABBA at observed 1,512 MHz, all seven CPU/video/PCM fields exact:
+
+| Korea scene | Baseline core fps | Candidate core fps | Median ratio |
+| --- | --- | --- | --- |
+| Her Knights, warm 1200 / measured 1200 | 136.686 / 135.879 | 153.194 / 154.134 | 1.1275x |
+| Tomak, warm 300 / measured 600 | 111.531 / 111.084 | 110.596 / 111.065 | 0.9957x |
+| Little Wizard, warm 2100 / measured 300 | 399.627 / 401.153 | 399.919 / 399.145 | 0.9979x |
+
+Her improved 12.75% relative to resume51. Tomak (-0.43%) and Wizard (-0.21%)
+are near parity; they are not claimed as speedups. The latter retains its
+previous large stable-poll gain. These bounded scene measurements do not
+prove whole-game frame rates or uninterrupted speaker output. Governor,
+guest clocks, audio generation and input scheduling are unchanged.
+
+Measured baseline SHA-256:
+`1eb6ba64c272c0d431d1e333d4b092c94cf33241f5c850899ccfec97067ff8e0`;
+candidate: `40e0f58dc95e202584c10934561bae78b18d7a570211eed6c9f4d237b78da695`.
+A comment-only rebuild changes metadata and the binary hash to
+`b33c4f0476b35c91d5c98521bb507617511faaffa468423836ed3eec75bfa5ce`.
+All runtime-allocated ELF sections, addresses, flags and sizes are identical
+(excluding note metadata), recorded in `runtime-section-equivalence.json`.
+
+Native H700 full differential passed (9,510 JIT events / 21 fallbacks), as did
+stable-poll equivalence. The new forward-loop cases cover taken/untaken paths,
+real framed calls, native-plus-partial budgets, flag-consuming exits and
+post-indexed sentinel reads against single-step execution. The focused cases
+also pass on Windows. Windows/H700/Android ARM64/ARMv7 cores build; no Android
+runtime or new physical audio/input-latency result is implied.

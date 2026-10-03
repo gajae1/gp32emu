@@ -821,6 +821,9 @@ static uint32_t a64_selfloop_prefix(arm920t_t *c, arm_jit_block_t *b) {
         if (op->kind == ARM_JIT_OP_BLOCK_DT &&
             (op->reserved == 3u || op->reserved == 4u || op->reserved == 5u))
             continue;
+        if (op->kind == ARM_JIT_OP_SINGLE_DT &&
+            (op->reserved == 3u || op->reserved == 5u)) continue;
+        if (op->reserved == 8u) continue; /* checked conditional taken successor */
         if (op->reserved && op->reserved != 2u) return 0;
         if (op->kind == ARM_JIT_OP_BRANCH) {
             if ((op->insn & (1u << 24)) && op->reserved != 2u) return 0;
@@ -925,6 +928,18 @@ static void arm_jit_compile_native(arm920t_t *c, arm_jit_block_t *b) {
          * guest op/cycle count and guarded boundary returns remain intact. */
         if (op->reserved == 7u && i + 1u < b->count) {
             a64_store_imm(&e, offsetof(arm920t_t, r) + 15u * 4u, e.expected_next);
+            continue;
+        }
+        if (op->reserved == 8u) {
+            if (!e.nzcv_valid) {
+                a64_load(&e, 3, offsetof(arm920t_t, cpsr));
+                a64_u32(&e, 0xd51b4203u);
+            }
+            size_t taken = a64_jump(&e, op->cond);
+            a64_store_imm(&e, offsetof(arm920t_t, r) + 15u * 4u, op->pc + 4u);
+            a64_return(&e, i + 1u);
+            a64_patch(&e, taken, e.pos);
+            e.nzcv_valid = 0;
             continue;
         }
         size_t skip = 0;

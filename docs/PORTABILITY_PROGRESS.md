@@ -3045,3 +3045,18 @@ slowdowns. Windows nested-call differential and Windows/H700/Android ARM64/
 ARMv7 builds pass. This does not change guest clocks, input or audio scheduling,
 and is not an all-games frame-rate or speaker-quality guarantee.
 Evidence: `F:/GP32/results/resume51-inline/`.
+
+### Conditional loop-entry trace layout (resume52)
+
+Short forward conditional branches can follow their taken path into a loop
+containing a call and a backedge to the current block entry. ARM64 keeps the
+existing native budget and interrupt/cache fences; x64 also emits the precise
+not-taken PC+4 exit. Plain loops retain the previous layout after the broader
+prototype caused a measured Tomak slowdown.
+
+Qualified H700 comparisons give Her Knights +12.75% relative to resume51,
+Tomak -0.43% and Little Wizard -0.21%. The controls are near parity, not claimed
+speedups; all three retain exact CPU/video/PCM results. Native H700 full JIT
+and stable-poll checks, Windows forward-loop differential, and Windows/H700/
+Android ARM64/ARMv7 builds pass. Actual speaker continuity and input latency
+were not newly measured. Evidence: `F:/GP32/results/resume52-branch/`.
