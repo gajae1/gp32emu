@@ -30,3 +30,8 @@ The catalogued Korean releases still absent from the supplied local assets are
 Funny Soccer 2002, Holeman Battle Race 2002, Story of Bug eyed Monster, Winter Is,
 Tales of Windy Land, and Tears - Another Story. Supply the matching owned dumps
 to add them; the packaging does not fetch game content.
+
+For OS builders using the tested RetroArch 1.22.2 revision, see the optional
+[ALSA wait correction](retroarch-patches/README.md). It is a source backport
+with a focused pthread reproduction, not an installed frontend update or a
+verified fix for all gameplay frame pacing.

@@ -2288,3 +2288,61 @@ The production H700 core SHA-256 is
 `2b6b9883a53da4529bfd0f99936c62766a982cf98c5ce9281f7f8041a2920dd1`.
 Installation record: `F:/GP32/results/resume32-core-installed.json`; the previous
 core is retained as `/mnt/SDCARD/gp32-dev/resume32-installed-core-before.so`.
+
+### Frontend FIFO waits and an upstream backport (resume33, 2026-10-03)
+
+Production gp32emu stays at 9ba7bf2. Its installed core SHA-256 remains
+`2b6b9883a53da4529bfd0f99936c62766a982cf98c5ce9281f7f8041a2920dd1`;
+the original RetroArch binary and user settings were preserved. The inspected
+frontend identifies as 1.22.2 / 69a4f0e and its binary SHA-256 is
+`daa4fd17f848004565cb97a0de99d2c28ca9eaf5f6c3758a721e84d2799b0dfd`.
+
+A diagnostic interposer correlated condition waits with the ALSA playback
+thread and per-run monotonic timestamps. Its first version crashed during
+process bootstrap (exit 139, no game frames); MainUI returned and the core and
+settings hashes were verified unchanged. Removing the mutex-unlock hook made
+a `--version` preflight and the subsequent real game run succeed. No diagnostic
+library was installed into the normal game launch path. Consequently the final
+trace observes waits/signals, not the unlock-to-wait race window.
+
+The successful trace recorded 8,742 events without exhausting its 65,536-event
+buffer. There were 220 main-thread waits on the condition signalled by the
+ALSA playback worker, including four game frames with two waits in one audio
+callback. Frame 103 took 22.254 ms in audio, including waits of 6.056 and
+15.942 ms. The driver uses 768-frame periods at 48 kHz (16 ms), while a core
+frame produces roughly 800 frontend-resampled frames. This explains where
+the observed time was spent; it does not identify a discarded notification.
+The 900-frame replay remained guest/source-audio exact and delivered all
+661,990 stereo frames without ALSA errors. Its late-600 interval p99 was
+17.268 ms, showing why one run's late-window timing is insufficient to claim
+an improvement over earlier 32 ms outliers. Evidence:
+`F:/GP32/results/resume33-pacing/{sync2.csv,run-start2.csv,sync2-analysis.json}`,
+`resume33-sync2-audio-runtime-verified.json`, `resume33-sync2-audio-summary.json`.
+
+Two bounded experiments were rejected. An external core submitted half its
+audio before video and half afterwards, retained partial/zero acceptance and
+passed the existing Windows audio/video test. Real Tomak delivery and source
+state remained exact, but late-600 interval p99/max were 30.548/30.647 ms, so
+there was no sufficient reason to adopt its extra callbacks/queue compaction.
+A separate copy of the measurement config selected the existing direct `alsa`
+driver. It preserved guest/source-audio state but recorded one EPIPE underrun
+and successful recovery, with early long intervals still present. Its late-600
+p99/max of 17.244/17.598 ms is not a qualified driver speedup comparison.
+Neither experiment changed the production core or user config. Evidence:
+`F:/GP32/results/resume33-split/`, `resume33-split-audio-summary.json`,
+`resume33-direct-alsa-runtime-verified.json`, `resume33-direct-alsa-summary.json`.
+
+A Sol sidecar verified the separate source-level lost-notification defect and
+reused official upstream fix c55718842aa53425e9851acf4dc4f91844116cad for the
+exact older `alsathread.c`. The backport and pthread reproduction now live in
+`packaging/spruce/retroarch-patches/`, with provenance and adoption limits.
+The patch uses the FIFO predicate mutex for waits/signals and shutdown,
+including the capture path sharing the same structure. The original source
+matches official 69a4f0e byte for byte, and applying the patch was checked.
+The barrier-controlled model reproduced an available-space timeout on the old
+protocol; the corrected write and shutdown modes passed on Windows winpthreads
+and native H700 Linux pthreads. This is a synchronization-model result, not a
+full patched RetroArch build or a demonstrated gameplay pacing fix.
+Native evidence: `F:/GP32/results/resume33-alsa-review/native-check.json`;
+source/patch evidence: `REPORT.md`, `source-manifest.json`, `verification.json`
+in the same directory. A rebuilt frontend comparison remains outstanding.
