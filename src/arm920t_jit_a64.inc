@@ -447,13 +447,22 @@ static int a64_single_dt(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
         a64_guest(e, 1, op->c, op->pc);
         if (op->e == 3u && !op->f) a64_load(e, 3, offsetof(arm920t_t, cpsr));
         a64_shift(e, op->e, op->f, 0);
-    } else a64_imm(e, 1, op->imm);
+    }
     a64_guest(e, 0, op->a, op->pc);
     /* A pre-indexed access without writeback never needs the base+offset sum
      * as a guest value, so form it directly in the address register instead of
      * copying w2 into w0. Post-indexed and writeback forms keep w2. */
     int folded = (d & ARM_BC_SD_P) && !wb;
-    a64_rr(e, (d & ARM_BC_SD_U) ? 0x0b000000u : 0x4b000000u, folded ? 0u : 2u, 0, 1);
+    unsigned sum = folded ? 0u : 2u;
+    if (d & ARM_BC_SD_REGOFF)
+        a64_rr(e, (d & ARM_BC_SD_U) ? 0x0b000000u : 0x4b000000u, sum, 0, 1);
+    else if (op->imm)
+        /* ARM's 12-bit transfer offset fits ADD/SUB W immediate exactly.
+         * Neither form sets flags; W arithmetic preserves address wrap. */
+        a64_u32(e, ((d & ARM_BC_SD_U) ? 0x11000000u : 0x51000000u) |
+                   (op->imm << 10) | sum);
+    else if (!folded)
+        a64_mov(e, 2, 0); /* retain the original base for writeback */
     if ((d & ARM_BC_SD_P) && !folded) a64_mov(e, 0, 2);
     if (!byte) {
         /* Retain the ARM unaligned word rotation. Only a load consumes it, and
