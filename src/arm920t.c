@@ -81,6 +81,7 @@ enum arm_jit_inv_cause {
 #define MODE_ABT 0x17u
 #define MODE_UND 0x1bu
 #define MODE_SYS 0x1fu
+#define HALT_END_RUN 2 /* Transient yield; retain the persistent halt bit. */
 
 /*
  * Firebird-style dynamic ARM block translator.
@@ -607,6 +608,7 @@ void arm920t_flush_jit(arm920t_t *c) { arm920t_jit_invalidate_all(c, ARM_JIT_INV
 uint32_t arm920t_get_pc(const arm920t_t *c) { return c ? c->r[15] : 0; }
 uint64_t arm920t_get_cycles(const arm920t_t *c) { return c ? c->cycles_total : 0; }
 void arm920t_add_idle_cycles(arm920t_t *c, uint32_t cycles) { if (c) c->cycles_total += cycles; }
+void arm920t_stop_run(arm920t_t *c) { if (c) c->halted |= HALT_END_RUN; }
 uint32_t arm920t_get_reg(const arm920t_t *c, unsigned r) { return c && r < 16 ? c->r[r] : 0; }
 uint32_t arm920t_get_cpsr(const arm920t_t *c) { return c ? c->cpsr : 0; }
 uint32_t arm920t_get_cp15(const arm920t_t *c, unsigned reg) { return c && reg < 16 ? c->cp15[reg] : 0; }
@@ -3046,6 +3048,7 @@ uint32_t arm920t_run(arm920t_t *c, uint32_t cycles) {
         else if (thumb(c)) { ARM_PROF_INC(c, interp_thumb_insns); exec_thumb(c); done += 1; }
         else { ARM_PROF_INC(c, interp_arm_insns); exec_arm(c); done += 1; }
     }
+    c->halted &= ~HALT_END_RUN;
     c->cycles_total += done;
     return done;
 }

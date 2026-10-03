@@ -467,6 +467,26 @@ static void test_sustained_backpressure(void) {
           "draining and appending in one run must retain the bounded queue");
 }
 
+static void test_oversized_block_recovery(void) {
+    static const int16_t oversized[12000u * 2u] = {0};
+    start_case();
+    allowance = 0;
+    feed(735u, 44100u, 1000);
+    CHECK(captured_frames == 0u, "oversized recovery fixture queues blocked PCM");
+    allowance = SIZE_MAX;
+    per_call = 17u;
+    scripted_audio = (gp32_audio_desc_t){oversized, 12000u, 44100u};
+    retro_run();
+    CHECK(captured_frames == 735u, "oversized block must drain recoverable backlog before discard");
+    int exact = captured_frames == 735u;
+    for (size_t i = 0; i < captured_frames && exact; ++i)
+        if (captured[i * 2u] != 1000 + (int)i || captured[i * 2u + 1u] != -1000 - (int)i)
+            exact = 0;
+    CHECK(exact, "oversized recovery preserves accepted PCM order and values");
+    CHECK(audio_pending_frames == 0u && scripted_audio.frame_count == 0u,
+          "oversized source is discarded without retaining excessive latency");
+}
+
 static void test_partial_overflow_recovery(void) {
     /* After accepting 300 frames, a full queue can retain only the last
      * 14 old blocks plus the incoming block. Capture that stream independently. */
@@ -496,6 +516,7 @@ int main(int argc, char **argv) {
     test_silence_and_gap();
     test_sustained_backpressure();
     test_partial_overflow_recovery();
+    test_oversized_block_recovery();
     test_video_dupe();
     test_portrait_video();
     test_lifecycle(argc > 1 ? argv[1] : "libretro_audio_test.tmp");

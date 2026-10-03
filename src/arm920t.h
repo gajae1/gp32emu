@@ -37,6 +37,9 @@ arm920t_t *arm920t_create(const arm_bus_t *bus);
 void arm920t_destroy(arm920t_t *cpu);
 void arm920t_reset(arm920t_t *cpu, uint32_t vector);
 uint32_t arm920t_run(arm920t_t *cpu, uint32_t cycles);
+/* From a bus/SWI handler: end the current run after this instruction. The
+ * following run resumes normally; this does not request a guest CPU halt. */
+void arm920t_stop_run(arm920t_t *cpu);
 void arm920t_add_idle_cycles(arm920t_t *cpu, uint32_t cycles);
 void arm920t_set_jit(arm920t_t *cpu, int enabled);
 void arm920t_flush_jit(arm920t_t *cpu);
