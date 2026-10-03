@@ -895,3 +895,38 @@ identical restored artifacts. The candidate source/patch, binaries, qualified
 results, test logs, `rejected.json` and `restored.json` are retained under
 `F:/GP32/results/resume57-pair/`. Candidate benchmark SHA-256 is
 `dfdf624b33a1bf339028cb16695b3debc996f865b1db69298d51ceda74962527`.
+
+## resume58: preserve scheduler ticks with one task-table scan
+
+The direct-FXE GPOS scheduler previously consumed the timer accumulator for
+all expiries but processed at most 64 sleeper ticks. A large elapsed slice
+therefore lost scheduler time. It also scanned the task table once per
+processed tick. An elapsed counter at UINT32_MAX could wrap before its
+deadline comparison and leave an expired task asleep.
+
+The scheduler now passes the complete tick count to the sleeper update.
+Each eligible sleeping task advances once using a widened sum, wakes when
+its deadline is reached, and retains the existing wake state/reset behavior.
+No guest task executes between the previously repeated updates. The SWI
+sleep path explicitly passes one tick. This removes repeated table scans
+and the 64-tick truncation without adding saved state or changing its format.
+
+The regression contrasts one 100-tick batch with 100 one-tick updates,
+checking a crossed deadline, a still-sleeping task and an already-expired
+maximum counter. It fails on the old code and passes on the fix. Windows
+and native H700 timer, PCM and state tests pass. Windows core and Android
+ARM64/ARMv7 builds pass; Android runtime remains unverified.
+
+Her Knights and Tomak H700 replays retain all seven CPU/video/PCM fields
+from the resume56 baseline. These are exactness checks, not qualified speed
+comparisons or fresh physical-speaker tests. The change concerns emulated
+scheduler sleepers, not the guest callback dispatch limit. In particular,
+the separate nested-callback CPU/peripheral time divergence remains open;
+do not treat this fix as callback-time settlement or complete audio timing.
+
+Evidence: `F:/GP32/results/resume58-time/` includes red/green test logs,
+native test results, `game-equivalence.json`, build logs and deployment
+record. Installed core SHA-256 is
+`c089d6c238eaccfeea4062492f7554646ac6f67092199d9604f259a6e5c1530b`;
+previous core backup is `gp32-dev/resume58-installed-core-before.so`.
+Protected device settings remain unchanged.

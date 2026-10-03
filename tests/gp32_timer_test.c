@@ -233,7 +233,62 @@ static void check_callback_register_banks(int jit, uint32_t caller_mode) {
     gp32_destroy(g);
 }
 
+static gp32_t *scheduler_fixture(void) {
+    gp32_t *g = gp32_create(NULL);
+    if (!g) return NULL;
+    const uint32_t callback = GP32_RAM_BASE + 0x2000u;
+    const uint32_t tasks = GP32_RAM_BASE + 0x4000u;
+    const uint32_t entry = GP32_RAM_BASE + 0x6000u;
+    const uint32_t limits[] = {80u, 200u, UINT32_MAX};
+    const uint32_t elapsed[] = {0u, 7u, UINT32_MAX};
+    g->direct_fxe_mode = 1;
+    s3c2400_write32(g->soc, 0x14800004u, 0x3000u);
+    s3c2400_write32(g->soc, 0x14800014u, 0u);
+    g->direct_hle_gpos_scheduler_callback = callback;
+    g->direct_hle_gpos_task_first = tasks;
+    g->direct_hle_gpos_task_last = tasks + 2u * 0x34u;
+    g->direct_hle_gpos_timers_enabled = 1;
+    g->direct_hle_gpos_timer[0].configured = 1;
+    g->direct_hle_gpos_timer[0].enabled = 1;
+    g->direct_hle_gpos_timer[0].callback = callback;
+    g->direct_hle_gpos_timer[0].tps = 200000u;
+    for (unsigned i = 0; i < 3u; ++i) {
+        uint32_t task = tasks + i * 0x34u;
+        uint32_t stack = GP32_RAM_BASE + 0x8000u + i * 0x100u;
+        s3c2400_write32(g->soc, task, stack);
+        s3c2400_write32(g->soc, task + 0x14u, 4u);
+        s3c2400_write32(g->soc, task + 0x20u, elapsed[i]);
+        s3c2400_write32(g->soc, task + 0x24u, limits[i]);
+        s3c2400_write32(g->soc, task + 0x30u, entry);
+        s3c2400_write32(g->soc, stack + 60u, entry);
+    }
+    return g;
+}
+
+static void check_scheduler_catchup(void) {
+    gp32_t *batch = scheduler_fixture(), *split = scheduler_fixture();
+    CHECK(batch && split, "create scheduler catchup cores");
+    if (!batch || !split) { gp32_destroy(batch); gp32_destroy(split); return; }
+    CHECK(direct_run_clock_hz(batch) == 66000000u, "scheduler fixture clock");
+    /* The same elapsed time must wake the same tasks regardless of slicing. */
+    direct_hle_gpos_timer_tick(batch, 33000u); /* 100 scheduler ticks. */
+    for (unsigned i = 0; i < 100u; ++i) direct_hle_gpos_timer_tick(split, 330u);
+    uint32_t tasks = GP32_RAM_BASE + 0x4000u;
+    CHECK(s3c2400_debug_read32(batch->soc, tasks + 0x14u) == 2u,
+          "scheduler does not discard ticks beyond 64");
+    CHECK(s3c2400_debug_read32(batch->soc, tasks + 0x34u + 0x20u) == 107u,
+          "sleeping task retains every elapsed tick");
+    CHECK(s3c2400_debug_read32(batch->soc, tasks + 2u * 0x34u + 0x14u) == 2u,
+          "expired maximum counter wakes without wraparound");
+    for (unsigned i = 0; i < 3u * 0x34u; i += 4u)
+        CHECK(s3c2400_debug_read32(batch->soc, tasks + i) ==
+              s3c2400_debug_read32(split->soc, tasks + i), "scheduler slice equivalence");
+    gp32_destroy(batch);
+    gp32_destroy(split);
+}
+
 int main(void) {
+    check_scheduler_catchup();
     for (int jit = 0; jit <= 1; ++jit) {
         check_timer(jit, 0, 0);
         check_timer(jit, 0x12u, 0); /* IRQ banks SP/LR. */

@@ -3133,3 +3133,21 @@ are mixed and small (Her +0.86%, Tomak +0.78%, Wizard -0.58%), so it is not
 promoted. The source and rebuilt production artifacts are restored exactly
 to resume56. No device core or settings were changed in this step. Evidence:
 `F:/GP32/results/resume57-pair/` and `F:/GP32/results/resume57-hany/`.
+
+### Scheduler catch-up and task wake overflow (resume58)
+
+Direct-FXE scheduler ticks beyond 64 per update were being discarded after
+the timer accumulator had already consumed them. The sleeper update now
+applies all ticks in one task-table scan, with a widened elapsed/deadline
+comparison to prevent maximum-counter wraparound. The SWI sleep path still
+advances exactly one tick. Saved-state layout is unchanged.
+
+The old implementation fails the new batch-versus-split timer regression.
+The fix passes Windows/H700 timer, PCM and state tests, builds for Android
+ARM64/ARMv7, and retains exact Her Knights/Tomak replay outputs. The H700
+core is installed with a backup and unchanged protected settings. This is a
+scheduler correctness/cost improvement, not a measured whole-game FPS gain.
+Nested guest callbacks still advance CPU time without fully settling the
+peripheral clocks; pending-event and activation-order handling remain needed
+before that separate defect can be fixed safely. Evidence and hashes are in
+the resume58 performance section and `F:/GP32/results/resume58-time/`.
