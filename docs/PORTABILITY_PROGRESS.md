@@ -2772,3 +2772,48 @@ fractional instruction credit on repeated short CPU runs. A single carried
 residue passed 21,152 bounded arithmetic cases and preserves 1:1 accounting.
 This is design evidence only: idle/HLE integration and save-state semantics
 remain unresolved, and no 166/200 MHz option is implemented or validated.
+
+### H700 GP32-only low-delay presentation profile (resume43)
+
+The previous grace experiment's FIFO starvation was resolved in an isolated
+Her Knights replay by widening RetroArch's audio rate-control bound from 0.5%
+to 2%. This is a permitted correction range, not a fixed playback-speed change.
+The thread still queued presentation early, leaving mean software delivery
+delay at 32.525 ms. Moving the wait to current-frame completion reduced it to
+16.019 ms, with no missing presented frames or central-window audio padding.
+
+RetroArch's existing `video_threaded = false` path then achieved the same
+practical outcome. The custom completion-wait code was archived locally and
+the external source restored; no new thread/queue mechanism is shipped.
+`packaging/spruce/h700/gp32emu.cfg` contains only the existing video setting and
+`audio_rate_control_delta = 0.020000`. It is scoped to the gp32emu core on the
+tested H700, retaining the device's global config and other emulator policies.
+
+Her Knights' 2,400-frame replay retained exact per-frame guest/source-audio
+fields and final pixels. In its late 1,200 frames, the native-video diagnostic
+had interval p99 17.135 ms and zero intervals over 20 ms; the current production
+frontend loaded the same core override and measured 17.148 ms, maximum 17.825 ms.
+Its full retro_run p99 was 16.649 ms, which bounds software delivery delay in
+this synchronous path. Tomak's 900-frame replay retained the same fields and
+pixels, with late-600 interval p99 17.219 ms, maximum 20.134 ms. Both diagnostic
+runs had zero central-window FIFO padding, all audio accepted and no ALSA
+errors. The production frontend did not carry the explicit padding trace.
+
+The new override was installed only after confirming that no gp32emu.cfg
+existed. Installed SHA-256:
+`966d726af5d5b2f0412276ededfb27ba2394053565902f64f09447c370ac1eb9`.
+The production core/frontend, GP32 core options, system entry and global
+RetroArch config retained their hashes. ROMs and saves were not modified.
+These are bounded replay results at sampled 1,512 MHz, not all-game or physical
+input/audio acceptance. The approximately 59.57-Hz software output cadence must
+not be relabelled as a verified physical refresh rate or universal 60 fps.
+Evidence: `F:/GP32/results/resume43-rate/`, particularly `installed-profile.json`,
+`n1-integrity.json`, `t1-integrity.json`, and the matching runtime logs.
+
+The installed override was then exercised with the existing production frontend
+and a private Tomak replay. The Korean Spruce in-game menu opened, closed and
+returned to moving gameplay; normal exit restored MainUI. Guest/source-audio
+fields match the corresponding reference prefix, all audio was accepted, and
+protected file hashes remained unchanged. Menu pause affects the number of
+completed core frames, so this run is an integration check, not a new pacing
+comparison (`installed-menu.json`, `p2-menu.png`).
