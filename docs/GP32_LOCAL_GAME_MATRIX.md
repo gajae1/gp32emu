@@ -26,12 +26,18 @@ Funny Soccer 2002, Holeman Battle Race 2002, Story of Bug eyed Monster, Winter
 Is, Tales of Windy Land, and Tears - Another Story. They require additional
 owned dumps; the installed 20 are not the complete GP32 catalog.
 
-Current device evidence: `F:/GP32/results/resume38-library/verified.json`,
-`installed-sha256.txt`, and `F:/GP32/results/resume38-ui-korean-list.png`.
-The system-selection capture `resume38-ui-awake.png` shows the GP32 image
+Latest device verification (resume65):
+`F:/GP32/results/resume65-soc-phase/library.json` freshly matches all 20
+installed payloads against the original installation manifest, with no missing
+or extra game files. Local top-level filenames still contain the same supplied
+titles. `F:/GP32/results/resume38-ui-resume65-awake.png` shows the 20-entry
+game list. The system-selection capture
+`F:/GP32/results/resume38-ui-resume65-systems.png` shows the GP32 image
 inside its tile, with the other systems and labels unobscured. Its deployed
 canvas is 120 x 130 pixels and alpha bounds are `(0,25)-(120,83)`, matching
 the neighboring systems' canvas dimensions. The selected icon is `gp32.png`.
+No additional image resize or library rewrite was needed. Earlier evidence
+remains in `F:/GP32/results/resume38-library/`.
 
 ## Historical inventory and replay evidence
 
