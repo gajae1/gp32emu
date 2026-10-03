@@ -142,6 +142,37 @@ static void check_callback_starts_timer(int jit, unsigned starter, int reconfigu
     gp32_destroy(g);
 }
 
+static void check_halfword_thumb_callback(int jit) {
+    gp32_t *g = gp32_create(NULL);
+    CHECK(g != NULL, "create halfword Thumb callback core");
+    if (!g) return;
+    const uint32_t callback = GP32_RAM_BASE + 0x2002u;
+    const uint32_t counter = GP32_RAM_BASE + 0x3000u;
+    const uint32_t caller_pc = GP32_RAM_BASE + 0x5002u;
+    g->direct_fxe_mode = 1;
+    direct_install_stubs(g);
+    gp32_set_jit(g, jit);
+    s3c2400_write16(g->soc, callback - 2u, 0x4770u); /* BX lr: wrong aligned entry. */
+    s3c2400_write16(g->soc, callback, 0x204du);      /* MOV r0,#77 */
+    s3c2400_write16(g->soc, callback + 2u, 0x6008u); /* STR r0,[r1] */
+    s3c2400_write16(g->soc, callback + 4u, 0x4770u); /* BX lr */
+    arm920t_set_cpsr(g->cpu, ARM_MODE_SVC | ARM_I_FLAG | ARM_F_FLAG | ARM_T_FLAG);
+    /* Reach a halfword-only PC through execution, independently of set_reg. */
+    s3c2400_write16(g->soc, caller_pc - 2u, 0x46c0u); /* NOP */
+    arm920t_set_reg(g->cpu, 15, caller_pc - 2u);
+    CHECK(arm920t_run(g->cpu, 1u) == 1u, "advance Thumb caller one instruction");
+    CHECK(arm920t_get_pc(g->cpu) == caller_pc, "fixture reaches halfword caller PC");
+    uint32_t cpsr = arm920t_get_cpsr(g->cpu);
+    CHECK(direct_call_guest_function3(g, callback | 1u, 0u, counter, 0u), "Thumb callback returns");
+    CHECK(s3c2400_debug_read32(g->soc, counter) == 77u, "callback starts at exact Thumb halfword");
+    CHECK(arm920t_get_pc(g->cpu) == caller_pc, "callback restores exact Thumb caller PC");
+    CHECK(arm920t_get_cpsr(g->cpu) == cpsr, "callback preserves Thumb caller state");
+    arm920t_set_cpsr(g->cpu, cpsr & ~ARM_T_FLAG);
+    arm920t_set_reg(g->cpu, 15, caller_pc | 1u);
+    CHECK(arm920t_get_pc(g->cpu) == (caller_pc & ~3u), "ARM PC remains word aligned");
+    gp32_destroy(g);
+}
+
 int main(void) {
     for (int jit = 0; jit <= 1; ++jit) {
         check_timer(jit, 0, 0);
@@ -151,6 +182,7 @@ int main(void) {
         check_callback_starts_timer(jit, 0u, 0);
         check_callback_starts_timer(jit, 1u, 0);
         check_callback_starts_timer(jit, 0u, 1);
+        check_halfword_thumb_callback(jit);
     }
     if (failures) return 1;
     puts("PASS: direct GPOS callbacks during vblank wait, disabled timer, split budget and CPU context");

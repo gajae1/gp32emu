@@ -563,7 +563,13 @@ void arm920t_destroy(arm920t_t *c) {
 }
 void arm920t_set_trace(arm920t_t *c, int en, arm_log_fn log, void *user) { if (c) { c->trace = en; c->log = log; c->log_user = user; } }
 void arm920t_set_swi_handler(arm920t_t *c, arm_swi_fn fn, void *user) { if (c) { c->swi = fn; c->swi_user = user; } }
-void arm920t_set_reg(arm920t_t *c, unsigned reg, uint32_t value) { if (c && reg < 16u) { c->r[reg] = (reg == 15u) ? (value & ~3u) : value; } }
+void arm920t_set_reg(arm920t_t *c, unsigned reg, uint32_t value) {
+    if (c && reg < 16u) {
+        /* PC alignment follows the current instruction set, including when
+         * entering or restoring a halfword-aligned Thumb HLE callback. */
+        c->r[reg] = reg == 15u ? (value & ~(thumb(c) ? 1u : 3u)) : value;
+    }
+}
 void arm920t_set_cpsr(arm920t_t *c, uint32_t value) { if (c) set_cpsr_full(c, value); }
 void arm920t_reset(arm920t_t *c, uint32_t vector) {
     if (!c) return;
