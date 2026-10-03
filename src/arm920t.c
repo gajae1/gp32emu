@@ -2082,6 +2082,7 @@ static void x64_rex(x64_emit_t *e, int w, int r, int x, int b) {
 static void x64_modrm(x64_emit_t *e, int mod, int reg, int rm) { x64_u8(e, (uint8_t)(((mod & 3) << 6) | ((reg & 7) << 3) | (rm & 7))); }
 static uint32_t arm_reg_off(unsigned r) { return (uint32_t)offsetof(arm920t_t, r) + r * 4u; }
 static uint32_t cpsr_off(void) { return (uint32_t)offsetof(arm920t_t, cpsr); }
+static uint32_t trace_off(void) { return (uint32_t)offsetof(arm920t_t, trace); }
 static uint32_t jit_ram_base_off(void) { return (uint32_t)offsetof(arm920t_t, jit_ram_base); }
 static uint32_t jit_bios_base_off(void) { return (uint32_t)offsetof(arm920t_t, jit_bios_base); }
 
@@ -2182,6 +2183,20 @@ static void x64_emit_call_helper_op(x64_emit_t *e, const arm_jit_op_t *op) {
     x64_alu_r32_r32(e, 0x85, X64_EAX, X64_EAX);
     size_t next = x64_jcc32(e, 0x5);
     x64_emit_return_imm(e, e->done);
+    x64_patch32(e, next, e->pos);
+}
+
+/* The fast load/store emitters call bare bus helpers on a RAM/BIOS miss, and
+ * such a callback can enable tracing mid-block. Emit this guard once the whole
+ * guest instruction is committed: the helper path already materialized r15 at
+ * the next PC, so returning done hands a clean resume to arm920t_run, whose
+ * interpreter logs the following instructions. Direct RAM/BIOS hits cannot
+ * run a callback and always fall through. */
+static void x64_emit_trace_bail(x64_emit_t *e, uint32_t done) {
+    x64_mov_r32_mem_cpu(e, X64_EAX, trace_off());
+    x64_alu_r32_r32(e, 0x85, X64_EAX, X64_EAX); /* test eax,eax */
+    size_t next = x64_jcc32(e, 0x4);            /* trace==0 -> keep running */
+    x64_emit_return_imm(e, done);
     x64_patch32(e, next, e->pos);
 }
 
@@ -2785,6 +2800,7 @@ static int x64_emit_block_dt(x64_emit_t *e, const arm_jit_op_t *op, uint32_t don
             x64_emit_fast_st_word_eax_addr_ecx_value(e);
         }
     }
+    x64_emit_trace_bail(e, done);
     return 1;
 }
 
@@ -2820,7 +2836,7 @@ static int x64_emit_halfword(x64_emit_t *e, const arm_jit_op_t *op, uint32_t don
         x64_alu_r32_r32(e, u ? 0x01 : 0x29, X64_EAX, X64_ECX);
         x64_emit_store_arm_reg(e, rn, X64_EAX);
     }
-    GP32_UNUSED(done);
+    x64_emit_trace_bail(e, done);
     return 1;
 }
 
@@ -2932,6 +2948,7 @@ static int x64_emit_single_dt(x64_emit_t *e, const arm_jit_op_t *op, uint32_t do
         x64_alu_r32_r32(e, u ? 0x01 : 0x29, X64_EAX, X64_ECX);
         x64_emit_store_arm_reg(e, rn, X64_EAX);
     }
+    x64_emit_trace_bail(e, done);
     return 1;
 }
 
@@ -3189,10 +3206,12 @@ static uint32_t arm_jit_run(arm920t_t *c, uint32_t cycles) {
     uint32_t total = 0;
     uint32_t poll_pc = UINT32_MAX, poll_count = 0, poll_cpsr = 0;
     uint32_t poll_regs[16];
-    while (total < cycles && !c->halted && !thumb(c)) {
+    /* A checked native helper can enable tracing during a bus callback.
+     * Return to arm920t_run so the next instruction uses exec_arm's logger. */
+    while (total < cycles && !c->halted && !thumb(c) && !c->trace) {
         if (total && (c->irq_line || c->fiq_line)) {
             maybe_irq(c);
-            if (c->halted || thumb(c)) break;
+            if (c->halted || thumb(c) || c->trace) break;
         }
         uint32_t pc = c->r[15] & ~3u;
         arm_jit_block_t *b = c->jit_blocks ? &c->jit_blocks[(pc >> 2) & ARM_JIT_BLOCK_MASK] : NULL;

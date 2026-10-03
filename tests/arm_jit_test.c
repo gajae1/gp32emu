@@ -36,6 +36,14 @@ typedef struct {
     arm920t_t *observe_cpu;
     uint32_t io_pc[8];
     unsigned io_count;
+    /* Loop callback controls: raise IRQ once at the Nth IO_ADDR access and
+     * count writes to IO_ADDR+4 that acknowledge it.  Zero when unused, so
+     * the pre-existing cases observe no behavior change. */
+    uint32_t io_raise_at;
+    unsigned io_acks;
+    unsigned io_flush_at, io_flushes;
+    unsigned io_trace_at, trace_lines;
+    unsigned io_return_at;
 } test_bus_t;
 
 static test_bus_t bus_jit, bus_ref;
@@ -61,11 +69,32 @@ static uint8_t *bus_ptr(test_bus_t *b, uint32_t a, size_t bytes) {
     if (a >= RAM_BASE && (uint64_t)(a - RAM_BASE) + bytes <= RAM_SIZE) return b->ram + (a - RAM_BASE);
     return NULL;
 }
+static void tb_trace(void *user, const char *line) {
+    test_bus_t *b=user;
+    if(line && (line[0]=='A' || line[0]=='T')) ++b->trace_lines;
+}
+
 static uint32_t tb_io_value(test_bus_t *b, uint32_t a) {
     if (b->observe_cpu && a == IO_ADDR) {
         uint32_t pc = arm920t_get_pc(b->observe_cpu);
         if (b->io_count < GP32_ARRAY_COUNT(b->io_pc)) b->io_pc[b->io_count] = pc;
         ++b->io_count;
+        /* Assert inside MMIO; the native helper must exit before executing
+         * the following instruction with an unmasked pending interrupt. */
+        if (b->io_raise_at && b->io_count == b->io_raise_at)
+            arm920t_set_irq(b->observe_cpu, 1);
+        if (b->io_trace_at && b->io_count == b->io_trace_at)
+            arm920t_set_trace(b->observe_cpu, 1, tb_trace, b);
+        if (b->io_return_at && b->io_count == b->io_return_at) {
+            uint32_t sp=arm920t_get_reg(b->observe_cpu,13u);
+            uint8_t *slot=bus_ptr(b,sp,4u);
+            if(slot) gp32_st32le(slot,CODE_ADDR+0x0cu);
+        }
+        if (b->io_flush_at && b->io_count == b->io_flush_at) {
+            gp32_st32le(b->bios + CODE_ADDR + 0x0cu, 0xe3a06077u); /* MOV r6,#0x77 */
+            arm920t_flush_jit(b->observe_cpu);
+            ++b->io_flushes;
+        }
         return pc;
     }
     return UINT32_MAX;
@@ -101,6 +130,12 @@ static void tb_write32(void *u, uint32_t a, uint32_t v) {
     test_bus_t *b = (test_bus_t *)u;
     uint8_t *p = bus_ptr(b, a, 4u);
     if (p) gp32_st32le(p, v);
+    else if (b->observe_cpu && a == IO_ADDR + 4u) {
+        /* Guest IRQ-acknowledge write from inside the vector handler.  Kept
+         * out of io_count so the loop's read count stays deterministic. */
+        arm920t_set_irq(b->observe_cpu, 0);
+        ++b->io_acks;
+    }
     else (void)tb_io_value(b, a);
 }
 static uint8_t *tb_fastmem(void *u, uint32_t a, size_t bytes, int write) {
@@ -1611,6 +1646,180 @@ static void case_native_mapped_ram_end(void) {
     teardown_pair();
 }
 
+/* Loop boundaries must preserve instruction budgets, MMIO, interrupts,
+ * invalidation and returns. Oracle assertions supplement full CPU/RAM
+ * comparisons. Finite callback/leaf cases expose native-call counts without
+ * counting the idle B at the end as evidence of useful chaining. */
+
+/* Loop body reads an MMIO word whose helper raises IRQ on the 50th access;
+ * the 0x18 vector handler counts the event in RAM and clears the line with
+ * an acknowledge write.  A chained backedge that skips the IRQ fence would
+ * run extra iterations or defer the handler past a chunk compare. */
+static const uint32_t P_LOOP_IRQ[] = {
+    0xE3A010C8u, /* MOV  r1, #200          ; loop iterations                */
+    0xE3A04414u, /* MOV  r4, #0x14000000   ; IO_ADDR                       */
+    0xE2848004u, /* ADD  r8, r4, #4        ; IRQ acknowledge MMIO          */
+    0xE3A0940Cu, /* MOV  r9, #0x0c000000   ; RAM_BASE: handler counter     */
+    0xE3A05000u, /* MOV  r5, #0            ; accumulator                   */
+    0xE5942000u, /* loop: LDR r2, [r4]     ; MMIO read, raises IRQ @ #50    */
+    0xE0855002u, /*       ADD r5, r5, r2                                  */
+    0xE2511001u, /*       SUBS r1, r1, #1                                 */
+    0x1AFFFFFBu, /*       BNE  loop        ; conditional backward B         */
+    0xE1A00005u, /* MOV  r0, r5                                          */
+    0xEAFFFFFEu, /* B .                                                   */
+};
+static const uint32_t P_IRQ_HANDLER[] = {  /* at vector 0x18               */
+    0xE599C000u, /* LDR  r12, [r9]         ; irq_count++                   */
+    0xE28CC001u, /* ADD  r12, r12, #1                                    */
+    0xE589C000u, /* STR  r12, [r9]                                        */
+    0xE5883000u, /* STR  r3, [r8]          ; acknowledge: drop IRQ line    */
+    0xE25EF004u, /* SUBS pc, lr, #4       ; return + SPSR restore          */
+};
+static void case_loop_irq_fence(void) {
+    current_case = "loop-irq-fence";
+    setup_pair();
+    load_both(P_LOOP_IRQ, GP32_ARRAY_COUNT(P_LOOP_IRQ));
+    for (unsigned i = 0; i < GP32_ARRAY_COUNT(P_IRQ_HANDLER); ++i)
+        set_mem_both(0x18u + i * 4u, P_IRQ_HANDLER[i]);
+    arm920t_set_cpsr(cpu_jit, 0x1fu);   /* system mode, IRQ/FIQ unmasked */
+    arm920t_set_cpsr(cpu_ref, 0x1fu);
+    bus_jit.observe_cpu = cpu_jit;
+    bus_ref.observe_cpu = cpu_ref;
+    bus_jit.io_raise_at = bus_ref.io_raise_at = 50u;
+    run_chunks();
+    CHECK(ref_reg(1) == 0u, "IRQ loop did not run all 200 iterations");
+    CHECK(ref_reg(0) == 200u * (CODE_ADDR + 0x18u),
+          "IRQ loop accumulated the wrong MMIO values");
+    CHECK(arm920t_get_pc(cpu_ref) == CODE_ADDR + 0x28u,
+          "IRQ loop did not park on B self");
+    CHECK(gp32_ld32le(bus_ref.ram) == 1u, "IRQ handler did not run exactly once");
+    CHECK(bus_ref.io_acks == 1u, "guest did not acknowledge the IRQ once");
+    CHECK(bus_ref.io_count == 200u, "oracle saw a wrong MMIO read count");
+    CHECK(bus_jit.io_count == bus_ref.io_count && bus_jit.io_acks == bus_ref.io_acks,
+          "jit MMIO/ack counts diverged from the interpreter");
+    CHECK((arm920t_get_cpsr(cpu_ref) & 0xffu) == 0x1fu,
+          "handler return did not restore system mode with IRQ unmasked");
+    gp32_cpu_profile_t profile;
+    arm920t_get_cpu_profile(cpu_jit, &profile);
+    if (profile.supported && profile.native_backend)
+        CHECK(profile.native_block_calls != 0u, "IRQ loop never entered native code");
+    teardown_pair();
+}
+
+/* Guest STR patches the head before a conditional cache invalidation.
+ * MCR ends translation, so this case checks the conservative fallback and
+ * subsequent code revalidation; callback_flush below covers an active chain. */
+static const uint32_t P_LOOP_SMC[] = {
+    0xE3A00000u, /* MOV  r0, #0            ; accumulator                   */
+    0xE3A01006u, /* MOV  r1, #6            ; iterations                    */
+    0xE3A07B01u, /* MOV  r7, #0x400        ; CODE_ADDR                     */
+    0xE2877014u, /* ADD  r7, r7, #0x14     ; r7 = &loop head (patch site)  */
+    0xE59F601Cu, /* LDR  r6, [pc, #0x1c]   ; patch word: MOV r2, #0x77     */
+    0xE2800001u, /* loop: ADD r0, r0, #1   ; patched to MOV r2, #0x77      */
+    0xE3510003u, /*       CMP r1, #3                                      */
+    0x05876000u, /*       STREQ r6, [r7]   ; one-time code patch           */
+    0x0E070F15u, /*       MCREQ p15,0,r0,c7,c5,0 ; I-cache invalidate      */
+    0xE2511001u, /*       SUBS r1, r1, #1                                 */
+    0x1AFFFFF9u, /*       BNE  loop        ; conditional backward B         */
+    0xEAFFFFFEu, /* B .                                                   */
+    0xEAFFFFFEu, /* B .  (padding keeps the literal out of the flow)       */
+    0xE3A02077u, /* .word MOV r2, #0x77    ; literal patch word            */
+};
+static void case_loop_smc_epoch(void) {
+    current_case = "loop-smc-epoch";
+    setup_pair();
+    load_both(P_LOOP_SMC, GP32_ARRAY_COUNT(P_LOOP_SMC));
+    run_chunks();
+    CHECK(ref_reg(0) == 4u, "patched loop head kept executing stale ADD");
+    CHECK(ref_reg(1) == 0u, "SMC loop did not finish");
+    CHECK(ref_reg(2) == 0x77u, "patched MOV never executed");
+    CHECK(ref_reg(7) == CODE_ADDR + 0x14u, "patch address register wrong");
+    CHECK(arm920t_get_pc(cpu_ref) == CODE_ADDR + 0x2Cu,
+          "SMC loop did not park on B self");
+    CHECK(gp32_ld32le(bus_ptr(&bus_ref, CODE_ADDR + 0x14u, 4u)) == 0xE3A02077u,
+          "guest code store did not land");
+    CHECK(!memcmp(bus_jit.bios, bus_ref.bios, BIOS_SIZE),
+          "code image diverged between engines");
+    gp32_cpu_profile_t smc_profile;
+    arm920t_get_cpu_profile(cpu_jit, &smc_profile);
+    if (smc_profile.supported && smc_profile.native_backend)
+        CHECK(smc_profile.native_block_calls != 0u, "SMC loop never entered native code");
+    teardown_pair();
+}
+
+/* An MMIO callback can invalidate native code while a self-loop is active.
+ * Unlike guest MCR (which terminates translation), this load's normal path
+ * continues to a chainable backedge. Patch the head and use the public flush. */
+static void case_loop_callback_flush(void) {
+    const uint32_t program[] = {
+        0xe3a00000u, 0xe3a010c8u, 0xe3a04414u,
+        0xe2800001u, /* loop: ADD r0,r0,#1; patched after read 50 */
+        0xe5942000u, /* LDR r2,[r4]: MMIO callback */
+        0xe2511001u, 0x1afffffbu, 0xeafffffeu
+    };
+    current_case = "loop-callback-flush";
+    setup_pair();
+    load_both(program, GP32_ARRAY_COUNT(program));
+    bus_jit.observe_cpu=cpu_jit; bus_ref.observe_cpu=cpu_ref;
+    bus_jit.io_flush_at=bus_ref.io_flush_at=50u;
+    /* Stop before the idle B, so the profile covers the memory loop itself. */
+    CHECK(arm920t_run(cpu_jit, 150u)==arm920t_run(cpu_ref,150u), "pre-flush budget");
+    compare_state();
+    CHECK(arm920t_run(cpu_jit, 653u)==arm920t_run(cpu_ref,653u), "flush/loop budget");
+    compare_state();
+    CHECK(ref_reg(0)==50u && ref_reg(6)==0x77u && ref_reg(1)==0u, "callback patch outcome");
+    CHECK(arm920t_get_pc(cpu_ref)==CODE_ADDR+0x1cu, "exact loop retirement");
+    CHECK(bus_ref.io_count==200u && bus_jit.io_count==200u, "loop MMIO count");
+    CHECK(bus_ref.io_flushes==1u && bus_jit.io_flushes==1u, "one callback flush");
+    CHECK(!memcmp(bus_jit.bios,bus_ref.bios,BIOS_SIZE), "callback code image");
+    gp32_cpu_profile_t profile;
+    arm920t_get_cpu_profile(cpu_jit,&profile);
+    if(profile.supported) printf("loop-flush native_calls=%" PRIu64 " native_insns=%" PRIu64 "\n",profile.native_block_calls,profile.native_arm_insns);
+    teardown_pair();
+}
+
+static void case_loop_callback_trace(void) {
+    const uint32_t program[]={0xe3a00000u,0xe3a010c8u,0xe3a04414u,
+        0xe2800001u,0xe5942000u,0xe2511001u,0x1afffffbu,0xeafffffeu};
+    current_case="loop-callback-trace";
+    setup_pair(); load_both(program,GP32_ARRAY_COUNT(program));
+    bus_jit.observe_cpu=cpu_jit;bus_ref.observe_cpu=cpu_ref;
+    bus_jit.io_trace_at=bus_ref.io_trace_at=3u;
+    CHECK(arm920t_run(cpu_jit,43u)==arm920t_run(cpu_ref,43u),"trace callback budget");
+    compare_state();
+    CHECK(bus_ref.trace_lines==30u,"trace starts after the third MMIO read");
+    CHECK(bus_jit.trace_lines==bus_ref.trace_lines,"native callback must enable next-instruction tracing");
+    teardown_pair();
+}
+
+static void case_loop_framed_leaf(void) {
+    /* BL -> PUSH LR; MMIO read; POP PC. A callback can replace the real
+     * stacked return on repetition 50; chaining must honor that exit. */
+    const uint32_t program[]={0xeb00001eu,0xe2511001u,0x1afffffcu,0xeafffffeu};
+    for(unsigned redirect=0;redirect<2u;++redirect) {
+        current_case=redirect?"loop-framed-changed-return":"loop-framed-leaf";
+        setup_pair();load_both(program,GP32_ARRAY_COUNT(program));
+        set_mem_both(CODE_ADDR+0x80u,0xe92d4000u);
+        set_mem_both(CODE_ADDR+0x84u,0xe5940000u);
+        set_mem_both(CODE_ADDR+0x88u,0xe8bd8000u);
+        set_reg_both(1u,200u);set_reg_both(4u,IO_ADDR);
+        set_reg_both(13u,DATA_ADDR+0x100u);
+        bus_jit.observe_cpu=cpu_jit;bus_ref.observe_cpu=cpu_ref;
+        bus_jit.io_return_at=bus_ref.io_return_at=redirect?50u:0u;
+        CHECK(arm920t_run(cpu_jit,31u)==arm920t_run(cpu_ref,31u),"framed partial budget");
+        compare_state();
+        CHECK(arm920t_run(cpu_jit,1169u)==arm920t_run(cpu_ref,1169u),"framed remaining budget");
+        compare_state();
+        CHECK(ref_reg(1)==(redirect?151u:0u),"framed loop iterations");
+        CHECK(ref_reg(13)==DATA_ADDR+0x100u,"framed stack restored");
+        CHECK(arm920t_get_pc(cpu_ref)==CODE_ADDR+0x0cu,"framed exit PC");
+        CHECK(bus_ref.io_count==(redirect?50u:200u) && bus_jit.io_count==bus_ref.io_count,"framed MMIO count");
+        gp32_cpu_profile_t profile;arm920t_get_cpu_profile(cpu_jit,&profile);
+        if(!redirect && profile.supported) printf("loop-framed native_calls=%" PRIu64 " native_insns=%" PRIu64 "\n",profile.native_block_calls,profile.native_arm_insns);
+        teardown_pair();
+    }
+}
+
 int main(int argc, char **argv) {
     /* Native gate triage can isolate this mapped physical-boundary case
      * without rerunning unrelated differential workloads. */
@@ -1618,7 +1827,14 @@ int main(int argc, char **argv) {
     int leaf_only = argc == 2 && !strcmp(argv[1], "--unframed-leaf");
     int chain_only = argc == 2 && !strcmp(argv[1], "--branch-chain");
     int callback_only = argc == 2 && !strcmp(argv[1], "--callback-pc");
-    if (chain_only) {
+    int loops_only = argc == 2 && !strcmp(argv[1], "--loop-fences");
+    if (loops_only) {
+        case_loop_irq_fence();
+        case_loop_smc_epoch();
+        case_loop_callback_flush();
+        case_loop_callback_trace();
+        case_loop_framed_leaf();
+    } else if (chain_only) {
         case_branch_chain();
     } else if (callback_only) {
         case_callback_pc();
@@ -1655,6 +1871,11 @@ int main(int argc, char **argv) {
     case_mul();
     case_seeded();
     case_budget();
+    case_loop_irq_fence();
+    case_loop_smc_epoch();
+    case_loop_callback_flush();
+    case_loop_callback_trace();
+    case_loop_framed_leaf();
     }
     current_case = "summary";
     if (jit_events == 0)
@@ -1665,7 +1886,7 @@ int main(int argc, char **argv) {
         return 1;
     }
     printf("PASS: arm jit differential (%s), jit events=%" PRIu64 " fallbacks=%" PRIu64 "\n",
-           chain_only ? "branch-chain" : callback_only ? "callback-PC" : (leaf_only ? "unframed-leaf" : (ram_end_only ? "mapped-page-RAM-end" : "flags/shift/branch/mem/half/block/mul/seeded/budget")),
+           chain_only ? "branch-chain" : callback_only ? "callback-PC" : (leaf_only ? "unframed-leaf" : (ram_end_only ? "mapped-page-RAM-end" : (loops_only ? "loop-fences" : "flags/shift/branch/mem/half/block/mul/seeded/budget/loop-fences"))),
            jit_events, jit_fallbacks);
     return 0;
 }
