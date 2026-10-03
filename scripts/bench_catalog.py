@@ -115,7 +115,9 @@ def inspect_zip(path, max_entry_bytes, max_ratio, budget):
             out["entries"].append({"name": zi.filename, "size": zi.file_size,
                                    "compressed": zi.compress_size, "rom": rom,
                                    "unsafe": unsafe})
-            if rom and not unsafe and zi.filename not in (o["name"] for o in out["entries"][:-1]):
+            # ZIP permits duplicate member names. They can contain different
+            # ROM bytes, so never silently pick the first matching name.
+            if rom and not unsafe:
                 candidates.append(zi)
         if not candidates:
             out["status"] = "no-rom-entry"

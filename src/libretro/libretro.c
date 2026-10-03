@@ -44,6 +44,7 @@ static uint64_t last_video_frame = UINT64_MAX;
 static const uint32_t *last_video_ptr;
 static int have_last_video;
 static int can_dupe;
+static int input_bitmasks;
 static int effects_ready;
 static char system_dir[4096];
 static char save_dir[4096];
@@ -350,11 +351,14 @@ static void invalidate_last_video(void) {
     have_last_video = 0;
 }
 
+static void refresh_input_bitmask_support(void);
+
 void retro_init(void) {
     set_default_dirs();
     reset_audio();
     if (!effects_ready) effects_ready = gp32_video_effects_init(&effects);
     refresh_variables();
+    refresh_input_bitmask_support();
 }
 void retro_deinit(void) {
     destroy_emu_with_save();
@@ -368,9 +372,37 @@ void retro_deinit(void) {
 void retro_reset(void) { if (emu) { gp32_reset(emu); gp32_video_effects_reset(&effects); reset_audio(); invalidate_last_video(); } }
 void retro_set_controller_port_device(unsigned port, unsigned device) { (void)port; (void)device; }
 
+/* Optional single-query joypad polling. A frontend that answers
+ * RETRO_ENVIRONMENT_GET_INPUT_BITMASKS can return every RetroPad button from
+ * one input_state call; frontends that do not know the command, or that
+ * explicitly report no support, keep the original per-button queries.
+ * The boolean is pre-set so a frontend that relies on its return value alone
+ * still enables the fast path, and it stays false unless the call succeeds. */
+static void refresh_input_bitmask_support(void) {
+    bool supported = true;
+    if (!environ_cb || !environ_cb(RETRO_ENVIRONMENT_GET_INPUT_BITMASKS, &supported)) supported = false;
+    input_bitmasks = supported ? 1 : 0;
+}
+
 static uint32_t read_buttons(void) {
     if (!input_state_cb) return 0;
     uint32_t m = 0;
+    if (input_bitmasks) {
+        /* Bit N of the mask is RETRO_DEVICE_ID_JOYPAD_<N>; the 16-button
+         * bitmask arrives sign-extended through the int16_t return value. */
+        uint32_t bits = (uint16_t)input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_MASK);
+        if (bits & (1u << RETRO_DEVICE_ID_JOYPAD_A)) m |= GP32_BUTTON_A;
+        if (bits & (1u << RETRO_DEVICE_ID_JOYPAD_B)) m |= GP32_BUTTON_B;
+        if (bits & (1u << RETRO_DEVICE_ID_JOYPAD_L)) m |= GP32_BUTTON_L;
+        if (bits & (1u << RETRO_DEVICE_ID_JOYPAD_R)) m |= GP32_BUTTON_R;
+        if (bits & (1u << RETRO_DEVICE_ID_JOYPAD_START)) m |= GP32_BUTTON_START;
+        if (bits & (1u << RETRO_DEVICE_ID_JOYPAD_SELECT)) m |= GP32_BUTTON_SELECT;
+        if (bits & (1u << RETRO_DEVICE_ID_JOYPAD_UP)) m |= GP32_BUTTON_UP;
+        if (bits & (1u << RETRO_DEVICE_ID_JOYPAD_DOWN)) m |= GP32_BUTTON_DOWN;
+        if (bits & (1u << RETRO_DEVICE_ID_JOYPAD_LEFT)) m |= GP32_BUTTON_LEFT;
+        if (bits & (1u << RETRO_DEVICE_ID_JOYPAD_RIGHT)) m |= GP32_BUTTON_RIGHT;
+        return m;
+    }
     if (input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_A)) m |= GP32_BUTTON_A;
     if (input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_B)) m |= GP32_BUTTON_B;
     if (input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L)) m |= GP32_BUTTON_L;
@@ -646,6 +678,7 @@ static gp32_t *create_core_with_optional_bios(const char *bios_path) {
 bool retro_load_game(const struct retro_game_info *game) {
     set_default_dirs();
     refresh_variables();
+    refresh_input_bitmask_support();
     destroy_emu_with_save();
     reset_audio();
     invalidate_last_video();
