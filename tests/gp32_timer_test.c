@@ -163,13 +163,18 @@ static void check_halfword_thumb_callback(int jit) {
     CHECK(arm920t_run(g->cpu, 1u) == 1u, "advance Thumb caller one instruction");
     CHECK(arm920t_get_pc(g->cpu) == caller_pc, "fixture reaches halfword caller PC");
     uint32_t cpsr = arm920t_get_cpsr(g->cpu);
+    uint64_t before = arm920t_get_cycles(g->cpu);
     CHECK(direct_call_guest_function3(g, callback | 1u, 0u, counter, 0u), "Thumb callback returns");
+    CHECK(arm920t_get_cycles(g->cpu) - before == 4u, "callback stops after three Thumb instructions and return trap");
     CHECK(s3c2400_debug_read32(g->soc, counter) == 77u, "callback starts at exact Thumb halfword");
     CHECK(arm920t_get_pc(g->cpu) == caller_pc, "callback restores exact Thumb caller PC");
     CHECK(arm920t_get_cpsr(g->cpu) == cpsr, "callback preserves Thumb caller state");
     arm920t_set_cpsr(g->cpu, cpsr & ~ARM_T_FLAG);
     arm920t_set_reg(g->cpu, 15, caller_pc | 1u);
     CHECK(arm920t_get_pc(g->cpu) == (caller_pc & ~3u), "ARM PC remains word aligned");
+    before = arm920t_get_cycles(g->cpu);
+    CHECK(arm920t_run(g->cpu, 1u) == 1u, "caller can execute after callback yield");
+    CHECK(arm920t_get_cycles(g->cpu) - before == 1u, "callback yield does not leave CPU halted");
     gp32_destroy(g);
 }
 

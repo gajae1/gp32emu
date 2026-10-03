@@ -2613,6 +2613,7 @@ static int direct_file_hle_swi(gp32_t *g, arm920t_t *cpu, uint32_t id, uint32_t 
     if (id == 0x20u) {
         g->direct_hle_callback_returned = 1u;
         arm920t_set_reg(cpu, 15, lr);
+        if (g->direct_hle_callback_running) arm920t_stop_run(cpu);
         return 1;
     }
     if (!g->direct_fpk_asset_count) return 0;

@@ -519,6 +519,7 @@ static int submit_audio_resampled(const gp32_audio_desc_t *aud) {
     /* Bound memory and latency if the frontend stops consuming audio. Short
      * backpressure remains lossless; a sustained stall retains recent sound. */
     if (need > GP32_AUDIO_QUEUE_LIMIT) {
+        flush_audio();
         audio_pending_frames = 0;
         gp32_audio_resampler_reset(&audio_resampler);
         return 1;

@@ -2964,3 +2964,34 @@ fix; no new speedup or whole-game compatibility result is claimed.
 Evidence: `F:/GP32/results/resume48-thumb/` (red/green test logs and native
 H700 result). Nested callback cycle accounting remains unresolved; this
 change does not alter it.
+
+The same investigation reproduced a separate callback dispatch inefficiency:
+an ARM `BX lr` followed by the firmware return trap consumed a full 4,096-cycle
+run batch, even though the callback had returned after two instructions.
+The private trap repeatedly executed for the rest of the batch. The return
+trap now requests an end to the current CPU run; normal execution resumes on
+the next call. Existing halt checks in interpreter and JIT dispatch enforce
+the request, without adding a per-instruction callback-flag poll.
+
+The guest Thumb regression consumed 4,096 cycles before this change and now
+consumes exactly its three instructions plus the ARM return trap. It also
+checks subsequent caller execution. Windows/H700 regressions and all four
+libretro builds passed again after this separate code change. A private
+one-timer probe improved from 52,096 CPU cycles for a 48,000-cycle idle budget
+to 48,002: the redundant 4,094 instructions are gone, while the actual two
+callback instructions still require separate peripheral/budget accounting.
+This is not a measured whole-game speedup or a resolution of that remaining
+time-accounting issue. Evidence: `resume48-thumb/yield-*` and
+`nested-time-{probe,after}.log` in the local results directory.
+
+The libretro oversized-block discard path also now drains any recoverable
+queued PCM before discarding an input larger than the 250 ms queue limit.
+Previously that branch immediately discarded the backlog even after the
+frontend resumed accepting samples. A scripted `retro_run` regression queues
+735 frames under backpressure, recovers in 17-frame callback chunks, then
+supplies an oversized source. It failed before the one-line drain fix and
+passes afterward on Windows and H700, preserving the exact queued samples.
+Normal steady blocks do not use this exceptional path; no audible improvement
+in an ordinary game is established by this regression. Source/buffer size
+limits and sustained-stall discard behavior remain bounded. Final evidence:
+`resume48-thumb/audio-*`; all four libretro target builds passed.
