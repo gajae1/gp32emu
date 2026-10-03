@@ -438,6 +438,40 @@ static uint32_t iis_frame_rate_hz(const s3c2400_t *s);
 static uint64_t iis_period_cpu_cycles(const s3c2400_t *s);
 static uint32_t iis_dma_transfers_per_frame(const s3c2400_t *s);
 
+static void audio_append_stereo(s3c2400_t *s, int16_t left, int16_t right);
+
+/*
+ * Reserve room for a whole IIS DMA batch in one growth decision.
+ *
+ * A whole-service transfer drains the channel's remaining transfer count (up
+ * to 2^20 units, i.e. as many stereo frames) inside one
+ * dma_iis_fast_trigger_count() call, so the per-sample append path re-tests
+ * capacity, re-derives the audio_frames*2 index and repeats the
+ * allocation-failure checks for every frame of that batch. Failed bulk
+ * reservations fall back to per-sample growth, allowing a smaller allocation
+ * to preserve part of the batch under memory pressure.
+ */
+static int audio_reserve_frames(s3c2400_t *s, uint64_t frames) {
+    const uint64_t max_frames = SIZE_MAX / (2u * sizeof(int16_t));
+    if (s->audio_frames > max_frames || frames > max_frames - s->audio_frames) return 0;
+    uint64_t need = s->audio_frames + frames;
+    if (need <= s->audio_cap_frames) return 1;
+    uint64_t new_cap = s->audio_cap_frames ? s->audio_cap_frames : 65536u;
+    while (new_cap < need) {
+        if (new_cap > max_frames / 2u) {
+            new_cap = need;
+            break;
+        }
+        new_cap *= 2u;
+    }
+    if (new_cap > max_frames) return 0;
+    int16_t *n = (int16_t *)realloc(s->audio, (size_t)new_cap * 2u * sizeof(int16_t));
+    if (!n) return 0;
+    s->audio = n;
+    s->audio_cap_frames = new_cap;
+    return 1;
+}
+
 static void dma_reload(s3c2400_t *s, int ch) {
     uint32_t *r = &s->dma[ch << 3];
     r[3] = (r[3] & ~0x000fffffu) | (r[2] & 0x000fffffu);
@@ -454,43 +488,79 @@ static uint32_t dma_iis_fast_trigger_count(s3c2400_t *s, uint32_t *r, uint32_t r
     int inc_dst = GP32_BIT(r[1],29) == 0;
     int service = GP32_BIT(r[2],26);
     if (!tc || !requests || inc_dst || dst != 0x15508010u || dsz == 0u) return 0;
-    uint32_t completed = 0;
-    while (tc && completed < requests) {
-        tc--;
+    /*
+     * Units this call can move: single-service mode stops after the requests
+     * handed in by the caller, whole-service mode hands the channel's whole
+     * remaining transfer count to the first request.
+     */
+    uint32_t units = service ? tc : (requests < tc ? requests : tc);
+    uint32_t completed = service ? 1u : units;
+    /*
+     * Batched PCM append.  One unit is one halfword for 16-bit transfers and a
+     * whole stereo frame for 32-bit transfers, so the number of frames this
+     * batch can produce is known up front and is committed with a single
+     * capacity decision instead of one audio_append_stereo() call per frame.
+     * The FIFO halfword waiting for its partner, the retained right halfword
+     * and iis_fifo_index are carried in locals and published once, which
+     * reproduces iis_fifo_write16() state for every batch length and starting
+     * parity.  If the reservation fails, every frame falls back to
+     * audio_append_stereo() itself, i.e. the unchanged per-sample path.
+     */
+    uint16_t pending = s->iis_fifo[0];
+    uint16_t last_right = s->iis_fifo[1];
+    unsigned idx = s->iis_fifo_index & 1u;
+    uint32_t halfwords = (dsz == 1u) ? units : units * 2u;
+    uint64_t base_frames = s->audio_frames;
+    uint32_t frames = 0;
+    int direct = audio_reserve_frames(s, (halfwords + idx) >> 1);
+    int16_t *out = direct && s->audio ? s->audio + (size_t)base_frames * 2u : NULL;
+#define IIS_PCM_APPEND(left, right)                                    \
+    do {                                                               \
+        if (direct) {                                                  \
+            out[0] = (int16_t)(left);                                  \
+            out[1] = (int16_t)(right);                                 \
+            out += 2;                                                  \
+            frames++;                                                  \
+        } else {                                                       \
+            audio_append_stereo(s, (int16_t)(left), (int16_t)(right)); \
+        }                                                              \
+        last_right = (uint16_t)(right);                                \
+    } while (0)
+    for (uint32_t i = 0; i < units; ++i) {
         if (dsz == 1u) {
             uint8_t *rp = ram_ptr(s, src, 2);
             uint16_t v = rp ? (uint16_t)(rp[0] | ((uint16_t)rp[1] << 8)) : s3c2400_read16(s, src);
-            iis_fifo_write16(s, v);
+            if (idx) {
+                IIS_PCM_APPEND(pending, v);
+                idx = 0;
+            } else {
+                pending = v;
+                idx = 1;
+            }
             if (inc_src) src += 2u;
         } else {
             uint8_t *rp = ram_ptr(s, src, 4);
             uint32_t v = rp ? gp32_ld32le(rp) : s3c2400_read32(s, src);
-            iis_fifo_write16(s, (uint16_t)v);
-            iis_fifo_write16(s, (uint16_t)(v >> 16));
+            uint16_t lo = (uint16_t)v;
+            uint16_t hi = (uint16_t)(v >> 16);
+            if (idx) {
+                /* A halfword is still queued from earlier: it pairs with the
+                 * low halfword and the high halfword becomes the queued one. */
+                IIS_PCM_APPEND(pending, lo);
+                pending = hi;
+            } else {
+                IIS_PCM_APPEND(lo, hi);
+                pending = lo;
+            }
             if (inc_src) src += 4u;
         }
-        completed++;
-        if (!service) {
-            /* Single-service mode performs one transfer per hardware request. */
-        } else {
-            while (tc) {
-                tc--;
-                if (dsz == 1u) {
-                    uint8_t *rp = ram_ptr(s, src, 2);
-                    uint16_t v = rp ? (uint16_t)(rp[0] | ((uint16_t)rp[1] << 8)) : s3c2400_read16(s, src);
-                    iis_fifo_write16(s, v);
-                    if (inc_src) src += 2u;
-                } else {
-                    uint8_t *rp = ram_ptr(s, src, 4);
-                    uint32_t v = rp ? gp32_ld32le(rp) : s3c2400_read32(s, src);
-                    iis_fifo_write16(s, (uint16_t)v);
-                    iis_fifo_write16(s, (uint16_t)(v >> 16));
-                    if (inc_src) src += 4u;
-                }
-            }
-            break;
-        }
     }
+#undef IIS_PCM_APPEND
+    if (direct) s->audio_frames = base_frames + frames;
+    s->iis_fifo[0] = pending;
+    s->iis_fifo[1] = last_right;
+    s->iis_fifo_index = idx;
+    tc -= units;
     r[4] = (r[4] & ~0x1fffffffu) | src;
     r[5] = (r[5] & ~0x1fffffffu) | dst;
     r[3] = (r[3] & ~0x000fffffu) | tc;
@@ -1177,13 +1247,7 @@ uint32_t s3c2400_run_clock_hz(const s3c2400_t *s) {
 static void audio_append_stereo(s3c2400_t *s, int16_t left, int16_t right) {
     if (!s) return;
     if (s->audio_frames >= s->audio_cap_frames) {
-        uint64_t new_cap = s->audio_cap_frames ? s->audio_cap_frames * 2u : 65536u;
-        if (new_cap < s->audio_frames + 1u) new_cap = s->audio_frames + 1u;
-        if (new_cap > (UINT64_MAX / (2u * sizeof(int16_t)))) return;
-        int16_t *n = (int16_t *)realloc(s->audio, (size_t)new_cap * 2u * sizeof(int16_t));
-        if (!n) return;
-        s->audio = n;
-        s->audio_cap_frames = new_cap;
+        if (!audio_reserve_frames(s, 1u)) return;
     }
     s->audio[s->audio_frames * 2u + 0u] = left;
     s->audio[s->audio_frames * 2u + 1u] = right;

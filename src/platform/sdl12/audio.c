@@ -32,6 +32,9 @@ typedef struct sdl12_audio_backend {
     int16_t last_played_l;
     int16_t last_played_r;
     int have_last_played;
+    /* The device ran dry and is hearing the zero fill; the next real frames
+     * must glide back in from that silence instead of splicing in at level. */
+    int resume_fade;
     int started;
     char error[160];
 } sdl12_audio_backend_t;
@@ -127,6 +130,48 @@ static void ramp_queue_head_from_last_played(sdl12_audio_backend_t *a) {
     }
 }
 
+static uint32_t audio_fade_frames(const sdl12_audio_backend_t *a) {
+    uint32_t fade = a->sample_rate_hz ? a->sample_rate_hz / 1000u : 44u;
+    if (fade < 16u) fade = 16u;
+    if (fade > 96u) fade = 96u;
+    return fade;
+}
+
+/* Source starvation hands the device real PCM and then the zero fill.  Ease
+ * the last submitted frames down to the silence so that edge is a short glide
+ * instead of a full-scale step.  Only the device buffer is touched; the
+ * silence itself is still appended by the callback. */
+static void fade_submitted_tail_to_silence(sdl12_audio_backend_t *a, int16_t *out, uint32_t frames) {
+    uint32_t fade = audio_fade_frames(a);
+    if (fade > frames) fade = frames;
+    if (fade < 2u) return;
+    int32_t den = (int32_t)(fade - 1u);
+    for (uint32_t i = 0; i < fade; ++i) {
+        int32_t weight = den - (int32_t)i;
+        int16_t *p = out + (uint64_t)(frames - fade + i) * 2u;
+        p[0] = (int16_t)(((int32_t)p[0] * weight) / den);
+        p[1] = (int16_t)(((int32_t)p[1] * weight) / den);
+    }
+}
+
+/* Mirror of fade_submitted_tail_to_silence: the device just heard the zero
+ * fill, so ease the first real frames back in from the sample it actually
+ * played last (last_played_l/r is zero for exactly that fill). */
+static void fade_submitted_head_from_silence(sdl12_audio_backend_t *a, int16_t *out, uint32_t frames) {
+    uint32_t fade = audio_fade_frames(a);
+    if (fade > frames) fade = frames;
+    if (fade == 0u) return;
+    int32_t from_l = a->have_last_played ? a->last_played_l : 0;
+    int32_t from_r = a->have_last_played ? a->last_played_r : 0;
+    int32_t den = (int32_t)fade + 1;
+    for (uint32_t i = 0; i < fade; ++i) {
+        int32_t num = (int32_t)i + 1;
+        int16_t *p = out + (uint64_t)i * 2u;
+        p[0] = (int16_t)(from_l + ((int32_t)p[0] - from_l) * num / den);
+        p[1] = (int16_t)(from_r + ((int32_t)p[1] - from_r) * num / den);
+    }
+}
+
 static void sdl12_audio_callback(void *userdata, Uint8 *stream, int len) {
     sdl12_audio_backend_t *a = (sdl12_audio_backend_t *)userdata;
     int16_t *out = (int16_t *)(void *)stream;
@@ -142,12 +187,22 @@ static void sdl12_audio_callback(void *userdata, Uint8 *stream, int len) {
         a->frame_count -= n;
         copied += n;
     }
+    /* The previous fill ended in the zero fill, so the device heard silence:
+     * glide these first real frames back in from it. */
+    if (frames_copy > 0u && a->resume_fade) {
+        a->resume_fade = 0;
+        fade_submitted_head_from_silence(a, out, frames_copy);
+    }
     if (frames_copy > 0u && frames_copy == frames_req) {
         a->last_played_l = out[(frames_copy - 1u) * 2u + 0u];
         a->last_played_r = out[(frames_copy - 1u) * 2u + 1u];
     } else {
         a->last_played_l = 0;
         a->last_played_r = 0;
+        if (frames_copy < frames_req) {
+            if (frames_copy > 0u) fade_submitted_tail_to_silence(a, out, frames_copy);
+            a->resume_fade = 1;
+        }
     }
     a->have_last_played = 1;
     if (frames_copy < frames_req) {
