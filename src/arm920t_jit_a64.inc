@@ -11,6 +11,8 @@
  * Slow instructions use the classified helper and validate its exit state:
  * exceptions, MMIO callbacks, mode changes and cache invalidation therefore
  * cannot continue executing an obsolete trace. No guest cycles are elided.
+ * Eligible entry backedges retain w22 (remaining), w23 (completed prefixes),
+ * w24 (entry epoch). These registers are callee-saved.
  */
 #ifndef ARM_JIT_CODE_SIZE
 #define ARM_JIT_CODE_SIZE (64u * 1024u * 1024u)
@@ -23,16 +25,20 @@ typedef struct a64_emit {
     int ram_read, ram_write, memory, mmu, leaf;
     int nzcv_valid; /* host NZCV equals the committed guest flags */
     uint32_t expected_next, generation;
+    uint32_t loop_done, block_count;
+    size_t loop_head;
 } a64_emit_t;
 
 static int arm_a64_exec_checked(arm920t_t *c, const arm_jit_op_t *op,
                                 uint32_t expected_next, uint32_t generation) {
     int stop = op->stop;
     uint32_t status = c->cpsr & 0xffu;
+    uint32_t epoch = c->jit_cache_epoch;
     uint8_t *ram_base = c->jit_ram_base;
     arm_jit_exec_classified(c, op);
-    return !stop && !c->halted && !thumb(c) && !c->trace &&
-           c->jit_generation == generation && c->jit_ram_base == ram_base &&
+    return !stop && !c->halted && !thumb(c) && !c->trace && c->jit_enabled &&
+           c->jit_generation == generation && c->jit_cache_epoch == epoch &&
+           c->jit_ram_base == ram_base &&
            (c->cpsr & 0xffu) == status &&
            (c->r[15] & ~3u) == expected_next &&
            !(c->irq_line && !(c->cpsr & I_FLAG)) &&
@@ -192,7 +198,9 @@ static void a64_cmp_imm(a64_emit_t *e, unsigned rn, unsigned imm) {
     a64_u32(e, 0x7100001fu | (imm << 10) | (rn << 5));
 }
 static void a64_return(a64_emit_t *e, uint32_t done) {
-    a64_imm(e, 0, done);
+    if (e->loop_done)
+        a64_u32(e, 0x11000000u | (done << 10) | (23u << 5)); /* add w0, w23, #done */
+    else a64_imm(e, 0, done);
     if (e->leaf) {
         a64_u32(e, 0xf84107f3u); /* ldr x19, [sp], #16 */
     } else if (e->memory) {
@@ -200,7 +208,57 @@ static void a64_return(a64_emit_t *e, uint32_t done) {
         a64_u32(e, 0xf94013f5u); /* ldr x21, [sp, #32] */
     } else a64_u32(e, 0xf9400bf3u); /* ldr x19, [sp, #16] */
     if (!e->leaf) a64_u32(e, 0xa8c37bfdu); /* ldp x29, x30, [sp], #48 */
+    if (e->loop_done) {
+        a64_u32(e, 0xa94167f8u); /* ldp x24, x25, [sp, #16] */
+        a64_u32(e, 0xa8c25ff6u); /* ldp x22, x23, [sp], #32 */
+    }
     a64_u32(e, 0xd65f03c0u); /* ret */
+}
+
+/* Only the first explicitly eligible entry backedge chains. A full decoded
+ * block must fit again; a short remainder returns to portable dispatch.
+ * Guards run after the real B retires and before accounting/re-entry. Thus
+ * every rejected edge returns completed prefixes + this partial prefix. */
+static void a64_selfloop(a64_emit_t *e, uint32_t done) {
+    size_t exits[5];
+    unsigned n = 0;
+    a64_load(e, 0, offsetof(arm920t_t, jit_generation));
+    a64_imm(e, 1, e->generation);
+    a64_cmp(e, 0, 1);
+    exits[n++] = a64_jump(e, 1); /* NE */
+    a64_load(e, 0, offsetof(arm920t_t, jit_cache_epoch));
+    a64_cmp(e, 0, 24);
+    exits[n++] = a64_jump(e, 1);
+    /* Allowed direct ops cannot change control state or RAM anchoring.
+     * Every callback runs through the checked helper above, which exits on
+     * halt/trace/JIT disable, mode/base/PC changes or pending interrupts.
+     * Retain edge cache and interrupt fences; avoid rechecking the same
+     * control state on every callback-free repetition. */
+    a64_load(e, 3, offsetof(arm920t_t, cpsr));
+    a64_load(e, 0, offsetof(arm920t_t, irq_line));
+    a64_cmp_imm(e, 0, 0);
+    size_t no_irq = a64_jump(e, 0);
+    a64_mask(e, 0, 3, I_FLAG);
+    a64_cmp_imm(e, 0, 0);
+    exits[n++] = a64_jump(e, 0);
+    a64_patch(e, no_irq, e->pos);
+    a64_load(e, 0, offsetof(arm920t_t, fiq_line));
+    a64_cmp_imm(e, 0, 0);
+    size_t no_fiq = a64_jump(e, 0);
+    a64_mask(e, 0, 3, F_FLAG);
+    a64_cmp_imm(e, 0, 0);
+    exits[n++] = a64_jump(e, 0);
+    a64_patch(e, no_fiq, e->pos);
+    a64_u32(e, 0x51000000u | (done << 10) | (22u << 5)); /* sub w0, w22, #done */
+    a64_cmp_imm(e, 0, e->block_count);
+    exits[n++] = a64_jump(e, 3); /* LO */
+    a64_mov(e, 22, 0);
+    a64_u32(e, 0x11000000u | (done << 10) | (23u << 5) | 23u);
+    /* Dedicated signed imm26 backedge; existing forward fixups stay intact. */
+    if (e->loop_head > e->pos || e->pos - e->loop_head >= (1u << 25)) e->fail = 1;
+    a64_u32(e, 0x14000000u | ((uint32_t)(e->loop_head - e->pos) & 0x03ffffffu));
+    for (unsigned i = 0; i < n; ++i) a64_patch(e, exits[i], e->pos);
+    a64_return(e, done);
 }
 static void a64_slow(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
     /* Fail closed if the leaf allowlist ever disagrees with an emitter. */
@@ -709,9 +767,51 @@ static int a64_one(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
         if (op->insn & (1u << 24))
             a64_store_imm(e, offsetof(arm920t_t, r) + 14u * 4u, op->pc + 4u);
         a64_store_imm(e, offsetof(arm920t_t, r) + 15u * 4u, arm_jit_branch_target(op->pc, op->insn));
+        if (e->loop_done == done) { a64_selfloop(e, done); return 1; }
         /* Inlined BL and stitched unconditional B follow the decoded trace. */
         if (op->reserved != 2u && (op->stop || !arm_jit_is_uncond_b_no_link(op->insn))) a64_return(e, done);
         return 1;
+    }
+    return 0;
+}
+
+/* Exclude ordinary calls, status/coprocessor operations,
+ * exceptions and PC-writing data/memory from the repeating prefix. The tail
+ * after a conditional backedge keeps every existing exit/helper path. */
+static uint32_t a64_selfloop_prefix(arm920t_t *c, arm_jit_block_t *b) {
+    if (c->bus.is_stable_read32 && b->poll_backedge) return 0;
+    for (unsigned i = 0; i < b->count; ++i) {
+        const arm_jit_op_t *op = &arm_jit_ops(c, b)[i];
+        /* Existing register-only leaf inlining proves LR/SP/mode unchanged.
+         * Its decoded return is materialized directly by the main emitter. */
+        if (op->reserved == 7u) continue;
+        /* The decoder has already validated these framed leaf operations.
+         * Keep their real stack reads/writes and existing return-target guard;
+         * a changed/Thumb return exits before reaching the self backedge. */
+        if (op->kind == ARM_JIT_OP_BLOCK_DT &&
+            (op->reserved == 3u || op->reserved == 4u || op->reserved == 5u))
+            continue;
+        if (op->reserved && op->reserved != 2u) return 0;
+        if (op->kind == ARM_JIT_OP_BRANCH) {
+            if ((op->insn & (1u << 24)) && op->reserved != 2u) return 0;
+            if (!(op->insn & (1u << 24)) && op->cond != 15u &&
+                arm_jit_branch_target(op->pc, op->insn) == b->tag_pc)
+                return i + 1u;
+        } else if (op->kind == ARM_JIT_OP_DATA) {
+            if (op->c == 15u) return 0;
+        } else if (op->kind == ARM_JIT_OP_MUL) {
+            if (((op->insn >> 16) & 15u) == 15u || ((op->insn >> 12) & 15u) == 15u ||
+                ((op->insn >> 8) & 15u) == 15u || (op->insn & 15u) == 15u) return 0;
+        } else if (op->kind == ARM_JIT_OP_SINGLE_DT) {
+            int wb = !(op->d & ARM_BC_SD_P) || (op->d & ARM_BC_SD_W);
+            if (((op->d & ARM_BC_SD_L) && op->b == 15u) || (wb && op->a == 15u)) return 0;
+        } else if (op->kind == ARM_JIT_OP_HALF) {
+            int wb = !(op->d & ARM_BC_HALF_P) || (op->d & ARM_BC_HALF_W);
+            if (op->b == 15u || (wb && op->a == 15u)) return 0;
+        } else if (op->kind == ARM_JIT_OP_BLOCK_DT) {
+            if (op->a == 15u || !op->imm || (op->imm & 0x8000u) || (op->d & 0x04u)) return 0;
+        } else return 0;
+        if (op->stop && op->kind != ARM_JIT_OP_BRANCH) return 0;
     }
     return 0;
 }
@@ -723,6 +823,8 @@ static void arm_jit_compile_native(arm920t_t *c, arm_jit_block_t *b) {
     e.code = tmp;
     e.cap = sizeof(tmp) / sizeof(tmp[0]);
     e.mmu = !!(c->cp15[1] & 1u);
+    e.loop_done = a64_selfloop_prefix(c, b);
+    e.block_count = b->count;
     /* Validate the complete direct window, including write permission.
      * Tiny or discontinuous test buses must retain their callback path. */
     e.ram_read = c->jit_ram_base && fastmem(c, ARM_JIT_RAM_BASE_ADDR, ARM_JIT_RAM_SIZE_BYTES, 0) == c->jit_ram_base;
@@ -744,6 +846,10 @@ static void arm_jit_compile_native(arm920t_t *c, arm_jit_block_t *b) {
             (!test && op->c == 15u && (op->d & ARM_BC_DATA_S))) e.leaf = 0;
     }
     a64_u32(&e, 0xd503245fu); /* bti c (NOP on ARMv8.0) */
+    if (e.loop_done) {
+        a64_u32(&e, 0xa9be5ff6u); /* stp x22, x23, [sp, #-32]! */
+        a64_u32(&e, 0xa90167f8u); /* stp x24, x25, [sp, #16] */
+    }
     /* Leaf traces preserve x29/x30 without touching them. Other traces keep
      * the aligned frame and x19/LR slots; only memory paths use x20/x21. */
     if (e.leaf) {
@@ -757,6 +863,11 @@ static void arm_jit_compile_native(arm920t_t *c, arm_jit_block_t *b) {
         a64_u32(&e, 0x910003fdu); /* mov x29, sp */
     }
     a64_rr(&e, 0xaa000000u, 19, 31, 0);
+    if (e.loop_done) {
+        a64_mov(&e, 22, 1);
+        a64_mov(&e, 23, 31);
+        a64_load(&e, 24, offsetof(arm920t_t, jit_cache_epoch));
+    }
     if (e.memory) {
         /* x20 = &c->jit_tlb_page[0] for the whole block. */
         size_t va = offsetof(arm920t_t, jit_tlb_page);
@@ -773,6 +884,7 @@ static void arm_jit_compile_native(arm920t_t *c, arm_jit_block_t *b) {
     size_t enough = a64_jump(&e, 2); /* HS */
     a64_return(&e, 0);
     a64_patch(&e, enough, e.pos);
+    e.loop_head = e.pos;
     for (unsigned i = 0; i < b->count; ++i) {
         const arm_jit_op_t *op = &arm_jit_ops(c, b)[i];
         e.expected_next = i + 1u < b->count ? arm_jit_ops(c, b)[i + 1u].pc : op->pc + 4u;
@@ -805,8 +917,8 @@ static void arm_jit_compile_native(arm920t_t *c, arm_jit_block_t *b) {
                 a64_patch(&e, skip, e.pos);
                 e.nzcv_valid = 0; /* taken/skipped paths join here */
             }
-            /* The next instruction sees its own pipeline PC; only exits and
-             * helpers require a PC store. Taken control flow returned above. */
+            /* PC remains materialized at exits/helpers and taken branches,
+             * as on the original path. Taken edges returned or re-entered. */
         }
         if (op->stop) {
             a64_store_imm(&e, offsetof(arm920t_t, r) + 15u * 4u, op->pc + 4u);

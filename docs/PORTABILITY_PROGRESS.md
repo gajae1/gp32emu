@@ -1931,3 +1931,100 @@ Installed production SHA-256:
 `935ce388a2bf69014158ed0b48d7d31f587058a6290ea7d0ed700620ae58a913`.
 Prior core backup: `/mnt/SDCARD/gp32-dev/resume26-installed-core-before.so`.
 Deployment record: `F:/GP32/results/resume26-core-installed.json`.
+
+### Measured native self-loop opportunity (resume27)
+
+A fresh current-core dispatch census of Korean Wizard late combat preserves
+all seven CPU/video/audio outputs. The hottest 0c002f04 entry is dispatched
+10,949,150 times, with 10,943,749 direct self successors; its decoded trace has
+69 ops, including 29 memory ops. The next 0c003800 entry has 3,010,514 dispatches
+and 3,009,125 self successors (21 ops, 9 memory ops). Thus a memory-capable
+native backedge, with exact instruction-budget and interrupt/cache fences,
+is a concrete target; an ALU-only loop shortcut would miss the primary work.
+The counter records a published native pointer, not proof that each short-budget
+call actually entered it. Instrumented FPS is not a speedup measurement.
+
+Her Knights also preserves all seven exactness fields. Its top four entries
+alternate rather than self-repeat (about 11.726M each); self loops elsewhere
+have 5.504M, 3.337M and 2.821M repeated successors. This distinguishes the
+bounded self-loop prototype from a future general cross-block linker.
+No production chaining claim is made from these counts alone. Evidence:
+`F:/GP32/results/resume27-hot-wizard.json`, `resume27-hot-her.json`,
+`resume27-hot/summary.json`.
+
+
+### AArch64 native self-loop chaining and callback tracing (resume27)
+
+Eligible backward branches to the current decoded block entry now stay inside
+native code while the remaining instruction budget can hold the full block.
+Cumulative retirement is returned on every exit; no guest iterations, stack
+accesses, MMIO reads or audio/video work are skipped. Inlined framed leaves keep
+the real saved return word and the existing return-target/Thumb guards. Stable
+poll loops retain the portable fast-forward path. Mode/cache-changing guest
+instructions remain excluded from a repeating prefix.
+
+Each edge retains generation/epoch, IRQ/FIQ and budget checks. Direct operations
+in the allowlist cannot change control state or memory anchors; callbacks use
+the checked helper, which rejects changed mode/base/PC, halt, trace, JIT disable,
+cache epoch and pending interrupts. These checks are not duplicated at every
+callback-free edge. The existing single-threaded CPU execution contract remains.
+The host frame preserves the cumulative budget registers across helpers.
+
+The first conservative candidate missed Wizard's hot framed leaf calls and was
+0.9% slower. Allowing the already-validated framed leaves gave Wizard +8.05%,
+but duplicated control checks made Her Knights 1.6% slower. Both intermediate
+variants were rejected for deployment; removing those redundant edge checks
+addresses that measured regression. Intermediate exact/clock-qualified results
+remain in `F:/GP32/results/resume27-loop-wizard-abba.json`,
+`resume27-loop-v2-wizard-abba.json`, and `resume27-loop-v2-her-abba.json`.
+
+The final native differential suite passes on H700 (7,744 dispatch events,
+21 existing fallbacks), including ragged budgets, callback cache flush/patch,
+IRQ, tracing, framed calls and a callback-replaced stack return. Arena churn,
+short native entry and generation/cache wrap checks also pass. The earlier
+stable-poll suite remains green. Profile-enabled finite loop cases show 796
+retired native instructions in six calls and 1,187 in four framed-loop calls;
+these counts exclude the terminal idle branch. The guest-MCR case tests the
+conservative fallback, not a chained MCR. Evidence: `resume27-final-jit.json`,
+`resume27-final-recycle.json`, `resume27-v3-fences.json`, `resume27-poll-h700.json`.
+
+A separate x64 callback-tracing bug is fixed: enabling trace during an MMIO
+load previously lost the next SUBS/BNE log lines (28 instead of 30). Memory
+instructions now exit after completing their writes when a callback enabled
+tracing, and dispatch resumes in the logging interpreter. Focused Windows
+loop-fence and callback-PC checks pass. This adds a trace check after x64
+memory instructions; no PC performance improvement is claimed. Windows,
+H700, Android arm64-v8a and armeabi-v7a production core builds pass.
+
+The final H700 CPU object and measured candidate are byte-identical after
+stripping debug metadata (SHA-256
+`1b4f949394764a4390eb2a8fab59337500ea0f51ebf29cd24085853593481b26`).
+
+Final ABBA results (emulation throughput, not the guest game animation rate):
+
+| Korea combat scene | Baseline | Candidate | Change |
+|---|---:|---:|---:|
+| Little Wizard, late 300 frames | 93.3010 fps | 112.2825 fps | +20.34% |
+| Her Knights, 1,200 frames | 121.7695 fps | 123.1070 fps | +1.10% |
+
+Both sets preserve all seven CPU/video/audio fields, with all measured
+frequency samples at 1,512 MHz and the existing conservative governor.
+Evidence: `F:/GP32/results/resume27-loop-v3-wizard-abba.json` and
+`resume27-loop-v3-her-abba.json`. These replay scenes do not establish
+all-game compatibility or a higher original-game frame rate.
+
+The final RetroArch capture runs 2,401 frontend calls (one BIOS call plus the
+2,400-frame replay after state restoration). Every replay PC/source-audio
+count/nonzero count/IISCON value matches the standalone reference, including
+407,434 source frames. Offered=accepted audio is 1,763,356 stereo frames, with
+zero partial/zero returns or pending deliveries. ALSA reports no underrun,
+error or recovery calls. The captured combat screen renders normally and
+MainUI returns after exit=0; both launcher/RetroArch setting hashes are unchanged.
+Late-300 core time averages 7.8568 ms and frontend interval p99 is 17.2021 ms.
+These are one runtime capture, not a controlled latency comparison or a
+physical-speaker/input-lag guarantee. Evidence: `resume27-audio-runtime-verified.json`,
+`resume27-audio-summary.json`, and `resume27-audio-runtime.png` in `F:/GP32/results`.
+
+Installed production SHA-256: `ec4477077d9e9b53f8f0ee635d4dccbda0ee0c238ae8492b24d7d110294b27df`.
+Previous core retained at `/mnt/SDCARD/gp32-dev/resume27-installed-core-before.so`;
+record: `F:/GP32/results/resume27-core-installed.json`.
