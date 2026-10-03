@@ -1496,16 +1496,16 @@ static ARM_NOINLINE arm_jit_block_t *arm_jit_translate(arm920t_t *c, uint32_t pc
     }
     if (!b->count) { ARM_PROF_INC(c, jit_translate_failures); return NULL; }
     /* A polling candidate may only read stable words and change ordinary
-     * registers/flags. The runtime still proves a fixed point before skipping
-     * complete repetitions; stores, exceptions and status writes are excluded. */
+     * registers/flags. Word stores must be proven idempotent RAM writes at
+     * runtime; exceptions and status writes remain excluded. */
     b->poll_prefix = 0;
     b->poll_backedge = 0;
     for (uint8_t i = 0; i < b->count; ++i) {
         const arm_jit_op_t *op = &arm_jit_ops(c, b)[i];
         if (op->kind == ARM_JIT_OP_DATA) {
-            if (op->c == 15u) break;
+            if (op->c == 15u && op->reserved != 7u) break;
         } else if (op->kind == ARM_JIT_OP_SINGLE_DT) {
-            if ((op->d & ~(ARM_BC_SD_U)) != (ARM_BC_SD_P | ARM_BC_SD_L) || op->b == 15u) break;
+            if ((op->d & ~(ARM_BC_SD_U | ARM_BC_SD_L)) != ARM_BC_SD_P || op->b == 15u) break;
         } else if (op->kind == ARM_JIT_OP_BRANCH) {
             if ((op->insn & (1u << 24)) && op->reserved != 2u) break;
         } else if (op->kind == ARM_JIT_OP_BLOCK_DT) {
@@ -2903,6 +2903,15 @@ static int arm_poll_read_stable(arm920t_t *c, const arm_jit_op_t *op) {
      * intermediate accesses are side-effect-free. */
     uint32_t base = op->a == 15u ? op->pc + 8u : c->r[op->a];
     uint32_t addr = (op->d & ARM_BC_SD_U) ? base + op->imm : base - op->imm;
+    if (!(op->d & ARM_BC_SD_L)) {
+        if (addr & 3u) return 0;
+        uint32_t phys = mmu_translate(c, addr);
+        if (!arm_jit_addr_in_ram(phys, 4u)) return 0;
+        const uint8_t *p = fastmem(c, phys, 4u, 1);
+        /* A stable endpoint alone cannot prove intermediate writes harmless.
+         * Every store in the observed repetition must already be a no-op. */
+        return p && gp32_ld32le(p) == c->r[op->b];
+    }
     return !(addr & 3u) && c->bus.is_stable_read32 &&
            c->bus.is_stable_read32(c->bus.user, mmu_translate(c, addr));
 }
