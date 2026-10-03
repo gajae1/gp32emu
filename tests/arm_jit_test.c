@@ -44,6 +44,8 @@ typedef struct {
     unsigned io_flush_at, io_flushes;
     unsigned io_trace_at, trace_lines;
     unsigned io_return_at;
+    unsigned block_io, block_effect, block_at, block_count;
+    uint32_t block_addr[3], block_pc[3], block_base[3], block_value[3];
 } test_bus_t;
 
 static test_bus_t bus_jit, bus_ref;
@@ -99,6 +101,25 @@ static uint32_t tb_io_value(test_bus_t *b, uint32_t a) {
     }
     return UINT32_MAX;
 }
+/* Observe all lanes, including writeback timing, before raising an exit. */
+static uint32_t tb_block_io(test_bus_t *b, uint32_t a, uint32_t value) {
+    unsigned lane = b->block_count++;
+    if (lane < 3u) {
+        b->block_addr[lane] = a;
+        b->block_pc[lane] = arm920t_get_pc(b->observe_cpu);
+        b->block_base[lane] = arm920t_get_reg(b->observe_cpu, 4u);
+        b->block_value[lane] = value;
+    }
+    if (b->block_count == b->block_at) {
+        if (b->block_effect == 1u) arm920t_set_irq(b->observe_cpu, 1);
+        else {
+            gp32_st32le(b->bios + CODE_ADDR + 4u, 0xe3a06077u);
+            if (b->block_effect == 2u) arm920t_flush_jit(b->observe_cpu);
+            else arm920t_set_jit(b->observe_cpu, 0);
+        }
+    }
+    return value;
+}
 static uint8_t tb_read8(void *u, uint32_t a) {
     test_bus_t *b = (test_bus_t *)u;
     uint8_t *p = bus_ptr(b, a, 1u);
@@ -112,6 +133,8 @@ static uint16_t tb_read16(void *u, uint32_t a) {
 static uint32_t tb_read32(void *u, uint32_t a) {
     test_bus_t *b = (test_bus_t *)u;
     uint8_t *p = bus_ptr(b, a, 4u);
+    if (b->block_io && a >= IO_ADDR && a < IO_ADDR + 12u)
+        return tb_block_io(b, a, 0x11110000u + (a - IO_ADDR) / 4u);
     return p ? gp32_ld32le(p) : tb_io_value(b, a);
 }
 static void tb_write8(void *u, uint32_t a, uint8_t v) {
@@ -130,7 +153,9 @@ static void tb_write32(void *u, uint32_t a, uint32_t v) {
     test_bus_t *b = (test_bus_t *)u;
     uint8_t *p = bus_ptr(b, a, 4u);
     if (p) gp32_st32le(p, v);
-    else if (b->observe_cpu && a == IO_ADDR + 4u) {
+    else if (b->block_io && a >= IO_ADDR && a < IO_ADDR + 12u)
+        (void)tb_block_io(b, a, v);
+    else if (b->observe_cpu && a == IO_ADDR + (b->block_io ? 0x40u : 4u)) {
         /* Guest IRQ-acknowledge write from inside the vector handler.  Kept
          * out of io_count so the loop's read count stays deterministic. */
         arm920t_set_irq(b->observe_cpu, 0);
@@ -1878,6 +1903,70 @@ static void case_callback_irq_commit(void) {
     }
 }
 
+/* Whole BLOCK completion precedes IRQ or code invalidation exits. Trace on
+ * the oracle forces instruction boundaries; jit=0 alone can batch portable ops. */
+static void case_block_callback_exit(void) {
+    const uint32_t handler[] = {
+        0xe5896000u, 0xe5894004u, 0xe5892008u, /* capture next-MOV, WB, last lane */
+        0xe5883000u, 0xe25ef004u,             /* IRQ ack and return */
+    };
+    unsigned cases = 0;
+    for (unsigned effect = 1u; effect <= 3u; ++effect)
+    for (unsigned load = 0; load < 2u; ++load)
+    for (unsigned mode = 0; mode < 4u; ++mode)
+    for (unsigned at = 1u; at <= 3u; at += 2u) {
+        unsigned p = mode & 1u, u = mode >> 1;
+        uint32_t base = u ? IO_ADDR - (p ? 4u : 0u) : IO_ADDR + (p ? 12u : 8u);
+        uint32_t final_base = u ? base + 12u : base - 12u;
+        uint32_t transfer = block_insn(p, u, 0, 1, load, 4, 7u);
+        const uint32_t program[] = {transfer, 0xe3a06001u, 0xeafffffeu};
+        current_case = effect == 1u ? "block-callback-irq" :
+                       effect == 2u ? "block-callback-flush" : "block-callback-disable";
+        setup_pair();
+        arm920t_set_trace(cpu_ref, 1, NULL, NULL);
+        load_both(program, GP32_ARRAY_COUNT(program));
+        for (unsigned i = 0; i < GP32_ARRAY_COUNT(handler); ++i)
+            set_mem_both(0x18u + 4u * i, handler[i]);
+        for (unsigned r = 0; r < 3u; ++r) set_reg_both(r, 0x22220000u + r);
+        set_reg_both(4u, base); set_reg_both(8u, IO_ADDR + 0x40u);
+        set_reg_both(9u, DATA_ADDR);
+        arm920t_set_cpsr(cpu_jit, 0x1fu); arm920t_set_cpsr(cpu_ref, 0x1fu);
+        bus_jit.observe_cpu = cpu_jit; bus_ref.observe_cpu = cpu_ref;
+        bus_jit.block_io = bus_ref.block_io = 1u;
+        bus_jit.block_effect = bus_ref.block_effect = effect;
+        bus_jit.block_at = bus_ref.block_at = at;
+        CHECK(arm920t_run(cpu_jit, 32u) == arm920t_run(cpu_ref, 32u), "block exit budget");
+        compare_state();
+        CHECK(bus_jit.block_count == 3u && bus_ref.block_count == 3u, "all lanes commit once");
+        CHECK(!memcmp(bus_jit.block_addr, bus_ref.block_addr, sizeof(bus_ref.block_addr)), "lane ordering");
+        CHECK(!memcmp(bus_jit.block_value, bus_ref.block_value, sizeof(bus_ref.block_value)), "lane values");
+        for (unsigned i = 0; i < 3u; ++i) {
+            CHECK(bus_ref.block_addr[i] == IO_ADDR + 4u * i, "oracle ascending lane addresses");
+            CHECK(bus_ref.block_pc[i] == CODE_ADDR + 4u && bus_jit.block_pc[i] == CODE_ADDR + 4u, "lane PC+4");
+            CHECK(bus_ref.block_base[i] == base && bus_jit.block_base[i] == base, "writeback follows all callbacks");
+        }
+        CHECK(arm920t_get_reg(cpu_jit, 4u) == final_base && ref_reg(4u) == final_base, "one final writeback");
+        if (effect == 1u) {
+            CHECK(gp32_ld32le(bus_ptr(&bus_jit, DATA_ADDR, 4u)) == 0u, "IRQ precedes next MOV");
+            CHECK(gp32_ld32le(bus_ptr(&bus_jit, DATA_ADDR + 4u, 4u)) == final_base, "IRQ sees committed writeback");
+            CHECK(gp32_ld32le(bus_ptr(&bus_jit, DATA_ADDR + 8u, 4u)) == (load ? 0x11110002u : 0x22220002u), "IRQ sees final lane");
+            CHECK(bus_jit.io_acks == 1u && bus_ref.io_acks == 1u, "IRQ acknowledged once");
+            CHECK(ref_reg(6u) == 1u, "IRQ returns after transfer");
+        } else CHECK(ref_reg(6u) == 0x77u && arm920t_get_reg(cpu_jit, 6u) == 0x77u, "next instruction revalidated");
+        CHECK(arm920t_get_pc(cpu_jit) == CODE_ADDR + 8u, "exit PC");
+        gp32_cpu_profile_t profile;
+        arm920t_get_cpu_profile(cpu_jit, &profile);
+        if (profile.supported && profile.native_backend)
+            CHECK(profile.native_block_calls != 0u, "regression requires native execution");
+        printf("block-exit effect=%u insn=%08" PRIx32 " lane=%u count=%u r6=%u wb=%08" PRIx32 " native_calls=%" PRIu64 "\n",
+               effect, transfer, at, bus_jit.block_count, arm920t_get_reg(cpu_jit, 6u),
+               arm920t_get_reg(cpu_jit, 4u), profile.native_block_calls);
+        ++cases;
+        teardown_pair();
+    }
+    printf("block callback cases=%u\n", cases);
+}
+
 int main(int argc, char **argv) {
     /* Native gate triage can isolate this mapped physical-boundary case
      * without rerunning unrelated differential workloads. */
@@ -1887,7 +1976,12 @@ int main(int argc, char **argv) {
     int callback_only = argc == 2 && !strcmp(argv[1], "--callback-pc");
     int loops_only = argc == 2 && !strcmp(argv[1], "--loop-fences");
     int irq_only = argc == 2 && !strcmp(argv[1], "--callback-irq");
-    if (irq_only) {
+    int block_only = argc == 2 && !strcmp(argv[1], "--block-callback");
+    if (block_only) {
+        case_block_callback_exit();
+        case_block_modes();
+        case_ldm_pc();
+    } else if (irq_only) {
         case_callback_irq_commit();
     } else if (loops_only) {
         case_loop_irq_fence();
@@ -1921,6 +2015,7 @@ int main(int argc, char **argv) {
     case_unframed_leaf();
     case_callback_pc();
     case_callback_irq_commit();
+    case_block_callback_exit();
     case_flags();
     case_shift();
     case_branch();
@@ -1948,7 +2043,7 @@ int main(int argc, char **argv) {
         return 1;
     }
     printf("PASS: arm jit differential (%s), jit events=%" PRIu64 " fallbacks=%" PRIu64 "\n",
-           irq_only ? "callback-IRQ" : chain_only ? "branch-chain" : callback_only ? "callback-PC" : (leaf_only ? "unframed-leaf" : (ram_end_only ? "mapped-page-RAM-end" : (loops_only ? "loop-fences" : "flags/shift/branch/mem/half/block/mul/seeded/budget/loop-fences"))),
+           block_only ? "block-callback" : irq_only ? "callback-IRQ" : chain_only ? "branch-chain" : callback_only ? "callback-PC" : (leaf_only ? "unframed-leaf" : (ram_end_only ? "mapped-page-RAM-end" : (loops_only ? "loop-fences" : "flags/shift/branch/mem/half/block/mul/seeded/budget/loop-fences"))),
            jit_events, jit_fallbacks);
     return 0;
 }
