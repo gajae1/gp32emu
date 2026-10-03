@@ -167,6 +167,8 @@ static uint8_t *tb_fastmem(void *u, uint32_t a, size_t bytes, int write) {
     (void)write;
     return bus_ptr((test_bus_t *)u, a, bytes);   /* must satisfy the RAM+BIOS probes */
 }
+static int portable_callbacks;
+
 static void setup_pair(void) {
     for (test_bus_t *b = &bus_jit; b; b = (b == &bus_jit) ? &bus_ref : NULL) {
         memset(b, 0, sizeof(*b));
@@ -188,7 +190,7 @@ static void setup_pair(void) {
     arm920t_reset(cpu_ref, CODE_ADDR);
     arm920t_reset(cpu_jit, CODE_ADDR);
     arm920t_set_jit(cpu_ref, 0);
-    arm920t_set_jit(cpu_jit, 1);
+    arm920t_set_jit(cpu_jit, !portable_callbacks);
 }
 static void teardown_pair(void) {
     jit_events += arm920t_get_jit_hits(cpu_jit) + arm920t_get_jit_misses(cpu_jit);
@@ -1882,7 +1884,7 @@ static void case_callback_irq_commit(void) {
         CHECK(gp32_ld32le(bus_ptr(&bus_ref, DATA_ADDR, 4u)) == 0u,
               "oracle IRQ must precede the following MOV");
         CHECK(gp32_ld32le(bus_ptr(&bus_jit, DATA_ADDR, 4u)) == 0u,
-              "native IRQ must precede the following MOV");
+              "IRQ must precede the following MOV");
         CHECK(ref_reg(4u) == IO_ADDR + 4u && arm920t_get_reg(cpu_jit, 4u) == IO_ADDR + 4u,
               "post-index writeback must commit once");
         CHECK(bus_ref.io_count == 1u && bus_jit.io_count == 1u &&
@@ -1893,7 +1895,10 @@ static void case_callback_irq_commit(void) {
               "IRQ returns to the instruction after the committed transfer");
         gp32_cpu_profile_t profile;
         arm920t_get_cpu_profile(cpu_jit, &profile);
-        if (profile.supported && profile.native_backend)
+        if (profile.supported && portable_callbacks) {
+            CHECK(profile.native_block_calls == 0u, "portable callback uses no native code");
+            CHECK(profile.block_interp_arm_insns != 0u, "portable callback executes decoded block");
+        } else if (profile.supported && profile.native_backend)
             CHECK(profile.native_block_calls != 0u, "regression requires native execution");
         printf("callback-irq transfer=%08" PRIx32 " captured=%08" PRIx32
                " pc=%08" PRIx32 " wb=%08" PRIx32 " native_calls=%" PRIu64 "\n",
@@ -1956,7 +1961,10 @@ static void case_block_callback_exit(void) {
         CHECK(arm920t_get_pc(cpu_jit) == CODE_ADDR + 8u, "exit PC");
         gp32_cpu_profile_t profile;
         arm920t_get_cpu_profile(cpu_jit, &profile);
-        if (profile.supported && profile.native_backend)
+        if (profile.supported && portable_callbacks) {
+            CHECK(profile.native_block_calls == 0u, "portable callback uses no native code");
+            CHECK(profile.block_interp_arm_insns != 0u, "portable callback executes decoded block");
+        } else if (profile.supported && profile.native_backend)
             CHECK(profile.native_block_calls != 0u, "regression requires native execution");
         printf("block-exit effect=%u insn=%08" PRIx32 " lane=%u count=%u r6=%u wb=%08" PRIx32 " native_calls=%" PRIu64 "\n",
                effect, transfer, at, bus_jit.block_count, arm920t_get_reg(cpu_jit, 6u),
@@ -1977,7 +1985,13 @@ int main(int argc, char **argv) {
     int loops_only = argc == 2 && !strcmp(argv[1], "--loop-fences");
     int irq_only = argc == 2 && !strcmp(argv[1], "--callback-irq");
     int block_only = argc == 2 && !strcmp(argv[1], "--block-callback");
-    if (block_only) {
+    int portable_only = argc == 2 && !strcmp(argv[1], "--portable-callback");
+    if (portable_only) {
+        portable_callbacks = 1;
+        case_callback_irq_commit();
+        case_block_callback_exit();
+        case_loop_callback_trace();
+    } else if (block_only) {
         case_block_callback_exit();
         case_block_modes();
         case_ldm_pc();
@@ -2016,6 +2030,11 @@ int main(int argc, char **argv) {
     case_callback_pc();
     case_callback_irq_commit();
     case_block_callback_exit();
+    portable_callbacks = 1;
+    case_callback_irq_commit();
+    case_block_callback_exit();
+    case_loop_callback_trace();
+    portable_callbacks = 0;
     case_flags();
     case_shift();
     case_branch();
@@ -2043,7 +2062,7 @@ int main(int argc, char **argv) {
         return 1;
     }
     printf("PASS: arm jit differential (%s), jit events=%" PRIu64 " fallbacks=%" PRIu64 "\n",
-           block_only ? "block-callback" : irq_only ? "callback-IRQ" : chain_only ? "branch-chain" : callback_only ? "callback-PC" : (leaf_only ? "unframed-leaf" : (ram_end_only ? "mapped-page-RAM-end" : (loops_only ? "loop-fences" : "flags/shift/branch/mem/half/block/mul/seeded/budget/loop-fences"))),
+           portable_only ? "portable-callback" : block_only ? "block-callback" : irq_only ? "callback-IRQ" : chain_only ? "branch-chain" : callback_only ? "callback-PC" : (leaf_only ? "unframed-leaf" : (ram_end_only ? "mapped-page-RAM-end" : (loops_only ? "loop-fences" : "flags/shift/branch/mem/half/block/mul/seeded/budget/loop-fences"))),
            jit_events, jit_fallbacks);
     return 0;
 }
