@@ -966,3 +966,47 @@ Installed core SHA-256 is
 `aea83fb1a649550162c670184543ac93ed13f3c7546a0ff4082cae4ccaf85c2e`;
 the previous core is backed up as `gp32-dev/resume59-installed-core-before.so`.
 Protected settings remain unchanged.
+
+## resume60: remove unused SDK timer discovery and accelerate refill search
+
+The audio polling path repeatedly searched for an SDK timer table, but its
+only result was a cached address: timer dispatch had already moved to GPOS,
+and the discovered table was never used at runtime. When no table existed,
+every poll repeated the full search. Remove that unused discovery and keep
+the legacy field in capture/load structures for v0002 state compatibility.
+The 64-sample phase still bounds refill retries; timer callbacks remain owned
+by GPOS rather than being re-entered from the audio mixer.
+
+The separate, required PCM refill-descriptor search resolves its read-only
+RAM window once per call and reads words directly. Windows crossing a RAM
+boundary retain the guarded reader. Candidate validation and callback order
+are unchanged, and the pointer is never reused after a guest callback or
+across calls/state loads.
+
+A native H700 synthetic SDK stream renders 2,205,000 stereo frames through
+70-sample halves with real ARM refill callbacks. This fixture deliberately
+has no legacy SDK timer table, exercising the former repeated miss path.
+At observed 1,512 MHz:
+
+| Variant | Measured seconds | Comparison scope |
+| --- | --- | --- |
+| resume59 baseline | 52.805916 / 52.684028 | Baseline sides of the initial ABBA |
+| Direct RAM search only | 45.181192 / 45.124807 | Same ABBA, 1.168x throughput |
+| Final change, including unused-discovery removal | 3.593649 / 3.594515 / 3.592362 / 3.592651 | Subsequent steady runs, 14.679x versus baseline median |
+
+All rows retain audio hash `6ceffc2ff53a9aa1`, 2,205,000 frames, callback
+counter and 189,000 callback CPU cycles. The final comparison reuses the
+completed baseline measurements; it is not a new interleaved ABBA. Four
+steady candidate records were collected despite a collector postcheck that
+expected two; all four complete records were analyzed without rerunning.
+Clock-ramping runs are excluded. This is synthetic mixer throughput, not
+game FPS, physical playback or a typical-game improvement claim.
+
+Windows/H700 PCM, timer and state checks pass; Windows and Android ARM64/
+ARMv7 builds pass. Her Knights/Tomak replay outputs remain exact. Evidence:
+`F:/GP32/results/resume60-scan/` contains the fixture, per-run clock samples,
+`comparison.json`, `steady-comparison.json`, native checks and deployment.
+Installed core SHA-256 is
+`ec04a1bfea14ab8d46a443223b21c6adc01416a3b1aaaa67b16c7137796e0ab5`;
+backup is `gp32-dev/resume60-installed-core-before.so`. Protected settings
+are unchanged. Nested-callback peripheral time settlement remains open.

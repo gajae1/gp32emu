@@ -3168,3 +3168,23 @@ with a backup and unchanged settings. Actual speaker continuity, whole-game
 SDK coverage and nested-callback peripheral time accounting remain open.
 Evidence: `F:/GP32/results/resume59-refill/` and the resume59 performance
 section.
+
+### SDK audio discovery overhead (resume60)
+
+Remove repeated SDK timer-table discovery whose address was never consumed
+by runtime code. GPOS dispatch and the saved-state field remain intact. The
+necessary PCM refill search now reads a validated RAM window directly, with
+the guarded fallback at RAM boundaries and no pointer cached across calls.
+
+In a H700 synthetic stream with no legacy timer table, 2,205,000 PCM frames
+take about 3.59 seconds versus 52.74 seconds previously at observed 1,512 MHz.
+PCM and callback results match exactly. The roughly 14.7x improvement applies
+to this discovery-heavy mixer fixture, not game FPS; the final measurements
+are sequential relative to the prior baseline. See the performance section
+for all runs and qualification limits.
+
+Windows/H700 PCM, timer and state checks pass, Android ARM64/ARMv7 builds
+pass, and Her Knights/Tomak replay outputs remain exact. The H700 core is
+installed with a backup and unchanged protected settings. Callback-time
+settlement and whole-game/physical-audio acceptance remain open. Evidence:
+`F:/GP32/results/resume60-scan/`.

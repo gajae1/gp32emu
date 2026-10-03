@@ -98,7 +98,7 @@ struct gp32 {
     uint64_t direct_hle_sdk_last_submit_cycle;
     uint64_t direct_hle_sdk_timer_accum;
     uint32_t direct_hle_sdk_submitted_frames;
-    uint32_t direct_hle_sdk_timer_table_addr;
+    uint32_t direct_hle_sdk_timer_table_addr; /* Legacy state field; no runtime lookup. */
     struct {
         uint32_t configured;
         uint32_t enabled;
@@ -1600,31 +1600,6 @@ static int direct_sdk_sound_mix_one(gp32_t *g, int16_t *out) {
 }
 
 
-static uint32_t direct_find_sdk_timer_table(gp32_t *g) {
-    if (!g || !g->direct_hle_sdk_sndmixer_addr) return 0u;
-    if (g->direct_hle_sdk_timer_table_addr && direct_ram_range(g, g->direct_hle_sdk_timer_table_addr, 4u * 16u)) return g->direct_hle_sdk_timer_table_addr;
-    uint32_t start = (g->direct_hle_sdk_sndmixer_addr > 0x2000u) ? (g->direct_hle_sdk_sndmixer_addr - 0x2000u) : GP32_RAM_BASE;
-    if (start < GP32_RAM_BASE) start = GP32_RAM_BASE;
-    uint32_t end = g->direct_hle_sdk_sndmixer_addr + 0x1000u;
-    uint32_t ram_end = GP32_RAM_BASE + (uint32_t)s3c2400_ram_size(g->soc);
-    if (end > ram_end) end = ram_end;
-    for (uint32_t base = start; base + 64u <= end; base += 4u) {
-        uint32_t good = 0u;
-        for (uint32_t slot = 0; slot < 4u; ++slot) {
-            uint32_t e = base + slot * 16u;
-            uint32_t on = direct_read32_if_ram(g, e + 0u);
-            uint32_t interval = direct_read32_if_ram(g, e + 8u);
-            uint32_t cb = direct_read32_if_ram(g, e + 12u);
-            if (on == 1u && interval && interval < 100000u && direct_ram_range(g, cb & ~1u, 4u)) good++;
-        }
-        if (good) {
-            g->direct_hle_sdk_timer_table_addr = base;
-            return base;
-        }
-    }
-    return 0u;
-}
-
 static int direct_call_guest_function3(gp32_t *g, uint32_t fn, uint32_t r0, uint32_t r1, uint32_t r2) {
     if (!g || !g->cpu || g->direct_hle_callback_running || !direct_ram_range(g, fn & ~1u, 4u)) return 0;
     arm920t_register_context_t saved;
@@ -1654,20 +1629,6 @@ static int direct_call_guest_function3(gp32_t *g, uint32_t fn, uint32_t r0, uint
 static int direct_call_guest_callback(gp32_t *g, uint32_t callback) {
     return direct_call_guest_function3(g, callback, 0u, 0u, 0u);
 }
-
-static void direct_sdk_poll_timers(gp32_t *g) {
-    if (g && g->direct_hle_sdk_sndmixer_addr) (void)direct_find_sdk_timer_table(g);
-    /* Direct-FXE HLE must not re-enter arbitrary SDK timer callbacks from
-       the host audio tick.  These callbacks are IRQ-context firmware code and
-       can run while the foreground task owns an APCS stack frame; running them
-       as normal guest calls corrupts homebrew such as AKA NOID when it reaches
-       menu/gameplay code.  GPOS timer state is handled by
-       direct_hle_gpos_timer_tick(), and PCM refill callbacks are dispatched
-       separately on the private HLE callback stack. */
-}
-
-
-
 
 static void direct_gpos_timer_reset(gp32_t *g) {
     if (!g) return;
@@ -1912,8 +1873,17 @@ static uint32_t direct_sdk_pcm_refill_tick(gp32_t *g, int allow_refill) {
     uint32_t end = entry + 0x1000u;
     uint32_t ram_end = GP32_RAM_BASE + (uint32_t)s3c2400_ram_size(g->soc);
     if (end > ram_end) end = ram_end;
+    /* Resolve this read-only RAM window once, retaining the guarded reader
+     * for windows crossing a RAM boundary. No pointer survives this search
+     * or the guest callback below. */
+    const uint8_t *scan = NULL;
+    if (end >= start && direct_ram_range(g, start, end - start)) {
+        arm_bus_t bus = s3c2400_get_bus(g->soc);
+        scan = bus.fastmem(bus.user, start, end - start, 0);
+    }
     for (uint32_t a = start; a + 0x24u < end; a += 4u) {
-        if (direct_read32_if_ram(g, a) != entry + 4u) continue;
+        uint32_t value = scan ? gp32_ld32le(scan + (a - start)) : direct_read32_if_ram(g, a);
+        if (value != entry + 4u) continue;
         uint32_t base = direct_read32_if_ram(g, a + 0x0cu);
         uint32_t block = a + 0x14u;
         uint32_t obj = direct_read32_if_ram(g, block + 8u);
@@ -1983,7 +1953,9 @@ static void direct_sdk_sound_tick(gp32_t *g, uint32_t cycles) {
         g->direct_hle_sdk_timer_accum += span;
         if (g->direct_hle_sdk_timer_accum == 64u) {
             g->direct_hle_sdk_timer_accum = 0u;
-            direct_sdk_poll_timers(g);
+            /* GPOS owns timer dispatch. The old SDK-table scan only cached
+             * an unused address; invoking those IRQ-context callbacks here
+             * would corrupt foreground task state (for example AKA NOID). */
         }
         /* A short host slice must not retry a failed guest refill more often
          * than the next cursor/poll boundary. */
@@ -3901,7 +3873,7 @@ typedef struct gp32_state_image {
     uint64_t direct_hle_sdk_last_submit_cycle;
     uint64_t direct_hle_sdk_timer_accum;
     uint32_t direct_hle_sdk_submitted_frames;
-    uint32_t direct_hle_sdk_timer_table_addr;
+    uint32_t direct_hle_sdk_timer_table_addr; /* Legacy state field; no runtime lookup. */
     struct {
         uint32_t configured;
         uint32_t enabled;
