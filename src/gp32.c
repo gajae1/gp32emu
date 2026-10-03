@@ -1250,6 +1250,8 @@ static uint32_t direct_read32_if_ram(gp32_t *g, uint32_t addr) {
 }
 
 static uint16_t direct_read_u16_if_ram(gp32_t *g, uint32_t addr) {
+    if (direct_ram_range(g, addr, 2u)) return s3c2400_read16(g->soc, addr);
+    /* Preserve the zero-filled missing byte when a sample straddles RAM. */
     uint16_t lo = direct_read8_if_ram(g, addr + 0u);
     uint16_t hi = direct_read8_if_ram(g, addr + 1u);
     return (uint16_t)(lo | (uint16_t)(hi << 8));
@@ -1548,17 +1550,18 @@ static void direct_sdk_submit_pcm_buffer(gp32_t *g, uint32_t buf, uint32_t bytes
     if (g->cpu) g->direct_hle_sdk_last_submit_cycle = arm920t_get_cycles(g->cpu);
 }
 
-static int direct_sdk_sound_mix_one(gp32_t *g, int16_t *out) {
+static int direct_sdk_sound_mix_one(gp32_t *g, const uint8_t *mixer, int16_t *out) {
     if (!g || !out || !g->direct_hle_sdk_sndmixer_addr) return 0;
     int32_t acc = 0;
     uint32_t active = 0u;
     for (uint32_t ch = 0; ch < 4u; ++ch) {
         uint32_t e = g->direct_hle_sdk_sndmixer_addr + ch * 20u;
-        uint32_t src0 = direct_read32_if_ram(g, e + 0u);
-        uint32_t cur = direct_read32_if_ram(g, e + 4u);
-        uint32_t reload = direct_read32_if_ram(g, e + 8u);
-        uint32_t remain = direct_read32_if_ram(g, e + 12u);
-        uint32_t repeat = direct_read32_if_ram(g, e + 16u);
+        const uint8_t *p = mixer ? mixer + ch * 20u : NULL;
+        uint32_t src0 = p ? gp32_ld32le(p + 0u) : direct_read32_if_ram(g, e + 0u);
+        uint32_t cur = p ? gp32_ld32le(p + 4u) : direct_read32_if_ram(g, e + 4u);
+        uint32_t reload = p ? gp32_ld32le(p + 8u) : direct_read32_if_ram(g, e + 8u);
+        uint32_t remain = p ? gp32_ld32le(p + 12u) : direct_read32_if_ram(g, e + 12u);
+        uint32_t repeat = p ? gp32_ld32le(p + 16u) : direct_read32_if_ram(g, e + 16u);
         if (!cur || !remain) {
             if (src0 && reload) {
                 cur = src0;
@@ -1941,14 +1944,21 @@ static void direct_sdk_sound_tick(gp32_t *g, uint32_t cycles) {
     if (!frames) return;
     g->direct_hle_sdk_timer_accum %= 64u;
     uint32_t span = direct_sdk_pcm_refill_tick(g, g->direct_hle_sdk_timer_accum == 0u);
+    arm_bus_t bus = s3c2400_get_bus(g->soc);
     while (frames) {
         uint32_t until_poll = 64u - (uint32_t)g->direct_hle_sdk_timer_accum;
         if (span > until_poll) span = until_poll;
         uint32_t until_event = span;
         if (span > frames) span = frames;
+        /* Only the address is reused within this callback-free span. Read
+         * live channel words each sample, retaining alias/write ordering and
+         * the guarded fallback for a table crossing the RAM boundary. */
+        const uint8_t *mixer = NULL;
+        if (direct_ram_range(g, g->direct_hle_sdk_sndmixer_addr, 80u))
+            mixer = bus.fastmem(bus.user, g->direct_hle_sdk_sndmixer_addr, 80u, 0);
         for (uint32_t i = 0; i < span; ++i) {
             int16_t sample = 0;
-            if (!direct_sdk_sound_mix_one(g, &sample)) break;
+            if (!direct_sdk_sound_mix_one(g, mixer, &sample)) break;
             s3c2400_audio_append_s16_stereo(g->soc, sample, sample, rate);
         }
         frames -= span;

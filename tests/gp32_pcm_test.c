@@ -111,7 +111,59 @@ static int check_hle_pcm_clock_domains(void) {
     return 1;
 }
 
+static int check_sdk_channel_mix(void) {
+    /* Four slots: a three-sample loop, a one-shot pair, an invalid source,
+     * and one silent sample. Exercise unaligned words and a partial table. */
+    const int16_t want[] = {-5461, -8192, 32767, -32768, 0};
+    for (unsigned edge = 0; edge < 2u; ++edge) {
+        gp32_t *g = gp32_create(NULL);
+        if (!g) return 0;
+        uint32_t end = GP32_RAM_BASE + (uint32_t)s3c2400_ram_size(g->soc);
+        uint32_t mixer = edge ? end - 76u : GP32_RAM_BASE + 0x4001u;
+        uint32_t source = GP32_RAM_BASE + 0x1001u;
+        uint32_t status = GP32_RAM_BASE + 0x2000u;
+        const uint16_t data[] = {0u, 32768u, 65535u, 49152u, 16384u, 32768u};
+        for (unsigned i = 0; i < GP32_ARRAY_COUNT(data); ++i)
+            s3c2400_write16(g->soc, source + i * 2u, data[i]);
+        const uint32_t channel[][5] = {
+            {source, source, 3u, 3u, 1u},
+            {source + 6u, source + 6u, 2u, 2u, 0u},
+            {end - 1u, end - 1u, 1u, 1u, 1u},
+            {source + 10u, source + 10u, 1u, 1u, 0u},
+        };
+        for (unsigned ch = 0; ch < 4u; ++ch)
+            for (unsigned w = 0; w < 5u; ++w)
+                direct_write32_if_ram(g, mixer + ch * 20u + w * 4u, channel[ch][w]);
+        g->direct_hle_sdk_sndmixer_addr = mixer;
+        g->direct_hle_sdk_sndsrcexist_addr = status;
+        uint32_t budget = (uint32_t)(((uint64_t)direct_run_clock_hz(g) * 5u + 44099u) / 44100u);
+        direct_sdk_sound_tick(g, budget);
+        uint64_t frames = 0;
+        uint32_t rate = 0;
+        const int16_t *pcm = s3c2400_audio_samples(g->soc, &frames, &rate);
+        int ok = pcm && frames == GP32_ARRAY_COUNT(want) && rate == 44100u &&
+            direct_read32_if_ram(g, status) == 1u &&
+            direct_read32_if_ram(g, mixer + 4u) == source + 4u &&
+            direct_read32_if_ram(g, mixer + 12u) == 1u;
+        for (unsigned i = 0; ok && i < GP32_ARRAY_COUNT(want); ++i)
+            ok = pcm[i * 2u] == want[i] && pcm[i * 2u + 1u] == want[i];
+        for (unsigned ch = 1; ok && ch < 4u; ++ch)
+            ok = !direct_read32_if_ram(g, mixer + ch * 20u) &&
+                 !direct_read32_if_ram(g, mixer + ch * 20u + 4u) &&
+                 !direct_read32_if_ram(g, mixer + ch * 20u + 12u);
+        s3c2400_write8(g->soc, end - 1u, 0xabu);
+        s3c2400_write8(g->soc, GP32_RAM_BASE, 0xcdu);
+        ok = ok && direct_read_u16_if_ram(g, end - 1u) == 0x00abu &&
+            direct_read_u16_if_ram(g, GP32_RAM_BASE - 1u) == 0xcd00u;
+        if (!ok) fprintf(stderr, "FAIL: SDK channel mixing/cursors at RAM edge %u\n", edge);
+        gp32_destroy(g);
+        if (!ok) return 0;
+    }
+    return 1;
+}
+
 int main(void) {
+    if (!check_sdk_channel_mix()) return 1;
     if (!check_hle_pcm_clock_domains()) return 1;
     if (!check_sdk_refill_slicing(32u) || !check_sdk_refill_slicing(64u) ||
         !check_sdk_refill_slicing(70u)) return 1;
