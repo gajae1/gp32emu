@@ -1049,3 +1049,76 @@ libretro audio/input/persistence cases passed. Android ARM64 and ARMv7 core
 builds passed again. No Android runtime or physical input-latency measurement
 was performed. The installed Spruce core remains the previously validated
 resume12 build; resume13 binaries are development candidates.
+
+## resume14: compact JIT dispatch and LCD loop specialization
+
+The JIT table now stores compact headers separately from decoded instructions.
+On 64-bit hosts a header is 32 bytes instead of a 2336-byte combined slot:
+the 16,384-entry hot table is 512 KiB rather than 36.5 MiB. Total allocation is
+essentially unchanged. Decoded instruction addresses remain stable for native
+helpers; state serialization, generation checks and cache-maintenance semantics
+are unchanged. Allocation failure frees the header table before falling back.
+
+With this change alone, matched-clock H700 A/B/B/A comparisons against `2a9f64b`
+produced the following core throughput. Both comparisons matched all seven
+CPU/video/PCM fields and all measured frequency samples were 1.512 GHz:
+
+| Korean gameplay scene | Baseline | Compact headers | Change |
+| --- | ---: | ---: | ---: |
+| Her Knights, 1200 warmup / 1200 measured frames | 101.3905 | 103.6500 | +2.23% |
+| Little Wizard, 1800 warmup / 600 measured frames | 94.8465 | 97.2635 | +2.55% |
+
+The Wizard comparison followed the Her Knights run without an idle interval.
+Its earlier cold-device comparison is excluded because frequency was still
+ramping. These windows differ from earlier Wizard runs and are not game-wide
+minimum frame rates. Evidence: `resume14-compact-her-abba.json` and
+`resume14-compact-wizard-warm-abba.json`.
+
+The final combined candidate also matched Her Knights CPU/video/PCM output.
+Its first throughput comparison overlapped a diagnostic search and is excluded;
+the subsequent quiet comparison had a frequency ramp in its first baseline.
+Therefore neither establishes an additional combined speedup percentage. The
+two steady candidate runs in the quiet comparison were 103.674 and 103.278
+core fps; use the qualified table above only for the isolated header change.
+Evidence: `resume14-integrated-her-abba.qualification.md` and
+`resume14-integrated-her-quiet-abba.json`.
+
+The integrated candidate also replaces AArch64 flag mask/OR sequences with a
+low-field BFXIL merge: new upper flags remain in the destination register and
+old CPSR low bits are inserted at bit zero. Arithmetic, logical, multiply and
+MSR paths preserve their different flag masks. A proposed nonzero-lsb splice
+was rejected during review and was never applied to the repository.
+
+For contiguous 16-bpp LCD output, four specialized loops select the fixed byte
+order once per frame. Odd widths, OFFSIZE gaps and unbacked RAM keep their
+existing paths. H700 execution of the independent LCD comparison passed all
+468 cases and all 65,536 color-table entries. Host-only component measurements
+showed roughly 19-24% less time for the two full-frame 16-bpp cases; that is not
+an H700 or whole-game speedup claim.
+
+Integrated validation: H700 native differential passed 36,108 events with four
+expected fallbacks, Windows CTest passed 12/12, and Android ARM64/ARMv7 builds
+passed. The libretro audio callback investigation found no reproduced ordering
+or loss defect when the frontend could accept data. Partial/blocked callbacks
+and recovery passed a separate probe; no production audio-buffer policy was
+changed. Actual speaker quality and physical input latency remain open.
+
+Profiling correction: `jit_block_conflicts` now counts only eviction of a
+different PC, excluding retranslation of modified code at the same PC. Wizard's
+corrected count was 7,070 versus the former mixed count of 11,422. A simple
+high-address XOR hash increased true collisions to 7,947 and translations from
+11,814 to 12,838; it was rejected. Keep the direct-map index unchanged.
+
+The integrated core then ran through Spruce's normal command handoff and menu
+return for 1800 frontend frames. The capture shows the expected Her Knights
+battle and 60.29 fps; ALSA initialized, RetroArch exited with status zero and
+reported 1784 video frames pushed / 17 dropped. This idle-scene run is not a
+worst-case combat or physical audio acceptance test (the debug overlay still
+reports audio underruns). GP32 and shared RetroArch configuration hashes were
+unchanged. After review, the tested core was installed as
+`Emu/GP32/gp32emu_libretro.so`, SHA-256
+`e99a75dade30c3804c1bff2c7e620f095404082257aa485e46cf8ec756e9a085`.
+The previous installed core is preserved at
+`gp32-dev/resume14-installed-core-before.so`; the temporary command was consumed
+and no diagnostic app was added to the menu. Local records:
+`resume14-runtime.log`, `resume14-runtime.png`, `resume14-core-installed.json`.

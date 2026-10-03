@@ -171,7 +171,6 @@ typedef struct arm_jit_block {
     uint8_t poll_prefix;
     uint8_t poll_backedge;
     arm_jit_native_fn native;
-    arm_jit_op_t op[ARM_JIT_MAX_INSNS];
 } arm_jit_block_t;
 
 /* Packed mirror of tlb_va_base/tlb_pa_base/tlb_mask/tlb_valid: one 16-byte
@@ -228,6 +227,7 @@ struct arm920t {
     arm_swi_fn swi;
     void *swi_user;
     arm_jit_block_t *jit_blocks;
+    arm_jit_op_t (*jit_ops)[ARM_JIT_MAX_INSNS];
     uint8_t *jit_code;
     uint8_t *jit_ram_base;
     uint8_t *jit_bios_base;
@@ -242,6 +242,12 @@ struct arm920t {
     /* Transient workload counters (GP32EMU_CPU_PROFILE); never serialized. */
     gp32_cpu_profile_t prof;
 };
+
+/* Native dispatch only needs the compact header. Decoded instructions live
+ * in a separate stable allocation so C helpers can retain their addresses. */
+ARM_FORCE_INLINE arm_jit_op_t *arm_jit_ops(const arm920t_t *c, const arm_jit_block_t *b) {
+    return c->jit_ops[b - c->jit_blocks];
+}
 
 static uint32_t mode(const arm920t_t *c) { return c->cpsr & MODE_MASK; }
 static int thumb(const arm920t_t *c) { return (c->cpsr & T_FLAG) != 0; }
@@ -549,6 +555,7 @@ void arm920t_destroy(arm920t_t *c) {
     arm_jit_free_exec(c->jit_code, c->jit_code_size);
 #endif
     free(c->jit_blocks);
+    free(c->jit_ops);
     free(c);
 }
 void arm920t_set_trace(arm920t_t *c, int en, arm_log_fn log, void *user) { if (c) { c->trace = en; c->log = log; c->log_user = user; } }
@@ -1061,7 +1068,7 @@ static void exec_thumb(arm920t_t *c) {
 static int arm_jit_fetch_unchanged(arm920t_t *c, const arm_jit_block_t *b) {
     if (!b->count || b->count > ARM_JIT_MAX_INSNS) return 0;
     for (unsigned i = 0; i < b->count; ++i) {
-        const arm_jit_op_t *op = &b->op[i];
+        const arm_jit_op_t *op = &arm_jit_ops(c, b)[i];
         uint32_t pa = op->pc;
         if (pa & 3u) return 0;
         if (c->cp15[1] & 1u) {
@@ -1318,7 +1325,14 @@ static void arm_bc_decode_op(arm_jit_op_t *op) {
 static int arm_jit_alloc(arm920t_t *c) {
     if (c->jit_blocks) return 1;
     c->jit_blocks = (arm_jit_block_t *)calloc(ARM_JIT_BLOCK_COUNT, sizeof(c->jit_blocks[0]));
-    return c->jit_blocks != NULL;
+    if (!c->jit_blocks) return 0;
+    c->jit_ops = calloc(ARM_JIT_BLOCK_COUNT, sizeof(c->jit_ops[0]));
+    if (!c->jit_ops) {
+        free(c->jit_blocks);
+        c->jit_blocks = NULL;
+        return 0;
+    }
+    return 1;
 }
 
 static void arm_jit_compile_native(arm920t_t *c, arm_jit_block_t *b);
@@ -1335,8 +1349,10 @@ static arm_jit_block_t *arm_jit_translate(arm920t_t *c, uint32_t pc) {
         arm920t_jit_invalidate_all(c, ARM_JIT_INV_CODE_RECYCLE);
     arm_jit_block_t *b = &c->jit_blocks[(pc >> 2) & ARM_JIT_BLOCK_MASK];
 #if ARM920T_PROFILING
-    /* Overwriting a still-valid same-generation slot is block-table pressure. */
-    if (b->valid && b->generation == c->jit_generation) c->prof.jit_block_conflicts++;
+    /* Only a different PC is a table collision. Replacing changed code at the
+     * same PC after cache maintenance is not evidence of table pressure. */
+    if (b->valid && b->generation == c->jit_generation && b->tag_pc != pc)
+        c->prof.jit_block_conflicts++;
 #endif
     b->valid = 0;
     b->tag_pc = pc;
@@ -1349,7 +1365,7 @@ static arm_jit_block_t *arm_jit_translate(arm920t_t *c, uint32_t pc) {
     for (uint8_t i = 0; i < ARM_JIT_MAX_INSNS; ++i) {
         if (i && ((cur ^ pc) & ~ARM_JIT_PAGE_MASK)) break;
         uint32_t insn = rb32(c, cur);
-        arm_jit_op_t *op = &b->op[i];
+        arm_jit_op_t *op = &arm_jit_ops(c, b)[i];
         op->pc = cur;
         op->insn = insn;
         op->cond = (uint8_t)(insn >> 28);
@@ -1382,7 +1398,7 @@ static arm_jit_block_t *arm_jit_translate(arm920t_t *c, uint32_t pc) {
                         uint32_t cpc = tpc + (uint32_t)k * 4u;
                         uint32_t cinsn = rb32(c, cpc);
                         ++i;
-                        arm_jit_op_t *cop = &b->op[i];
+                        arm_jit_op_t *cop = &arm_jit_ops(c, b)[i];
                         cop->pc = cpc;
                         cop->insn = cinsn;
                         cop->cond = (uint8_t)(cinsn >> 28);
@@ -1402,7 +1418,7 @@ static arm_jit_block_t *arm_jit_translate(arm920t_t *c, uint32_t pc) {
         if (arm_jit_is_uncond_b_no_link(insn)) {
             uint32_t target = arm_jit_branch_target(cur, insn);
             int seen = 0;
-            for (uint8_t j = 0; j < i; ++j) if ((b->op[j].pc & ~3u) == target) { seen = 1; break; }
+            for (uint8_t j = 0; j < i; ++j) if ((arm_jit_ops(c, b)[j].pc & ~3u) == target) { seen = 1; break; }
             if (!seen && ((target ^ pc) & ~ARM_JIT_PAGE_MASK) == 0u) {
                 op->stop = 0;
                 cur = target;
@@ -1420,7 +1436,7 @@ static arm_jit_block_t *arm_jit_translate(arm920t_t *c, uint32_t pc) {
     b->poll_prefix = 0;
     b->poll_backedge = 0;
     for (uint8_t i = 0; i < b->count; ++i) {
-        const arm_jit_op_t *op = &b->op[i];
+        const arm_jit_op_t *op = &arm_jit_ops(c, b)[i];
         if (op->kind == ARM_JIT_OP_DATA) {
             if (op->c == 15u) break;
         } else if (op->kind == ARM_JIT_OP_SINGLE_DT) {
@@ -2794,7 +2810,7 @@ static void arm_jit_compile_native(arm920t_t *c, arm_jit_block_t *b) {
     x64_mov_r64_mem_cpu(&e, X64_R14D, jit_ram_base_off());
     x64_mov_r64_mem_cpu(&e, X64_R15D, jit_bios_base_off());
     for (uint8_t i = 0; i < b->count; ++i) {
-        const arm_jit_op_t *op = &b->op[i];
+        const arm_jit_op_t *op = &arm_jit_ops(c, b)[i];
         size_t patches[3];
         unsigned npatch = 0;
         if (arm_jit_is_side_effect_free_nop(op->insn)) continue;
@@ -2816,7 +2832,7 @@ static void arm_jit_compile_native(arm920t_t *c, arm_jit_block_t *b) {
        condition jumps past that return and still needs a normal epilogue.
        Extra epilogues after unconditional returns are unreachable and benign. */
     {
-        uint32_t final_pc = b->op[b->count - 1u].pc + 4u;
+        uint32_t final_pc = arm_jit_ops(c, b)[b->count - 1u].pc + 4u;
         x64_mov_mem_cpu_imm(&e, arm_reg_off(15), final_pc);
         x64_emit_return_imm(&e, b->count);
     }
@@ -2912,9 +2928,9 @@ static uint32_t arm_jit_run(arm920t_t *c, uint32_t cycles) {
 
         if (!done) {
             for (uint8_t i = 0; i < b->count && total + done < cycles; ++i) {
-                const arm_jit_op_t *op = &b->op[i];
+                const arm_jit_op_t *op = &arm_jit_ops(c, b)[i];
                 if ((c->r[15] & ~3u) != op->pc || thumb(c)) break;
-                uint32_t expected_next = (i + 1u < b->count) ? (b->op[i + 1u].pc & ~3u) : (op->pc + 4u);
+                uint32_t expected_next = (i + 1u < b->count) ? (arm_jit_ops(c, b)[i + 1u].pc & ~3u) : (op->pc + 4u);
                 if (stable_reads && (i >= b->poll_prefix || !arm_poll_read_stable(c, op))) stable_reads = 0;
                 arm_jit_exec_classified_bc(c, op);
                 ARM_PROF_INC(c, block_interp_arm_insns);

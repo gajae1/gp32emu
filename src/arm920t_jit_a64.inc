@@ -154,6 +154,12 @@ static void a64_mask(a64_emit_t *e, unsigned rd, unsigned rn, uint32_t mask) {
 static void a64_ubfx(a64_emit_t *e, unsigned rd, unsigned rn, unsigned lsb, unsigned width) {
     a64_u32(e, 0x53000000u | (lsb << 16) | ((lsb + width - 1u) << 10) | (rn << 5) | rd);
 }
+/* BFXIL Wd, Wn, #0, #width: preserve the new upper flags in Wd while
+ * replacing its low bits with the old CPSR in Wn. BFXIL always inserts at
+ * destination bit zero; a nonzero source lsb would not splice upper flags. */
+static void a64_bfxil_low(a64_emit_t *e, unsigned rd, unsigned rn, unsigned width) {
+    a64_u32(e, 0x33000000u | ((width - 1u) << 10) | (rn << 5) | rd);
+}
 static void a64_lsl(a64_emit_t *e, unsigned rd, unsigned rn, unsigned amount) {
     a64_u32(e, 0x53000000u | (((32u - amount) & 31u) << 16) |
             ((31u - amount) << 10) | (rn << 5) | rd);
@@ -301,9 +307,8 @@ static int a64_data(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
             a64_mask(e, 5, 5, N_FLAG | Z_FLAG);
             a64_rr(e, 0x2a000000u, 5, 5, 4);
         }
-        a64_mask(e, 3, 3, logical ? ~(N_FLAG | Z_FLAG | C_FLAG) : 0x0fffffffu);
-        a64_rr(e, 0x2a000000u, 3, 3, 5);
-        a64_store(e, 3, offsetof(arm920t_t, cpsr));
+        a64_bfxil_low(e, 5, 3, logical ? 29u : 28u);
+        a64_store(e, 5, offsetof(arm920t_t, cpsr));
     }
     if (!test) {
         if (op->c == 15u) a64_mask(e, 2, 2, ~3u);
@@ -634,10 +639,8 @@ static int a64_mul(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
         a64_load(e, 3, offsetof(arm920t_t, cpsr));
         a64_cmp_imm(e, 2, 0); /* subs wzr, w2, #0 */
         a64_u32(e, 0xd53b4205u); /* mrs x5, nzcv */
-        a64_mask(e, 5, 5, N_FLAG | Z_FLAG);
-        a64_mask(e, 3, 3, ~(N_FLAG | Z_FLAG));
-        a64_rr(e, 0x2a000000u, 3, 3, 5); /* orr w3, w3, w5 */
-        a64_store(e, 3, offsetof(arm920t_t, cpsr));
+        a64_bfxil_low(e, 5, 3, 30u); /* N/Z from w5; C/V and control from w3. */
+        a64_store(e, 5, offsetof(arm920t_t, cpsr));
     }
     GP32_UNUSED(done);
     return 1;
@@ -688,8 +691,8 @@ static void arm_jit_compile_native(arm920t_t *c, arm_jit_block_t *b) {
     e.ram_write = c->jit_ram_base && fastmem(c, ARM_JIT_RAM_BASE_ADDR, ARM_JIT_RAM_SIZE_BYTES, 1) == c->jit_ram_base;
     if (e.ram_read || e.ram_write) {
         for (unsigned i = 0; i < b->count; ++i)
-            if (b->op[i].kind == ARM_JIT_OP_SINGLE_DT || b->op[i].kind == ARM_JIT_OP_HALF ||
-                b->op[i].kind == ARM_JIT_OP_BLOCK_DT) { e.memory = 1; break; }
+            if (arm_jit_ops(c, b)[i].kind == ARM_JIT_OP_SINGLE_DT || arm_jit_ops(c, b)[i].kind == ARM_JIT_OP_HALF ||
+                arm_jit_ops(c, b)[i].kind == ARM_JIT_OP_BLOCK_DT) { e.memory = 1; break; }
     }
     a64_u32(&e, 0xd503245fu); /* bti c (NOP on ARMv8.0) */
     a64_u32(&e, 0xa9bd7bfdu); /* stp x29, x30, [sp, #-48]! */
@@ -719,8 +722,8 @@ static void arm_jit_compile_native(arm920t_t *c, arm_jit_block_t *b) {
     a64_return(&e, 0);
     a64_patch(&e, enough, e.pos);
     for (unsigned i = 0; i < b->count; ++i) {
-        const arm_jit_op_t *op = &b->op[i];
-        e.expected_next = i + 1u < b->count ? b->op[i + 1u].pc : op->pc + 4u;
+        const arm_jit_op_t *op = &arm_jit_ops(c, b)[i];
+        e.expected_next = i + 1u < b->count ? arm_jit_ops(c, b)[i + 1u].pc : op->pc + 4u;
         e.generation = b->generation;
         size_t skip = 0;
         if (op->cond == 15u) {
@@ -744,7 +747,7 @@ static void arm_jit_compile_native(arm920t_t *c, arm_jit_block_t *b) {
         }
     }
     /* The last op can itself be a stitched branch at the block-size limit. */
-    const arm_jit_op_t *last = &b->op[b->count - 1u];
+    const arm_jit_op_t *last = &arm_jit_ops(c, b)[b->count - 1u];
     uint32_t final_pc = last->pc + 4u;
     if (last->kind == ARM_JIT_OP_BRANCH && last->cond == 14u)
         final_pc = arm_jit_branch_target(last->pc, last->insn);
@@ -911,9 +914,8 @@ static int a64_data_regshift(a64_emit_t *e, const arm_jit_op_t *op, uint32_t don
             a64_mask(e, 5, 5, N_FLAG | Z_FLAG);
             a64_rr(e, 0x2a000000u, 5, 5, 4);
         }
-        a64_mask(e, 3, 3, logical ? ~(N_FLAG | Z_FLAG | C_FLAG) : 0x0fffffffu);
-        a64_rr(e, 0x2a000000u, 3, 3, 5);
-        a64_store(e, 3, offsetof(arm920t_t, cpsr));
+        a64_bfxil_low(e, 5, 3, logical ? 29u : 28u);
+        a64_store(e, 5, offsetof(arm920t_t, cpsr));
     }
     if (!test) {
         if (op->c == 15u) a64_mask(e, 2, 2, ~3u);
@@ -957,9 +959,8 @@ static int a64_long_mul(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
         a64_u32(e, 0xd53b4207u);                           /* mrs x7, nzcv */
         a64_mask(e, 7, 7, Z_FLAG);
         a64_rr(e, 0x2a000000u, 6, 6, 7);
-        a64_mask(e, 5, 5, ~(N_FLAG | Z_FLAG));             /* C/V and the rest kept */
-        a64_rr(e, 0x2a000000u, 5, 5, 6);
-        a64_store(e, 5, offsetof(arm920t_t, cpsr));
+        a64_bfxil_low(e, 6, 5, 30u);                      /* C/V and control kept */
+        a64_store(e, 6, offsetof(arm920t_t, cpsr));
     }
     GP32_UNUSED(done);
     return 1;
@@ -1006,18 +1007,15 @@ static int a64_psr_mov(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
         if (insn & (1u << 25)) {                           /* immediate form */
             uint32_t v = gp32_ror32(insn & 0xffu, ((insn >> 8) & 0xfu) * 2u);
             a64_load(e, 1, offsetof(arm920t_t, cpsr));
-            a64_mask(e, 1, 1, 0x00ffffffu);
             a64_imm(e, 2, v & 0xff000000u);
         } else {                                           /* register form */
             unsigned rm = insn & 0xfu;
             if (rm == 15u) return 0;
             a64_guest(e, 2, rm, op->pc);
             a64_load(e, 1, offsetof(arm920t_t, cpsr));
-            a64_mask(e, 1, 1, 0x00ffffffu);
-            a64_mask(e, 2, 2, 0xff000000u);
         }
-        a64_rr(e, 0x2a000000u, 1, 1, 2);                   /* orr w1, w1, w2 */
-        a64_store(e, 1, offsetof(arm920t_t, cpsr));
+        a64_bfxil_low(e, 2, 1, 24u);                      /* top byte from source */
+        a64_store(e, 2, offsetof(arm920t_t, cpsr));
         GP32_UNUSED(done);
         return 1;
     }
