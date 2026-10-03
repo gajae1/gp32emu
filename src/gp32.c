@@ -107,6 +107,8 @@ struct gp32 {
         uint32_t max_exec_tick;
         uint64_t accum;
     } direct_hle_gpos_timer[GP32_DIRECT_GPOS_TIMER_COUNT];
+    /* Dispatch-only identities; no pending callbacks survive a state load. */
+    uint32_t direct_hle_gpos_timer_epoch[GP32_DIRECT_GPOS_TIMER_COUNT];
     uint32_t direct_hle_gpos_timers_enabled;
     uint32_t direct_hle_gpos_task_first;
     uint32_t direct_hle_gpos_task_last;
@@ -1673,6 +1675,8 @@ static void direct_sdk_poll_timers(gp32_t *g) {
 
 static void direct_gpos_timer_reset(gp32_t *g) {
     if (!g) return;
+    for (uint32_t i = 0; i < GP32_DIRECT_GPOS_TIMER_COUNT; ++i)
+        ++g->direct_hle_gpos_timer_epoch[i];
     memset(g->direct_hle_gpos_timer, 0, sizeof(g->direct_hle_gpos_timer));
     g->direct_hle_gpos_timers_enabled = 0u;
     g->direct_hle_gpos_task_first = 0u;
@@ -1764,15 +1768,29 @@ static void direct_hle_gpos_timer_tick(gp32_t *g, uint32_t cycles) {
     if (!g || !g->direct_fxe_mode || !g->direct_hle_gpos_timers_enabled || !cycles) return;
     uint32_t clock = direct_run_clock_hz(g);
     if (!clock) clock = 66000000u;
+    struct { uint32_t callback, tps, fires, epoch; } pending[GP32_DIRECT_GPOS_TIMER_COUNT] = {0};
+    /* Settle elapsed time for every slot before guest callbacks can start or
+     * reconfigure another timer. New timers must not inherit pre-start time. */
     for (uint32_t i = 0; i < GP32_DIRECT_GPOS_TIMER_COUNT; ++i) {
         uint32_t cb = g->direct_hle_gpos_timer[i].callback;
         uint32_t tps = g->direct_hle_gpos_timer[i].tps;
         if (!g->direct_hle_gpos_timer[i].configured || !g->direct_hle_gpos_timer[i].enabled || !cb || !tps) continue;
+        pending[i].callback = cb;
+        pending[i].tps = tps;
+        pending[i].epoch = g->direct_hle_gpos_timer_epoch[i];
         if (tps > 200000u) tps = 200000u;
         uint64_t scaled = g->direct_hle_gpos_timer[i].accum + (uint64_t)cycles * (uint64_t)tps;
-        uint32_t fires = (uint32_t)(scaled / (uint64_t)clock);
+        pending[i].fires = (uint32_t)(scaled / (uint64_t)clock);
         g->direct_hle_gpos_timer[i].accum = scaled % (uint64_t)clock;
-        if (!fires) continue;
+    }
+    for (uint32_t i = 0; i < GP32_DIRECT_GPOS_TIMER_COUNT; ++i) {
+        uint32_t cb = pending[i].callback;
+        uint32_t tps = pending[i].tps;
+        uint32_t fires = pending[i].fires;
+        if (!fires || !g->direct_hle_gpos_timers_enabled ||
+            !g->direct_hle_gpos_timer[i].configured || !g->direct_hle_gpos_timer[i].enabled ||
+            g->direct_hle_gpos_timer_epoch[i] != pending[i].epoch ||
+            g->direct_hle_gpos_timer[i].callback != cb || g->direct_hle_gpos_timer[i].tps != tps) continue;
         if (direct_gpos_callback_is_scheduler(g, cb)) {
             direct_gpos_neutralize_internal_timer_tasks(g);
             uint32_t ticks = fires > 64u ? 64u : fires;
@@ -1782,7 +1800,11 @@ static void direct_hle_gpos_timer_tick(gp32_t *g, uint32_t cycles) {
         if (direct_try_emulate_gpos_counter_callback(g, cb, fires)) continue;
         if (tps <= 1000u && direct_ram_range(g, cb & ~1u, 4u)) {
             uint32_t calls = fires > 8u ? 8u : fires;
-            for (uint32_t n = 0; n < calls; ++n) direct_call_guest_callback(g, cb);
+            for (uint32_t n = 0; n < calls; ++n) {
+                if (!g->direct_hle_gpos_timers_enabled || !g->direct_hle_gpos_timer[i].enabled ||
+                    g->direct_hle_gpos_timer_epoch[i] != pending[i].epoch) break;
+                direct_call_guest_callback(g, cb);
+            }
         }
     }
 }
@@ -1828,6 +1850,7 @@ static int direct_handle_swi_gpos_timer(gp32_t *g, arm920t_t *cpu, uint32_t pc) 
         uint32_t tps = direct_read32_if_ram(g, cmdp + 12u);
         uint32_t max_exec = direct_read32_if_ram(g, cmdp + 16u);
         if (idx < GP32_DIRECT_GPOS_TIMER_COUNT && direct_ram_range(g, cb & ~1u, 4u) && tps) {
+            ++g->direct_hle_gpos_timer_epoch[idx];
             g->direct_hle_gpos_timer[idx].configured = 1u;
             g->direct_hle_gpos_timer[idx].enabled = 0u;
             g->direct_hle_gpos_timer[idx].callback = cb;
@@ -1853,7 +1876,10 @@ static int direct_handle_swi_gpos_timer(gp32_t *g, arm920t_t *cpu, uint32_t pc) 
     }
     case 3u: {
         uint32_t idx = direct_read32_if_ram(g, cmdp + 4u);
-        if (idx < GP32_DIRECT_GPOS_TIMER_COUNT) g->direct_hle_gpos_timer[idx].enabled = 0u;
+        if (idx < GP32_DIRECT_GPOS_TIMER_COUNT) {
+            ++g->direct_hle_gpos_timer_epoch[idx];
+            g->direct_hle_gpos_timer[idx].enabled = 0u;
+        }
         break;
     }
     case 4u: {
@@ -1867,7 +1893,10 @@ static int direct_handle_swi_gpos_timer(gp32_t *g, arm920t_t *cpu, uint32_t pc) 
     }
     case 5u: {
         uint32_t idx = direct_read32_if_ram(g, cmdp + 4u);
-        if (idx < GP32_DIRECT_GPOS_TIMER_COUNT) memset(&g->direct_hle_gpos_timer[idx], 0, sizeof(g->direct_hle_gpos_timer[idx]));
+        if (idx < GP32_DIRECT_GPOS_TIMER_COUNT) {
+            ++g->direct_hle_gpos_timer_epoch[idx];
+            memset(&g->direct_hle_gpos_timer[idx], 0, sizeof(g->direct_hle_gpos_timer[idx]));
+        }
         break;
     }
     default:

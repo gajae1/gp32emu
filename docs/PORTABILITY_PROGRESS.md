@@ -2903,3 +2903,24 @@ background-only capture, through Hangul dialogue into its first fight. Paired
 and scrolling. The local matrix now records Hangul evidence for 13 of the
 20 owned Korea-labelled titles; seven remain language-unverified. See the
 resume46 matrix entry for exact scope and artifacts. No ROM was downloaded.
+
+The parallel timer review also identified retroactive time credit: a callback
+starting a later timer slot caused that new timer to receive the elapsed
+interval preceding its start. A real guest SWI regression reproduced a first
+expiry 464 cycles early at 66 MHz/1 kHz; reversing slot order did not fail.
+Timer time accounting now completes for every slot before dispatching guest
+callbacks. Per-slot dispatch identities cancel pending work when a callback
+stops, removes or reconfigures a timer, including replacement with the same
+function and rate. Without that identity check, the two-phase implementation
+incorrectly invoked an expiry belonging to the replaced timer; this was also
+reproduced and corrected before deployment.
+
+Expanded Windows and native H700 timer tests pass for both slot orders,
+same-function/rate replacement, ARM/Thumb entry and interpreter/JIT execution.
+The Windows save-state regression and all four libretro target builds pass.
+Dispatch identities are transient and are not added to the serialized state;
+the wire format remains unchanged. This addresses callback-driven timer
+mutation, not the separately unresolved accounting of nested CPU execution.
+Final core SHA-256:
+`53cbcff7fb85c3bd57078ca2c17af99bfa9e7d2cf9c6a0d533bdbbdf7da69763`.
+The private deployment record is `resume46-callback/installed-final.json`.
