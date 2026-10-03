@@ -22,6 +22,10 @@ Existing European releases were preserved outside `Roms/GP32`; game saves and
 RetroArch settings were retained. This library inventory is not a claim that
 every GP32 release is present or that every game is fully compatible.
 
+Use the [Korean library inventory guide](../../docs/KOREAN_LIBRARY.md) to
+check supplied files and deduplicate ZIP/plain copies before adding games.
+The region label alone does not verify the game's displayed language.
+
 The catalogued Korean releases still absent from the supplied local assets are
 Funny Soccer 2002, Holeman Battle Race 2002, Story of Bug eyed Monster, Winter Is,
 Tales of Windy Land, and Tears - Another Story. Supply the matching owned dumps

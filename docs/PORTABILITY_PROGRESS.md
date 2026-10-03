@@ -1122,3 +1122,73 @@ The previous installed core is preserved at
 `gp32-dev/resume14-installed-core-before.so`; the temporary command was consumed
 and no diagnostic app was added to the menu. Local records:
 `resume14-runtime.log`, `resume14-runtime.png`, `resume14-core-installed.json`.
+
+## resume15: Korean library and active-combat audio delivery
+
+The live Spruce menu shows 20 Korean-region releases and the GP32 system tile
+at the same scale as its neighbors. The existing 120 x 130 icon matches the
+repository hash; no additional image resize or device setting change was needed.
+Six catalogued Korean releases remain absent from the supplied assets, as listed
+in the [packaging guide](../packaging/spruce/README.md). Region filenames alone
+do not verify every game's displayed language or full compatibility.
+
+The inventory scanner now treats duplicate ZIP member names as ambiguous,
+including when the two entries contain different ROM bytes. Previously it could
+silently select the first entry. One-ROM archives retain their existing behavior.
+
+### Tomak Korean combat: core-to-frontend and ALSA counters
+
+A diagnostic-only wrapper of the installed `42876cf` core ran the existing
+Tomak Korean stage-one state through the normal Spruce/RetroArch launch path.
+It replayed the same 2,400-frame firing and vertical movement pattern as the
+resume13 headless scene. The wrapper counted audio batch acceptance; the
+previous ALSA interposer counted actual libasound errors and recovery calls.
+Neither diagnostic library replaced the installed core.
+
+| Observation | Result |
+| --- | --- |
+| Core runs / batch calls | 2,400 / 2,400 |
+| Offered / accepted stereo frames at the libretro boundary | 1,763,352 / 1,763,352 |
+| Partial / zero callback returns | 0 / 0 |
+| Pending core output after each run | 0 frames |
+| ALSA write calls / accepted output frames | 2,621 / 2,012,928 |
+| ALSA errors / recovery calls | 0 / 0 |
+| Threaded video frames pushed / dropped | 2,386 / 15 |
+| Mid-combat / final OSD fps | 59.87 / 60.45 |
+
+Screenshots show active bullets, enemies and damage; these are presentation
+readings in one scene, not whole-game minimum rates. The final OSD's 42.69%
+"underrun" value is still the software FIFO near-empty statistic described
+above, not an audible-dropout percentage. ALSA zero-frame counts include normal
+game silence and startup/shutdown padding, so these counters cannot replace
+physical listening. GP32 and common RetroArch configuration hashes are unchanged,
+and MainUI returned normally after exit 0. Evidence under `F:/GP32/results/`:
+`resume15-runtime-verified.json`, `resume15-delivery.json`, `resume15-alsa.json`,
+`resume11-ui-resume15-combat.png`, and `resume15-runtime.png`.
+
+### Input polling
+
+Libretro now negotiates optional joypad bitmask support and reads the pad in
+one callback instead of ten when available. Unsupported frontends retain the
+individual-button path. Poll-before-run order, GP32 button mapping and state-load
+input behavior are unchanged. This reduces callback overhead; it is not a
+measured controller-to-display latency reduction or whole-game speedup.
+
+The focused input, audio and persistence tests pass in the C23 Windows build.
+The input test also passes natively on H700 with the interpreter and JIT, including
+bitmask negotiation, fallback, combined buttons and sign-extended unused high
+bits. Android ARM64 and ARMv7 cores build successfully; device runtime on Android
+remains unverified. The separate resampler investigation found no actionable
+defect in supported input sizes/rates, so that production code was left unchanged.
+
+A separate 300-frame Tomak runtime probe then confirmed that the device's real
+RetroArch enables the bitmask path (`bitmask_enabled=1`); scripted gameplay ran
+with all 220,418 audio frames accepted and no ALSA errors or recovery. This is a
+short integration check, not an additional performance benchmark. Evidence:
+`resume15-pad-runtime-verified.json`.
+
+The production H700 core with the input change is now installed, SHA-256
+`69c519d25a9de1d83dbf9b2dce6ffea6db331fecd99e78037bd7d968b2587df6`.
+The previous core is retained at `gp32-dev/resume15-installed-core-before.so`;
+settings are unchanged. The diagnostic wrappers remain separate developer
+artifacts. Deployment evidence: `resume15-core-installed.json`.
