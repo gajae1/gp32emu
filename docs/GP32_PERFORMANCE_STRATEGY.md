@@ -1083,3 +1083,49 @@ Installed core SHA-256 is
 `b841afd42adabadfc8c30bd07e3ecfba0b5d868461a954a1f1dd132744f2dd07`;
 backup is `gp32-dev/resume62-installed-core-before.so`. Protected settings
 remain unchanged; `installed.json` records the verified deployment hashes.
+
+## resume63: continuous firmware elapsed time across guest clock changes
+
+Firmware milliseconds previously divided all historical CPU cycles by the
+current effective clock. Lowering the clock could double already elapsed
+time; raising it could move time backwards. Accumulate completed CPU/idle
+slices at their own rates instead, carrying the fractional nanosecond phase.
+Guest clock writes which change the effective execution rate end the current
+CPU run after that instruction, so subsequent instructions are accounted at
+the new rate. Host setup writes do not halt the next run.
+
+The same accounting wraps synchronous HLE guest callbacks. Their existing
+maximum execution budget is now charged in actual cycles, rather than a
+fixed number of calls to `arm920t_run`; otherwise frequent clock-write yields
+could exhaust the callback limit early. Reset and direct-image loading clear
+firmware elapsed time independently of the cumulative CPU diagnostic count.
+
+State format v0003 adds a 16-byte elapsed-time section while retaining the
+v0002 component layouts and a v0002 reader. Old images have no clock history;
+migration starts from their former observable time and integrates future
+execution normally. New images preserve clock history and fractional phase.
+Old cores cannot read v0003 images. The loader validates the new section
+before committing machine state, retaining rejection without mutation.
+
+The pre-change elapsed-time implementation fails the new regression. JIT-on
+and JIT-off cases cover a guest 66-to-33-to-66 MHz transition, time across
+save/load, reset, a clock-changing guest callback and 300 successive clock
+yields. Windows and native H700 timer/PCM/state tests pass. The native H700
+JIT differential suite (9,510 events, 21 fallbacks), stable-poll, SoC timing,
+libretro audio and persistence checks pass. Android ARM64/ARMv7 builds pass.
+The unchanged CPU/SoC results were reused after the callback-budget-only
+followup; affected timer/PCM cases and the final H700 core replays were checked.
+
+Her Knights and Tomak load their existing v0002 states and retain all seven
+CPU/video/PCM replay fields. No whole-game FPS or speaker improvement is
+claimed. This fixes the firmware elapsed-time counter, not complete peripheral
+chronology: peripherals still use the existing post-slice update model, and
+nested callbacks still require pending-event/budget settlement. Forced guest
+clock overrides remain deferred.
+
+Evidence: `F:/GP32/results/resume63-clock/`, including the old-code failure,
+native checks, transactional state cases, final builds and old-state replays.
+Installed core SHA-256 is
+`df361f96b5ce4748ec1090d3a120161554464916293caf7b479a5f5b222a9bab`;
+backup is `gp32-dev/resume63-installed-core-before.so`. Protected settings
+remain unchanged. Existing user save files were not rewritten during deployment.

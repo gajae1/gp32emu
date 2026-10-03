@@ -3226,3 +3226,27 @@ continuity, callback-time settlement and whole-game acceptance remain open.
 
 The core is installed on H700 with a backup and unchanged protected settings;
 the performance section records the deployed SHA-256 and backup path.
+
+### Continuous firmware milliseconds and state v3 (resume63)
+
+Firmware elapsed time now accumulates each completed execution or idle slice
+at its effective clock, instead of reinterpreting all past cycles whenever
+the guest changes its clock. Clock writes yield after the current instruction;
+callbacks use the same accounting and retain their cycle budget even with
+frequent yields. Reset starts firmware time at zero.
+
+New v0003 states retain elapsed time and fractional phase. Existing v0002
+states remain readable, starting at their former observable time because
+they contain no historical clock information. New v0003 states cannot be
+opened by older cores. Truncated or invalid elapsed-time data is rejected
+without mutating the running machine.
+
+Windows/H700 clock-transition, callback, PCM and state checks pass. Native
+H700 JIT/poll/SoC timing and libretro audio/persistence checks pass; Android
+ARM64/ARMv7 builds pass. Her Knights/Tomak old-state replays retain exact
+CPU/video/PCM fields. This is a firmware-time correction, not a complete
+peripheral-timing or whole-game acceptance claim. Post-slice peripheral
+clock ordering and nested-callback event settlement remain open. Evidence:
+`F:/GP32/results/resume63-clock/` and the resume63 performance section.
+The verified core is installed with a backup and unchanged protected settings;
+deployment did not rewrite existing user saves.

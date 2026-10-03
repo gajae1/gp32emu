@@ -14,12 +14,19 @@
 #define GP32_DIRECT_GPOS_TIMER_COUNT 4u
 #define GP32_DIRECT_PCM_CHANNELS 4u
 
+typedef struct gp32_elapsed_time {
+    uint64_t nanoseconds;
+    uint32_t remainder;
+    uint32_t clock_hz;
+} gp32_elapsed_time_t;
+
 struct gp32 {
     s3c2400_t *soc;
     arm920t_t *cpu;
     gp32_log_fn log;
     void *log_user;
     char error[256];
+    gp32_elapsed_time_t elapsed;
     int direct_fxe_mode;
     uint32_t direct_fxe_entry;
     uint32_t direct_fxe_stack;
@@ -269,8 +276,26 @@ static uint32_t direct_run_clock_hz(const gp32_t *g) {
 }
 
 static uint32_t direct_elapsed_ms(const gp32_t *g) {
-    if (!g || !g->cpu) return 0u;
-    return (uint32_t)((arm920t_get_cycles(g->cpu) * 1000ull) / (uint64_t)direct_run_clock_hz(g));
+    return g ? (uint32_t)(g->elapsed.nanoseconds / 1000000u) : 0u;
+}
+
+static void direct_account_elapsed(gp32_t *g, uint32_t cycles, uint32_t clock) {
+    if (!cycles) return;
+    /* Carry sub-nanosecond phase across slices. A clock change only converts
+     * that fraction; it must never rescale already elapsed whole time. */
+    if (g->elapsed.clock_hz && g->elapsed.clock_hz != clock)
+        g->elapsed.remainder = (uint32_t)((uint64_t)g->elapsed.remainder * clock / g->elapsed.clock_hz);
+    uint64_t scaled = (uint64_t)cycles * 1000000000u + g->elapsed.remainder;
+    g->elapsed.nanoseconds += scaled / clock;
+    g->elapsed.remainder = (uint32_t)(scaled % clock);
+    g->elapsed.clock_hz = clock;
+}
+
+static uint32_t direct_run_cpu(gp32_t *g, uint32_t cycles) {
+    uint32_t clock = direct_run_clock_hz(g);
+    uint32_t done = arm920t_run(g->cpu, cycles);
+    direct_account_elapsed(g, done, clock);
+    return done;
 }
 
 static uint32_t direct_lcd_frame_cycles(const gp32_t *g) {
@@ -319,6 +344,7 @@ static uint32_t direct_consume_idle_wait(gp32_t *g, uint32_t budget) {
     if (g->direct_vblank_wait_cycles < (uint64_t)n) n = (uint32_t)g->direct_vblank_wait_cycles;
     if (n > 32768u) n = 32768u;
     arm920t_add_idle_cycles(g->cpu, n);
+    direct_account_elapsed(g, n, direct_run_clock_hz(g));
     s3c2400_tick(g->soc, n);
     direct_hle_gpos_timer_tick(g, n);
     direct_hle_audio_tick(g, n);
@@ -1622,9 +1648,13 @@ static int direct_call_guest_function3(gp32_t *g, uint32_t fn, uint32_t r0, uint
     arm920t_set_reg(g->cpu, 13, cb_stack);
     arm920t_set_reg(g->cpu, 14, direct_callback_return_stub_addr(g));
     arm920t_set_reg(g->cpu, 15, fn & ~1u);
-    for (unsigned i = 0; i < 256u && !g->direct_hle_callback_returned; ++i) {
-        uint32_t done = arm920t_run(g->cpu, 4096u);
+    uint32_t remaining = 256u * 4096u;
+    while (remaining && !g->direct_hle_callback_returned) {
+        uint32_t slice = remaining < 4096u ? remaining : 4096u;
+        uint32_t done = direct_run_cpu(g, slice);
         if (!done) break;
+        /* Clock-write yields consume cycles, not whole 4096-cycle attempts. */
+        remaining -= done;
     }
     arm920t_set_register_context(g->cpu, &saved);
     g->direct_hle_callback_running = 0u;
@@ -3307,6 +3337,7 @@ gp32_status_t gp32_load_smartmedia_direct_data(gp32_t *g, const void *data, size
 
 static gp32_status_t gp32_load_fxe_image_internal(gp32_t *g, fxe_image_t *img, int update_reset_image, int scan_file_hle, int init_smc_gpio, int preserve_hle_options) {
     char e[256] = {0};
+    memset(&g->elapsed, 0, sizeof(g->elapsed));
     direct_reset_hle_runtime(g, preserve_hle_options);
     s3c2400_reset(g->soc);
     s3c2400_install_hle_bios(g->soc);
@@ -3450,6 +3481,7 @@ gp32_status_t gp32_save_smartmedia(gp32_t *g, const char *path) {
 
 gp32_status_t gp32_reset(gp32_t *g) {
     if (!g) return GP32_ERR_INVALID_ARGUMENT;
+    memset(&g->elapsed, 0, sizeof(g->elapsed));
     if (g->direct_reset_image_valid && g->direct_reset_image.payload && g->direct_reset_image.payload_size) {
         gp32_status_t st = gp32_load_fxe_image_internal(g, &g->direct_reset_image, 0, g->direct_reset_scan_file_hle, g->direct_reset_init_smc_gpio, 1);
         if (st == GP32_OK) {
@@ -3712,7 +3744,7 @@ gp32_status_t gp32_run_cycles(gp32_t *g, uint32_t cycles) {
         }
         uint32_t slice = remaining > 32768u ? 32768u : remaining;
         direct_update_fw_tick(g);
-        uint32_t done = arm920t_run(g->cpu, slice);
+        uint32_t done = direct_run_cpu(g, slice);
         s3c2400_tick(g->soc, done);
         direct_hle_gpos_timer_tick(g, done);
         direct_hle_audio_tick(g, done);
@@ -4110,28 +4142,51 @@ static void gp32_direct_state_apply(gp32_t *g, const gp32_state_image_t *st) {
     g->direct_vblank_wait_requested = st->direct_vblank_wait_requested;
 }
 
-static const uint8_t gp32_state_magic[16] = { 'G','P','3','2','S','T','A','T','E','v','0','0','0','2',0,0 };
+static const uint8_t gp32_state_magic_v2[16] = { 'G','P','3','2','S','T','A','T','E','v','0','0','0','2',0,0 };
+static const uint8_t gp32_state_magic[16] = { 'G','P','3','2','S','T','A','T','E','v','0','0','0','3',0,0 };
+static_assert(sizeof(gp32_elapsed_time_t) == 16u, "fixed elapsed-time wire extension");
 
 static int gp32_state_write(const gp32_t *g, state_io_t *io) {
     gp32_state_image_t direct;
     gp32_direct_state_capture(g, &direct);
     return state_io_write(io, gp32_state_magic, sizeof(gp32_state_magic)) &&
            state_io_write(io, &direct, sizeof(direct)) &&
+           state_io_write(io, &g->elapsed, sizeof(g->elapsed)) &&
            arm920t_state_save_io(g->cpu, io) &&
            s3c2400_state_save_io(g->soc, io);
 }
 
 static int gp32_state_read(gp32_t *g, state_io_t *io, gp32_state_image_t *direct) {
     uint8_t got[sizeof(gp32_state_magic)];
-    if (!state_io_read(io, got, sizeof(got)) || memcmp(got, gp32_state_magic, sizeof(got)) != 0 ||
+    if (!state_io_read(io, got, sizeof(got))) return 0;
+    int legacy = memcmp(got, gp32_state_magic_v2, sizeof(got)) == 0;
+    if ((!legacy && memcmp(got, gp32_state_magic, sizeof(got)) != 0) ||
         !state_io_read(io, direct, sizeof(*direct))) return 0;
+    gp32_elapsed_time_t elapsed = {0};
+    if (!legacy) {
+        if (!state_io_read(io, &elapsed, sizeof(elapsed))) return 0;
+        if (elapsed.clock_hz ? elapsed.remainder >= elapsed.clock_hz :
+            (elapsed.remainder != 0u || elapsed.nanoseconds != 0u)) return 0;
+    }
     /* Keep CPU state pending until the SoC has read every section. Its large
      * state image already uses most of a Windows thread's default stack, so
      * the CPU image must not remain on that stack during the SoC call. */
     arm920t_state_image_t *cpu = malloc(sizeof(*cpu));
     if (!cpu) return 0;
     int ok = state_io_read(io, cpu, sizeof(*cpu)) && s3c2400_state_load_io(g->soc, io);
-    if (ok) arm920t_state_apply(g->cpu, cpu);
+    if (ok) {
+        if (legacy) {
+            /* v2 has no clock history. Continue from its former observable
+             * time, then accumulate subsequent slices at their own rates. */
+            uint32_t clock = direct_run_clock_hz(g);
+            uint64_t scaled = (cpu->cycles_total % clock) * 1000000000u;
+            elapsed.nanoseconds = (cpu->cycles_total / clock) * 1000000000u + scaled / clock;
+            elapsed.remainder = (uint32_t)(scaled % clock);
+            elapsed.clock_hz = clock;
+        }
+        arm920t_state_apply(g->cpu, cpu);
+        g->elapsed = elapsed;
+    }
     free(cpu);
     return ok;
 }
