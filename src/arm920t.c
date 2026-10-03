@@ -709,8 +709,9 @@ static void op_data_proc(arm920t_t *c, uint32_t insn) {
     case 0xf: r = ~op2; if (s) { set_nz(c, r); set_flag(c, C_FLAG, sh_c); } break;
     }
     if (write) {
-        write_r(c, rd, r);
         if (rd == 15 && s) restore_cpsr_from_spsr(c);
+        /* An exception return aligns PC for the restored ARM/Thumb state. */
+        write_r(c, rd, r);
     }
 }
 
@@ -839,7 +840,7 @@ static void op_block_dt(arm920t_t *c, uint32_t insn) {
     if (w && (!l || ((list & (1u << rn)) == 0))) write_r(c, rn, final_base);
     if (exception_return) {
         restore_cpsr_from_spsr(c);
-        write_pc_x(c, loaded_pc);
+        write_r(c, 15, loaded_pc);
     }
 }
 
@@ -1616,8 +1617,8 @@ ARM_FORCE_INLINE void op_data_proc_bc(arm920t_t *c, const arm_jit_op_t *op) {
     case 0xf: r = ~op2; if (sflag) { set_nz(c, r); set_flag(c, C_FLAG, sh_c); } break;
     }
     if (write) {
-        write_r(c, rd, r);
         if (rd == 15u && sflag) restore_cpsr_from_spsr(c);
+        write_r(c, rd, r);
     }
 }
 
@@ -1722,7 +1723,7 @@ ARM_FORCE_INLINE void op_block_dt_bc(arm920t_t *c, const arm_jit_op_t *op) {
     if (w && (!l || ((list & (1u << rn)) == 0))) write_r(c, rn, final_base);
     if (exception_return) {
         restore_cpsr_from_spsr(c);
-        write_pc_x(c, loaded_pc);
+        write_r(c, 15, loaded_pc);
     }
 }
 
@@ -1984,7 +1985,7 @@ typedef struct x64_emit {
     uint8_t *b;
     size_t cap;
     size_t pos;
-    int fail;
+    int fail, mmu;
 } x64_emit_t;
 
 static void x64_u8(x64_emit_t *e, uint8_t v) { if (e->pos < e->cap) e->b[e->pos++] = v; else e->fail = 1; }
@@ -2766,9 +2767,14 @@ static int x64_emit_one(x64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
     switch ((arm_jit_kind_t)op->kind) {
     case ARM_JIT_OP_DATA: return x64_emit_data_proc(e, op, done);
     case ARM_JIT_OP_MUL: return x64_emit_mul(e, op);
-    case ARM_JIT_OP_HALF: return x64_emit_halfword(e, op, done);
-    case ARM_JIT_OP_SINGLE_DT: return x64_emit_single_dt(e, op, done);
-    case ARM_JIT_OP_BLOCK_DT: return x64_emit_block_dt(e, op, done);
+    /* These inline memory paths treat guest addresses as physical. A RAM or
+     * BIOS range check cannot establish an identity mapping with the MMU on.
+     * Keep translated accesses in the classified path until this backend has
+     * a validated TLB lookup like AArch64. CP15 control writes end the block
+     * and invalidate its generation, so this mode is a compile-time constant. */
+    case ARM_JIT_OP_HALF: return !e->mmu && x64_emit_halfword(e, op, done);
+    case ARM_JIT_OP_SINGLE_DT: return !e->mmu && x64_emit_single_dt(e, op, done);
+    case ARM_JIT_OP_BLOCK_DT: return !e->mmu && x64_emit_block_dt(e, op, done);
     case ARM_JIT_OP_BRANCH: {
         int32_t off = gp32_sign_extend((op->insn & 0x00ffffffu) << 2, 26);
         if (op->insn & (1u << 24)) x64_mov_mem_cpu_imm(e, arm_reg_off(14), op->pc + 4u);
@@ -2799,6 +2805,7 @@ static void arm_jit_compile_native(arm920t_t *c, arm_jit_block_t *b) {
     memset(&e, 0, sizeof(e));
     e.b = tmp;
     e.cap = sizeof(tmp);
+    e.mmu = !!(c->cp15[1] & 1u);
     x64_u8(&e, 0x53);                         /* push rbx */
     x64_u8(&e, 0x41); x64_u8(&e, 0x56);       /* push r14 */
     x64_u8(&e, 0x41); x64_u8(&e, 0x57);       /* push r15 */

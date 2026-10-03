@@ -1230,6 +1230,97 @@ static void case_native_mapped_pages(void) {
     }
 }
 
+/* Recompile the same memory block across MMU mode changes. The VA is itself
+ * in RAM, so stale MMU-off code reads/writes a different valid physical page.
+ * Restore both saved modes too: the mapped-page roundtrip keeps MMU enabled. */
+static void case_native_mmu_mode_changes(void) {
+    const uint32_t va = RAM_BASE + 0x10000u, mapped = RAM_BASE + 0x20000u;
+    const uint32_t ttb = RAM_BASE + 0x4000u, l2 = RAM_BASE + 0x8000u;
+    const uint32_t values[] = {0x11223344u, 0x55667788u};
+    const uint32_t markers[] = {0xa1a2a3a4u, 0xb1b2b3b4u, 0xc1c2c3c4u,
+                                0xd1d2d3d4u, 0xe1e2e3e4u};
+    const uint32_t program[] = {
+        0xe5901000u, /* LDR r1,[r0] */
+        0xe5802004u, /* STR r2,[r0,#4] */
+        0xe5d03000u, /* LDRB r3,[r0] */
+        half_insn(1, 1, 0, 1, 1, 0, 4, 1, 2), /* LDRH r4,[r0,#2] */
+        0xe5c02008u, /* STRB r2,[r0,#8] */
+        half_insn(1, 1, 0, 0, 1, 0, 2, 1, 10), /* STRH r2,[r0,#10] */
+        0xe8900060u, /* LDMIA r0,{r5,r6} */
+        0xe8890060u, /* STMIA r9,{r5,r6} */
+        0xeafffffeu,
+    };
+    uint32_t stores[] = {0x01020304u, 0x05060708u};
+    uint8_t *saved[2][2] = {{NULL, NULL}, {NULL, NULL}};
+    arm920t_t *pair[2];
+    current_case = "native-MMU-mode-changes";
+    setup_pair();
+    pair[0] = cpu_jit;
+    pair[1] = cpu_ref;
+    arm920t_set_trace(cpu_ref, 1, NULL, NULL);
+    load_both(program, GP32_ARRAY_COUNT(program));
+    set_mem_both(CODE_ADDR + 0x100u, 0xee01bf10u); /* MCR p15,0,r11,c1,c0,0 */
+    set_mem_both(CODE_ADDR + 0x104u, 0xee02af10u); /* MCR p15,0,r10,c2,c0,0 */
+    set_reg_both(0, va);
+    set_reg_both(9, va + 16u);
+    set_reg_both(10, ttb);
+    set_mem_both(ttb, 2u); /* BIOS identity section */
+    set_mem_both(ttb + ((va >> 20) * 4u), l2 | 1u);
+    set_mem_both(l2 + ((va >> 10) & 0x3fcu), mapped | 2u);
+    set_mem_both(va, values[0]);
+    set_mem_both(mapped, values[1]);
+    set_mem_both(va + 4u, stores[0]);
+    set_mem_both(mapped + 4u, stores[1]);
+    run_cache_pair(CODE_ADDR + 0x104u, 1u);
+    state_io_t count = state_io_counter();
+    CHECK(arm920t_state_save_io(cpu_jit, &count), "count MMU-mode CPU state");
+    for (unsigned phase = 0; phase < GP32_ARRAY_COUNT(markers); ++phase) {
+        unsigned mode = phase & 1u;
+        if (phase < 3u) { /* Guest control writes: off -> on -> off. */
+            set_reg_both(11, 0x70u | mode);
+            run_cache_pair(CODE_ADDR + 0x100u, 1u);
+        } else { /* Restore on over off, then off over on, with live blocks. */
+            for (unsigned i = 0; i < GP32_ARRAY_COUNT(pair); ++i) {
+                state_io_t in = state_io_reader(saved[mode][i], count.pos);
+                CHECK(arm920t_state_load_io(pair[i], &in), "restore different MMU mode");
+            }
+        }
+        CHECK((arm920t_get_cp15(cpu_jit, 1) & 1u) == mode &&
+              (arm920t_get_cp15(cpu_ref, 1) & 1u) == mode, "requested MMU mode");
+        set_reg_both(2, markers[phase]);
+        stores[mode] = markers[phase];
+        /* The first mapped load fills a cold TLB; repeat from the same PC
+         * to exercise the cached block with a direct RAM-page lookup. */
+        for (unsigned repeat = 0; repeat < 2u; ++repeat) {
+            set_reg_both(1, UINT32_MAX);
+            run_cache_pair(CODE_ADDR, 64u);
+            CHECK(ref_reg(1) == values[mode], "MMU mode selected the wrong load page");
+            CHECK(ref_reg(3) == (values[mode] & 0xffu) &&
+                  ref_reg(4) == (values[mode] >> 16), "MMU byte/halfword loads");
+            CHECK(ref_reg(5) == values[mode] && ref_reg(6) == stores[mode], "MMU block load");
+            uint32_t selected = mode ? mapped : va;
+            CHECK(tb_read32(&bus_ref, selected + 16u) == values[mode] &&
+                  tb_read32(&bus_ref, selected + 20u) == stores[mode], "MMU block store");
+            CHECK(tb_read32(&bus_ref, va) == values[0] &&
+                  tb_read32(&bus_ref, mapped) == values[1], "MMU load words changed");
+            CHECK(tb_read32(&bus_ref, va + 4u) == stores[0] &&
+                  tb_read32(&bus_ref, mapped + 4u) == stores[1], "MMU mode selected the wrong store page");
+        }
+        if (phase < 2u) {
+            for (unsigned i = 0; i < GP32_ARRAY_COUNT(pair); ++i) {
+                saved[mode][i] = (uint8_t *)malloc(count.pos);
+                if (!saved[mode][i]) { fail("allocate MMU-mode CPU state"); goto done; }
+                state_io_t out = state_io_writer(saved[mode][i], count.pos);
+                CHECK(arm920t_state_save_io(pair[i], &out), "save MMU-mode CPU state");
+            }
+        }
+    }
+done:
+    for (unsigned mode = 0; mode < 2u; ++mode)
+        for (unsigned i = 0; i < GP32_ARRAY_COUNT(pair); ++i) free(saved[mode][i]);
+    teardown_pair();
+}
+
 static void case_native_mapped_ram_end(void) {
     const uint32_t va = 0x10007ffcu, ttb = RAM_BASE + 0x4000u, l2 = RAM_BASE + 0x8000u;
     const uint32_t program[] = {
@@ -1268,6 +1359,7 @@ int main(int argc, char **argv) {
         case_native_mapped_ram_end();
     } else {
     case_native_mapped_pages();
+    case_native_mmu_mode_changes();
     case_native_mapped_ram_end();
     case_cache_unchanged();
     case_cache_modified(0);

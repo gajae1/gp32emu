@@ -20,7 +20,7 @@ typedef struct a64_emit {
     uint32_t *code;
     size_t pos, cap;
     int fail;
-    int ram_read, ram_write, memory;
+    int ram_read, ram_write, memory, mmu;
     uint32_t expected_next, generation;
 } a64_emit_t;
 
@@ -192,11 +192,10 @@ static void a64_cmp_imm(a64_emit_t *e, unsigned rn, unsigned imm) {
 }
 static void a64_return(a64_emit_t *e, uint32_t done) {
     a64_imm(e, 0, done);
-    a64_u32(e, 0xf9400bf3u); /* ldr x19, [sp, #16] */
     if (e->memory) {
-        a64_u32(e, 0xf9400ff4u); /* ldr x20, [sp, #24] */
+        a64_u32(e, 0xa94153f3u); /* ldp x19, x20, [sp, #16] */
         a64_u32(e, 0xf94013f5u); /* ldr x21, [sp, #32] */
-    }
+    } else a64_u32(e, 0xf9400bf3u); /* ldr x19, [sp, #16] */
     a64_u32(e, 0xa8c37bfdu); /* ldp x29, x30, [sp], #48 */
     a64_u32(e, 0xd65f03c0u); /* ret */
 }
@@ -329,27 +328,28 @@ static void a64_ram_offset(a64_emit_t *e, size_t *slow, unsigned *nslow, unsigne
                    offsetof(arm_jit_tlb_page_t, va_page) == 0u &&
                    offsetof(arm_jit_tlb_page_t, xor_offset) == 4u,
                    "native RAM page lookup layout");
-    a64_load(e, 6, offsetof(arm920t_t, cp15) + 4u);
-    size_t identity = e->pos;
-    a64_u32(e, 0x36000006u); /* tbz w6, #0 -> identity (MMU off) */
-    a64_ubfx(e, 8, 0, 12, 20); /* full VA page tag */
-    a64_mask(e, 6, 8, 0xfffu); /* original (VA >> 12) & 0xfff index */
-    a64_rr(e, 0x8b000c00u, 10, 20, 6); /* add x10, x20, x6, lsl #3 */
-    a64_u32(e, 0x29402547u); /* ldp w7, w9, [x10]: VA page, XOR offset */
-    a64_cmp(e, 8, 7);
-    slow[(*nslow)++] = a64_jump(e, 1);
-    a64_rr(e, 0x4a000000u, 0, 0, 9); /* VA XOR offset -> direct RAM offset */
-    size_t mapped = a64_jump(e, 14);
-    a64_patch(e, identity, e->pos);
-    a64_imm(e, 6, ARM_JIT_RAM_BASE_ADDR);
-    a64_rr(e, 0x4b000000u, 0, 0, 6);
+    /* CP15 control writes and state loads invalidate the block generation;
+     * a helper that changes it exits through arm_a64_exec_checked. The MMU
+     * enable bit is therefore constant throughout this compiled block. */
+    if (e->mmu) {
+        a64_ubfx(e, 8, 0, 12, 20); /* full VA page tag */
+        a64_mask(e, 6, 8, 0xfffu); /* original (VA >> 12) & 0xfff index */
+        a64_rr(e, 0x8b000c00u, 10, 20, 6); /* add x10, x20, x6, lsl #3 */
+        a64_u32(e, 0x29402547u); /* ldp w7, w9, [x10]: VA page, XOR offset */
+        a64_cmp(e, 8, 7);
+        slow[(*nslow)++] = a64_jump(e, 1);
+        a64_rr(e, 0x4a000000u, 0, 0, 9); /* VA XOR offset -> direct RAM offset */
+    } else {
+        a64_imm(e, 6, ARM_JIT_RAM_BASE_ADDR);
+        a64_rr(e, 0x4b000000u, 0, 0, 6);
+    }
     /* A word-aligned start and same-page block span cannot overrun RAM,
      * whose start/end are both 4 KiB aligned. */
-    if (bytes == 2u) a64_patch(e, mapped, e->pos);
-    a64_imm(e, 6, ARM_JIT_RAM_SIZE_BYTES - bytes);
-    a64_cmp(e, 0, 6);
-    slow[(*nslow)++] = a64_jump(e, 8); /* HI also rejects identity below RAM */
-    if (bytes != 2u) a64_patch(e, mapped, e->pos);
+    if (!e->mmu || bytes == 2u) {
+        a64_imm(e, 6, ARM_JIT_RAM_SIZE_BYTES - bytes);
+        a64_cmp(e, 0, 6);
+        slow[(*nslow)++] = a64_jump(e, 8); /* HI also rejects identity below RAM */
+    }
 }
 
 static int a64_single_dt(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
@@ -685,6 +685,7 @@ static void arm_jit_compile_native(arm920t_t *c, arm_jit_block_t *b) {
     a64_emit_t e = {0};
     e.code = tmp;
     e.cap = sizeof(tmp) / sizeof(tmp[0]);
+    e.mmu = !!(c->cp15[1] & 1u);
     /* Validate the complete direct window, including write permission.
      * Tiny or discontinuous test buses must retain their callback path. */
     e.ram_read = c->jit_ram_base && fastmem(c, ARM_JIT_RAM_BASE_ADDR, ARM_JIT_RAM_SIZE_BYTES, 0) == c->jit_ram_base;
@@ -696,13 +697,12 @@ static void arm_jit_compile_native(arm920t_t *c, arm_jit_block_t *b) {
     }
     a64_u32(&e, 0xd503245fu); /* bti c (NOP on ARMv8.0) */
     a64_u32(&e, 0xa9bd7bfdu); /* stp x29, x30, [sp, #-48]! */
-    a64_u32(&e, 0xf9000bf3u); /* str x19, [sp, #16] */
     /* Only memory fast paths use x20/x21; helpers preserve them by AAPCS64.
      * Keep the same aligned frame and x19/LR slots even without their saves. */
     if (e.memory) {
-        a64_u32(&e, 0xf9000ff4u); /* str x20, [sp, #24] */
+        a64_u32(&e, 0xa90153f3u); /* stp x19, x20, [sp, #16] */
         a64_u32(&e, 0xf90013f5u); /* str x21, [sp, #32] */
-    }
+    } else a64_u32(&e, 0xf9000bf3u); /* str x19, [sp, #16] */
     a64_u32(&e, 0x910003fdu); /* mov x29, sp */
     a64_rr(&e, 0xaa000000u, 19, 31, 0);
     if (e.memory) {
