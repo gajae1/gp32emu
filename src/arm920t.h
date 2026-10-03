@@ -59,6 +59,17 @@ uint64_t arm920t_get_jit_misses(const arm920t_t *cpu);
 uint64_t arm920t_get_jit_fallbacks(const arm920t_t *cpu);
 void arm920t_get_cpu_profile(const arm920t_t *cpu, gp32_cpu_profile_t *out);
 void arm920t_reset_cpu_profile(arm920t_t *cpu);
+/* HLE guest calls preserve CPU registers across all modes while retaining
+ * their memory, peripheral, CP15 and cycle-count effects. Not a wire image. */
+typedef struct arm920t_register_context {
+    uint32_t r[16], cpsr;
+    uint32_t bank_usr[7], bank_fiq[7];
+    uint32_t bank_svc[2], bank_abt[2], bank_irq[2], bank_und[2];
+    uint32_t spsr_fiq, spsr_svc, spsr_abt, spsr_irq, spsr_und;
+} arm920t_register_context_t;
+void arm920t_get_register_context(const arm920t_t *cpu, arm920t_register_context_t *out);
+void arm920t_set_register_context(arm920t_t *cpu, const arm920t_register_context_t *saved);
+
 /* Fixed v0002 wire image; stage it before committing a whole-machine load. */
 typedef struct arm920t_state_image {
     uint32_t r[16];

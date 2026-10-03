@@ -616,6 +616,36 @@ uint64_t arm920t_get_jit_hits(const arm920t_t *c) { return c ? c->jit_hits : 0; 
 uint64_t arm920t_get_jit_misses(const arm920t_t *c) { return c ? c->jit_misses : 0; }
 uint64_t arm920t_get_jit_fallbacks(const arm920t_t *c) { return c ? c->jit_fallbacks : 0; }
 
+void arm920t_get_register_context(const arm920t_t *c, arm920t_register_context_t *out) {
+    if (!c || !out) return;
+    memcpy(out->r, c->r, sizeof(out->r));
+    out->cpsr = c->cpsr;
+    memcpy(out->bank_usr, c->bank_usr, sizeof(out->bank_usr));
+    memcpy(out->bank_fiq, c->bank_fiq, sizeof(out->bank_fiq));
+    memcpy(out->bank_svc, c->bank_svc, sizeof(out->bank_svc));
+    memcpy(out->bank_abt, c->bank_abt, sizeof(out->bank_abt));
+    memcpy(out->bank_irq, c->bank_irq, sizeof(out->bank_irq));
+    memcpy(out->bank_und, c->bank_und, sizeof(out->bank_und));
+    out->spsr_fiq = c->spsr_fiq; out->spsr_svc = c->spsr_svc;
+    out->spsr_abt = c->spsr_abt; out->spsr_irq = c->spsr_irq; out->spsr_und = c->spsr_und;
+}
+
+void arm920t_set_register_context(arm920t_t *c, const arm920t_register_context_t *saved) {
+    if (!c || !saved) return;
+    /* Restore the complete bank representation directly: switching modes
+     * here would first save the callback's registers over a restored bank. */
+    memcpy(c->r, saved->r, sizeof(c->r));
+    c->cpsr = saved->cpsr;
+    memcpy(c->bank_usr, saved->bank_usr, sizeof(c->bank_usr));
+    memcpy(c->bank_fiq, saved->bank_fiq, sizeof(c->bank_fiq));
+    memcpy(c->bank_svc, saved->bank_svc, sizeof(c->bank_svc));
+    memcpy(c->bank_abt, saved->bank_abt, sizeof(c->bank_abt));
+    memcpy(c->bank_irq, saved->bank_irq, sizeof(c->bank_irq));
+    memcpy(c->bank_und, saved->bank_und, sizeof(c->bank_und));
+    c->spsr_fiq = saved->spsr_fiq; c->spsr_svc = saved->spsr_svc;
+    c->spsr_abt = saved->spsr_abt; c->spsr_irq = saved->spsr_irq; c->spsr_und = saved->spsr_und;
+}
+
 static uint32_t shifter_operand(arm920t_t *c, uint32_t insn, int *carry_out) {
     if (insn & (1u << 25)) {
         uint32_t imm = insn & 0xffu;
