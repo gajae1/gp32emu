@@ -1474,3 +1474,83 @@ The production core was atomically installed with SHA-256
 The previous core is backed up at
 `/mnt/SDCARD/gp32-dev/resume20-installed-core-before.so`.
 Installation record: `F:/GP32/results/resume20-core-installed.json`.
+
+
+### Native dispatcher and I2S source spans (resume21)
+
+Translation and the classified fallback are outlined from native dispatch.
+The hot loop also omits two conditions already guaranteed at native publication
+and postpones stable-read bookkeeping until portable execution. Sol reviewed
+outlining; a separate CommandCode review checked every native-pointer writer,
+cache invalidation and immutable bus callback lifetime. H700's outlining
+candidate passed the 42,769-event differential, polling and recycle tests.
+After the dispatch simplification, Windows arm_jit/arm_poll/recycle and H700
+poll/recycle passed. The corrected polling test also passes on both hosts.
+
+The polling regression had a real setup flaw: its callback-absent variant
+changed the original bus after CPU creation, although the CPU copies the bus.
+It now recreates that CPU before execution and asserts callback presence via
+actual query counts. The fastmem stable-poll variant explicitly enables JIT,
+ensuring native eligibility cannot silently bypass its stability queries.
+
+The SWE audio candidate proves the complete incrementing/fixed I2S DMA source
+span once and reuses its RAM pointer. Partial RAM spans, MMIO and other failed
+probes retain per-unit reads and side effects. PCM pairing, FIFO carry, DMA
+register updates, sample counts and timing are unchanged. The initially larger
+partial-span prototype was discarded; production adds only six lines and
+removes two per-unit pointer probes.
+
+The worker initially rejected the small candidate after mixed x86 Clang -O2
+results. Parent validation used the actual release optimization level (-O3)
+and target hardware: nine alternating timing rounds on H700 measured candidate
+runtime ratios 0.7788/0.7664/0.7916 for whole 32/16-bit stream/burst, and
+0.8096/0.7846 for single-service 32/16-bit; the untouched byte control was 1.0000.
+Thus the measured PCM DMA cases take roughly 19-23% less time. These are isolated
+component workloads without a separate clock monitor, not game FPS claims.
+Windows Clang -O3 also showed no median regression in those cases, unlike the
+worker's -O2 run; short workstation timings are not a global PC speed claim.
+
+The worker's differential harness compared PCM, SoC snapshots and DMA/IIS/IRQ
+state across ordinary and boundary cases. Parent's existing s3c2400_timing and
+libretro_audio regressions passed on the integrated source. Android ARM64 and
+ARMv7 release builds passed. The integrated H700 binary matches all seven
+CPU/video/PCM fields in both Wizard selection and Her Knights combat:
+`F:/GP32/results/resume21-final-exactness.json`. Final benchmark SHA-256:
+`834553a87ff73c75d3cace98520263c704aba8f8c864eb9a29099952d2b3648b`.
+Audio evidence: `F:/GP32/results/resume21-audio/time-h700.json`,
+`time-pc-o3.json`, and the parent addendum to `evidence.md`.
+
+The independent video-staging prototype remains outside production. Its
+real-capture harness crashed before candidate exactness/timing completed;
+synthetic baseline-vs-baseline checks cannot validate the candidate. No video
+speedup is claimed and libretro.c remains unchanged. The unfinished prototype
+and limitation are preserved in `F:/GP32/results/resume21-video/REPORT.md`.
+
+The first RetroArch cold-boot probe remained at the BIOS menu. Its diagnostic
+input file used `frame:A`, which `input_script.c` defines as a one-frame tap,
+not the intended held-button intervals. That run's silent output is excluded
+from gameplay/audio acceptance; it does not indicate a new core regression.
+The standalone benchmark uses its own boot pulses and is a separate workload.
+Evidence: `F:/GP32/results/resume21-runtime.png` and `resume21-wizard-boot.txt`.
+The follow-up runtime uses the existing Korean Wizard combat state and its
+explicit `frame:=A` / `frame:=NONE` input script.
+
+The saved-state Wizard run successfully loaded the combat state and completed
+2400 frames through Spruce/RetroArch: exit 0, 44 seconds including startup and
+shutdown, 39 content seconds. All 1,762,933 offered stereo frames were accepted;
+there were no zero/partial returns or queued tails. ALSA reported zero errors
+and recoveries. Unlike the excluded BIOS run, most output contains nonzero PCM.
+The final screenshot shows the actual match's "You Lost" screen at 56.74 OSD
+fps. Video statistics report 2390 pushed / 11 dropped. This is not an all-scenes
+60 fps result or proof of physical audio quality. The late zero-PCM interval
+and OSD FIFO statistic are retained as observations, not classified as audible
+dropouts without a recording. MainUI returned and settings hashes are unchanged.
+Evidence: `F:/GP32/results/resume21-combat-runtime-verified.json`,
+`resume21-combat-runtime.log`, `resume21-combat-runtime.png`.
+
+The production core was then atomically installed with SHA-256
+`d18bd01d9b0b9ebc07dd28a8884687dc32d76b5838e790d0e89a2f7b70253dec`.
+The previous core is backed up at
+`/mnt/SDCARD/gp32-dev/resume21-installed-core-before.so`.
+Settings remained unchanged. Installation record:
+`F:/GP32/results/resume21-core-installed.json`.

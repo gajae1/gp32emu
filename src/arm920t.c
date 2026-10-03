@@ -110,10 +110,13 @@ enum arm_jit_inv_cause {
 
 #if defined(_MSC_VER)
 #define ARM_FORCE_INLINE static __forceinline
+#define ARM_NOINLINE __declspec(noinline)
 #elif defined(__GNUC__) || defined(__clang__)
 #define ARM_FORCE_INLINE static inline __attribute__((always_inline))
+#define ARM_NOINLINE __attribute__((noinline))
 #else
 #define ARM_FORCE_INLINE static inline
+#define ARM_NOINLINE
 #endif
 
 ARM_FORCE_INLINE unsigned arm_ctz16(uint32_t v) {
@@ -1340,7 +1343,10 @@ static int arm_jit_alloc(arm920t_t *c) {
 
 static void arm_jit_compile_native(arm920t_t *c, arm_jit_block_t *b);
 
-static arm_jit_block_t *arm_jit_translate(arm920t_t *c, uint32_t pc) {
+/* Keep translation (including the native emitter's large scratch buffer) out
+ * of the dispatch loop. Inlining it inflates the hot frame and register spills
+ * even when every block lookup hits already compiled code. */
+static ARM_NOINLINE arm_jit_block_t *arm_jit_translate(arm920t_t *c, uint32_t pc) {
     if (!arm_jit_alloc(c)) { ARM_PROF_INC(c, jit_translate_failures); return NULL; }
     /* No native block is executing here. Invalidate before binding the slot:
      * generation wrap clears the table, and old code pointers must be stale
@@ -3066,6 +3072,26 @@ static int arm_poll_read_stable(arm920t_t *c, const arm_jit_op_t *op) {
            c->bus.is_stable_read32(c->bus.user, mmu_translate(c, addr));
 }
 
+/* The classified interpreter is much larger than native block dispatch. Keep
+ * its register pressure and instruction footprint on the fallback path. */
+static ARM_NOINLINE uint32_t arm_jit_run_portable(arm920t_t *c,
+                                                 arm_jit_block_t *b,
+                                                 uint32_t budget,
+                                                 int *stable_reads) {
+    uint32_t done = 0;
+    for (uint8_t i = 0; i < b->count && done < budget; ++i) {
+        const arm_jit_op_t *op = &arm_jit_ops(c, b)[i];
+        if ((c->r[15] & ~3u) != op->pc || thumb(c)) break;
+        uint32_t expected_next = (i + 1u < b->count) ? (arm_jit_ops(c, b)[i + 1u].pc & ~3u) : (op->pc + 4u);
+        if (*stable_reads && (i >= b->poll_prefix || !arm_poll_read_stable(c, op))) *stable_reads = 0;
+        arm_jit_exec_classified_bc(c, op);
+        ARM_PROF_INC(c, block_interp_arm_insns);
+        done++;
+        if (op->stop || thumb(c) || c->halted || (c->r[15] & ~3u) != expected_next) break;
+    }
+    return done;
+}
+
 static uint32_t arm_jit_run(arm920t_t *c, uint32_t cycles) {
     if (!c || !cycles || thumb(c) || c->trace) return 0;
     if (!c->jit_ram_base) c->jit_ram_base = fastmem(c, ARM_JIT_RAM_BASE_ADDR, 1u, 0);
@@ -3103,35 +3129,22 @@ static uint32_t arm_jit_run(arm920t_t *c, uint32_t cycles) {
         }
 
         uint32_t done = 0;
-        int stable_reads = c->bus.is_stable_read32 && b->poll_prefix;
-        if (b->native_ok && b->native && (cycles - total) >= b->count &&
-            /* Let eligible wait loops collect two portable fixed-point samples
-             * from their first repetition on every host. All other blocks, and
-             * buses without a stability callback, retain native execution.
-             * Static eligibility never skips work: the existing runtime
-             * stability/state/IRQ checks still must pass. */
-            !(c->bus.is_stable_read32 && b->poll_backedge)
-        ) {
+        int stable_reads = 0;
+        /* Translation only publishes native for eligible blocks. In
+         * particular, a bus with stable reads leaves polling backedges on
+         * the portable path. The bus callbacks are fixed at CPU creation. */
+        if (b->native && (cycles - total) >= b->count) {
             done = b->native(c, cycles - total);
 #if ARM920T_PROFILING
             c->prof.native_block_calls++;
             c->prof.native_arm_insns += done;
             if (!done) c->prof.native_bail_calls++;
 #endif
-            if (done) stable_reads = 0; /* Native code did not record read addresses. */
         }
 
         if (!done) {
-            for (uint8_t i = 0; i < b->count && total + done < cycles; ++i) {
-                const arm_jit_op_t *op = &arm_jit_ops(c, b)[i];
-                if ((c->r[15] & ~3u) != op->pc || thumb(c)) break;
-                uint32_t expected_next = (i + 1u < b->count) ? (arm_jit_ops(c, b)[i + 1u].pc & ~3u) : (op->pc + 4u);
-                if (stable_reads && (i >= b->poll_prefix || !arm_poll_read_stable(c, op))) stable_reads = 0;
-                arm_jit_exec_classified_bc(c, op);
-                ARM_PROF_INC(c, block_interp_arm_insns);
-                done++;
-                if (op->stop || thumb(c) || c->halted || (c->r[15] & ~3u) != expected_next) break;
-            }
+            stable_reads = c->bus.is_stable_read32 && b->poll_prefix;
+            done = arm_jit_run_portable(c, b, cycles - total, &stable_reads);
         }
         if (!done) break;
         total += done;

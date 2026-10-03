@@ -366,3 +366,51 @@ candidate:
 `8cb9b887fdcf73bb5d11b5ef7eee28b6feec0fed1c128909d2fb114468e12d85`.
 Evidence: `F:/GP32/results/resume20-leaf-her-abba.json` and
 `F:/GP32/results/resume20-leaf-wizard-menu-abba.json`.
+
+
+## resume21: reduce repeated native-dispatch checks
+
+A measured-window SIGPROF sample of the current Wizard selection scene yielded
+485 samples: generated JIT code 57.11%, `arm_jit_run` 24.12%, the benchmark main
+(including hashing) 8.04%, and the classified helper 4.54%. These are coarse
+sample proportions, not exact cycle costs. Profiling counters for the same
+2400/300 workload count 27,405,276 native calls / 270,050,092 native instructions.
+Evidence: `F:/GP32/results/resume21-sample-summary.json` and
+`resume21-wizard-profile.json`.
+
+Clang had inlined translation/native emission into dispatch: `arm_jit_run` was
+35,904 code bytes with a 66,048-byte reserved stack frame. Outlining translation
+and the portable fallback reduced the hot path (now inlined into `arm920t_run`)
+to a 240-byte frame. The large emitter scratch still exists when translation
+actually occurs; the old hot path did not clear/copy that entire frame per call.
+Outlining alone measured 61.344 -> 61.408 core fps (+0.10%) in Wizard, so it is
+not independently claimed as a meaningful speedup. Disassembly and the isolated
+negative/marginal comparison are preserved under `resume21-*-asm.txt` and
+`resume21-outline-wizard-menu-abba.json`.
+
+The final candidate also relies on translation's existing publication contract:
+a nonnull native pointer in a valid cached block already means compilation
+succeeded, and stable-read polling backedges never receive native code. Bus
+callbacks are copied once at CPU creation. Dispatch therefore avoids redundant
+native_ok/poll eligibility checks and computes read-stability bookkeeping only
+for portable execution. Cache tags/generations, remaining budgets, IRQ checks
+and runtime polling fixed-point checks are unchanged.
+
+Qualified primed H700 ABBA, observed 1512 MHz with the governor unchanged:
+
+| Scene | Baseline core fps | Candidate core fps | Median change |
+| --- | --- | --- | --- |
+| Wizard selection, 2400 warmup / 300 measured | 61.472 / 61.472 | 64.819 / 63.893 | 61.472 -> 64.356 (+4.69%) |
+| Her Knights Korea combat, 1200 / 1200 | 112.721 / 113.182 | 119.642 / 119.518 | 112.9515 -> 119.580 (+5.87%) |
+
+All seven CPU/video/PCM fields match. Wizard has 19 matching frequency samples,
+Her has 40. Baseline bench:
+`8cb9b887fdcf73bb5d11b5ef7eee28b6feec0fed1c128909d2fb114468e12d85`;
+CPU candidate:
+`10d5eae849ccf002c92a6e9f3a8230e2bbd0bfb2f8da95b1b1bc4f9feeaba3f8`.
+These comparisons exclude the separate experimental audio/video candidates.
+Evidence: `F:/GP32/results/resume21-dispatch-{wizard-menu,her}-abba.json`.
+
+The Windows GP Fight replay was also exact for the outlining-only candidate,
+but its unmonitored short workstation runs are not a qualified performance
+comparison (`resume21-outline-pc-gpfight.json`). No PC speedup is claimed.
