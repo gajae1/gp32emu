@@ -1902,8 +1902,10 @@ static int direct_handle_swi_gpos_timer(gp32_t *g, arm920t_t *cpu, uint32_t pc) 
     return 1;
 }
 
-static void direct_sdk_pcm_refill_tick(gp32_t *g) {
-    if (!g || !g->direct_hle_sdk_sndmixer_addr) return;
+/* Refill a released half and bound the next mix span by its cursor edge.
+ * Without a recognized stream, retain the ordinary 64-sample poll cadence. */
+static uint32_t direct_sdk_pcm_refill_tick(gp32_t *g, int allow_refill) {
+    if (!g || !g->direct_hle_sdk_sndmixer_addr) return 64u;
     uint32_t entry = g->direct_hle_sdk_sndmixer_addr;
     uint32_t cursor_ptr_addr = 0u;
     uint32_t start = (entry > 0x1000u) ? entry - 0x1000u : GP32_RAM_BASE;
@@ -1921,7 +1923,7 @@ static void direct_sdk_pcm_refill_tick(gp32_t *g) {
             break;
         }
     }
-    if (!cursor_ptr_addr) return;
+    if (!cursor_ptr_addr) return 64u;
     uint32_t last_half_addr = cursor_ptr_addr - 4u;
     uint32_t shift = direct_read32_if_ram(g, cursor_ptr_addr + 8u);
     uint32_t base = direct_read32_if_ram(g, cursor_ptr_addr + 0x0cu);
@@ -1930,15 +1932,26 @@ static void direct_sdk_pcm_refill_tick(gp32_t *g) {
     uint32_t obj = direct_read32_if_ram(g, block + 8u);
     uint32_t fill = direct_read32_if_ram(g, block + 12u);
     uint32_t cur = direct_read32_if_ram(g, entry + 4u);
-    if (!base || !cur || !half_units || shift > 4u || !direct_ram_range(g, fill & ~1u, 4u)) return;
+    if (!base || !cur || !half_units || shift > 4u || !direct_ram_range(g, fill & ~1u, 4u)) return 64u;
+    if (half_units > (0x20000u >> shift)) return 64u;
     uint32_t half_bytes = half_units << shift;
-    if (!half_bytes || half_bytes > 0x20000u) return;
+    if (!half_bytes || half_bytes > 0x20000u || cur < base ||
+        (uint64_t)cur - base >= (uint64_t)half_bytes * 2u) return 64u;
     uint32_t current_half = ((cur - base) >= half_bytes) ? 1u : 0u;
     uint32_t previous_half = direct_read32_if_ram(g, last_half_addr) & 1u;
-    if (current_half == previous_half) return;
+    if (current_half == previous_half) {
+        uint32_t bytes_left = half_bytes - ((cur - base) % half_bytes);
+        uint32_t samples_left = (bytes_left + 1u) / 2u;
+        return samples_left < 64u ? samples_left : 64u;
+    }
+    if (!allow_refill) return 64u;
     uint32_t dst = base + (previous_half ? half_bytes : 0u);
-    if (!direct_ram_range(g, dst, half_bytes)) return;
-    if (direct_call_guest_function3(g, fill, obj, dst, half_bytes)) direct_write32_if_ram(g, last_half_addr, current_half);
+    if (!direct_ram_range(g, dst, half_bytes)) return 64u;
+    if (!direct_call_guest_function3(g, fill, obj, dst, half_bytes)) return 64u;
+    direct_write32_if_ram(g, last_half_addr, current_half);
+    /* A guest refill may mutate mixer metadata; inspect it again after the
+     * next sample instead of retaining addresses across the callback. */
+    return 1u;
 }
 
 static void direct_sdk_sound_tick(gp32_t *g, uint32_t cycles) {
@@ -1954,16 +1967,27 @@ static void direct_sdk_sound_tick(gp32_t *g, uint32_t cycles) {
     uint32_t frames = (uint32_t)(scaled / (uint64_t)clock);
     g->direct_hle_sdk_accum = scaled % (uint64_t)clock;
     if (!frames) return;
-    g->direct_hle_sdk_timer_accum += frames;
-    if (g->direct_hle_sdk_timer_accum >= 64u) {
-        g->direct_hle_sdk_timer_accum = 0u;
-        direct_sdk_poll_timers(g);
-        direct_sdk_pcm_refill_tick(g);
-    }
-    for (uint32_t i = 0; i < frames; ++i) {
-        int16_t sample = 0;
-        if (!direct_sdk_sound_mix_one(g, &sample)) break;
-        s3c2400_audio_append_s16_stereo(g->soc, sample, sample, rate);
+    g->direct_hle_sdk_timer_accum %= 64u;
+    uint32_t span = direct_sdk_pcm_refill_tick(g, g->direct_hle_sdk_timer_accum == 0u);
+    while (frames) {
+        uint32_t until_poll = 64u - (uint32_t)g->direct_hle_sdk_timer_accum;
+        if (span > until_poll) span = until_poll;
+        uint32_t until_event = span;
+        if (span > frames) span = frames;
+        for (uint32_t i = 0; i < span; ++i) {
+            int16_t sample = 0;
+            if (!direct_sdk_sound_mix_one(g, &sample)) break;
+            s3c2400_audio_append_s16_stereo(g->soc, sample, sample, rate);
+        }
+        frames -= span;
+        g->direct_hle_sdk_timer_accum += span;
+        if (g->direct_hle_sdk_timer_accum == 64u) {
+            g->direct_hle_sdk_timer_accum = 0u;
+            direct_sdk_poll_timers(g);
+        }
+        /* A short host slice must not retry a failed guest refill more often
+         * than the next cursor/poll boundary. */
+        span = direct_sdk_pcm_refill_tick(g, span == until_event);
     }
 }
 
