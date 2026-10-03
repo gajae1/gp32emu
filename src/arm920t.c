@@ -2050,7 +2050,7 @@ typedef struct x64_emit {
     size_t cap;
     size_t pos;
     int fail, mmu, ram_read, ram_write;
-    uint32_t expected_next, generation, done;
+    uint32_t expected_next, generation, done, guest_pc;
 } x64_emit_t;
 
 static void arm_x64_write_pc_load_helper(arm920t_t *c, uint32_t v) {
@@ -2474,6 +2474,9 @@ static void x64_emit_fast_ld_word_eax_addr(x64_emit_t *e) {
     done = x64_jmp32(e);
     x64_patch32(e, unaligned, e->pos);
     x64_patch32(e, not_bios, e->pos);
+    /* Materialize the executing instruction's PC only on the helper path:
+     * bus callbacks can observe it, while direct RAM/BIOS hits need no store. */
+    x64_mov_mem_cpu_imm(e, arm_reg_off(15), e->guest_pc + 4u);
     x64_emit_arg0_cpu(e);
     x64_emit_arg1_u32_from(e, X64_R10D);
     x64_call_abs(e, (uintptr_t)arm_jit_ld_word_helper);
@@ -2496,6 +2499,7 @@ static void x64_emit_fast_ld_byte_eax_addr(x64_emit_t *e) {
     x64_patch32(e, done, e->pos);
     done = x64_jmp32(e);
     x64_patch32(e, not_bios, e->pos);
+    x64_mov_mem_cpu_imm(e, arm_reg_off(15), e->guest_pc + 4u);
     x64_emit_arg0_cpu(e);
     x64_emit_arg1_u32_from(e, X64_R10D);
     x64_call_abs(e, (uintptr_t)arm_jit_ld_byte_helper);
@@ -2516,6 +2520,7 @@ static void x64_emit_fast_st_word_eax_addr_ecx_value(x64_emit_t *e) {
     done = x64_jmp32(e);
     x64_patch32(e, unaligned, e->pos);
     x64_patch32(e, not_ram, e->pos);
+    x64_mov_mem_cpu_imm(e, arm_reg_off(15), e->guest_pc + 4u);
     x64_emit_arg0_cpu(e);
     x64_emit_arg1_u32_from(e, X64_R10D);
     x64_emit_arg2_u32_from(e, X64_R9D);
@@ -2534,6 +2539,7 @@ static void x64_emit_fast_st_byte_eax_addr_ecx_value(x64_emit_t *e) {
     x64_mov_membase_index8_r32(e, X64_R14D, X64_EDX, X64_R9D);
     done = x64_jmp32(e);
     x64_patch32(e, not_ram, e->pos);
+    x64_mov_mem_cpu_imm(e, arm_reg_off(15), e->guest_pc + 4u);
     x64_emit_arg0_cpu(e);
     x64_emit_arg1_u32_from(e, X64_R10D);
     x64_emit_arg2_u32_from(e, X64_R9D);
@@ -2557,6 +2563,7 @@ static void x64_emit_fast_ld_sbyte_eax_addr(x64_emit_t *e) {
     x64_patch32(e, done, e->pos);
     done = x64_jmp32(e);
     x64_patch32(e, not_bios, e->pos);
+    x64_mov_mem_cpu_imm(e, arm_reg_off(15), e->guest_pc + 4u);
     x64_emit_arg0_cpu(e);
     x64_emit_arg1_u32_from(e, X64_R10D);
     x64_call_abs(e, (uintptr_t)arm_jit_ld_sbyte_helper);
@@ -2581,6 +2588,7 @@ static void x64_emit_fast_ld_half_eax_addr(x64_emit_t *e, int sign) {
     x64_patch32(e, done, e->pos);
     done = x64_jmp32(e);
     x64_patch32(e, not_bios, e->pos);
+    x64_mov_mem_cpu_imm(e, arm_reg_off(15), e->guest_pc + 4u);
     x64_emit_arg0_cpu(e);
     x64_emit_arg1_u32_from(e, X64_R10D);
     x64_call_abs(e, sign ? (uintptr_t)arm_jit_ld_shalf_helper : (uintptr_t)arm_jit_ld_half_helper);
@@ -2598,6 +2606,7 @@ static void x64_emit_fast_st_half_eax_addr_ecx_value(x64_emit_t *e) {
     x64_mov_membase_index16_r32(e, X64_R14D, X64_EDX, X64_R9D);
     done = x64_jmp32(e);
     x64_patch32(e, not_ram, e->pos);
+    x64_mov_mem_cpu_imm(e, arm_reg_off(15), e->guest_pc + 4u);
     x64_emit_arg0_cpu(e);
     x64_emit_arg1_u32_from(e, X64_R10D);
     x64_emit_arg2_u32_from(e, X64_R9D);
@@ -3081,8 +3090,16 @@ static void arm_jit_compile_native(arm920t_t *c, arm_jit_block_t *b) {
         const arm_jit_op_t *op = &arm_jit_ops(c, b)[i];
         e.expected_next = i + 1u < b->count ? arm_jit_ops(c, b)[i + 1u].pc : op->pc + 4u;
         e.done = (uint32_t)i + 1u;
+        e.guest_pc = op->pc;
         size_t patches[3];
         unsigned npatch = 0;
+        /* A real BL and register-only leaf preserve the link/execution state.
+         * Elide its known return guard, retaining PC and guest cycle indices.
+         * Boundary returns still execute their guarded real-PC path. */
+        if (op->reserved == 7u && i + 1u < b->count) {
+            x64_mov_mem_cpu_imm(&e, arm_reg_off(15), e.expected_next);
+            continue;
+        }
         if (arm_jit_is_side_effect_free_nop(op->insn)) continue;
         if (op->stop) x64_mov_mem_cpu_imm(&e, arm_reg_off(15), op->pc + 4u);
         x64_emit_cond_skip(&e, op->cond, patches, &npatch);

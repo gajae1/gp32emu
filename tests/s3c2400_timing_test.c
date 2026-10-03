@@ -44,9 +44,36 @@ int main(void) {
         if ((k % 3u) == 0u) { s3c2400_reset(s); observe(s, 31u); }
     }
     fclose(state);
-    s3c2400_destroy(s);
     printf("lcd_timing_trace=%016" PRIx64 "\n", hash);
     /* Recorded by running this replay against the previous core, before the
      * derived timing cache was introduced. */
-    return hash == UINT64_C(0x47779e5037cd7b27) ? 0 : 1;
+    if (hash != UINT64_C(0x47779e5037cd7b27)) { s3c2400_destroy(s); return 1; }
+    /* IIS byte-DMA pacing. Each 8-bit DMA unit writes IISFIF once, and the
+     * register write pushes one 16-bit FIFO entry, so a stereo frame consumes
+     * two units. With an 8-unit auto-reloading block the terminal-count IRQ
+     * must land on the fourth frame period (500 cycles each at 96 kHz/48 MHz),
+     * not the second. */
+    s3c2400_reset(s);
+    s3c2400_write32(s, 0x14600040u, 0x0c000000u); /* DISRC2: RAM, incrementing */
+    s3c2400_write32(s, 0x14600044u, 0x35508010u); /* DIDST2: IISFIF, fixed */
+    s3c2400_write32(s, 0x14600048u, 0x10800008u); /* DCON2: IRQ|HW req|IIS, byte, tc=8 */
+    s3c2400_write32(s, 0x14600058u, 2u);          /* DMASKTRIG2: channel on */
+    s3c2400_write32(s, 0x15508000u, 1u);          /* IISCON: start */
+    unsigned dma2_irqs = 0;
+    for (unsigned i = 0; i < 4u; ++i) {
+        s3c2400_tick(s, 500u);
+        if (s3c2400_read32(s, 0x14400000u) & 0x00080000u) {
+            ++dma2_irqs;
+            s3c2400_write32(s, 0x14400000u, 0x00080000u);
+        }
+    }
+    uint64_t iis_frames = 0;
+    (void)s3c2400_audio_samples(s, &iis_frames, NULL);
+    s3c2400_destroy(s);
+    if (iis_frames != 4u || dma2_irqs != 1u) {
+        fprintf(stderr, "FAIL: IIS byte DMA frames=%" PRIu64 " dma2_irqs=%u (want 4/1)\n",
+                iis_frames, dma2_irqs);
+        return 1;
+    }
+    return 0;
 }

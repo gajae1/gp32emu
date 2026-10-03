@@ -737,6 +737,7 @@ static void arm_jit_compile_native(arm920t_t *c, arm_jit_block_t *b) {
     e.leaf = !e.memory;
     for (unsigned i = 0; e.leaf && i < b->count; ++i) {
         const arm_jit_op_t *op = &arm_jit_ops(c, b)[i];
+        if (op->reserved == 7u && i + 1u < b->count) continue;
         if (op->cond == 15u || op->kind == ARM_JIT_OP_BRANCH) continue;
         int test = op->a >= 8u && op->a <= 11u;
         if (op->kind != ARM_JIT_OP_DATA || (op->d & ARM_BC_DATA_REGSHIFT) ||
@@ -776,6 +777,14 @@ static void arm_jit_compile_native(arm920t_t *c, arm_jit_block_t *b) {
         const arm_jit_op_t *op = &arm_jit_ops(c, b)[i];
         e.expected_next = i + 1u < b->count ? arm_jit_ops(c, b)[i + 1u].pc : op->pc + 4u;
         e.generation = b->generation;
+        /* A register-only leaf preserves its BL link and execution state.
+         * Keep the architectural PC visible to subsequent callbacks, but a
+         * decoded caller successor needs no dynamic return-target guard. The
+         * guest op/cycle count and guarded boundary returns remain intact. */
+        if (op->reserved == 7u && i + 1u < b->count) {
+            a64_store_imm(&e, offsetof(arm920t_t, r) + 15u * 4u, e.expected_next);
+            continue;
+        }
         size_t skip = 0;
         if (op->cond == 15u) {
             /* ARMv4 NV is never, unlike A64's condition 15 (always). */

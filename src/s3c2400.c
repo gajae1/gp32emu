@@ -1422,10 +1422,12 @@ static uint32_t iis_dma_transfers_per_frame(const s3c2400_t *s) {
     unsigned dsz = GP32_BITS(r[2], 21, 20);
     /*
      * One tick of the simplified IIS scheduler represents one complete stereo
-     * audio frame. 16-bit DMA therefore needs two FIFO writes (left/right) in
-     * that frame period, while a 32-bit DMA write carries both halfwords.
+     * audio frame. Every unit transfer performs one IISFIF write, and each
+     * 8- or 16-bit write pushes one FIFO halfword, so both need two units
+     * (left/right) in that frame period, while a 32-bit DMA write carries
+     * both halfwords.
      */
-    if (dsz == 0u) return 4u;
+    if (dsz == 0u) return 2u;
     if (dsz == 1u) return 2u;
     return 1u;
 }
