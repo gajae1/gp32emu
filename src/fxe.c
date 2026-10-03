@@ -71,7 +71,12 @@ static void b2_wr32(uint8_t *mem, uint32_t addr, uint32_t v) {
     gp32_st32le(mem + o, v);
 }
 static int b2_in_ram(uint32_t addr, size_t len) {
-    return addr >= GP32_RAM_BASE && len <= (size_t)(GP32_RAM_BASE + 0x00800000u - addr);
+    /* Addresses past the 8 MiB image end must fail; the previous
+       (base + size - addr) form wrapped for them and accepted out-of-RAM
+       addresses, so the b2fxec decrunchers could read past the RAM image. */
+    const uint32_t end = GP32_RAM_BASE + 0x00800000u;
+    if (addr < GP32_RAM_BASE || addr > end) return 0;
+    return len <= (size_t)(end - addr);
 }
 static uint32_t b2_ror32(uint32_t v, unsigned n) {
     n &= 31u;

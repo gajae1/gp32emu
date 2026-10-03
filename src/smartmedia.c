@@ -501,8 +501,8 @@ typedef struct smc_state_image {
     uint32_t program_byte_count;
 } smc_state_image_t;
 
-int smc_state_save(const smc_t *s, FILE *f) {
-    if (!s || !f) return 0;
+int smc_state_save_io(const smc_t *s, state_io_t *io) {
+    if (!s || !io) return 0;
     smc_state_image_t st;
     memset(&st, 0, sizeof(st));
     st.data_size = s->data_size;
@@ -529,28 +529,28 @@ int smc_state_save(const smc_t *s, FILE *f) {
     st.accumulated_status = s->accumulated_status;
     st.mode_3065 = s->mode_3065;
     st.program_byte_count = s->program_byte_count;
-    if (fwrite(&st, 1, sizeof(st), f) != sizeof(st)) return 0;
-    if (s->data_size && s->data && fwrite(s->data, 1, s->data_size, f) != s->data_size) return 0;
-    if (s->page_total_size && s->page_reg && fwrite(s->page_reg, 1, s->page_total_size, f) != s->page_total_size) return 0;
+    if (!state_io_write(io, &st, sizeof(st))) return 0;
+    if (!state_io_write(io, s->data, s->data_size)) return 0;
+    if (!state_io_write(io, s->page_reg, s->page_total_size)) return 0;
     return 1;
 }
 
-int smc_state_load(smc_t *s, FILE *f) {
-    if (!s || !f) return 0;
+int smc_state_load_io(smc_t *s, state_io_t *io) {
+    if (!s || !io) return 0;
     smc_state_image_t st;
-    if (fread(&st, 1, sizeof(st), f) != sizeof(st)) return 0;
+    if (!state_io_read(io, &st, sizeof(st))) return 0;
     if (st.data_size > (size_t)128u * 1024u * 1024u || st.page_total_size > 2112u) return 0;
     uint8_t *data = NULL;
     uint8_t *page = NULL;
     if (st.data_size) {
         data = (uint8_t *)malloc(st.data_size);
         if (!data) return 0;
-        if (fread(data, 1, st.data_size, f) != st.data_size) { free(data); return 0; }
+        if (!state_io_read(io, data, st.data_size)) { free(data); return 0; }
     }
     if (st.page_total_size) {
         page = (uint8_t *)malloc(st.page_total_size);
         if (!page) { free(data); return 0; }
-        if (fread(page, 1, st.page_total_size, f) != st.page_total_size) { free(data); free(page); return 0; }
+        if (!state_io_read(io, page, st.page_total_size)) { free(data); free(page); return 0; }
     }
     free(s->data);
     free(s->page_reg);
@@ -582,4 +582,14 @@ int smc_state_load(smc_t *s, FILE *f) {
     s->mode_3065 = st.mode_3065;
     s->program_byte_count = st.program_byte_count;
     return 1;
+}
+
+int smc_state_save(const smc_t *s, FILE *f) {
+    state_io_t io = state_io_file(f);
+    return smc_state_save_io(s, &io);
+}
+
+int smc_state_load(smc_t *s, FILE *f) {
+    state_io_t io = state_io_file(f);
+    return smc_state_load_io(s, &io);
 }

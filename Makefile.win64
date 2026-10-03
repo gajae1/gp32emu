@@ -32,6 +32,9 @@ ifeq ($(origin PKG_CONFIG),undefined)
 PKG_CONFIG := x86_64-w64-mingw32-pkg-config
 endif
 
+GP32EMU_C_STD_PROBE := $(ROOT)/cmake/c_standard_probe.c
+include $(ROOT)/cmake/c_standard.mk
+
 TARGET := $(ROOT)/GP32emu-win64.exe
 BUILD := $(ROOT)/build/win64
 SDL_PREFIX := $(ROOT)/third_party/sdl/install/win64
@@ -48,7 +51,7 @@ endif
 GP32EMU_ENABLE_THREADS ?= 1
 DEFS := -DGP32EMU_ENABLE_THREADS=$(GP32EMU_ENABLE_THREADS) -DGP32EMU_WIN64_FRONTEND=1 -DSDL_MAIN_HANDLED=1 -DWIN32_LEAN_AND_MEAN=1 -DNOMINMAX=1 -D_CRT_SECURE_NO_WARNINGS=1 -D_WIN32_WINNT=0x0601
 INCLUDES := -I$(ROOT)/include -I$(ROOT)/src
-CFLAGS ?= -std=c11 -O3 -g -Wall -Wextra -Wno-unused-parameter
+CFLAGS ?= $(GP32EMU_C_STD_FLAG) -O3 -g -Wall -Wextra -Wno-unused-parameter
 CPPFLAGS += $(DEFS) $(INCLUDES) $(SDL_CFLAGS)
 ZIPLIB_CFLAGS ?= $(filter-out -Werror,$(CFLAGS)) -D_XOPEN_SOURCE=700 -D_FILE_OFFSET_BITS=64 -DZIP_ENABLE_DEFLATE=0 -DZIP_HAVE_SYMLINK=0 -w
 LDFLAGS ?= -static -static-libgcc -mwindows

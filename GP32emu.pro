@@ -15,7 +15,13 @@ CONFIG += c++17
 TARGET = GP32emu
 TEMPLATE = app
 
-QMAKE_CFLAGS += -std=c11 -DGP32EMU_ENABLE_THREADS=1 -D_XOPEN_SOURCE=700 -D_FILE_OFFSET_BITS=64 -DZIP_ENABLE_DEFLATE=0 -DZIP_HAVE_SYMLINK=0
+# Keep the Qt frontend on the same C dialect policy as CMake and the Makefiles.
+# qmake's system() returns command output, so each probe prints its selected dialect.
+GP32EMU_C_STD_CC = $$shell_quote($$QMAKE_CC)
+GP32EMU_C_STD_PROBE = $$shell_quote($$PWD/cmake/c_standard_probe.c)
+GP32EMU_C_STD = $$system("$$GP32EMU_C_STD_CC -x c -std=c23 -fsyntax-only $$GP32EMU_C_STD_PROBE >/dev/null 2>&1 && echo c23 || { $$GP32EMU_C_STD_CC -x c -std=c2x -fsyntax-only $$GP32EMU_C_STD_PROBE >/dev/null 2>&1 && echo c2x || echo c11; }")
+message("Using C dialect $$GP32EMU_C_STD")
+QMAKE_CFLAGS += -std=$$GP32EMU_C_STD -DGP32EMU_ENABLE_THREADS=1 -D_XOPEN_SOURCE=700 -D_FILE_OFFSET_BITS=64 -DZIP_ENABLE_DEFLATE=0 -DZIP_HAVE_SYMLINK=0
 QMAKE_CFLAGS_WARN_ON += -Wall -Wextra
 QMAKE_CXXFLAGS_WARN_ON += -Wall -Wextra
 LIBS += -pthread

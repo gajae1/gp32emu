@@ -1,12 +1,16 @@
 # WebAssembly GP32emu build. Uses the portable ARM bytecode interpreter; native x64 JIT is intentionally unavailable for WASM.
 WASM_CC ?= clang
 WASM_LD ?= wasm-ld
+GP32EMU_C_STD_CC := $(WASM_CC)
+
+include cmake/c_standard.mk
+
 PORT ?= 8008
 OUT_DIR := web
 OUT_WASM := $(OUT_DIR)/gp32_wasm_core.wasm
 BUILD_DIR := build-wasm
 
-WASM_CFLAGS := --target=wasm32-unknown-unknown -O3 -g0 -std=c11 -DGP32EMU_WASM=1 -DGP32EMU_ENABLE_THREADS=0 -D__STDC_HOSTED__=0 \
+WASM_CFLAGS := --target=wasm32-unknown-unknown -O3 -g0 $(GP32EMU_C_STD_FLAG) -DGP32EMU_WASM=1 -DGP32EMU_ENABLE_THREADS=0 -D__STDC_HOSTED__=0 \
   -DARM_JIT_BLOCK_COUNT=32768 -DARM_JIT_MAX_INSNS=96 \
   -Iwasm/libc/include -Iinclude -Isrc -Wall -Wextra -Wno-unused-parameter -Wno-implicit-function-declaration \
   -Wno-builtin-macro-redefined -ffunction-sections -fdata-sections

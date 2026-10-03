@@ -108,7 +108,7 @@ static void usage(const char *argv0) {
     fprintf(stderr,
         "usage: %s [--bios gp32166m.bin] [--smc game.smc] [--fxe homebrew.fxe|--fpk package.fpk] [--input-script script.txt] [--load-state file.gp32st] [--no-bios-auto-start] [--cycles-per-frame N] [--frames N] [--hle-sef-rate HZ] [--buttons MASK] [--button-at CYCLES:MASK] [--cycles N] [--step-cycles N] [--dump-frame out.ppm] [--dump-at CYCLES:out.ppm] [--record-mkv out.mkv] [--dump-wav out.wav] [--save-smc out.smc] [--dump-mem ADDR LEN out.bin] [--trace] [--jit|--no-jit] [--jit-stats] [--dump-regs] [--dump-lcd-regs] [--dump-cp15] [--progress] [--rotate-ccw|--rotate-cw|--rotate-180]\n"
         "\n"
-        "Headless standalone GP32 emulator smoke runner. No BIOS or game data is bundled. --fxe accepts classic scrambled FXE files and raw GXB payloads; --fpk extracts and loads the package's main FXE. Input scripts use FRAMEf:BUTTON names such as 1550f:P. BIOS+SMC headless runs synthesize a few A/confirm pulses unless --no-bios-auto-start or explicit input is supplied.\n",
+        "Headless standalone GP32 emulator smoke runner. No BIOS or game data is bundled. --fxe accepts classic scrambled FXE files and raw GXB payloads; --fpk extracts and loads the package's main FXE. Input scripts use FRAMEf:BUTTON names such as 1550f:P. BIOS+SMC headless runs synthesize a few A/confirm pulses unless --no-bios-auto-start or explicit input is supplied. --dump-at CYCLES:out.ppm captures are serviced live in --cycles mode at the requested cycle, and in --frames mode at the first frame boundary whose completed cycle count reaches CYCLES; a capture scheduled exactly at the final frame boundary is written once at exit from that final state.\n",
         argv0);
 }
 
@@ -250,7 +250,21 @@ int main(int argc, char **argv) {
             if (!recorder) { fprintf(stderr, "mkv recorder open failed: %s\n", rec_err[0] ? rec_err : "unknown error"); gp32_input_script_destroy(input_script); gp32_destroy(g); return 1; }
         }
         for (uint64_t frame = 0; frame < frames; ++frame) {
-            uint32_t elapsed = (uint32_t)gp32_get_cycles(g);
+            uint64_t elapsed64 = gp32_get_cycles(g);
+            uint32_t elapsed = (uint32_t)elapsed64;
+            /* Service scheduled --dump-at captures at this frame boundary so
+             * each capture matches a separate run that ends exactly at the
+             * same frame count.  --frames advances whole frames, so captures
+             * have frame-boundary granularity here; sub-frame cycles are only
+             * honored in --cycles mode.  Without --dump-at this loop is a
+             * no-op and emulation/input chunking is unchanged. */
+            while (next_dump_event < dump_event_count && dump_events[next_dump_event].at_cycles <= elapsed64) {
+                if (!dump_events[next_dump_event].done) {
+                    dump_frame_now(g, dump_events[next_dump_event].path, rotate);
+                    dump_events[next_dump_event].done = 1;
+                }
+                next_dump_event++;
+            }
             auto_buttons = bios_auto_start_active ? bios_auto_start_buttons_for_frame(frame) : 0u;
             gp32_set_buttons(g, buttons | script_buttons | auto_buttons);
             if (input_script) {

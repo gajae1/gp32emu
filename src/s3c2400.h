@@ -39,6 +39,8 @@ uint32_t s3c2400_hclk_hz(const s3c2400_t *soc);
 uint32_t s3c2400_run_clock_hz(const s3c2400_t *soc);
 int s3c2400_state_save(const s3c2400_t *soc, FILE *f);
 int s3c2400_state_load(s3c2400_t *soc, FILE *f);
+int s3c2400_state_save_io(const s3c2400_t *soc, state_io_t *io);
+int s3c2400_state_load_io(s3c2400_t *soc, state_io_t *io);
 
 uint8_t s3c2400_read8(void *user, uint32_t addr);
 uint16_t s3c2400_read16(void *user, uint32_t addr);

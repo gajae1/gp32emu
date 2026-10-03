@@ -1155,14 +1155,16 @@ static int direct_shadow_index(uint8_t v) {
     return v >= 0x71u && v <= 0x77u;
 }
 
-static int direct_surface_has_shadow_neighbour(gp32_t *g, uint32_t fb_addr, uint32_t width, uint32_t height, uint32_t x, uint32_t y) {
+static int direct_surface_has_shadow_neighbour(gp32_t *g, const uint8_t *pixels, uint32_t fb_addr, uint32_t width, uint32_t height, uint32_t x, uint32_t y) {
     for (int dy = -1; dy <= 1; ++dy) {
         int yy = (int)y + dy;
         if (yy < 0 || yy >= (int)height) continue;
         for (int dx = -1; dx <= 1; ++dx) {
             int xx = (int)x + dx;
             if ((dx == 0 && dy == 0) || xx < 0 || xx >= (int)width) continue;
-            if (direct_shadow_index(direct_read8_if_ram(g, fb_addr + (uint32_t)yy * width + (uint32_t)xx))) return 1;
+            uint32_t offset = (uint32_t)yy * width + (uint32_t)xx;
+            uint8_t v = pixels ? pixels[offset] : direct_read8_if_ram(g, fb_addr + offset);
+            if (direct_shadow_index(v)) return 1;
         }
     }
     return 0;
@@ -1190,15 +1192,25 @@ static void direct_fix_gp32_additive_blend_shadow_pixels(gp32_t *g) {
     if (width == 0u || height == 0u || width > 240u || height > 320u) return;
     uint32_t fb_addr = s3c2400_debug_read32(g->soc, 0x14a00014u) << 1;
     if (!direct_ram_range(g, fb_addr, width * height)) return;
+    /* The complete surface is ordinary RAM. Resolve it once for this call;
+     * state loading can replace RAM, so do not cache the pointer. Keep the
+     * ordered, in-place eight-pass repair and all LUT/LCD guards unchanged.
+     * The old byte reader uses aligned 32-bit loads. Retain it if a custom
+     * RAM size ends partway through the surface's last aligned word. */
+    arm_bus_t bus = s3c2400_get_bus(g->soc);
+    uint32_t span = ((fb_addr + width * height + 3u) & ~3u) - fb_addr;
+    uint8_t *pixels = bus.fastmem(bus.user, fb_addr, span, 1);
 
     for (unsigned pass = 0; pass < 8u; ++pass) {
         uint32_t changed = 0u;
         for (uint32_t y = 0; y < height; ++y) {
             for (uint32_t x = 0; x < width; ++x) {
-                uint32_t addr = fb_addr + y * width + x;
-                if (direct_read8_if_ram(g, addr) != 0x78u) continue;
-                if (!direct_surface_has_shadow_neighbour(g, fb_addr, width, height, x, y)) continue;
-                direct_write8_if_ram(g, addr, 0x77u);
+                uint32_t offset = y * width + x;
+                uint8_t v = pixels ? pixels[offset] : direct_read8_if_ram(g, fb_addr + offset);
+                if (v != 0x78u) continue;
+                if (!direct_surface_has_shadow_neighbour(g, pixels, fb_addr, width, height, x, y)) continue;
+                if (pixels) pixels[offset] = 0x77u;
+                else direct_write8_if_ram(g, fb_addr + offset, 0x77u);
                 changed++;
             }
         }
@@ -3755,6 +3767,16 @@ uint32_t gp32_get_run_clock_hz(const gp32_t *g) { return g ? s3c2400_run_clock_h
 uint64_t gp32_get_jit_hits(const gp32_t *g) { return g ? arm920t_get_jit_hits(g->cpu) : 0; }
 uint64_t gp32_get_jit_misses(const gp32_t *g) { return g ? arm920t_get_jit_misses(g->cpu) : 0; }
 uint64_t gp32_get_jit_fallbacks(const gp32_t *g) { return g ? arm920t_get_jit_fallbacks(g->cpu) : 0; }
+gp32_status_t gp32_get_cpu_profile(const gp32_t *g, gp32_cpu_profile_t *out) {
+    if (!out) return GP32_ERR_INVALID_ARGUMENT;
+    arm920t_get_cpu_profile(g ? g->cpu : NULL, out);
+    return GP32_OK;
+}
+gp32_status_t gp32_reset_cpu_profile(gp32_t *g) {
+    if (!g) return GP32_ERR_INVALID_ARGUMENT;
+    arm920t_reset_cpu_profile(g->cpu);
+    return GP32_OK;
+}
 const char *gp32_get_error(const gp32_t *g) { return g ? g->error : "invalid gp32 handle"; }
 
 typedef struct gp32_fpk_handle_state_image {
@@ -4046,17 +4068,71 @@ static void gp32_direct_state_apply(gp32_t *g, const gp32_state_image_t *st) {
     g->direct_vblank_wait_requested = st->direct_vblank_wait_requested;
 }
 
+static const uint8_t gp32_state_magic[16] = { 'G','P','3','2','S','T','A','T','E','v','0','0','0','2',0,0 };
+
+static int gp32_state_write(const gp32_t *g, state_io_t *io) {
+    gp32_state_image_t direct;
+    gp32_direct_state_capture(g, &direct);
+    return state_io_write(io, gp32_state_magic, sizeof(gp32_state_magic)) &&
+           state_io_write(io, &direct, sizeof(direct)) &&
+           arm920t_state_save_io(g->cpu, io) &&
+           s3c2400_state_save_io(g->soc, io);
+}
+
+static int gp32_state_read(gp32_t *g, state_io_t *io, gp32_state_image_t *direct) {
+    uint8_t got[sizeof(gp32_state_magic)];
+    return state_io_read(io, got, sizeof(got)) && memcmp(got, gp32_state_magic, sizeof(got)) == 0 &&
+           state_io_read(io, direct, sizeof(*direct)) &&
+           arm920t_state_load_io(g->cpu, io) &&
+           s3c2400_state_load_io(g->soc, io);
+}
+
+static void gp32_state_loaded(gp32_t *g, const gp32_state_image_t *direct) {
+    gp32_direct_state_apply(g, direct);
+    s3c2400_set_irq_sink(g->soc, g->cpu);
+    arm920t_set_swi_handler(g->cpu, direct_fxe_swi, g);
+    gp32_clear_audio(g);
+    direct_fix_gp32_additive_blend_shadow_endpoint(g);
+}
+
+size_t gp32_state_size(const gp32_t *g) {
+    if (!g) return 0;
+    state_io_t io = state_io_counter();
+    return gp32_state_write(g, &io) ? io.pos : 0;
+}
+
+gp32_status_t gp32_save_state_data(gp32_t *g, void *data, size_t size) {
+    if (!g || !data) return GP32_ERR_INVALID_ARGUMENT;
+    size_t needed = gp32_state_size(g);
+    if (!needed) { seterr(g, "count savestate failed"); return GP32_ERR_IO; }
+    if (size < needed) {
+        seterr(g, "savestate buffer too small: need %zu bytes, got %zu", needed, size);
+        return GP32_ERR_INVALID_ARGUMENT;
+    }
+    state_io_t io = state_io_writer(data, size);
+    if (!gp32_state_write(g, &io)) { seterr(g, "write savestate buffer failed"); return GP32_ERR_IO; }
+    if (io.pos < size) memset((uint8_t *)data + io.pos, 0, size - io.pos);
+    return GP32_OK;
+}
+
+gp32_status_t gp32_load_state_data(gp32_t *g, const void *data, size_t size) {
+    if (!g || !data || !size) return GP32_ERR_INVALID_ARGUMENT;
+    state_io_t io = state_io_reader(data, size);
+    gp32_state_image_t direct;
+    if (!gp32_state_read(g, &io, &direct)) {
+        seterr(g, "load savestate buffer failed or unsupported version");
+        return GP32_ERR_IO;
+    }
+    gp32_state_loaded(g, &direct);
+    return GP32_OK;
+}
+
 gp32_status_t gp32_save_state(gp32_t *g, const char *path) {
     if (!g || !path) return GP32_ERR_INVALID_ARGUMENT;
     FILE *f = fopen(path, "wb");
     if (!f) { seterr(g, "open savestate %s: %s", path, strerror(errno)); return GP32_ERR_IO; }
-    const uint8_t magic[16] = { 'G','P','3','2','S','T','A','T','E','v','0','0','0','2',0,0 };
-    gp32_state_image_t direct;
-    gp32_direct_state_capture(g, &direct);
-    int ok = fwrite(magic, 1, sizeof(magic), f) == sizeof(magic) &&
-             fwrite(&direct, 1, sizeof(direct), f) == sizeof(direct) &&
-             arm920t_state_save(g->cpu, f) &&
-             s3c2400_state_save(g->soc, f);
+    state_io_t io = state_io_file(f);
+    int ok = gp32_state_write(g, &io);
     if (fclose(f) != 0) ok = 0;
     if (!ok) { seterr(g, "write savestate %s failed", path); return GP32_ERR_IO; }
     return GP32_OK;
@@ -4066,19 +4142,11 @@ gp32_status_t gp32_load_state(gp32_t *g, const char *path) {
     if (!g || !path) return GP32_ERR_INVALID_ARGUMENT;
     FILE *f = fopen(path, "rb");
     if (!f) { seterr(g, "open savestate %s: %s", path, strerror(errno)); return GP32_ERR_IO; }
-    const uint8_t magic[16] = { 'G','P','3','2','S','T','A','T','E','v','0','0','0','2',0,0 };
-    uint8_t got[16];
+    state_io_t io = state_io_file(f);
     gp32_state_image_t direct;
-    int ok = fread(got, 1, sizeof(got), f) == sizeof(got) && memcmp(got, magic, sizeof(magic)) == 0 &&
-             fread(&direct, 1, sizeof(direct), f) == sizeof(direct) &&
-             arm920t_state_load(g->cpu, f) &&
-             s3c2400_state_load(g->soc, f);
+    int ok = gp32_state_read(g, &io, &direct);
     if (fclose(f) != 0) ok = 0;
     if (!ok) { seterr(g, "load savestate %s failed or unsupported version", path); return GP32_ERR_IO; }
-    gp32_direct_state_apply(g, &direct);
-    s3c2400_set_irq_sink(g->soc, g->cpu);
-    arm920t_set_swi_handler(g->cpu, direct_fxe_swi, g);
-    gp32_clear_audio(g);
-    direct_fix_gp32_additive_blend_shadow_endpoint(g);
+    gp32_state_loaded(g, &direct);
     return GP32_OK;
 }

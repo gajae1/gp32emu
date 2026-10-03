@@ -2,6 +2,7 @@
 #define GP32EMU_SMARTMEDIA_H
 
 #include "common.h"
+#include "state_io.h"
 
 typedef struct smc smc_t;
 
@@ -22,5 +23,7 @@ size_t smc_image_size(const smc_t *smc);
 int smc_is_dirty(const smc_t *smc);
 int smc_state_save(const smc_t *smc, FILE *f);
 int smc_state_load(smc_t *smc, FILE *f);
+int smc_state_save_io(const smc_t *smc, state_io_t *io);
+int smc_state_load_io(smc_t *smc, state_io_t *io);
 
 #endif

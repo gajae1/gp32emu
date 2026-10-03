@@ -4,20 +4,26 @@
 #include <string.h>
 
 static uint32_t blend_half(uint32_t a, uint32_t b) {
-    const uint32_t r = ((((a >> 16) & 255u) + ((b >> 16) & 255u)) >> 1) & 255u;
-    const uint32_t g = ((((a >> 8) & 255u) + ((b >> 8) & 255u)) >> 1) & 255u;
-    const uint32_t bl = (((a & 255u) + (b & 255u)) >> 1) & 255u;
-    return (r << 16) | (g << 8) | bl;
+    /* Same result as blending each 8-bit channel separately:
+       floor((a + b) / 2) == ((a & 0xfe) >> 1) + ((b & 0xfe) >> 1) + (a & b & 1)
+       for every channel.  Every lane stays below 256, so lanes never carry into
+       their neighbour, and the alpha byte is dropped exactly as before. */
+    return ((a & 0x00fefefeu) >> 1) + ((b & 0x00fefefeu) >> 1) + (a & b & 0x00010101u);
 }
 
 static uint32_t blend_lcd_persistence(uint32_t cur, uint32_t old) {
     /* Mild GP32 FLU-style sample-and-hold/response persistence.  The current
        frame remains dominant so menus and pixel art stay legible, while the
-       previous persisted output contributes a short motion trail. */
-    const uint32_t r = ((((cur >> 16) & 255u) * 3u + ((old >> 16) & 255u) + 2u) >> 2) & 255u;
-    const uint32_t g = ((((cur >> 8) & 255u) * 3u + ((old >> 8) & 255u) + 2u) >> 2) & 255u;
-    const uint32_t b = (((cur & 255u) * 3u + (old & 255u) + 2u) >> 2) & 255u;
-    return (r << 16) | (g << 8) | b;
+       previous persisted output contributes a short motion trail.
+
+       Per channel this is (3*cur + old + 2) >> 2.  Splitting both inputs into
+       their top six and low two bits keeps every packed lane below 256, so the
+       arithmetic below is exact for each channel and lanes never carry into
+       each other, while the alpha byte is dropped exactly as before. */
+    const uint32_t cur_hi = (cur >> 2) & 0x003f3f3fu;
+    const uint32_t old_hi = (old >> 2) & 0x003f3f3fu;
+    const uint32_t low = (cur & 0x00030303u) * 3u + (old & 0x00030303u) + 0x00020202u;
+    return cur_hi * 3u + old_hi + ((low & 0x000c0c0cu) >> 2);
 }
 
 int gp32_video_effects_init(gp32_video_effects_t *fx) {
@@ -75,14 +81,38 @@ int gp32_video_effects_process_320x240(gp32_video_effects_t *fx, const uint32_t 
         fx->have_prev_lcd = 1;
         return 1;
     }
-    for (uint32_t i = 0; i < GP32_VIDEO_EFFECTS_PIXELS; ++i) {
-        const uint32_t raw = src_rgb[i] & 0x00ffffffu;
-        uint32_t p = raw;
-        if (interp) p = blend_half(p, fx->prev_raw[i]);
-        fx->prev_raw[i] = raw;
-        if (lcd) p = blend_lcd_persistence(p, fx->prev_lcd[i]);
-        fx->prev_lcd[i] = p;
-        dst_rgb[i] = p;
+    /* Both effects are enabled and their histories are seeded, so the per-pixel
+       flags of the original single loop are loop-invariant.  Split the frame
+       into one branch-free loop per mode and touch only the history buffer the
+       mode actually samples.  A history buffer is only read while its own
+       effect is enabled, and gp32_video_effects_set() resets the histories
+       whenever a flag changes, so skipping the stores of a buffer the current
+       mode never samples stays invisible: the first frame after such a change
+       is re-seeded before any blend reads history. */
+    uint32_t *const prev_raw = fx->prev_raw;
+    uint32_t *const prev_lcd = fx->prev_lcd;
+    if (interp && lcd) {
+        for (uint32_t i = 0; i < GP32_VIDEO_EFFECTS_PIXELS; ++i) {
+            const uint32_t raw = src_rgb[i] & 0x00ffffffu;
+            const uint32_t p = blend_lcd_persistence(blend_half(raw, prev_raw[i]), prev_lcd[i]);
+            prev_raw[i] = raw;
+            prev_lcd[i] = p;
+            dst_rgb[i] = p;
+        }
+    } else if (interp) {
+        for (uint32_t i = 0; i < GP32_VIDEO_EFFECTS_PIXELS; ++i) {
+            const uint32_t raw = src_rgb[i] & 0x00ffffffu;
+            const uint32_t p = blend_half(raw, prev_raw[i]);
+            prev_raw[i] = raw;
+            dst_rgb[i] = p;
+        }
+    } else {
+        for (uint32_t i = 0; i < GP32_VIDEO_EFFECTS_PIXELS; ++i) {
+            const uint32_t raw = src_rgb[i] & 0x00ffffffu;
+            const uint32_t p = blend_lcd_persistence(raw, prev_lcd[i]);
+            prev_lcd[i] = p;
+            dst_rgb[i] = p;
+        }
     }
     fx->have_prev_raw = 1;
     fx->have_prev_lcd = 1;

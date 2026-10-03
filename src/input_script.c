@@ -19,6 +19,7 @@ typedef struct script_event {
     uint64_t frame;
     uint32_t mask;
     script_action_t action;
+    size_t sequence;
 } script_event_t;
 
 struct gp32_input_script {
@@ -148,6 +149,7 @@ static int add_event(gp32_input_script_t *s, uint64_t frame, uint32_t mask, scri
     s->events[s->count].frame = frame;
     s->events[s->count].mask = mask;
     s->events[s->count].action = action;
+    s->events[s->count].sequence = s->count;
     s->count++;
     return 1;
 }
@@ -157,7 +159,10 @@ static int event_cmp(const void *a, const void *b) {
     const script_event_t *eb = (const script_event_t *)b;
     if (ea->frame < eb->frame) return -1;
     if (ea->frame > eb->frame) return 1;
-    return (int)ea->action - (int)eb->action;
+    if (ea->action != eb->action) return (int)ea->action - (int)eb->action;
+    /* qsort is not stable. Equal-time SETs must apply in authored order,
+     * independently of the host C library's sorting algorithm. */
+    return (ea->sequence > eb->sequence) - (ea->sequence < eb->sequence);
 }
 
 int gp32_input_script_load(const char *path, gp32_input_script_t **out_script, char *err, size_t err_len) {

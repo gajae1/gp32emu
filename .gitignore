@@ -1,6 +1,7 @@
 *.o
 *.a
 build*
+!scripts/build_android.ps1
 third_party/sdl/build/
 third_party/sdl/install/
 third_party/sdl/SDL3-3.4.10/
@@ -11,3 +12,5 @@ build-wasm/
 *.gp32st
 web/*.wasm
 .qmake.stash
+__pycache__/
+*.pyc

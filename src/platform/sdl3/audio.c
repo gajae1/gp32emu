@@ -19,6 +19,10 @@ typedef struct sdl3_audio_backend {
     uint32_t sample_rate_hz;
     gp32_audio_resampler_t resampler;
     int started;
+    /* Tail of the last chunk actually queued, for splice ramps. */
+    int16_t last_queued_l;
+    int16_t last_queued_r;
+    int ramp_pending;
     char error[160];
 } sdl3_audio_backend_t;
 
@@ -47,6 +51,24 @@ static int32_t audio_queue_rate_adjust_ppm(uint32_t queued_frames) {
     if (ppm < max_speedup) ppm = max_speedup;
     if (ppm > max_slowdown) ppm = max_slowdown;
     return ppm;
+}
+
+/* A soft-limit trim throws the freshly resampled chunk away, so the next chunk
+ * queued is not contiguous with the tail that is already playing.  Crossfade
+ * its head from that tail over the same ~1 ms window the resampler uses for
+ * gap recovery, instead of stepping straight across the dropped audio. */
+static void ramp_chunk_head_from_queue_tail(sdl3_audio_backend_t *a, int16_t *frames, uint32_t count) {
+    uint32_t fade = a->sample_rate_hz ? a->sample_rate_hz / 1000u : 44u;
+    if (fade < 16u) fade = 16u;
+    if (fade > 96u) fade = 96u;
+    if (fade > count) fade = count;
+    for (uint32_t i = 0; i < fade; ++i) {
+        int32_t num = (int32_t)(i + 1u);
+        int32_t den = (int32_t)fade;
+        int16_t *p = frames + (size_t)i * 2u;
+        p[0] = (int16_t)((int32_t)a->last_queued_l + ((int32_t)p[0] - (int32_t)a->last_queued_l) * num / den);
+        p[1] = (int16_t)((int32_t)a->last_queued_r + ((int32_t)p[1] - (int32_t)a->last_queued_r) * num / den);
+    }
 }
 
 static gp32_status_t sdl3_audio_submit(gp32_audio_backend_t *backend, const gp32_audio_desc_t *audio) {
@@ -108,13 +130,20 @@ static gp32_status_t sdl3_audio_submit(gp32_audio_backend_t *backend, const gp32
         gp32_audio_resampler_mark_gap(&a->resampler, dst_rate);
         queued_bytes = 0;
     } else if (queued_bytes > soft_queued) {
+        a->ramp_pending = 1;
         return GP32_OK;
     }
 
+    if (a->ramp_pending) {
+        a->ramp_pending = 0;
+        ramp_chunk_head_from_queue_tail(a, a->tmp, out_frames);
+    }
     if (out_frames && !SDL_PutAudioStreamData(a->stream, a->tmp, (int)bytes)) {
         gp32_platform_set_error(a->error, sizeof(a->error), SDL_GetError());
         return GP32_ERR_IO;
     }
+    a->last_queued_l = a->tmp[(out_frames - 1u) * 2u + 0u];
+    a->last_queued_r = a->tmp[(out_frames - 1u) * 2u + 1u];
     queued_bytes = SDL_GetAudioStreamQueued(a->stream);
     if (!a->started && queued_bytes >= (int)(GP32_SDL3_AUDIO_START_FRAMES * 2u * sizeof(int16_t))) {
         a->started = 1;
