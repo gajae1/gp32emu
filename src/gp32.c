@@ -1459,7 +1459,9 @@ static void direct_hle_pcm_tick(gp32_t *g, uint32_t cycles) {
     if (!g || !g->soc || !cycles) return;
     if (!g->direct_hle_audio_asset && !direct_hle_pcm_any_active(g)) return;
     uint32_t out_rate = direct_hle_mix_output_rate(g);
-    uint32_t clock = direct_firmware_clock_hz(g);
+    /* cycles arrive in the same effective instruction-budget domain used
+     * by gp32_run_cycles, not the PLL frequency reported to firmware. */
+    uint32_t clock = direct_run_clock_hz(g);
     uint64_t scaled = g->direct_hle_pcm_accum + (uint64_t)cycles * (uint64_t)out_rate;
     uint32_t frames = (uint32_t)(scaled / (uint64_t)clock);
     g->direct_hle_pcm_accum = scaled % (uint64_t)clock;

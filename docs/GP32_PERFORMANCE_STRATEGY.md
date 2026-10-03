@@ -1010,3 +1010,31 @@ Installed core SHA-256 is
 `ec04a1bfea14ab8d46a443223b21c6adc01416a3b1aaaa67b16c7137796e0ab5`;
 backup is `gp32-dev/resume60-installed-core-before.so`. Protected settings
 are unchanged. Nested-callback peripheral time settlement remains open.
+
+## resume61: HLE PCM clock-domain correction
+
+HLE PCM now converts elapsed execution-budget cycles using the effective
+run clock, matching `gp32_run_cycles` and the frontend's frame budget. It
+previously divided those cycles by the firmware-visible PLL frequency.
+With FCLK 66 MHz and run clock 33 MHz, a 10 ms slice consequently generated
+only 220 stereo frames instead of 441 at 44.1 kHz.
+
+The regression exercises the actual idle/peripheral/audio tick path with
+mixed SEF and looping PCM input. FCLK/run ratios of 66/66, 66/33 and 132/48
+MHz now produce 441 byte-identical stereo frames per 10 ms. The old core
+fails the divided-clock case. Windows and native H700 PCM, timer and state
+checks pass; Android ARM64/ARMv7 builds pass. Her Knights/Tomak replays
+retain all seven CPU/video/PCM fields from the accepted baseline. These
+replays do not establish audible acceptance of the corrected HLE path.
+
+No PLL, clock heuristic, default option or saved-state layout changed; no
+forced 166/200 MHz override was added. Nested-callback peripheral time and
+elapsed-millisecond continuity across guest clock changes remain separate
+open issues. This is an audio timing correction, not a measured FPS gain.
+
+Evidence: `F:/GP32/results/resume61-pcm-clock/`, including the old-code
+failure, native checks, build logs, replay comparison and installation record.
+Installed core SHA-256 is
+`c14b01fc0ef443966289cc1b686768c861ada27bfa2cfc144455a5a26bf61a76`;
+backup is `gp32-dev/resume61-installed-core-before.so`. Protected settings
+remain unchanged.

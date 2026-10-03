@@ -63,7 +63,56 @@ static int check_sdk_refill_slicing(uint32_t half_samples) {
     return ok;
 }
 
+static int check_hle_pcm_clock_domains(void) {
+    /* Equal wall time must yield the same stream under different CPU/bus
+     * ratios, including the high-PLL effective instruction-budget clock. */
+    const uint32_t pll[] = {0x3000u, 0x3000u, 0xe000u};
+    const uint32_t div[] = {0u, 2u, 2u};
+    const uint32_t run_hz[] = {66000000u, 33000000u, 48000000u};
+    uint8_t sef[8u + 512u] = {0};
+    for (unsigned i = 8u; i < sizeof(sef); ++i) sef[i] = (uint8_t)i;
+    fpk_asset_t asset = {0};
+    asset.data = sef;
+    asset.size = sizeof(sef);
+    int16_t reference[441u * 2u];
+    for (unsigned k = 0; k < GP32_ARRAY_COUNT(pll); ++k) {
+        gp32_t *g = gp32_create(NULL);
+        if (!g) return 0;
+        g->direct_fxe_mode = 1;
+        s3c2400_write32(g->soc, 0x14800004u, pll[k]);
+        s3c2400_write32(g->soc, 0x14800014u, div[k]);
+        g->direct_hle_audio_asset = &asset;
+        g->direct_hle_audio_size = 512u;
+        g->direct_hle_audio_rate = 22050u;
+        const uint32_t source = GP32_RAM_BASE + 0x1000u;
+        s3c2400_write32(g->soc, source, 0x40ff8000u);
+        g->direct_hle_pcm_ch[0].active = 1u;
+        g->direct_hle_pcm_ch[0].src_addr = source;
+        g->direct_hle_pcm_ch[0].size_bytes = 4u;
+        g->direct_hle_pcm_ch[0].bits = 8u;
+        g->direct_hle_pcm_ch[0].rate = 11025u;
+        g->direct_hle_pcm_ch[0].repeat = 1u;
+        uint32_t budget = direct_run_clock_hz(g) / 100u;
+        g->direct_vblank_wait_cycles = budget;
+        gp32_status_t status = gp32_run_cycles(g, budget);
+        uint64_t frames = 0;
+        uint32_t rate = 0;
+        const int16_t *pcm = s3c2400_audio_samples(g->soc, &frames, &rate);
+        int ok = status == GP32_OK && direct_run_clock_hz(g) == run_hz[k] &&
+            pcm && frames == 441u && rate == 44100u;
+        if (ok && k == 0u) memcpy(reference, pcm, sizeof(reference));
+        else if (ok) ok = !memcmp(reference, pcm, sizeof(reference));
+        if (!ok) fprintf(stderr, "FAIL: HLE PCM clock ratio %u: frames=%llu rate=%u\n",
+                         k, (unsigned long long)frames, rate);
+        g->direct_hle_audio_asset = NULL;
+        gp32_destroy(g);
+        if (!ok) return 0;
+    }
+    return 1;
+}
+
 int main(void) {
+    if (!check_hle_pcm_clock_domains()) return 1;
     if (!check_sdk_refill_slicing(32u) || !check_sdk_refill_slicing(64u) ||
         !check_sdk_refill_slicing(70u)) return 1;
     gp32_t *g = gp32_create(NULL);

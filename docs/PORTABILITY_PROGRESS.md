@@ -3188,3 +3188,20 @@ pass, and Her Knights/Tomak replay outputs remain exact. The H700 core is
 installed with a backup and unchanged protected settings. Callback-time
 settlement and whole-game/physical-audio acceptance remain open. Evidence:
 `F:/GP32/results/resume60-scan/`.
+
+### HLE PCM elapsed-time clock domain (resume61)
+
+HLE PCM used the firmware-visible PLL clock to interpret cycles supplied in
+the effective execution-budget clock domain. Under clock division this
+generated too few samples: the regression reproduced 220 instead of 441
+stereo frames in 10 ms. Using the run clock makes three clock ratios yield
+the same 441 frames and identical mixed SEF/PCM data through the real tick
+path. Guest clock selection and saved-state layout are unchanged.
+
+Windows/H700 PCM, timer and state checks pass, Android ARM64/ARMv7 builds
+pass, and Her Knights/Tomak replay outputs remain exact. The checked core
+is installed with a backup and unchanged protected settings. This does not
+establish whole-game performance or speaker continuity. Forced guest-clock
+overrides remain deferred; callback-time settlement and elapsed-time
+continuity across clock changes remain open. Evidence and deployment hash:
+the resume61 performance section and `F:/GP32/results/resume61-pcm-clock/`.
