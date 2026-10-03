@@ -2184,3 +2184,57 @@ source change leaves the stripped AArch64 CPU object byte-identical
 (`1b4f949394764a4390eb2a8fab59337500ea0f51ebf29cd24085853593481b26`),
 so the tested and installed LCD core above is retained. Full-game, physical
 input latency and Android runtime coverage are still incomplete.
+
+### Portable callback boundaries and Tomak audio (resume31, 2026-10-03)
+
+Disabling native JIT still executes cached decoded ARM blocks. That portable
+loop previously continued past a bus callback which raised an unmasked IRQ,
+invalidated code, disabled JIT or enabled tracing. It now finishes the current
+instruction, then returns to dispatch on trace/generation/epoch changes or
+an unmasked IRQ/FIQ. A callback exit also disables poll fast-forward for that
+batch. This applies to 32-bit ARM and native-block fallback execution.
+
+The existing eight single-transfer IRQ and 48 block-transfer callback cases
+now also run with native JIT disabled. Profile assertions require decoded
+portable instructions and zero native calls. Before the fix they expose 112
+mismatches; the patched cases pass, including callback-triggered tracing.
+The final portable-focused mode passes on Windows and native H700. The full
+H700 differential passed with 9,067 dispatch events and 21 fallbacks while
+the temporary helper candidate below was present; removing that candidate
+restores the previously validated native helper, and the final portable mode
+was rerun. All four build targets pass. Evidence:
+`F:/GP32/results/resume31-portable/` (`baseline.log`, `patched.log`,
+`windows-focused.log`, `full-native.json`, `final-focused-native.json`).
+
+A separate AArch64 SINGLE_DT helper prototype removed the kind switch and
+reduced its stack frame from 320 to 240 bytes while retaining all exit fences.
+It was **not adopted**: a clock-qualified extended Tomak replay measured
+240.1975 -> 239.875 fps (-0.13%), with all seven fields identical. The original
+hot-scene comparison also remained exact, but its clocks ramped and cannot
+support a speed claim. Generated code size alone was insufficient evidence
+to retain the extra helper and duplicated prelude. Artifacts remain under
+`F:/GP32/results/resume31-a64-helper/`, with comparisons in
+`resume31-helper-tomak-abba.json` and `resume31-helper-tomak-hot-abba.json`.
+
+Tomak's observed combat replay now has actual RetroArch audio evidence before
+and after the portable fix. Both 900-frame replays produce 347,032 source
+stereo frames, with nonzero samples in every replay frame; PC, source counts,
+nonzero counts and IIS registers match the PC reference frame by frame.
+Both frontends accept all 661,990 submitted resampled stereo frames across
+901 runs, without pending audio, partial/zero returns or ALSA errors/recovery.
+The final measured-600 core mean/max is 8.030/11.306 ms at 1,512 MHz.
+
+Presentation remains an open issue: interval p99 was 17.205 ms in the first
+run and 28.365 ms in the final run despite exact guest progression and similar
+core work. These isolated runs do not establish a causal regression or
+perfect 60fps pacing. Callback timing and preceding-frame outliers are saved
+for targeted frontend investigation; physical listening/input latency and
+complete-game stability remain unverified. Evidence:
+`F:/GP32/results/resume31-final-audio-runtime-verified.json`,
+`resume31-final-audio-summary.json`, `resume31-final-pacing-outliers.json`.
+
+The production core is
+`83d7876f8bc2ac60754ed0f77d96b21d38b1b4fb796896993eb2c018cf3cb72b`.
+The prior core is backed up at
+`/mnt/SDCARD/gp32-dev/resume31-final-installed-core-before.so`.
+MainUI resumes normally; user ROMs, saves and settings remain unchanged.

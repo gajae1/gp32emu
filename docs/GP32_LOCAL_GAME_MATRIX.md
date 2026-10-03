@@ -459,3 +459,24 @@ Evidence: `F:/GP32/results/resume29-dooly/FINDINGS.md`, `runs.txt`,
 These add direct Hangul evidence for two more of the 20 existing owned titles.
 The library and user saves were not modified; missing owned Korean files are
 still required for the six catalog gaps above.
+
+## Tomak real frontend audio (resume31, 2026-10-03)
+
+The observed Tomak shooting scene now has a bounded real H700 RetroArch
+replay: 900 emulated frames from `resume28-korea/17/advance.state`, using the
+same movement/attack script as the PC/H700 comparison. The unmodified
+resume30 core produces 347,032 source stereo frames and nonzero samples in
+every replay frame. Guest PC, source frame count, nonzero count and IIS state
+match the PC diagnostic frame by frame; the CPU endpoint matches the prior
+benchmark. RetroArch accepts all 661,990 submitted resampled stereo frames
+(including its initial BIOS run), without partial/zero callbacks, pending
+audio, ALSA errors or recovery. The screenshot still shows the player,
+enemies and HUD in combat.
+
+In the measured last 600 frames, core work averages 8.043 ms and reaches
+11.501 ms maximum; presentation interval p99 is 17.205 ms. All recorded CPU
+clock samples are 1,512 MHz. This is a 15-second replay, not complete-game
+acceptance, a physical listening test, or proof of universal 60fps.
+Evidence: `F:/GP32/results/resume31-audio/probe.csv`,
+`resume31-audio-runtime-verified.json`, `resume31-audio-summary.json`,
+`resume31-audio-runtime.png`. User settings, ROMs and saves are unchanged.

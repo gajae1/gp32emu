@@ -2914,6 +2914,8 @@ static ARM_NOINLINE uint32_t arm_jit_run_portable(arm920t_t *c,
                                                  uint32_t budget,
                                                  int *stable_reads) {
     uint32_t done = 0;
+    const uint32_t generation = c->jit_generation;
+    const uint32_t epoch = c->jit_cache_epoch;
     for (uint8_t i = 0; i < b->count && done < budget; ++i) {
         const arm_jit_op_t *op = &arm_jit_ops(c, b)[i];
         if ((c->r[15] & ~3u) != op->pc || thumb(c)) break;
@@ -2922,6 +2924,15 @@ static ARM_NOINLINE uint32_t arm_jit_run_portable(arm920t_t *c,
         arm_jit_exec_classified_bc(c, op);
         ARM_PROF_INC(c, block_interp_arm_insns);
         done++;
+        /* jit=0 still uses decoded blocks. A bus callback can invalidate the
+         * next decoded instruction or raise an interrupt just as in native
+         * code. Finish this instruction, then return to the dispatcher. */
+        if (c->trace || c->jit_generation != generation || c->jit_cache_epoch != epoch ||
+            (c->irq_line && !(c->cpsr & I_FLAG)) ||
+            (c->fiq_line && !(c->cpsr & F_FLAG))) {
+            *stable_reads = 0;
+            break;
+        }
         if (op->stop || thumb(c) || c->halted || (c->r[15] & ~3u) != expected_next) break;
     }
     return done;
