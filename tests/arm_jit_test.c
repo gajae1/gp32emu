@@ -351,6 +351,84 @@ static void case_branch_chain(void) {
     teardown_pair();
 }
 
+/* Forward stitching requires a BL before the entry backedge. Start at the
+ * actual loop entry so native-sized budgets exercise that trace, and compare
+ * against single-step execution. Cold MOVEQ instructions observe guest flags. */
+static void case_forward_loop(void) {
+    const uint32_t cond_program[] = {
+        0xe3520000u, /* entry: CMP r2,#0 */
+        0x1a000001u, /* BNE body */
+        0x03a06077u, /* cold: MOVEQ r6,#0x77 */
+        0xea000004u, /* B park */
+        0xeb00003au, /* body: BL leaf at +0x100 */
+        0xe0800001u, /* ADD r0,r0,r1 */
+        0xe2511001u, /* SUBS r1,r1,#1 */
+        0x1afffff7u, /* BNE entry */
+        0x03a06099u, /* MOVEQ r6,#0x99 */
+        0xeafffffeu, /* park */
+    };
+    const uint32_t ldr_program[] = {
+        0xe4943004u, /* entry: LDR r3,[r4],#4 */
+        0xe3530000u, /* CMP r3,#0 */
+        0x1a000001u, /* BNE body */
+        0x03a06077u, /* cold: MOVEQ r6,#0x77 */
+        0xea000003u, /* B park */
+        0xeb000039u, /* body: BL leaf at +0x100 */
+        0xe0800003u, /* ADD r0,r0,r3 */
+        0xe2511001u, /* SUBS r1,r1,#1 */
+        0xeafffff6u, /* B entry */
+        0xeafffffeu, /* park */
+    };
+    for (unsigned scenario = 0; scenario < 3u; ++scenario) {
+        current_case = scenario == 0u ? "forward-loop-taken" :
+                       scenario == 1u ? "forward-loop-untaken" : "forward-loop-ldr";
+        setup_pair();
+        arm920t_set_trace(cpu_ref, 1, NULL, NULL);
+        load_both(scenario == 2u ? ldr_program : cond_program,
+                  GP32_ARRAY_COUNT(cond_program));
+        set_mem_both(CODE_ADDR + 0x100u, 0xe92d4000u); /* PUSH lr */
+        set_mem_both(CODE_ADDR + 0x104u, 0xe2877001u); /* ADD r7,r7,#1 */
+        set_mem_both(CODE_ADDR + 0x108u, 0xe8bd8000u); /* POP pc */
+        set_reg_both(0u, 0u);
+        set_reg_both(1u, scenario == 2u ? 3u : 6u);
+        set_reg_both(2u, scenario == 1u ? 0u : 1u);
+        set_reg_both(6u, 0u);
+        set_reg_both(7u, 0u);
+        set_reg_both(13u, DATA_ADDR + 0x100u);
+        if (scenario == 2u) {
+            set_reg_both(4u, DATA_ADDR + 0x40u);
+            set_mem_both(DATA_ADDR + 0x40u, 5u);
+            set_mem_both(DATA_ADDR + 0x44u, 7u);
+            set_mem_both(DATA_ADDR + 0x48u, 0u);
+            set_mem_both(DATA_ADDR + 0x4cu, 9u);
+        }
+        /* At least one complete native trace fits. A small remainder splits
+         * the next repetition immediately after its forward taken branch. */
+        uint32_t budget = scenario == 2u ? 13u : 11u;
+        CHECK(arm920t_run(cpu_jit, budget) == arm920t_run(cpu_ref, budget),
+              "forward-loop native and partial budget");
+        compare_state();
+        CHECK(ref_reg(15u) == CODE_ADDR +
+              (scenario == 0u ? 0x10u : scenario == 1u ? 0x24u : 0x14u),
+              "forward-loop branch/budget successor");
+        run_chunks();
+        CHECK(ref_reg(0u) == (scenario == 0u ? 21u : scenario == 1u ? 0u : 12u),
+              "forward-loop accumulator");
+        CHECK(ref_reg(1u) == (scenario == 0u ? 0u : scenario == 1u ? 6u : 1u),
+              "forward-loop iteration count");
+        CHECK(ref_reg(7u) == (scenario == 0u ? 6u : scenario == 1u ? 0u : 2u),
+              "forward-loop real leaf calls");
+        CHECK(ref_reg(6u) == (scenario == 0u ? 0x99u : 0x77u) &&
+              (arm920t_get_cpsr(cpu_ref) & 0xf0000000u) == 0x60000000u,
+              "forward-loop guest flags survive host guards");
+        CHECK(ref_reg(13u) == DATA_ADDR + 0x100u &&
+              ref_reg(15u) == CODE_ADDR + 0x24u, "forward-loop stack and exit PC");
+        if (scenario == 2u)
+            CHECK(ref_reg(4u) == DATA_ADDR + 0x4cu, "sentinel writeback exactly once");
+        teardown_pair();
+    }
+}
+
 /* BX is a common ARM function return.  Check the native even-target path,
  * condition skip, Thumb interworking fallback, and the BX PC pipeline case. */
 static void case_bx(void) {
@@ -2050,6 +2128,7 @@ int main(int argc, char **argv) {
     int leaf_only = argc == 2 && !strcmp(argv[1], "--unframed-leaf");
     int nested_only = argc == 2 && !strcmp(argv[1], "--nested-leaf");
     int chain_only = argc == 2 && !strcmp(argv[1], "--branch-chain");
+    int forward_only = argc == 2 && !strcmp(argv[1], "--forward-loop");
     int callback_only = argc == 2 && !strcmp(argv[1], "--callback-pc");
     int loops_only = argc == 2 && !strcmp(argv[1], "--loop-fences");
     int irq_only = argc == 2 && !strcmp(argv[1], "--callback-irq");
@@ -2076,6 +2155,8 @@ int main(int argc, char **argv) {
         case_loop_framed_leaf();
     } else if (chain_only) {
         case_branch_chain();
+    } else if (forward_only) {
+        case_forward_loop();
     } else if (callback_only) {
         case_callback_pc();
     } else if (leaf_only) {
@@ -2111,6 +2192,7 @@ int main(int argc, char **argv) {
     case_shift();
     case_branch();
     case_branch_chain();
+    case_forward_loop();
     case_bx();
     case_mem();
     case_half_modes();
@@ -2135,7 +2217,7 @@ int main(int argc, char **argv) {
         return 1;
     }
     printf("PASS: arm jit differential (%s), jit events=%" PRIu64 " fallbacks=%" PRIu64 "\n",
-           portable_only ? "portable-callback" : block_only ? "block-callback" : irq_only ? "callback-IRQ" : chain_only ? "branch-chain" : callback_only ? "callback-PC" : (leaf_only ? "unframed-leaf" : (ram_end_only ? "mapped-page-RAM-end" : (loops_only ? "loop-fences" : "flags/shift/branch/mem/half/block/mul/seeded/budget/loop-fences"))),
+           portable_only ? "portable-callback" : block_only ? "block-callback" : irq_only ? "callback-IRQ" : chain_only ? "branch-chain" : forward_only ? "forward-loop" : callback_only ? "callback-PC" : (leaf_only ? "unframed-leaf" : (ram_end_only ? "mapped-page-RAM-end" : (loops_only ? "loop-fences" : "flags/shift/branch/mem/half/block/mul/seeded/budget/loop-fences"))),
            jit_events, jit_fallbacks);
     return 0;
 }

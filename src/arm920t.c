@@ -1451,6 +1451,32 @@ static unsigned arm_jit_collect_framed(arm920t_t *c, uint32_t pc,
     return 0;
 }
 
+/* Prefer the taken edge only when a short forward arm closes this loop.
+ * This is a trace-layout hint, not permission to skip any guest operation.
+ * Keep plain loops on their existing path; joining them can create costly
+ * portable polling candidates where native execution was already effective.
+ * Speculative inspection must neither touch MMIO nor populate a mapping. */
+static int arm_jit_forward_loop(arm920t_t *c, uint32_t entry,
+                                uint32_t pc, uint32_t insn) {
+    if ((insn >> 28) >= 14u || (insn & 0x0f000000u) != 0x0a000000u) return 0;
+    uint32_t target = arm_jit_branch_target(pc, insn);
+    if (target <= pc || target - pc <= 4u ||
+        ((target ^ entry) & ~ARM_JIT_PAGE_MASK)) return 0;
+    int call = 0;
+    for (unsigned i = 0; i < 8u; ++i) {
+        uint32_t cur = target + i * 4u, next;
+        if (((cur ^ entry) & ~ARM_JIT_PAGE_MASK) ||
+            !arm_jit_peek_fetch(c, cur, &next)) break;
+        if ((next & 0x0f000000u) == 0x0a000000u) {
+            return call && (next >> 28) != 15u &&
+                   arm_jit_branch_target(cur, next) == entry;
+        }
+        if (arm_jit_is_uncond_bl(next)) call = 1;
+        if (arm_jit_may_write_pc(next) && !arm_jit_is_uncond_bl(next)) break;
+    }
+    return 0;
+}
+
 /* Keep translation (including the native emitter's large scratch buffer) out
  * of the dispatch loop. Inlining it inflates the hot frame and register spills
  * even when every block lookup hits already compiled code. */
@@ -1542,6 +1568,18 @@ static ARM_NOINLINE arm_jit_block_t *arm_jit_translate(arm920t_t *c, uint32_t pc
                     cur += 4u;
                     continue;
                 }
+            }
+        }
+
+        if (i + 1u < ARM_JIT_MAX_INSNS && arm_jit_forward_loop(c, pc, cur, insn)) {
+            uint32_t target = arm_jit_branch_target(cur, insn);
+            int seen = 0;
+            for (uint8_t j = 0; j < i; ++j)
+                if (arm_jit_ops(c, b)[j].pc == target) { seen = 1; break; }
+            if (!seen) {
+                op->reserved = 8u; /* taken trace; failed condition exits at PC+4 */
+                cur = target;
+                continue;
             }
         }
 
@@ -2908,6 +2946,13 @@ static void arm_jit_compile_native(arm920t_t *c, arm_jit_block_t *b) {
          * Boundary returns still execute their guarded real-PC path. */
         if (op->reserved == 7u && i + 1u < b->count) {
             x64_mov_mem_cpu_imm(&e, arm_reg_off(15), e.expected_next);
+            continue;
+        }
+        if (op->reserved == 8u) {
+            x64_emit_cond_skip(&e, op->cond ^ 1u, patches, &npatch);
+            x64_mov_mem_cpu_imm(&e, arm_reg_off(15), op->pc + 4u);
+            x64_emit_return_imm(&e, (uint32_t)i + 1u);
+            for (unsigned j = 0; j < npatch; ++j) x64_patch32(&e, patches[j], e.pos);
             continue;
         }
         if (arm_jit_is_side_effect_free_nop(op->insn)) continue;
