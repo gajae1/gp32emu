@@ -256,6 +256,16 @@ static int a64_data(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
     int arith_imm = (op->d & ARM_BC_DATA_IMM) &&
         (code == 2u || code == 4u || code == 10u || code == 11u) &&
         (op->imm <= 0xfffu || (!(op->imm & 0xfffu) && (op->imm >> 12) <= 0xfffu));
+    /* A64 shifted-register ALU forms absorb a separate guest shifter op.
+     * Keep RRX and encoded LSR/ASR #32 on the explicit path. Arithmetic
+     * carry comes from add/sub, whereas flag-setting logical ops need the
+     * ARM shifter carry and therefore retain a64_shift. RSB shifts its first
+     * source; ADC/SBC/RSC have no shifted-register host form. */
+    int folded_shift = !(op->d & ARM_BC_DATA_IMM) &&
+        (op->g == 0u || op->h != 0u) &&
+        ((logical && !flags) ||
+         ((code == 2u || code == 4u || code == 10u || code == 11u) && op->g < 3u));
+    uint32_t shift_bits = folded_shift ? (op->g << 22) | (op->h << 10) : 0u;
     uint32_t imm_bits = 0;
     if (arith_imm)
         imm_bits = op->imm <= 0xfffu ? op->imm << 10 :
@@ -272,32 +282,32 @@ static int a64_data(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
         }
     } else {
         a64_guest(e, 1, op->e, op->pc);
-        a64_shift(e, op->g, op->h, flags && logical);
+        if (!folded_shift) a64_shift(e, op->g, op->h, flags && logical);
     }
     uint32_t s = flags ? 0x20000000u : 0u;
     switch (code) {
-    case 0: case 8: a64_rr(e, 0x0a000000u, 2, 0, 1); break;
-    case 1: case 9: a64_rr(e, 0x4a000000u, 2, 0, 1); break;
+    case 0: case 8: a64_rr(e, 0x0a000000u | shift_bits, 2, 0, 1); break;
+    case 1: case 9: a64_rr(e, 0x4a000000u | shift_bits, 2, 0, 1); break;
     case 2: case 10:
         if (arith_imm) a64_u32(e, 0x51000000u | s | imm_bits | 2u); /* sub[s] w2, w0, #imm */
-        else a64_rr(e, 0x4b000000u | s, 2, 0, 1);
+        else a64_rr(e, 0x4b000000u | s | shift_bits, 2, 0, 1);
         break;
     case 3: a64_rr(e, 0x4b000000u | s, 2, 1, 0); break;
     case 4: case 11:
         if (arith_imm) a64_u32(e, 0x11000000u | s | imm_bits | 2u); /* add[s] w2, w0, #imm */
-        else a64_rr(e, 0x0b000000u | s, 2, 0, 1);
+        else a64_rr(e, 0x0b000000u | s | shift_bits, 2, 0, 1);
         break;
     case 5: case 6: case 7:
         a64_u32(e, 0xd51b4203u); /* msr nzcv, x3: ARM/A64 carry is no-borrow */
         a64_rr(e, (code == 5u ? 0x1a000000u : 0x5a000000u) | s,
                2, code == 7u ? 1u : 0u, code == 7u ? 0u : 1u);
         break;
-    case 12: a64_rr(e, 0x2a000000u, 2, 0, 1); break;
+    case 12: a64_rr(e, 0x2a000000u | shift_bits, 2, 0, 1); break;
     case 13:
-        if (!(op->d & ARM_BC_DATA_IMM)) a64_mov(e, 2, 1);
+        if (!(op->d & ARM_BC_DATA_IMM)) a64_rr(e, 0x2a000000u | shift_bits, 2, 31, 1);
         break;
-    case 14: a64_rr(e, 0x0a200000u, 2, 0, 1); break;
-    case 15: a64_rr(e, 0x2a200000u, 2, 31, 1); break;
+    case 14: a64_rr(e, 0x0a200000u | shift_bits, 2, 0, 1); break;
+    case 15: a64_rr(e, 0x2a200000u | shift_bits, 2, 31, 1); break;
     }
     if (flags) {
         if (logical) a64_cmp_imm(e, 2, 0);

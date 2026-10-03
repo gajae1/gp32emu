@@ -158,8 +158,91 @@ static void case_irq_subs_pc(int jit) {
     arm920t_destroy(c);
 }
 
+/* ARM920T TRM DDI0151C table 2-10: CP15 c1.V selects the
+ * low (0) or high (0xffff0000) exception vector base, independently of M. */
+static void case_vector_base(int jit) {
+    for (unsigned high = 0; high < 2u; ++high) {
+        current_case = high ? "SWI-high-vector" : "SWI-low-vector";
+        arm920t_t *c = make_cpu(jit);
+        bios_w32(CODE_ADDR, 0xee010f10u);      /* MCR p15,0,r0,c1,c0,0 */
+        bios_w32(CODE_ADDR + 4u, 0xef000000u); /* SWI #0 */
+        arm920t_set_reg(c, 0, 0x70u | (high << 13));
+        arm920t_run(c, 2u);
+        CHECK(arm920t_get_pc(c), (high ? 0xffff0000u : 0u) + 8u,
+              "CP15 V must select the SWI vector base");
+        CHECK(arm920t_get_reg(c, 14), CODE_ADDR + 8u, "SWI return address");
+        CHECK(arm920t_get_cpsr(c) & 0xffu, 0xd3u, "SWI SVC ARM state");
+        arm920t_destroy(c);
+    }
+}
+
+/* ARM DDI0100I A7.1.49: Thumb POP never interworks on ARMv4T,
+ * even when the loaded address is even. BX remains the interworking path. */
+static void case_thumb_pop(int jit) {
+    for (unsigned odd = 0; odd < 2u; ++odd) {
+        current_case = "Thumb-POP-state";
+        arm920t_t *c = make_cpu(jit);
+        load_setup(TADDR | 1u);
+        bios_w32(CODE_ADDR + 0x18u, STACK_TOP - 4u);
+        ram_w32(TADDR, 0xe7febd00u); /* POP {pc}; B . */
+        ram_w32(STACK_TOP - 4u, (TADDR + 0x42u) | odd);
+        ram_w32(TADDR + 0x40u, 0x255a23eeu); /* wrong r3 marker; MOVS r5,#0x5a */
+        ram_w32(TADDR + 0x44u, 0x0000e7feu);
+        arm920t_run(c, 16u);
+        CHECK(arm920t_get_cpsr(c) & 0x20u, 0x20u, "POP must preserve Thumb state");
+        CHECK(arm920t_get_pc(c), TADDR + 0x44u, "POP target halfword alignment");
+        CHECK(arm920t_get_reg(c, 5), 0x5au, "POP target marker");
+        CHECK(arm920t_get_reg(c, 3), 0u, "POP must not align target to word");
+        CHECK(arm920t_get_reg(c, 13), STACK_TOP, "POP stack writeback");
+        arm920t_destroy(c);
+    }
+}
+
+/* ARM DDI0100I A4.1.23: pre-v5 LDR PC retains ARM and ignores bits 1:0. */
+static void case_ldr_pc(int jit) {
+    for (unsigned low = 1; low < 4u; ++low) {
+        current_case = "LDR-PC-state";
+        arm920t_t *c = make_cpu(jit);
+        bios_w32(CODE_ADDR, 0xe590f000u); /* LDR pc,[r0] */
+        arm920t_set_reg(c, 0, STACK_TOP - 4u);
+        ram_w32(STACK_TOP - 4u, (TADDR + 0x40u) | low);
+        ram_w32(TADDR + 0x40u, 0xe3a0505au); /* MOV r5,#0x5a */
+        ram_w32(TADDR + 0x44u, 0xeafffffeu);
+        arm920t_run(c, 64u);
+        CHECK(arm920t_get_cpsr(c) & 0x20u, 0u, "LDR PC must preserve ARM state");
+        CHECK(arm920t_get_pc(c), TADDR + 0x44u, "LDR PC target word alignment");
+        CHECK(arm920t_get_reg(c, 5), 0x5au, "LDR PC target marker");
+        arm920t_destroy(c);
+    }
+}
+
+/* MSR cannot leave User mode or mask interrupts, but flags remain writable. */
+static void case_user_msr(int jit) {
+    for (unsigned reg = 0; reg < 2u; ++reg) {
+        current_case = "User-MSR-privilege";
+        arm920t_t *c = make_cpu(jit);
+        bios_w32(CODE_ADDR, 0xe321f010u);      /* privileged MSR CPSR_c,#USR */
+        bios_w32(CODE_ADDR + 4u, reg ? 0xe127f001u : 0xe321f0d3u);
+        /* register CPSR_csx,r1 or immediate CPSR_c,#SVC|I|F */
+        bios_w32(CODE_ADDR + 8u, 0xe328f20fu); /* MSR CPSR_f,#0xf0000000 */
+        bios_w32(CODE_ADDR + 12u, 0xe10f0000u); /* MRS r0,CPSR */
+        arm920t_set_reg(c, 1, 0x00ffffd3u);
+        arm920t_run(c, 1u);
+        CHECK(arm920t_get_cpsr(c), 0x10u, "privileged MSR must enter User mode");
+        arm920t_run(c, 64u);
+        CHECK(arm920t_get_cpsr(c), 0xf0000010u, "User MSR must preserve control/status");
+        CHECK(arm920t_get_reg(c, 0), 0xf0000010u, "User flags write and MRS");
+        CHECK(arm920t_get_pc(c), CODE_ADDR + 16u, "User MSR instruction flow");
+        arm920t_destroy(c);
+    }
+}
+
 int main(void) {
     for (int jit = 0; jit <= 1; ++jit) {
+        case_user_msr(jit);
+        case_thumb_pop(jit);
+        case_ldr_pc(jit);
+        case_vector_base(jit);
         case_ldm_exception_return(jit);
         case_movs_pc_lr(jit);
         case_irq_subs_pc(jit);
