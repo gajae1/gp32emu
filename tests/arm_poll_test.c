@@ -36,6 +36,7 @@ typedef struct {
     uint8_t ram[RAM_SIZE];
     int fastmem_bios;
     int fastmem_ram;
+    int reject_fastmem_writes;             /* reads still expose backing RAM */
     uint32_t no_fast_lo, no_fast_hi;  /* hole: fastmem declines this range */
     int stable_all;                        /* callback answers 1 for every word */
     uint32_t stable_addrs[MAX_STABLE];     /* words reported stable */
@@ -111,7 +112,7 @@ static void tb_write32(void *u, uint32_t a, uint32_t v) {
 }
 static uint8_t *tb_fastmem(void *u, uint32_t a, size_t bytes, int write) {
     test_bus_t *b = (test_bus_t *)u;
-    (void)write;
+    if (write && b->reject_fastmem_writes) return NULL;
     if (a >= b->no_fast_lo && a < b->no_fast_hi) return NULL;
     if (!b->fastmem_bios && a < BIOS_SIZE) return NULL;
     if (!b->fastmem_ram && a >= RAM_BASE) return NULL;
@@ -243,6 +244,27 @@ static const uint32_t PROG_ADD[] = {
 static const uint32_t PROG_STORE[] = {
     0xE4810004u, 0xE2800001u, 0xE3500020u, 0x1AFFFFFBu, 0xEAFFFFFEu
 };
+/* Little Wizard-shaped poll: BL timer; STR r0,[fp,#4]; SUB r0,r0,r4;
+ * BL abs; CMP r0,r5; BCC back; B .
+ * timer: PUSH {lr}; LDR r0,[r1]; POP {pc}.
+ * abs: MOV r2,r0,ASR #31; EOR r0,r0,r2; SUB r0,r0,r2; MOV pc,lr. */
+static const uint32_t PROG_TIMER_STORE_ABS[] = {
+    0xEB000005u, 0xE58B0004u, 0xE0400004u, 0xEB000005u,
+    0xE1500005u, 0x3AFFFFF9u, 0xEAFFFFFEu,
+    0xE92D4000u, 0xE5910000u, 0xE8BD8000u,
+    0xE1A02FC0u, 0xE0200002u, 0xE0400002u, 0xE1A0F00Eu
+};
+/* LDR r0,[r1]; STR r0,[fp,#4]; CMP r0,#0; BEQ back; B . */
+static const uint32_t PROG_POLL_STORE[] = {
+    0xE5910000u, 0xE58B0004u, 0xE3500000u, 0x0AFFFFFBu, 0xEAFFFFFEu
+};
+/* Same CPU and RAM state at each backedge, but only the first STR is
+ * idempotent: LDR r0,[r1]; STR r2,[fp,#4]; STR r3,[fp,#4];
+ * STR r2,[fp,#4]; CMP r0,#0; BEQ back; B . */
+static const uint32_t PROG_POLL_STORE_RESTORE[] = {
+    0xE5910000u, 0xE58B2004u, 0xE58B3004u, 0xE58B2004u,
+    0xE3500000u, 0x0AFFFFF9u, 0xEAFFFFFEu
+};
 
 static void load_prog(const uint32_t *prog, size_t n) {
     load_words(&bus_fast, CODE_ADDR, prog, n);
@@ -349,6 +371,139 @@ static void case_mmio_stack(void) {
     CHECK(bus_fast.w32 >= 200u, "helper pushes were not exercised");
     CHECK(bus_fast.w32 == bus_ref.w32, "MMIO stack writes were suppressed");
     CHECK(bus_fast.mmio_word == CODE_ADDR + 4u, "helper pushed a wrong return address");
+    teardown_pair();
+}
+
+/* Keep timer loads on the bus while the stack and ordinary STR destination
+ * retain fastmem backing. Only DATA_ADDR changes between run calls: the first
+ * timestamp store after an update must execute before polling can settle.
+ * Both signs of the register-only abs leaf and its real MOV pc,lr return are
+ * exercised, including budget boundaries inside both helpers. */
+static void case_idempotent_store_timer_leaf(void) {
+    current_case = "idempotent-store-timer-leaf";
+    setup_pair(1);
+    load_prog(PROG_TIMER_STORE_ABS, sizeof(PROG_TIMER_STORE_ABS) / sizeof(PROG_TIMER_STORE_ABS[0]));
+    for (test_bus_t *b = &bus_fast; b; b = (b == &bus_fast) ? &bus_ref : NULL) {
+        b->no_fast_lo = RAM_BASE;
+        b->no_fast_hi = DATA_ADDR + 4u;
+    }
+    add_stable(&bus_fast, DATA_ADDR);
+    set_reg_both(1u, DATA_ADDR);
+    set_reg_both(4u, 100u); /* origin */
+    set_reg_both(5u, 40u);  /* deadline */
+    set_reg_both(11u, STORE_ADDR - 4u);
+    set_reg_both(13u, STACK_TOP);
+    store_both(STORE_ADDR, 80u);
+
+    const uint32_t clocks[] = {80u, 85u, 120u};
+    const uint32_t distances[] = {20u, 15u, 20u};
+    /* Thirteen executed instructions per repetition; finish at the backedge
+     * before updating the clock, while CHUNKS still probes interior states. */
+    const uint32_t finish_iteration[] = {11u}; /* sum(CHUNKS) + 11 == 195 * 13 */
+    for (size_t i = 0; i < sizeof(clocks) / sizeof(clocks[0]); ++i) {
+        uint64_t before_fr = bus_fast.r32, before_rr = bus_ref.r32;
+        store_both(DATA_ADDR, clocks[i]);
+        run_chunks(CHUNKS, NCHUNKS, 1, NULL, NULL);
+        run_chunks(finish_iteration, 1u, 1, NULL, NULL);
+        uint64_t fr = bus_fast.r32 - before_fr, rr = bus_ref.r32 - before_rr;
+        CHECK(rr >= 150u, "reference did not exercise the timer/store/abs loop enough times");
+        CHECK(fr * 4u <= rr, "idempotent STR and MOV pc,lr leaf did not reduce timer reads");
+        CHECK(arm920t_get_pc(cpu_fast) == CODE_ADDR, "timer loop did not finish at its backedge");
+        CHECK(ld32le(bus_ptr(&bus_fast, STORE_ADDR, 4u)) == clocks[i],
+              "clock update did not reach the timestamp store");
+        CHECK(arm920t_get_reg(cpu_fast, 0u) == distances[i], "abs leaf returned the wrong distance");
+        CHECK(arm920t_get_reg(cpu_fast, 13u) == STACK_TOP, "timer helper did not restore SP");
+        CHECK(ld32le(bus_ptr(&bus_fast, STACK_TOP - 4u, 4u)) == CODE_ADDR + 4u,
+              "timer helper did not preserve its return address");
+    }
+    CHECK(bus_fast.stable_queries > 0u, "timer stability callback was never consulted");
+
+    store_both(DATA_ADDR, 160u); /* cross the deadline between run calls */
+    run_chunks(CHUNKS, NCHUNKS, 1, NULL, NULL);
+    CHECK(arm920t_get_pc(cpu_fast) == CODE_ADDR + 24u, "updated timer did not exit at the deadline");
+    CHECK(arm920t_get_reg(cpu_fast, 0u) == 60u, "deadline exit used a stale timer value");
+    CHECK(ld32le(bus_ptr(&bus_fast, STORE_ADDR, 4u)) == 160u,
+          "deadline exit lost the final timestamp store");
+    teardown_pair();
+}
+
+/* An unchanged first store and equal backedge state do not justify skipping
+ * the following stores. Compare RAM at small boundaries inside the mutation
+ * as well as the complete-loop boundary, and require every timer read. */
+static void case_store_modified_restored(void) {
+    current_case = "store-modified-restored";
+    setup_pair(1);
+    load_prog(PROG_POLL_STORE_RESTORE,
+              sizeof(PROG_POLL_STORE_RESTORE) / sizeof(PROG_POLL_STORE_RESTORE[0]));
+    for (test_bus_t *b = &bus_fast; b; b = (b == &bus_fast) ? &bus_ref : NULL) {
+        b->no_fast_lo = RAM_BASE;
+        b->no_fast_hi = DATA_ADDR + 4u;
+    }
+    add_stable(&bus_fast, DATA_ADDR);
+    set_reg_both(1u, DATA_ADDR);
+    set_reg_both(2u, 0x11111111u);
+    set_reg_both(3u, 0x22222222u);
+    set_reg_both(11u, STORE_ADDR - 4u);
+    store_both(STORE_ADDR, 0x11111111u);
+
+    run_chunks(CHUNKS, 2u, 1, NULL, NULL); /* LDR; unchanged STR; changing STR */
+    CHECK(ld32le(bus_ptr(&bus_fast, STORE_ADDR, 4u)) == 0x22222222u,
+          "intermediate non-idempotent store was not exercised");
+    run_chunks(CHUNKS + 2u, NCHUNKS - 2u, 1, NULL, NULL);
+    CHECK(bus_ref.r32 >= 400u, "reference did not exercise the changing stores enough times");
+    CHECK(bus_fast.r32 == bus_ref.r32, "restored RAM state incorrectly allowed polling skips");
+    CHECK(ld32le(bus_ptr(&bus_fast, STORE_ADDR, 4u)) == 0x11111111u,
+          "final store did not restore the original RAM value");
+    teardown_pair();
+}
+
+/* Equal-valued MMIO writes still have observable side effects. Check their
+ * count and latched value at every run boundary, even though the stable RAM
+ * load and full CPU state return to a fixed point. */
+static void case_mmio_poll_store(void) {
+    current_case = "mmio-poll-store";
+    setup_pair(1);
+    load_prog(PROG_POLL_STORE, sizeof(PROG_POLL_STORE) / sizeof(PROG_POLL_STORE[0]));
+    for (test_bus_t *b = &bus_fast; b; b = (b == &bus_fast) ? &bus_ref : NULL) {
+        b->no_fast_lo = RAM_BASE;
+        b->no_fast_hi = DATA_ADDR + 4u;
+    }
+    add_stable(&bus_fast, DATA_ADDR);
+    set_reg_both(1u, DATA_ADDR);
+    set_reg_both(11u, MMIO_BASE - 4u);
+
+    for (size_t i = 0; i < NCHUNKS; ++i) {
+        run_chunks(CHUNKS + i, 1u, 1, NULL, NULL);
+        CHECK(bus_fast.w32 == bus_ref.w32, "ordinary STR suppressed MMIO writes");
+        CHECK(bus_fast.mmio_word == bus_ref.mmio_word, "MMIO store value diverged");
+    }
+    CHECK(bus_ref.w32 >= 500u, "reference did not exercise MMIO STR enough times");
+    CHECK(bus_fast.r32 == bus_ref.r32, "MMIO STR incorrectly allowed polling skips");
+    teardown_pair();
+}
+
+/* Readable backing memory is not enough: fastmem must explicitly accept
+ * write access for the STR. Refuse only writes so a read probe would succeed,
+ * and require every equal-valued store to fall back to the public bus. */
+static void case_poll_store_no_write_fastmem(void) {
+    current_case = "poll-store-no-write-fastmem";
+    setup_pair(1);
+    load_prog(PROG_POLL_STORE, sizeof(PROG_POLL_STORE) / sizeof(PROG_POLL_STORE[0]));
+    for (test_bus_t *b = &bus_fast; b; b = (b == &bus_fast) ? &bus_ref : NULL) {
+        b->no_fast_lo = RAM_BASE;
+        b->no_fast_hi = DATA_ADDR + 4u;
+        b->reject_fastmem_writes = 1;
+    }
+    add_stable(&bus_fast, DATA_ADDR);
+    set_reg_both(1u, DATA_ADDR);
+    set_reg_both(11u, STORE_ADDR - 4u);
+
+    for (size_t i = 0; i < NCHUNKS; ++i) {
+        run_chunks(CHUNKS + i, 1u, 1, NULL, NULL);
+        CHECK(bus_fast.w32 == bus_ref.w32, "rejected fastmem STR suppressed bus writes");
+    }
+    CHECK(bus_ref.w32 >= 500u, "reference did not exercise rejected fastmem STR enough times");
+    CHECK(bus_fast.r32 == bus_ref.r32, "read-only fastmem incorrectly allowed polling skips");
     teardown_pair();
 }
 
@@ -505,6 +660,10 @@ int main(void) {
     case_literal();
     case_bl_helper();
     case_mmio_stack();
+    case_idempotent_store_timer_leaf();
+    case_store_modified_restored();
+    case_mmio_poll_store();
+    case_poll_store_no_write_fastmem();
     case_pointer_chain();
     case_callback_off();
     case_changing_load_addr();
@@ -516,6 +675,6 @@ int main(void) {
         fprintf(stderr, "arm poll: %d failures\n", failures);
         return 1;
     }
-    puts("PASS: stable-poll equivalence, reduced reads, literal/BL/chain, off/walk/basetmp/mmio/add/store/IRQ");
+    puts("PASS: stable-poll equivalence, reduced reads, literal/BL/chain/timer-store-leaf, off/walk/basetmp/mmio/add/store/IRQ");
     return 0;
 }

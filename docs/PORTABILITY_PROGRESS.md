@@ -2924,3 +2924,22 @@ mutation, not the separately unresolved accounting of nested CPU execution.
 Final core SHA-256:
 `53cbcff7fb85c3bd57078ca2c17af99bfa9e7d2cf9c6a0d533bdbbdf7da69763`.
 The private deployment record is `resume46-callback/installed-final.json`.
+
+### Stable timer-poll optimization (resume47)
+
+The shared CPU poll accelerator now recognizes balanced register-only leaf
+returns and idempotent immediate word stores to writable RAM. Each store
+must already match memory before execution; intermediate writes, MMIO and
+read-only mappings are excluded. Existing state, timing and invalidation
+checks remain in force. Windows/H700 poll regressions and the native H700
+JIT differential passed; all four libretro target builds succeeded.
+
+Qualified H700 comparisons improved Little Wizard Korea's measured late
+window from 113.05 to 399.96 core fps (3.54x), with exact CPU, video and PCM
+results. Her Knights and Tomak stayed within measurement variation. The
+2,401-run real-RetroArch replay retained source timing and audio counts,
+accepted every offered audio frame and reported no ALSA errors. The last
+300 callback intervals stayed below 17.206 ms. This is bounded scene evidence,
+not whole-library 60 fps, physical input latency or Android runtime proof.
+See `GP32_PERFORMANCE_STRATEGY.md` for the checks, rejected candidate and
+active-audio limitation of the late window.

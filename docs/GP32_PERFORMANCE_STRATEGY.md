@@ -482,3 +482,72 @@ match, with 38 steady 1512 MHz samples. Evidence:
 `F:/GP32/results/resume22-a64-her-abba.json`. These modest, repeatable core
 throughput gains are additional to resume21; they do not establish minimum
 displayed FPS across the library.
+
+## resume47: stable timer polls with idempotent RAM stores
+
+Disassembly of Little Wizard Korea's measured hot entry `0c002f04` identifies
+a timer-wait loop: call a balanced timer leaf, store the timestamp, subtract
+the origin, call a register-only absolute-value leaf, then compare a deadline.
+The earlier stable-poll classifier rejected the ordinary STR and the decoded
+register-leaf return. Repeated computation was consuming most of this window.
+
+The shared CPU path now admits immediate pre-indexed word STR without
+writeback or PC data, provided every observed store is aligned, maps to
+ordinary writable RAM through fastmem, and already contains the value being
+stored. A decoded register-only leaf return can remain in the poll prefix.
+The existing full-register/CPSR fixed point, stable-read checks, run budget,
+IRQ and invalidation fences still apply. Each skipped complete repetition is
+charged its original guest instruction count; peripheral time is unchanged.
+Writing then restoring RAM is not enough: every intermediate store is checked.
+
+Native H700 differential and Windows/H700 stable-poll regressions passed.
+New cases exercise changing timer values between runs, budgets inside the
+two leaf functions, deadline exit, intermediate RAM mutation, MMIO writes,
+and readable fastmem that refuses writes. Android ARM64/ARMv7 and Windows/H700
+libretro builds succeeded.
+
+Qualified H700 ABBA, all measured clock samples at 1,512 MHz:
+
+| Scene | Baseline core fps | Candidate core fps | Median ratio |
+| --- | --- | --- | --- |
+| Little Wizard Korea, late 2100/300 | 112.983 / 113.122 | 400.395 / 399.529 | 3.5378x |
+| Her Knights Korea combat, 1200/1200 | 122.485 / 122.458 | 121.935 / 122.724 | 0.9988x |
+| Tomak Korea shooting, 300/600 | 111.159 / 112.071 | 111.619 / 111.186 | 0.9981x |
+
+All seven CPU/video/PCM fields match in every comparison. Her Knights and
+Tomak remain within observed variation; no gain is claimed for them. These
+are core throughput windows, not displayed fps or complete-game guarantees.
+The candidate's short Wizard window required a private 0.2-second clock
+sampling interval instead of the normal one second; all qualification rules
+remain unchanged. The initial one-prime Wizard sequence included 1,416 MHz
+and is retained as disqualified. Two recorded unscored primes stabilized the
+second sequence, with 28 measured samples and at least three per invocation.
+No governor or device setting was changed.
+
+Evidence: `F:/GP32/results/resume47-poll/`, especially `wizard-warm.json`,
+`her.json`, `tomak.json`, `h700-jit.json` and `h700-poll.json`.
+Baseline benchmark SHA-256:
+`985f263e06f5501ecd69519329a959eafd61313f220a23d3890dce1d982bdab3`;
+candidate: `5df7815fc7a2551e0b9ac3058dba4336f505c70eebbded05078301f688ce1d8e`.
+
+Before this change, a separate A64 logical-immediate folding candidate passed
+the native differential but showed no useful gain against the warm baseline
+in Wizard or Tomak. Both comparison sequences were clock-disqualified, and
+the warm endpoints were effectively equal or worse. That candidate and its
+tests were reverted and archived under `resume47-logical/`; none was installed.
+
+A private real-RetroArch replay then completed 2,401 runs and returned to
+MainUI. Every row's guest cycle/PC, source audio frame/nonzero counts and IIS
+state matched the earlier identical replay. All 1,763,356 offered audio frames
+were accepted, with no partial/zero callback returns or pending frames; ALSA
+reported no write errors or recovery. This frontend has no explicit FIFO
+padding trace, so zero-valued samples cannot establish absence of padding.
+
+The last 300 runs had core time mean 1.397 ms, p99 5.238 ms, max 7.516 ms;
+frontend callback intervals had p99 17.067 ms and max 17.205 ms, none above
+20 ms. Synchronous video includes vsync wait. This late window includes the
+game's IIS-disabled state, so it is not a continuous active-audio stress test.
+These measurements do not establish physical input latency or panel refresh.
+All protected installed settings and binaries remained unchanged during the
+private run. Evidence: `resume47-poll/runtime-analysis.json` and
+`resume47-poll-runtime-verified.json` under the local results directory.
