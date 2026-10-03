@@ -278,7 +278,7 @@ installed production frontend. Build it in a separate artifact and set
 The playback worker records the FIFO's available bytes, real bytes consumed,
 period bytes, explicitly zero-padded bytes and `snd_pcm_writei` result.
 `monotonic_ns` is sampled before acquiring the FIFO mutex; it is not a core
-frame timestamp or an input-latency measurement. The trace uses a 4,096-entry
+frame timestamp or an input-latency measurement. The trace uses a 16,384-entry
 array and writes the file only when the worker ends. Check `allocated=1` and
 `overflow=0` in its first line before interpreting the full run. One worker
 lifecycle overwrites the path; use a distinct file per run and do not infer
@@ -298,3 +298,50 @@ Evidence: `F:/GP32/results/resume38-audio/{padding.csv,padding-summary.json}`
 and `F:/GP32/results/resume38-padding-audio-{runtime-verified,summary}.json`.
 The installed frontend/core, platform config and emulator config retained
 their pre-run hashes; MainUI returned normally.
+
+## Period granularity experiment: mixed result, not adopted (resume41)
+
+`69a4f0e-alsa-period-comparison.patch` is **diagnostic only**. It applies to
+`audio/common/alsa.c` at the same pinned revision, with LF SHA-256
+`c076c5fb9ed5a3587b36a8253aeeadcc0906a8f3fc7f48e66ff0a36f52845c0c`.
+Use the LF patch procedure above. In an isolated frontend build, setting
+`GP32_ALSA_TEST_PERIODS=16` requests 16 playback periods; an unset variable
+or any other value retains the original four-period request. Capture is
+unchanged. The existing buffer-time request is retained, but ALSA negotiates
+the actual period count: verify both period and buffer sizes in the log.
+This is not a production recommendation or a gp32emu core option.
+
+The H700 accepted **eight** periods of 384 frames (8 ms at 48 kHz), compared
+with four periods of 768 frames (16 ms). Both had the same 3,072-frame PCM
+buffer and software FIFO. The padding trace capacity was raised from 4,096
+to 16,384 events to cover the additional wakeups in a 40-second replay.
+Only a diagnostic build carries this allocation, and only when tracing is
+enabled; installed production binaries are unchanged.
+
+Her Knights Korea was replayed for 2,400 combat frames in ABBA order using
+one diagnostic frontend/core pair. The table covers the final 1,200 frames;
+all sampled host clocks in these windows were 1,512 MHz.
+
+| Run | Actual period | Interval p99 (ms) | Interval max (ms) | Intervals over 20 ms |
+| --- | ---: | ---: | ---: | ---: |
+| A1 | 16 ms | 31.893 | 32.055 | 34 |
+| B1 | 8 ms | 24.016 | 24.131 | 62 |
+| B2 | 8 ms | 24.020 | 24.091 | 73 |
+| A2 | 16 ms | 31.902 | 32.102 | 39 |
+
+Smaller periods reduced the longest stalls but increased the frequency of
+intervals over 20 ms. Do not call this stable 60 Hz or adopt it from p99 alone.
+Every replay frame matched A1's guest PC, cycle count, source PCM count,
+nonzero count and IIS register. Each run accepted all 1,764,180 offered
+stereo frames, had no ALSA errors/recoveries, and had zero explicit FIFO
+padding in output frames [96,000,1,872,000), a central 37-second window.
+All traces allocated without overflow; final screenshots were pixel-identical.
+These checks do not measure physical input latency or speaker quality.
+
+The source patches were checked against LF copies and reproduce the compiled
+diagnostic source exactly. Frontend SHA-256:
+`5956a71c374cb6ecb8ab99dc3411ca6bae9bf69e143d69c85dafc21a3a0e9646`.
+Both temporary frontend source changes were restored after building. All
+runs returned to MainUI with installed binary/configuration hashes unchanged.
+Evidence: `F:/GP32/results/resume41-periods/{summary.json,build-manifest.json,
+patch-check.json,*-padding.csv}` and `resume41-periods-*-runtime-verified.json`.

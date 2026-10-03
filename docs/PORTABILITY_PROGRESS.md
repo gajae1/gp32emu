@@ -2711,3 +2711,35 @@ Evidence: `F:/GP32/results/resume40-audio/` and
 as `resume40-cpu-clock-design.md`. It proposes separating instruction budgets
 from peripheral time, but its rounding/state proposals are unimplemented and
 require further review; no clock option or user setting was changed.
+
+### Her Knights output-period isolation and rejected halfword candidate (resume41)
+
+The late Her Knights stalls recur roughly every 26-27 frames. Correlating a
+frame-start interval with the preceding `retro_run` places the delay inside
+video/audio callbacks, with only about 0.43 ms between calls. This supports
+testing output granularity rather than attributing the stalls to guest CPU
+execution. It does not establish the entire presentation/input-latency path.
+
+A diagnostic frontend now allows a four-versus-sixteen period request while
+retaining the requested buffer time. The H700 negotiated four versus eight
+periods (16 versus 8 ms), both with 3,072-frame hardware/software buffers.
+The 2,400-frame Her Knights ABBA replay reduced interval p99 from
+31.893/31.902 ms to 24.016/24.020 ms, but intervals over 20 ms increased from
+34/39 to 62/73. No production adoption: this is a mixed pacing result.
+All per-frame guest/source-audio fields and final screenshots matched; all
+audio was accepted, without ALSA errors or central-window FIFO padding.
+See `packaging/spruce/retroarch-patches/README.md` for the diagnostic patch,
+trace-capacity change, comparison scope and evidence paths.
+
+Separately, the AArch64 halfword-transfer emitter was tried with immediate
+ADD/SUB addressing, analogous to resume39's single-transfer optimization.
+The native differential suite passed (9,067 JIT events, 21 fallbacks), and
+both Wizard ABBA sets preserved all seven CPU/video/audio result fields.
+Both sets were disqualified for speed comparisons because their first
+baseline window sampled 1,416 and 1,512 MHz; the other windows sampled
+1,512 MHz. Warm baseline/candidate scores were also tightly overlapping.
+The candidate was therefore reverted, not reported as a gain. Its patch and
+results are retained under `F:/GP32/results/resume41-a64/`. The rebuilt
+production core again has the resume39 SHA-256
+`37884295e3f0a6c149be1ea1c91e835aa997325eff7e1615394e2ec21a3a6b0f`.
+Installed core, frontend and user settings were not changed.

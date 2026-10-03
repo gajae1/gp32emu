@@ -1,0 +1,21 @@
+--- a/audio/common/alsa.c
++++ b/audio/common/alsa.c
+@@ -40,6 +40,8 @@
+    snd_pcm_sw_params_t *sw_params = NULL;
+    unsigned latency_usec          = latency * 1000;
+    unsigned periods               = 4;
++   /* Temporary diagnostic: compare period granularity at fixed buffer time. */
++   const char *period_test = getenv("GP32_ALSA_TEST_PERIODS");
+    unsigned orig_rate             = rate;
+    const char *alsa_dev           = device ? device : "default";
+    int errnum                     = 0;
+@@ -152,6 +154,9 @@
+       goto error;
+ 
+    }
++
++   if (stream == SND_PCM_STREAM_PLAYBACK && period_test && strcmp(period_test, "16") == 0)
++      periods = 16;
+ 
+    if ((errnum = snd_pcm_hw_params_set_periods_near(*pcm, params, &periods, NULL)) < 0)
+    {
