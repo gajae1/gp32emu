@@ -214,10 +214,56 @@ acceptance. No new frame-pacing speedup is claimed from this integration run.
 Spruce's unchanged CPU-pinning helper emitted `sched_setaffinity: Invalid
 argument`: the launcher passes `23`, while the bundled `pin_cpu` expects a
 comma-separated list such as `2,3`. The observed frontend still had CPUs 0-3
-available. This separate launcher issue remains to be corrected; no governor
-or affinity policy was changed as part of frontend selection.
+available. No governor or affinity policy was changed as part of frontend
+selection; the follow-up experiment below evaluates this issue.
 
 Local evidence: `F:/GP32/results/resume36-integration/{installed.json,
 routing.txt,source-manifest.json}` and
 `F:/GP32/results/resume36-launch2/{runtime-verified.json,frontend.exit,
 active-exe.txt,active-status.txt,runtime.log,final.png}`.
+
+## Preserve GP32's inherited CPU affinity
+
+Apply `gp32-h700-affinity.patch` to the same staging tree when using the
+GP32-only frontend. It changes `spruce/scripts/emu/lib/general_functions.sh`
+so `pin_to_dedicated_cores` returns immediately for `ra64.gp32.h700`.
+Other process names retain the OS's existing behavior. This removes the failed
+pinning request while preserving the CPU set inherited from the launcher
+(CPUs 0-3 on the tested H700), rather than imposing a new fixed mask.
+
+The obvious alternative, correcting `23` to `2,3`, was tested with the same
+frontend/core/content in an ABBA Tomak replay. All ten observed threads moved
+to CPUs 2-3, including audio/video and Mali workers. All runs were guest/source
+audio and screenshot exact, with no ALSA errors, and sampled at 1,512 MHz.
+Results for the last 600 of 900 replay frames:
+
+| Run | Allowed CPUs | Core mean (ms) | Interval p99 (ms) | Interval max (ms) | Intervals over 20 ms |
+| --- | --- | ---: | ---: | ---: | ---: |
+| A1 | 0-3 | 8.018 | 17.473 | 23.774 | 4 |
+| B1 | 2-3 | 8.070 | 17.972 | 18.221 | 0 |
+| B2 | 2-3 | 8.055 | 17.924 | 18.155 | 0 |
+| A2 | 0-3 | 8.067 | 17.371 | 22.918 | 2 |
+
+The two-core limit reduced the longest intervals but increased p99, with no
+qualified core speedup. Midstream all-zero stereo-frame counts from the ALSA
+observer also rose: 201/213 in A versus 1,430/1,388 in B across the same eight
+48,000-frame windows (bins 6-13). This heuristic cannot establish an audible
+dropout or its cause, but it does not support adopting a two-core audio-quality
+improvement. The two-core candidate was superseded by the small pinning bypass;
+it is not the installed policy.
+
+The final patch passed shell syntax and on-device scope checks. The original
+helper is backed up at
+`/mnt/SDCARD/gp32-dev/resume37-affinity/general_functions.before.sh`.
+The installed helper SHA-256 is
+`ae6ae624a51bb9a2bfac508d18507e69588f24e185c879f82a1b6743b16f6f24`.
+Source and evidence: `F:/GP32/results/resume37-affinity/{abba.json,
+final-manifest.json,installed-final.json}`. No governor, volume, game save,
+core binary or RetroArch configuration was changed for this adjustment.
+
+A final installed-function run loaded the production core, exited with code 0,
+retained CPUs 0-3 and no longer emitted the affinity error. ALSA reported no
+errors/recoveries. This was an integration check with private config/save paths,
+not another performance or physical audio-quality comparison. Evidence:
+`F:/GP32/results/resume37-final/{runtime-verified.json,active-status.txt,
+frontend.exit,function.log}`.

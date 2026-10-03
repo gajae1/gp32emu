@@ -2527,3 +2527,63 @@ Evidence: `F:/GP32/results/resume36-integration/{source-manifest.json,
 installed.json,routing.txt,live-snapshot.json}` and
 `F:/GP32/results/resume36-launch2/{runtime-verified.json,frontend.exit,
 active-exe.txt,active-status.txt,runtime.log,function.log,final.png}`.
+
+### H700 affinity tradeoff and GP32-only bypass (resume37, 2026-10-04)
+
+The bundled `pin_cpu` help text confirms comma/range CPU-list syntax. Spruce
+shortens `DEVICE_MAX_CORES_ONLINE=0123` to `23`, which requests CPU 23 instead
+of CPUs 2 and 3. A GP32-scoped candidate converted that argument to `2,3`.
+Four interleaved real RetroArch Tomak runs compared the original helper with
+the correction using identical frontend/core/state/input/config. All sampled
+clocks were 1,512 MHz; per-thread captures confirmed all ten threads used CPUs
+0-3 in A and CPUs 2-3 in B, and the corrected pin command succeeded.
+
+Late-600 core mean / interval p99 / max, in milliseconds:
+
+| Run | CPUs | Core mean | Interval p99 | Interval max | Intervals >20 ms |
+| --- | --- | ---: | ---: | ---: | ---: |
+| A1 | 0-3 | 8.018 | 17.473 | 23.774 | 4 |
+| B1 | 2-3 | 8.070 | 17.972 | 18.221 | 0 |
+| B2 | 2-3 | 8.055 | 17.924 | 18.155 | 0 |
+| A2 | 0-3 | 8.067 | 17.371 | 22.918 | 2 |
+
+All four runs matched the standalone per-frame PC/source-audio/IIS reference
+and final screenshot, accepted all 661,990 stereo frames, and recorded no ALSA
+errors or recoveries. The 0.251% increase in mean core time is smaller than
+baseline run variation; there is no qualified speedup. Two-core pinning reduced
+the largest intervals but increased p99. The midstream all-zero stereo-frame
+heuristic also rose from 201/213 to 1,430/1,388 over eight 48,000-frame windows
+(bins 6-13). This does not prove a dropout or identify a source, but raises an
+audio-quality concern that prevents claiming an overall improvement.
+
+The two-core candidate was briefly installed while considering its lower
+maximum interval, then superseded after reviewing the audio counters. Final
+policy: `pin_to_dedicated_cores` returns immediately only for `ra64.gp32.h700`.
+The inherited CPU set remains available, and the invalid pinning worker is
+not launched. Other binaries' OS behavior is unchanged. The final patch is
+`packaging/spruce/retroarch-patches/gp32-h700-affinity.patch`; no two-core
+restriction patch is shipped or remains installed.
+
+The final helper passed shell syntax and an on-device check that the GP32 call
+does not search for processes or invoke `pin_cpu`. Installed SHA-256:
+`ae6ae624a51bb9a2bfac508d18507e69588f24e185c879f82a1b6743b16f6f24`.
+Original helper SHA-256:
+`d0fdc6e97293fa97b6bc6f3107dc6c7a712d1d43f6d488585ee1343365eabd66`;
+backup: `/mnt/SDCARD/gp32-dev/resume37-affinity/general_functions.before.sh`.
+The frontend selector, both frontend binaries, installed core, emulator JSON
+and platform RetroArch config hashes were preserved. Governor and volume were
+not modified.
+
+Evidence: `F:/GP32/results/resume37-affinity/{abba.json,manifest.json,
+final-manifest.json,installed.json,installed-final.json}` plus each run's
+`*-pinning.log` and `*-thread-affinity.txt` in that directory.
+
+A final integration run used the installed helper/frontend and production
+core, with private configuration/save bookkeeping and the existing bounded
+wrapper. It retained CPUs 0-3, emitted no invalid-affinity error, exited with
+code 0 and returned to MainUI. ALSA recorded 1,027 writes / 788,736 frames with
+zero errors or recoveries. That run had no scripted replay input, so its PCM
+counter values are not a fifth comparable ABBA row or proof of improved sound.
+Evidence: `F:/GP32/results/resume37-final/{runtime-verified.json,
+active-status.txt,frontend.exit,function.log}`. Broader game pacing and physical
+input/audio acceptance remain open.
