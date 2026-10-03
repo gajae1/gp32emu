@@ -316,3 +316,26 @@ matched and all 20 clock samples were 1512 MHz. Crossing 60 in this core-only
 window leaves little frontend headroom; it is not evidence of sustained 60-fps
 RetroArch presentation. Evidence:
 `F:/GP32/results/resume18-flags-wizard-menu-abba.json`.
+
+## Rejected follow-ups (resume19)
+
+Extending the adjacent-condition optimization to reuse only N/Z after logical
+instructions passed the existing native H700 differential (42,769 events,
+four expected fallbacks). However, qualified primed ABBA on Her Knights combat
+gave 110.424 -> 110.3385 core fps (-0.08%), with all seven fields exact and all
+40 clock samples at 1512 MHz. This provides no useful gain in that scene. The
+extra flag-mask tracking was removed; no speed claim is made for unmeasured
+scenes. Candidate `21315d73618f4ac4776d9dc3fcdec00b08ccb0411b8d9b2bd4d7c4ce8d058a63`
+and source `resume19-rejected-nz.inc` remain outside Git for reproduction.
+Evidence: `F:/GP32/results/resume19-nz-{jit-h700,her-abba}.json`.
+
+The video-effects worker also left production code unchanged. Removing a
+redundant source-alpha mask preserved visible output, but its initial apparent
+host speedup disappeared under finer interleaving: the final x86 measurements
+varied around parity across interpolation/LCD-persistence modes and image sets.
+The first memcpy timing floor was eliminated by the compiler and is invalid;
+the corrected measurement retains its output. These are host results, not H700
+cost estimates. The effects are disabled in the current default frontend path,
+so this candidate cannot improve that path. No device benchmark or deployment
+was justified for this candidate. Artifacts:
+`F:/GP32/results/resume18-video/REPORT.md`, `final-o3.txt`, and `cand_src.c`.

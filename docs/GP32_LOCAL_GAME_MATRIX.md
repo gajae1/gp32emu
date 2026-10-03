@@ -292,6 +292,41 @@ attack response. Round completion, later scenes and physical sound remain open.
 Full commands and screenshots are in `resume17-gpfight/README.md` and `shots/`.
 ROMs and saved states remain outside Git.
 
+## GP Fight button cadence follow-up (resume19)
+
+The bounded follow-up retained both idle and button-hold/tap replay frames.
+Holding A from frame 60 still matches idle through the early 2000-frame window;
+B/L/R holds show the same limitation there. A different script presses A for
+four frames, releases it for sixteen, and repeats from frame 60 through 1700
+(final release at 1704). Its captures
+differ from idle from frame 200 onward, including fighters' positions and the
+later combat HUD. This establishes a response to repeated A press/release in
+the match; pixel changes alone do not prove the precise attack/guard mapping.
+
+Parent replayed that script and the idle control to frame 1200 with runner
+SHA-256 `66f09849645e86288649fc1735271c4c59b563f556eef10eb8eee427b950c709`.
+Both frame-1000 and frame-1200 dumps exactly match the corresponding earlier
+worker captures. The repeated-A script is
+`F:/GP32/results/resume18-gpfight/combat-atap.txt`, SHA-256
+`34cd30229daa3ba2f71bc81f86db59b65e23ef4848c421a0fe0284d6e39db61c`;
+it uses the resume17 match-entry state above. Exact commands and results are in
+`F:/GP32/results/resume19-gpfight/replay.json`, with existing-frame comparisons
+in `resume18-gpfight/parent-comparison.json`.
+
+The same 1200-frame repeated-A workload also matched between the Windows x86-64
+and native H700 benchmark in all seven CPU/video/PCM fields. Both ended at
+cycles 3729235000, PC `0x0c035efc`, CPSR `0x60000053`, with 216684 audio frames,
+video hash `e78f9b6c4c98722c` and audio hash `235a169c190050c9`. This was one
+unprimed exactness run per host without measured-clock qualification; its timing
+must not be compared with the earlier 2400-frame movement-only performance
+window. Evidence: `F:/GP32/results/resume19-gpfight/pc-h700.json`.
+
+The idle timeline subsequently reaches GAME OVER and the title screen around
+frames 3000-3600. A no-input loss is not a completed playable-game acceptance.
+The late pale image from the earlier 2400-frame device test must not, on its
+own, be labelled a renderer defect or a successful round transition. No input
+mapping or timing change was made based on these inconclusive observations.
+
 ## Korean-language evidence (resume18)
 
 Device inventory contains 20 `.smc` files, all named `(Korea)`, as checked via
@@ -303,7 +338,7 @@ captures provide these narrower visual confirmations:
 | --- | --- | --- |
 | Her Knights - All for Princess - Deadline | Title `그녀의 기사단 강행돌파`; Korean mode labels including `열혈모드`, `근성모드` | `F:/GP32/results/resume9-her3000.png`, `resume9-her4200.png` |
 | Little Girl Mill of a Gingko, The | Title `은행나무소녀 밀`, `시작하기` / `끝내기`; Korean village dialogue | `F:/GP32/results/resume13-mil-r2-f7200.png`, `resume16-mill/can-d1300.png` |
-| GP Fight | Korean fighter names including `나이수` and `주미라` in the match HUD | `F:/GP32/results/resume17-gpfight/shots/08-match-state-f5400.png` |
+| GP Fight | Korean fighter names including `나이수` and `주미라`; title `지피대난투` | `F:/GP32/results/resume17-gpfight/shots/08-match-state-f5400.png`, `resume18-gpfight/shots/idle-timeline-b.png` |
 
 Little Wizard's inspected Korean-release combat capture
 (`F:/GP32/results/resume13-wizard-korea-combat.png`) uses English fighter names
