@@ -1,0 +1,16 @@
+--- a/spruce/scripts/emu/lib/ra_functions.sh
++++ b/spruce/scripts/emu/lib/ra_functions.sh
+@@ -211,6 +211,13 @@
+ 		"64-bit") export RA_BIN="${RA_BIN_64:-ra64.universal}" ;;
+ 	esac
+ 
++	# Keep the GP32 ALSA wait correction local to its tested H700 core.
++	# Removing the optional binary restores the standard frontend automatically.
++	if [ "$EMU_NAME" = "GP32" ] && [ "$CORE" = "gp32emu" ] &&
++	   [ "$RA_BIN" = "ra64.h700" ] && [ -x "$RA_DIR/ra64.gp32.h700" ]; then
++		export RA_BIN="ra64.gp32.h700"
++	fi
++
+ 	use_igm="$(get_config_value '.menuOptions."Emulator Settings".raInGameMenu.selected' "True")"
+ 
+ 	# Sync IGM flag file with config setting

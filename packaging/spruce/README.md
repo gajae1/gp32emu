@@ -32,6 +32,8 @@ Tales of Windy Land, and Tears - Another Story. Supply the matching owned dumps
 to add them; the packaging does not fetch game content.
 
 For OS builders using the tested RetroArch 1.22.2 revision, see the optional
-[ALSA wait correction](retroarch-patches/README.md). It is a source backport
-with a focused pthread reproduction, not an installed frontend update or a
+[ALSA wait correction and GP32 frontend selection](retroarch-patches/README.md).
+The tested H700 now selects a separately rebuilt frontend only for the GP32
+core; other systems retain their original frontend. The package contains source
+patches and instructions, not a replacement RetroArch binary. This is not a
 verified fix for all gameplay frame pacing.
