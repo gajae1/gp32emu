@@ -193,6 +193,55 @@ Machine-specific paths for this workspace stay in the runner table above.
 | Little Wizard (Europe) | real combat entry (state at frame 3350) | not yet measured |
 | Blue Angelo (Europe) | extracted gameplay, 1200/300 | 66.806 |
 
+## resume13 gameplay evidence (frozen 006fab9 runner, states + scripts)
+
+Extended 2026-10-03 (resume13). Runner: F:/GP32/results/resume13-headless.exe
+(006fab9 core, source commit 006fab97522edc69a68e2851e30c14d3e234c4de, plus the
+--save-state option), SHA-256 aa29d3f92d394f77db0cf82b10317ebfd6ff3e2fe905a61e1aeda4e894bd171f.
+BIOS unchanged: F:/GP32/test-assets/[BIOS] GamePark GP32 (Europe) (v1.6.6).bin,
+SHA-256 ECF63B73BBD13668F9FEF259EE276BD14A81B0BB420FFF1678613E7ED7C814F7.
+Each row below describes a bounded replay or state capture with this frozen
+runner from an owned payload. A state is paired
+with its matching ROM payload and must not be reused with another title.
+
+Boundaries: these are verification runs, not speed measurements (no stable-FPS
+claim and no ranking), not a compatibility pass for any title, and no physical
+audio verification was performed.
+
+| Title (payload SHA-256 16) | Verified scene | State label | Script label | Run end cycles / PC | Screenshot label |
+| --- | --- | --- | --- | --- | --- |
+| Little Girl Mill of a Gingko, The (Korea) 7793488564167e7f | stage-1 entry gate is NOT gameplay (wait screen) | resume13-mil-gameplay.state, sha256 ec81ccbbd75c0d85... | resume13-mil-gameplay.txt | 9830858333 / 0x0c7b1548 | resume13-mil-gameplay.png |
+| Little Girl Mill of a Gingko, The (Korea) 7793488564167e7f | in-room controllable stage after the LOADING transition; held directional input moves the sprite | resume13-mil-stage.state, sha256 523eb8c4ddf647ca... -> resume13-mil-stage2.state, sha256 7fb5f3684deb7174... | resume13-mil-stage.txt (RIGHT hold), resume13-mil-stage2.txt (LEFT 0..300, RIGHT 420..900) | 14915858333 / 0x0c7b1548 | resume13-mil-stage2-left240.png, resume13-mil-stage2-right780.png |
+| Tomak - Save the Earth, Again (Korea) 36c1b19b95ff840e | real shooting verified at dynamic 2400 default pacing | resume13-tomak-gameplay.state | resume13-tomak-shoot-2400.txt | 7980000000 / 0x0c016af4 | resume13-tomak-dynamic-end.png, sha256 84869a90a5315dec... |
+| Little Wizard (Korea) 7864ba3c787c601b | actual battle, 2400 frames, in-game timer 85 -> 39 | resume13-wizard-korea-combat.state, sha256 5d56b6d938fb19fb... | resume13-wizard-combat.txt, sha256 7c65c973ba609f60... | n/a | resume13-wizard-korea-combat.png |
+
+### Little Girl Mill of a Gingko, The (Korea): entry gate vs in-room stage
+
+The stage-1 entry gate is a wait screen, not gameplay: with no input the frame
+stayed byte-identical over 1400 captured frames (9200 -> 10600) and over 300
+more frames after a state reload (0 differing pixels of 76800). With RIGHT/A
+input the same state starts a LOADING transition (parent replay, --frames 300:
+cycles 10113358333, PC 0x0c077a84); the in-room stage appears 600-900 frames
+later. So "identical frames over N frames" is not proof of gameplay for this
+title.
+
+Movement evidence (fixed camera, 54-px sprite): with LEFT held from frame 0 the
+sprite translated 113 px left by frame 120 and 127 px by frame 240, then settled
+at the wall; with RIGHT held from frame 420 the same 127 px travel went back and
+stopped at the tree. HUD changes across the transition: X 0 at the gate, X 10
+in the stage.
+
+Reproducible commands (labels relative to the repository parent; both runs add
+`--bios "test-assets/[BIOS] GamePark GP32 (Europe) (v1.6.6).bin" --jit --rotate-ccw`):
+
+- exit the gate: results/resume13-headless.exe --smc results/resume13-mil-rom.smc --load-state results/resume13-mil-gameplay.state --input-script results/resume13-mil-stage.txt --frames 4200 --save-state results/resume13-mil-stage.state
+- movement proof: results/resume13-headless.exe --smc results/resume13-mil-rom.smc --load-state results/resume13-mil-stage.state --input-script results/resume13-mil-stage2.txt --frames 1200 --save-state results/resume13-mil-stage2.state
+
+Script grammar: FRAMEf:=BUTTON sets the held state from that frame, FRAMEf:P
+taps START for one frame. Full per-frame timelines, cluster measurements and
+hashes: F:/GP32/results/resume13-mil-log.md.
+
+
 ## Open items
 
 - The batch is complete (batch result section above). The integrated resume12

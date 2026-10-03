@@ -998,3 +998,54 @@ The previous core and temporary diagnostic app remain in the device's
 `gp32-dev` backup directory. GP32 configuration and common RetroArch settings
 match the pre-promotion hashes. Local evidence: `resume12-final-ra.log`,
 `resume12-final-ra.png`, `resume12-core-installed.json`.
+
+## resume13: audio continuity and Korean gameplay coverage
+
+Relative to `006fab9`, IIS DMA batches reserve capture space once and append
+PCM with local FIFO cursors. Growth checks use `SIZE_MAX`, including on
+32-bit Android, and zero-frame batches avoid arithmetic on a null buffer.
+If bulk allocation fails, per-frame allocation can still retain part of the
+audio; allocation-failure outcomes are best effort, not byte-exact guarantees.
+The final host comparison matched all PCM bytes and 52 serialized-state samples
+across 14 cases; all 10 expected normal PCM-producing cases actually emitted
+audio. Three small streams also matched independently generated sample order
+and FIFO carry expectations. Evidence: `resume13-iis/iis-parent-final.json`.
+
+Two H700 A/B/B/A comparisons used dynamic guest clocks, 1200 warmup and 1200
+measured frames with scripted gameplay. All seven CPU/video/PCM fields matched
+in every run. Observed measurement clocks were consistently 1.512 GHz (44 and
+46 samples respectively); no governor or audio setting was changed.
+
+| Korean gameplay scene | 006fab9 median core fps | IIS batch median core fps |
+| --- | ---: | ---: |
+| Her Knights, first palace battle | 101.025 | 101.1425 |
+| Tomak, stage-1 shooting with movement and bullets | 102.472 | 102.371 |
+
+These differences are within run variation: no overall game speedup is
+established for this change. These are uncapped core throughput figures, not
+displayed frame rates or guarantees about later stages. Local evidence:
+`resume13-iis-her-abba.json`, `resume13-iis-tomak-abba.json`. Candidate bench
+SHA-256: `6f7321815b278bd4b054ab4691ffc245cc5792fe65e0b5da5636e95f7043ce2e`.
+
+SDL 1.2 now fades a partially filled callback into silence and fades resumed
+audio back in; SDL3 fades resumed chunks after an empty queue. Ordinary playback
+remained byte-identical in virtual-clock probes. With a deliberately starved
+SDL 1.2 source, large sample steps fell from 81 to 0 in that probe. SDL3 removed
+the 42 restart edges, but cannot repair the 43 edges before a gap after SDL has
+already consumed the queued data. Real SDL 1.2/SDL3 header compilation passed
+with GCC and Zig; physical listening remains unverified. These backend changes
+are separate from RetroArch's audio output path.
+
+The headless runner can now write a native state with `--save-state` and returns
+a failure status when the write fails. Korean Little Wizard combat, Tomak
+shooting and Mill's input-responsive first room now have repeatable states and
+scripts; see `GP32_LOCAL_GAME_MATRIX.md`. States and ROMs remain external.
+The libretro input regression also checks that loading a state cannot keep a
+stale button pressed after the frontend has released it.
+
+Validation: the existing full Windows suite passed 12/12 during integration;
+after the final IIS memory-bound changes, the six affected peripheral and
+libretro audio/input/persistence cases passed. Android ARM64 and ARMv7 core
+builds passed again. No Android runtime or physical input-latency measurement
+was performed. The installed Spruce core remains the previously validated
+resume12 build; resume13 binaries are development candidates.

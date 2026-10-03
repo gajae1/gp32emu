@@ -106,14 +106,14 @@ static uint32_t bios_auto_start_buttons_for_frame(uint64_t frame) {
 
 static void usage(const char *argv0) {
     fprintf(stderr,
-        "usage: %s [--bios gp32166m.bin] [--smc game.smc] [--fxe homebrew.fxe|--fpk package.fpk] [--input-script script.txt] [--load-state file.gp32st] [--no-bios-auto-start] [--cycles-per-frame N] [--frames N] [--hle-sef-rate HZ] [--buttons MASK] [--button-at CYCLES:MASK] [--cycles N] [--step-cycles N] [--dump-frame out.ppm] [--dump-at CYCLES:out.ppm] [--record-mkv out.mkv] [--dump-wav out.wav] [--save-smc out.smc] [--dump-mem ADDR LEN out.bin] [--trace] [--jit|--no-jit] [--jit-stats] [--dump-regs] [--dump-lcd-regs] [--dump-cp15] [--progress] [--rotate-ccw|--rotate-cw|--rotate-180]\n"
+        "usage: %s [--bios gp32166m.bin] [--smc game.smc] [--fxe homebrew.fxe|--fpk package.fpk] [--input-script script.txt] [--load-state file.gp32st] [--save-state out.gp32st] [--no-bios-auto-start] [--cycles-per-frame N] [--frames N] [--hle-sef-rate HZ] [--buttons MASK] [--button-at CYCLES:MASK] [--cycles N] [--step-cycles N] [--dump-frame out.ppm] [--dump-at CYCLES:out.ppm] [--record-mkv out.mkv] [--dump-wav out.wav] [--save-smc out.smc] [--dump-mem ADDR LEN out.bin] [--trace] [--jit|--no-jit] [--jit-stats] [--dump-regs] [--dump-lcd-regs] [--dump-cp15] [--progress] [--rotate-ccw|--rotate-cw|--rotate-180]\n"
         "\n"
         "Headless standalone GP32 emulator smoke runner. No BIOS or game data is bundled. --fxe accepts classic scrambled FXE files and raw GXB payloads; --fpk extracts and loads the package's main FXE. Input scripts use FRAMEf:BUTTON names such as 1550f:P. BIOS+SMC headless runs synthesize a few A/confirm pulses unless --no-bios-auto-start or explicit input is supplied. --dump-at CYCLES:out.ppm captures are serviced live in --cycles mode at the requested cycle, and in --frames mode at the first frame boundary whose completed cycle count reaches CYCLES; a capture scheduled exactly at the final frame boundary is written once at exit from that final state.\n",
         argv0);
 }
 
 int main(int argc, char **argv) {
-    const char *bios = NULL, *smc = NULL, *fxe = NULL, *fpk = NULL, *input_script_path = NULL, *load_state = NULL, *dump = NULL, *record_mkv = NULL, *dump_wav = NULL, *save_smc = NULL, *dump_mem = NULL;
+    const char *bios = NULL, *smc = NULL, *fxe = NULL, *fpk = NULL, *input_script_path = NULL, *load_state = NULL, *save_state = NULL, *dump = NULL, *record_mkv = NULL, *dump_wav = NULL, *save_smc = NULL, *dump_mem = NULL;
     uint32_t dump_mem_addr = 0, dump_mem_len = 0;
     uint32_t buttons = 0, hle_sef_rate = 0;
     button_event_t events[64];
@@ -131,6 +131,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--fpk") && i + 1 < argc) fpk = argv[++i];
         else if (!strcmp(argv[i], "--input-script") && i + 1 < argc) input_script_path = argv[++i];
         else if (!strcmp(argv[i], "--load-state") && i + 1 < argc) load_state = argv[++i];
+        else if (!strcmp(argv[i], "--save-state") && i + 1 < argc) save_state = argv[++i];
         else if (!strcmp(argv[i], "--no-bios-auto-start")) bios_auto_start = 0;
         else if (!strcmp(argv[i], "--buttons") && i + 1 < argc) buttons = (uint32_t)strtoul(argv[++i], NULL, 0);
         else if (!strcmp(argv[i], "--button-at") && i + 1 < argc) {
@@ -405,7 +406,15 @@ int main(int argc, char **argv) {
         else fprintf(stderr, "SmartMedia save failed: %s\n", gp32_get_error(g));
     }
     if (dump) dump_frame_now(g, dump, rotate);
+    int exit_code = 0;
+    if (save_state) {
+        if (gp32_save_state(g, save_state) == GP32_OK) printf("wrote %s\n", save_state);
+        else {
+            fprintf(stderr, "state save failed: %s\n", gp32_get_error(g));
+            exit_code = 1;
+        }
+    }
     gp32_input_script_destroy(input_script);
     gp32_destroy(g);
-    return 0;
+    return exit_code;
 }

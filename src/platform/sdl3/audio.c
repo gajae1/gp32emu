@@ -23,6 +23,9 @@ typedef struct sdl3_audio_backend {
     int16_t last_queued_l;
     int16_t last_queued_r;
     int ramp_pending;
+    /* The stream ran dry, so the device is hearing the silence it plays on an
+     * empty queue; the next chunk must glide back in from that silence. */
+    int silence_resume;
     char error[160];
 } sdl3_audio_backend_t;
 
@@ -71,6 +74,23 @@ static void ramp_chunk_head_from_queue_tail(sdl3_audio_backend_t *a, int16_t *fr
     }
 }
 
+/* Starvation consumed the whole queue, so the device output real PCM and then
+ * silence.  Ease the resumed chunk in from that silence instead of stepping
+ * straight to full level one millisecond after the gap. */
+static void fade_chunk_head_from_silence(sdl3_audio_backend_t *a, int16_t *frames, uint32_t count) {
+    uint32_t fade = a->sample_rate_hz ? a->sample_rate_hz / 1000u : 44u;
+    if (fade < 16u) fade = 16u;
+    if (fade > 96u) fade = 96u;
+    if (fade > count) fade = count;
+    int32_t den = (int32_t)fade + 1;
+    for (uint32_t i = 0; i < fade; ++i) {
+        int32_t num = (int32_t)(i + 1u);
+        int16_t *p = frames + (size_t)i * 2u;
+        p[0] = (int16_t)(((int32_t)p[0] * num) / den);
+        p[1] = (int16_t)(((int32_t)p[1] * num) / den);
+    }
+}
+
 static gp32_status_t sdl3_audio_submit(gp32_audio_backend_t *backend, const gp32_audio_desc_t *audio) {
     sdl3_audio_backend_t *a = (sdl3_audio_backend_t *)backend;
     if (!a || !audio) return GP32_ERR_INVALID_ARGUMENT;
@@ -86,7 +106,13 @@ static gp32_status_t sdl3_audio_submit(gp32_audio_backend_t *backend, const gp32
 
     int queued_bytes = SDL_GetAudioStreamQueued(a->stream);
     uint32_t queued_frames = bytes_to_frames(queued_bytes);
-    if (a->started && queued_frames == 0u) gp32_audio_resampler_mark_gap(&a->resampler, dst_rate);
+    if (a->started && queued_frames == 0u) {
+        gp32_audio_resampler_mark_gap(&a->resampler, dst_rate);
+        /* The stale soft-limit ramp no longer describes what the device
+         * heard: it fell through to silence, so resume from there. */
+        a->ramp_pending = 0;
+        a->silence_resume = 1;
+    }
 
     int32_t adjust_ppm = a->started ? audio_queue_rate_adjust_ppm(queued_frames) : 0;
     size_t max_out = gp32_audio_resampler_max_output_frames(&a->resampler,
@@ -134,7 +160,10 @@ static gp32_status_t sdl3_audio_submit(gp32_audio_backend_t *backend, const gp32
         return GP32_OK;
     }
 
-    if (a->ramp_pending) {
+    if (a->silence_resume) {
+        a->silence_resume = 0;
+        fade_chunk_head_from_silence(a, a->tmp, out_frames);
+    } else if (a->ramp_pending) {
         a->ramp_pending = 0;
         ramp_chunk_head_from_queue_tail(a, a->tmp, out_frames);
     }

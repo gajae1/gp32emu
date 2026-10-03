@@ -51,6 +51,54 @@ int main(void) {
         }
         retro_deinit();
     }
+    /* State-load lifecycle: a pad mask captured inside a serialized state is
+     * host input, not game input. The first retro_run after retro_unserialize
+     * must apply the frontend's live pad, so a stored press can never leak
+     * into gameplay after a load. */
+    for (int jit = 0; jit <= 1; ++jit) {
+        retro_init();
+        retro_set_input_poll(poll_input);
+        retro_set_input_state(input_state);
+        retro_set_video_refresh(present);
+        emu = gp32_create(NULL);
+        if (!emu || gp32_load_bios_data(emu, bios, sizeof(bios)) != GP32_OK) return 2;
+        gp32_set_jit(emu, jit);
+        pressed = 1; polled = presented = 0; observed_gpio = 0;
+        retro_run();
+        if ((observed_gpio & 0x4000u) != 0) {
+            fprintf(stderr, "FAIL: input lifecycle jit=%d pre-save press missed gpio=%08x\n",
+                    jit, observed_gpio);
+            retro_deinit(); return 1;
+        }
+        size_t st_size = retro_serialize_size();
+        uint8_t *st = st_size ? (uint8_t *)malloc(st_size) : NULL;
+        if (!st || !retro_serialize(st, st_size)) {
+            fprintf(stderr, "FAIL: input lifecycle jit=%d serialize failed size=%zu\n", jit, st_size);
+            free(st); retro_deinit(); return 1;
+        }
+        pressed = 0;
+        retro_run();
+        if (!retro_unserialize(st, st_size)) {
+            fprintf(stderr, "FAIL: input lifecycle jit=%d unserialize failed\n", jit);
+            free(st); retro_deinit(); return 1;
+        }
+        free(st);
+        pressed = 0; polled = presented = 0; observed_gpio = 0;
+        retro_run();
+        if (polled != 1 || presented != 1 || (observed_gpio & 0x4000u) == 0) {
+            fprintf(stderr, "FAIL: input lifecycle jit=%d stored press leaked post-load gpio=%08x poll=%u video=%u\n",
+                    jit, observed_gpio, polled, presented);
+            retro_deinit(); return 1;
+        }
+        pressed = 1; polled = presented = 0; observed_gpio = 0;
+        retro_run();
+        if (polled != 1 || presented != 1 || (observed_gpio & 0x4000u) != 0) {
+            fprintf(stderr, "FAIL: input lifecycle jit=%d post-load press missed gpio=%08x poll=%u video=%u\n",
+                    jit, observed_gpio, polled, presented);
+            retro_deinit(); return 1;
+        }
+        retro_deinit();
+    }
     puts("PASS: input press/release observed by ARM GPIO program before same-run video callback (jit off/on)");
     return 0;
 }

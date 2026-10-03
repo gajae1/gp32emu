@@ -70,6 +70,17 @@ The Windows UI targets x86_64 (Win64); Win32 is intentionally not provided. SDL 
 ./gp32_headless --fxe homebrew.fxe --frames 600 --dump-frame frame.ppm
 ```
 
+To reproduce a demanding gameplay scene, save a native state after scripted
+input, then reload it with the same BIOS and original game media:
+
+```sh
+./gp32_headless --bios gp32166m.bin --smc game.smc --input-script combat.txt --frames 3900 --jit --save-state combat.gp32st
+./gp32_headless --bios gp32166m.bin --smc game.smc --load-state combat.gp32st --frames 600 --jit --dump-frame replay.ppm
+```
+
+`--save-state` writes the state after execution and reports a nonzero exit code
+if saving fails. States contain game data and should not be distributed.
+
 Current headless capture output is Matroska/MKV with ZMBV video and PCM audio via `--record-mkv`. Y4M output and legacy recording aliases are not supported.
 
 
