@@ -437,3 +437,25 @@ uses the f46ddac Windows core; Tomak/Wizard Slayer use the callback-exit candida
 The H700 executable is f46ddac for all three.
 
 The six missing Korean releases listed above still need owned game files.
+
+## Loading-screen followup (resume29, 2026-10-03)
+
+Two unresolved resume28 captures now have later visual evidence:
+
+* **Dooly Soccer 2002:** resuming the loading state without BIOS autopulse
+  reaches the title within another 600 frames, then Korean story dialogue.
+  Explicit held input clears the dialogue and reaches a match: screenshots
+  progress from 0:00 / 0:0 to 0:21 / 0:1, with players and ball on the pitch.
+  This rules out a permanent loading stall for this replay. It does not
+  establish a complete match, audio quality or save compatibility.
+* **W.B.W. - Wanna Be Wizard_:** another 1,800 frames from the publisher
+  capture, with 15-frame A presses every 120 frames and BIOS autopulse off,
+  reaches a forest scene with a character, wolves, date/currency HUD and
+  Hangul location text. Later-stage play and audio remain unverified.
+
+Evidence: `F:/GP32/results/resume29-dooly/FINDINGS.md`, `runs.txt`,
+`play600.png`, `play2400.png`, and
+`F:/GP32/results/resume29-wbw/advance.json`, `advance.png`.
+These add direct Hangul evidence for two more of the 20 existing owned titles.
+The library and user saves were not modified; missing owned Korean files are
+still required for the six catalog gaps above.

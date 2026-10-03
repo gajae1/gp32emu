@@ -2075,3 +2075,53 @@ Input source review confirms polling and button publication precede same-run
 CPU execution. No input-latency patch is justified by that path; physical
 controller-to-screen latency remains unmeasured. External key-interrupt
 semantics require a verified GP32 hardware source before any implementation.
+
+### AArch64 direct-color LCD scanout (resume29, 2026-10-03)
+
+The contiguous 16-bpp renderer now expands eight 5:5:5:I pixels with NEON,
+avoiding per-pixel random accesses to the 256 KiB color table. The conversion
+preserves the shared intensity bit and all four DMA byte/halfword orders.
+Byte loads permit unaligned guest addresses; each bounded row span has a
+scalar tail, so partial rows do not overread. Indexed formats, gap/fallback
+scanout, DMA cursor/page accounting and non-AArch64 lookup rendering retain
+their existing behavior. The path is limited to little-endian AArch64.
+
+On H700, the existing LCD differential harness passes 868 cases, comparing
+the whole framebuffer and DMA state against the original renderer. Windows
+scalar rendering passes 168 cases. Windows, H700 and both Android ARM targets
+build successfully. Evidence: `F:/GP32/results/resume29-lcd/`.
+
+The 20 saved library scenes explain where this helps: 17 use 8-bpp, whereas
+OneShot Voca, Princess Maker 2 and W.B.W. use 16-bpp. This is a scene snapshot,
+not a claim that each game always uses one format. W.B.W.'s forest replay was
+measured with 1,800 warmup + 1,200 measured frames and an unscored prime. At
+1,512 MHz throughout all 30 measured clock samples, ABBA baseline throughput
+was 157.239/157.680 fps and candidate 166.585/167.489 fps: means
+157.4595 -> 167.0370 fps, **+6.08%**. All seven CPU/video/audio fields match.
+These are uncapped core throughput figures, not displayed game frame rates.
+Evidence: `F:/GP32/results/resume29-lcd-wbw-abba.json` and `modes.json` in the
+LCD evidence directory.
+
+Tomak and Little Wizard replays also preserve all seven fields. Their first
+baseline clock windows ramped, so those ABBA results are retained as exactness
+evidence only; no speedup is attributed to their unchanged indexed renderer.
+Evidence: `resume29-lcd-tomak-abba.json`, `resume29-lcd-wizard-abba.json`.
+
+An isolated real RetroArch Little Wizard replay completes 2,401 frontend runs:
+1,763,356 stereo frames offered and accepted, no pending/partial/zero returns,
+and no ALSA errors or recovery. Guest PC, produced/nonzero samples and IIS
+state match the established standalone replay frame by frame. The late-300
+core mean is 7.845 ms; presentation-interval p99 is 26.954 ms in this run,
+so this is not evidence of perfect frame pacing. The screenshot is intact,
+MainUI resumes normally, and both user configuration hashes remain unchanged.
+Evidence: `F:/GP32/results/resume29-audio-runtime-verified.json`,
+`resume29-audio-summary.json`, `resume29-audio-runtime.png`.
+
+Production H700 core SHA-256:
+`37dd671a416531ddca6a77ad09e52596d2759c504f11eca2902535799deaf411`.
+The previous core is backed up at
+`/mnt/SDCARD/gp32-dev/resume29-installed-core-before.so`.
+The library followup also resolves Dooly's loading screen into an observed
+match and W.B.W.'s publisher screen into a Hangul-labelled scene; see the
+local game matrix. Full-game stability, speaker listening, physical input
+latency and Android runtime acceptance remain open.
