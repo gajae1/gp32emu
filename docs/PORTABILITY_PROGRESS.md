@@ -3028,3 +3028,20 @@ passed with exact CPU/video/PCM results. Measured core throughput improved
 0.46% in Her Knights and 0.82% in Tomak; no displayed-FPS guarantee is implied.
 H700 and Android ARM64 cores build successfully. See the resume50 section in
 `GP32_PERFORMANCE_STRATEGY.md` for evidence, scope and the deferred LCD idea.
+
+### Nested call and loaded-return optimization (resume51)
+
+The shared ARM translator recognizes exact STR-LR/LDR-PC stack wrappers and
+flattens one nested framed call inside an STR-LR wrapper. Actual instructions,
+stack memory, short-budget exits and loaded return addresses remain intact.
+AArch64 now continues matching single-transfer returns through the same
+trace. Speculative framed-callee reads use mapped code peeks, with every
+recorded fetch retained for cache revalidation.
+
+Final qualified H700 ABBA gives Her Knights +11.40% core throughput and Tomak
+essentially unchanged (+0.40%, overlapping run ranges), with exact CPU/video/
+PCM outputs. Broader nested STM traces were excluded after measured Tomak
+slowdowns. Windows nested-call differential and Windows/H700/Android ARM64/
+ARMv7 builds pass. This does not change guest clocks, input or audio scheduling,
+and is not an all-games frame-rate or speaker-quality guarantee.
+Evidence: `F:/GP32/results/resume51-inline/`.

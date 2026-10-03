@@ -590,3 +590,57 @@ nested call and single-transfer stack wrappers; the existing bounded leaf
 poll accelerator does not cover that complete cycle. This is a future
 investigation target, not permission to skip those instructions without
 per-access stability and full-state proof.
+
+## resume51: bounded nested framed calls
+
+The Her Knights wait wrapper saves LR with STR, calls a five-instruction
+clock getter, then returns through LDR PC. The translator now recognizes the
+exact single-transfer push/pop encodings alongside STM/LDM and can flatten
+one nested framed-call level inside an STR-LR outer wrapper. Existing STM-LR
+wrappers retain their non-nested boundary. The outer function is bounded to
+16 source instructions, a child to eight, and the combined callee to 32 decoded ops.
+Ordinary non-nested leaves retain their eight-instruction limit.
+
+Every instruction still retires, including BL links and real stack transfers.
+Speculative callee fetches use the existing non-mutating mapped-code peek;
+missing mappings, page crossings or unsupported control flow reject inlining.
+Recorded PCs remain part of cache-epoch revalidation. Nested frames do not
+qualify as a stable-poll proof, so this does not skip the complete wait loop.
+
+A64 single-transfer returns can continue only when the actual aligned loaded
+PC matches the recorded successor. Modified stack returns exit immediately,
+as with the existing block-transfer return guard. Checked helper paths retain
+their PC/status/IRQ/cache fences. Windows differential checks and native H700
+short-budget checks cover nested frames and aliasing of the outer saved return
+against instruction-by-instruction execution.
+
+The first wider candidate improved Her Knights 5.82% but reduced Tomak 0.67%.
+Keeping the old non-nested length limit retained Her's 5.93% gain but did not
+remove Tomak's 0.70% loss. Both rejected intermediate measurement sets are
+preserved in `F:/GP32/results/resume51-inline/` (`wide-*`, `narrow-*`). The
+matching-return candidate reached Her +11.00% but Tomak -0.81%; its
+`return-guard-*` records are also retained. Limiting nested expansion to STR-LR
+outer wrappers removed that measured Tomak slowdown. The final candidate
+retains the A64 loaded-return guard; separate final records determine claims.
+
+Qualified final ABBA at observed 1,512 MHz (conservative governor unchanged):
+
+| Korea scene | Baseline core fps | Candidate core fps | Median ratio |
+| --- | --- | --- | --- |
+| Her Knights combat, warm 1200 / measured 1200 | 122.391 / 122.476 | 135.97 / 136.808 | 1.1140x |
+| Tomak shooting, warm 300 / measured 600 | 111.052 / 111.233 | 112.101 / 111.08 | 1.0040x |
+
+Her improved 11.40%. Tomak is essentially unchanged (+0.40%, overlapping run
+ranges); no broad speedup is claimed for it. All seven CPU/video/PCM fields
+match. These are core-throughput measurements, not displayed-FPS minima or
+evidence of continuous clean speaker output. Input scheduling, guest clocks,
+audio generation and global frontend settings are unchanged.
+
+Baseline benchmark SHA-256:
+`1dcac1723555a9bd0ff02c3e81e4e3433917c94eadb057a07f788da9ff1bacf4`;
+final candidate: `1eb6ba64c272c0d431d1e333d4b092c94cf33241f5c850899ccfec97067ff8e0`.
+
+Final native H700 differential passed (9,404 JIT events / 21 fallbacks), as
+did the existing stable-poll equivalence suite. Windows nested-call checks
+and Windows/H700/Android ARM64/ARMv7 libretro builds pass. No Android runtime
+or new speaker/input-latency measurement was performed in this step.

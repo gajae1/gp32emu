@@ -1846,6 +1846,47 @@ static void case_loop_callback_trace(void) {
     teardown_pair();
 }
 
+static void case_nested_framed_leaf(void) {
+    /* The inner callee can alias the outer saved return. Check every short
+     * budget against single-step execution, not another flattened trace. */
+    const uint32_t program[] = {0xeb00001eu, 0xe3a08063u, 0xeafffffeu,
+                                0xeafffffeu, 0xeafffffeu};
+    for (unsigned single = 0; single < 2u; ++single)
+    for (unsigned redirect = 0; redirect < 2u; ++redirect)
+    for (unsigned budget = 1; budget <= 14u; ++budget) {
+        current_case = redirect ? "nested-leaf-aliased-return" : "nested-leaf-budget";
+        setup_pair();
+        arm920t_set_trace(cpu_ref, 1, NULL, NULL);
+        load_both(program, GP32_ARRAY_COUNT(program));
+        set_mem_both(CODE_ADDR + 0x80u, single ? 0xe52de004u : 0xe92d4000u);
+        set_mem_both(CODE_ADDR + 0x84u, 0xeb00001du); /* BL inner at +0x100 */
+        set_mem_both(CODE_ADDR + 0x88u, 0xe2800001u); /* ADD r0,r0,#1 */
+        set_mem_both(CODE_ADDR + 0x8cu, single ? 0xe49df004u : 0xe8bd8000u);
+        set_mem_both(CODE_ADDR + 0x100u, 0xe92d4000u);
+        set_mem_both(CODE_ADDR + 0x104u, redirect ? 0xe5865000u : 0xe1a05005u);
+        set_mem_both(CODE_ADDR + 0x108u, 0xe5940000u);
+        set_mem_both(CODE_ADDR + 0x10cu, 0xe8bd8000u);
+        set_mem_both(DATA_ADDR, 7u);
+        set_reg_both(4u, DATA_ADDR);
+        set_reg_both(5u, CODE_ADDR + 0x10u);
+        set_reg_both(6u, DATA_ADDR + 0xfcu);
+        set_reg_both(8u, 0u);
+        set_reg_both(13u, DATA_ADDR + 0x100u);
+        CHECK(arm920t_run(cpu_jit, budget) == arm920t_run(cpu_ref, budget),
+              "nested leaf short budget");
+        compare_state();
+        CHECK(arm920t_run(cpu_jit, 30u) == arm920t_run(cpu_ref, 30u),
+              "nested leaf continuation");
+        compare_state();
+        CHECK(ref_reg(0u) == 8u && ref_reg(13u) == DATA_ADDR + 0x100u,
+              "nested leaf result and balanced stack");
+        CHECK(ref_reg(8u) == (redirect ? 0u : 99u) &&
+              ref_reg(15u) == CODE_ADDR + (redirect ? 0x10u : 8u),
+              "nested leaf honors loaded outer return");
+        teardown_pair();
+    }
+}
+
 static void case_loop_framed_leaf(void) {
     /* BL -> PUSH LR; MMIO read; POP PC. A callback can replace the real
      * stacked return on repetition 50; chaining must honor that exit. */
@@ -2007,13 +2048,16 @@ int main(int argc, char **argv) {
      * without rerunning unrelated differential workloads. */
     int ram_end_only = argc == 2 && !strcmp(argv[1], "--ram-end");
     int leaf_only = argc == 2 && !strcmp(argv[1], "--unframed-leaf");
+    int nested_only = argc == 2 && !strcmp(argv[1], "--nested-leaf");
     int chain_only = argc == 2 && !strcmp(argv[1], "--branch-chain");
     int callback_only = argc == 2 && !strcmp(argv[1], "--callback-pc");
     int loops_only = argc == 2 && !strcmp(argv[1], "--loop-fences");
     int irq_only = argc == 2 && !strcmp(argv[1], "--callback-irq");
     int block_only = argc == 2 && !strcmp(argv[1], "--block-callback");
     int portable_only = argc == 2 && !strcmp(argv[1], "--portable-callback");
-    if (portable_only) {
+    if (nested_only) {
+        case_nested_framed_leaf();
+    } else if (portable_only) {
         portable_callbacks = 1;
         case_callback_irq_commit();
         case_block_callback_exit();
@@ -2080,6 +2124,7 @@ int main(int argc, char **argv) {
     case_loop_callback_flush();
     case_loop_callback_trace();
     case_loop_framed_leaf();
+    case_nested_framed_leaf();
     }
     current_case = "summary";
     if (jit_events == 0)

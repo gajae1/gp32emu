@@ -496,7 +496,16 @@ static int a64_single_dt(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
         a64_u32(e, (byte ? 0x38206800u : 0xb8206800u) | (0u << 16) | (21u << 5) | 1u);
     }
     if (wb) a64_put_guest(e, op->a, 2); /* includes the helper's Rn==Rd order */
-    if (load && op->b == 15u) a64_return(e, done);
+    if (load && op->b == 15u) {
+        if (op->reserved == 3u || op->reserved == 5u) {
+            /* Keep the real loaded return, as for an inlined LDM PC. */
+            a64_imm(e, 6, e->expected_next);
+            a64_cmp(e, 1, 6);
+            size_t matched = a64_jump(e, 0);
+            a64_return(e, done);
+            a64_patch(e, matched, e->pos);
+        } else a64_return(e, done);
+    }
     size_t next = a64_jump(e, 14);
     for (unsigned i = 0; i < nslow; ++i) a64_patch(e, slow[i], e->pos);
     a64_slow(e, op, done);
