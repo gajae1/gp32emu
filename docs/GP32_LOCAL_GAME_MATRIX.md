@@ -8,10 +8,10 @@ different payloads. The menu shows 20 games; the BIOS is not a game entry.
 No ROM, save or configuration change was needed for this verification.
 
 Language evidence is cumulative across the captures below, not just the last
-autopulse pass. Thirteen titles have at least one captured screen containing
-Hangul: Dooly Soccer 2002, Dungeon & Guarder, Dyhard, GP Fight, Her Knights, Little Girl Mill,
+autopulse pass. Fourteen titles have at least one captured screen containing
+Hangul: Astonishia Story R, Dooly Soccer 2002, Dungeon & Guarder, Dyhard, GP Fight, Her Knights, Little Girl Mill,
 OneShot Voca, Princess Maker 2, Tanggle's Magic Square, Therapy, W.B.W., Wizard
-Slayer, and Woody & Kunta. The other seven remain Korea-region-labelled with
+Slayer, and Woody & Kunta. The other six remain Korea-region-labelled with
 their displayed language unverified. This does not establish complete
 localization or full-game compatibility for any title.
 
@@ -533,3 +533,18 @@ frontend/audio-latency measurement. The captures include generated PCM, but
 physical audio quality was not evaluated. Exact commands, private states,
 PCM and images (`advance.png`, `dialog.png`, `move.png`, `idle.png`) are under
 `F:/GP32/results/resume46-dungeon/`. No user save or ROM was modified.
+
+## Astonishia Story R inn dialogue (resume55, 2026-10-04)
+
+A Windows headless replay continues the existing Korea ROM's resume28 room
+state with explicit A press/release pulses, followed by released input. It
+progresses downstairs to the innkeeper. `follow-600.png` visibly contains
+Hangul dialogue addressed to the knight, establishing language evidence for
+this title. The later final capture is black and is not treated as proof of
+continued gameplay or failure. Whole-game compatibility remains unverified.
+
+Evidence: `F:/GP32/results/resume55-astonishia/` contains the exact command
+records (`dialog.json`, `settle.json`, `follow.json`), private intermediate
+states and timed screenshots. Only private replay outputs were written; no
+device library, user save or ROM was modified. The cumulative language count
+is now 14 of the 20 installed Korea-labelled titles, with six still unverified.

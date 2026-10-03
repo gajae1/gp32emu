@@ -3084,3 +3084,20 @@ remain language-unverified and six catalogued releases lack supplied dumps.
 See `KOREAN_LIBRARY.md` and the resume53 section of
 `GP32_PERFORMANCE_STRATEGY.md` for scope and evidence. No runtime source change
 or new ROM installation was needed in this step.
+
+### AArch64 control-field addressing and Korean dialogue (resume55)
+
+Native loop traces now reuse an already-saved host register for the address
+of CPU control fields after the TLB arrays. IRQ/FIQ and cache/generation
+guards still read current values at each edge; no guest operations or guard
+checks are removed. Qualified exact H700 comparisons show Her Knights +3.89%
+and Tomak +1.14% core throughput, with Little Wizard near parity (+0.46%).
+H700 full native differential and stable-poll checks pass, and Android ARM64
+builds. The new core is installed with a backup; protected settings match.
+See the resume55 performance section for hashes and measurement limits.
+
+A separate Windows replay reaches visible innkeeper dialogue in Astonishia
+Story R (Korea), increasing cumulative Hangul evidence to 14 of the 20 owned
+installed titles. This is language/scene evidence, not whole-game acceptance;
+six titles still lack language confirmation and six catalogued releases still
+lack supplied dumps. No ROM or user save was changed.

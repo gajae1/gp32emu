@@ -792,3 +792,46 @@ Do not promote more polling candidates merely because they fail to converge:
 native eligibility alone is not a performance result. Further work on this
 path first needs attribution of native/helper costs in the actual affected
 blocks. The broad forward-loop restriction remains in production.
+
+## resume55: reuse the AArch64 loop's control-field address
+
+A current measured-window census retains exact replay outputs. Her Knights
+executes 571,209,279 guest instructions through 11,315,274 native block calls;
+only 946,831 operations use classified helpers. Tomak has 404,170,536 guest
+instructions through native blocks, 15,050,388 native calls and 1,510,416 helper operations. These
+are workload counts, not timings. They support optimizing already-native
+execution rather than broadly increasing native eligibility.
+
+CPU control fields lie after the large TLB arrays. Previously each native
+self-loop check repeatedly materialized their distant addresses. Eligible
+loop traces now initialize x25 to the control-field base once in the prologue
+and use scaled immediate offsets for reachable fields. x25 already had a
+callee-saved stack slot in loop traces; no extra save/restore is introduced.
+Out-of-range or misaligned offsets retain the existing address path.
+
+Every IRQ/FIQ, generation and cache-epoch value is still loaded at each guard.
+Guest register commits, helper exit checks, budgets and loop boundaries are
+unchanged. This caches only a host address, not guest state or guard results.
+Non-loop traces and other CPU backends retain their previous paths.
+
+Qualified H700 ABBA at observed 1,512 MHz, all seven CPU/video/PCM fields exact:
+
+| Korea scene | Baseline core fps | Candidate core fps | Median change |
+| --- | --- | --- | --- |
+| Her Knights, warm 1200 / measured 1200 | 152.895 / 153.325 | 158.690 / 159.435 | +3.89% |
+| Tomak, warm 300 / measured 600 | 111.718 / 111.589 | 112.618 / 113.241 | +1.14% |
+| Little Wizard, warm 2100 / measured 300 | 398.477 / 400.012 | 400.739 / 401.405 | +0.46% |
+
+Wizard remains near parity; these are bounded core-throughput observations,
+not whole-game/display-FPS or new speaker/input-latency measurements. H700
+full native differential passes (9,510 JIT events / 21 fallbacks), including
+callback, IRQ, cache/SMC and partial-budget fences; stable-poll equivalence
+also passes. Android ARM64 builds successfully; no Android runtime is claimed.
+
+Evidence: `F:/GP32/results/resume55-profile/` contains the census, qualified
+comparisons, test results and guarded deployment record. Baseline benchmark
+SHA-256 is `b33c4f0476b35c91d5c98521bb507617511faaffa468423836ed3eec75bfa5ce`;
+candidate is `42c3d697a074917074e630bd91dea2739ef29347c6d50f24ed69c1d9822bd515`.
+Installed core is `3a0fb70ae46c3bcefc618e5a1100295130da291e26318f40ae3624571059f15a`;
+the previous core is backed up as `resume55-installed-core-before.so` under
+the device's `gp32-dev` directory. Protected settings are unchanged.

@@ -12,7 +12,7 @@
  * exceptions, MMIO callbacks, mode changes and cache invalidation therefore
  * cannot continue executing an obsolete trace. No guest cycles are elided.
  * Eligible entry backedges retain w22 (remaining), w23 (completed prefixes),
- * w24 (entry epoch). These registers are callee-saved.
+ * w24 (entry epoch), x25 (CPU control-field base). These are callee-saved.
  */
 #ifndef ARM_JIT_CODE_SIZE
 #define ARM_JIT_CODE_SIZE (64u * 1024u * 1024u)
@@ -82,7 +82,15 @@ static void a64_cpu_addr(a64_emit_t *e, unsigned rd, size_t off) {
 
 static void a64_cpu_mem(a64_emit_t *e, uint32_t opcode, unsigned rt, size_t off, unsigned scale) {
     unsigned rn = 19;
-    if ((off & ((1u << scale) - 1u)) || (off >> scale) > 4095u) {
+    const size_t control = offsetof(arm920t_t, irq_line);
+    if (e->loop_done && off >= control &&
+        !((off - control) & ((1u << scale) - 1u)) && ((off - control) >> scale) <= 4095u) {
+        /* These fields follow the large TLB arrays. x25 is initialized once
+         * before the loop, avoiding repeated address materialization while
+         * still loading each current IRQ/cache/control value at every guard. */
+        rn = 25;
+        off -= control;
+    } else if ((off & ((1u << scale) - 1u)) || (off >> scale) > 4095u) {
         a64_cpu_addr(e, 17, off);
         rn = 17;
         off = 0;
@@ -899,6 +907,7 @@ static void arm_jit_compile_native(arm920t_t *c, arm_jit_block_t *b) {
     if (e.loop_done) {
         a64_mov(&e, 22, 1);
         a64_mov(&e, 23, 31);
+        a64_cpu_addr(&e, 25, offsetof(arm920t_t, irq_line));
         a64_load(&e, 24, offsetof(arm920t_t, jit_cache_epoch));
     }
     if (e.memory) {

@@ -6,7 +6,7 @@ duplicates, what is BIOS, and what is untagged, malformed or ambiguous. It
 never downloads, extracts, renames or deletes anything and never touches a
 device.
 
-## Installed Korean library (2026-10-04, resume53)
+## Installed Korean library (2026-10-04)
 
 The current local inventory contains 20 unique Korea-tagged game payloads.
 The H700 library contains exactly those 20 payloads, with no missing or extra
@@ -17,13 +17,14 @@ game menu. Evidence: `F:/GP32/results/resume53-diag/korean-library.json`,
 
 Displayed-language evidence is cumulative from the captures documented in
 [the local game matrix](GP32_LOCAL_GAME_MATRIX.md), including its resume46
-Dungeon & Guarder followup. It is separate from the inventory tool's
-filename-based classification; the tool still reports language as unverified.
+Dungeon & Guarder and resume55 Astonishia Story R followups. It is separate
+from the inventory tool's filename-based classification; the tool still
+reports language as unverified.
 
 | Captured language evidence | Installed Korea-tagged titles |
 | --- | --- |
-| Hangul visible (13) | Dooly Soccer 2002; Dungeon & Guarder; Dyhard; GP Fight; Her Knights; Little Girl Mill; OneShot Voca; Princess Maker 2; Tanggle's Magic Square; Therapy; W.B.W.; Wizard Slayer; Woody & Kunta |
-| Not yet established (7) | Astonishia Story R; Hany Party Game; Kimchiman GP32; Little Wizard; Rally Pop; Raphael; Tomak |
+| Hangul visible (14) | Astonishia Story R; Dooly Soccer 2002; Dungeon & Guarder; Dyhard; GP Fight; Her Knights; Little Girl Mill; OneShot Voca; Princess Maker 2; Tanggle's Magic Square; Therapy; W.B.W.; Wizard Slayer; Woody & Kunta |
+| Not yet established (6) | Hany Party Game; Kimchiman GP32; Little Wizard; Rally Pop; Raphael; Tomak |
 
 The six catalogued Korea-region releases without supplied dumps are Funny
 Soccer 2002, Holeman Battle Race 2002, Story of Bug eyed Monster, Winter Is,
