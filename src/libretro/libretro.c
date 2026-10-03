@@ -7,6 +7,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+#include <arm_neon.h>
+#endif
 
 #define GP32_W 320u
 #define GP32_H 240u
@@ -440,6 +443,26 @@ static int stage_frame_320x240(const gp32_framebuffer_desc_t *fb, uint32_t *dst)
          * landscape, so rotate 90 degrees counter-clockwise to expose the
          * standard libretro 320x240 display. This matches the SDL/Win64/media
          * presenter path and fixes the earlier cropped/scrambled 240x320 copy. */
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+        const uint32x4_t alpha = vdupq_n_u32(0xff000000u);
+        for (uint32_t by = 0; by < GP32_H; by += 4u) {
+            for (uint32_t bx = 0; bx < GP32_W; bx += 4u) {
+                const uint32_t *p = src + (size_t)bx * stride + GP32_RAW_W - 4u - by;
+                uint32x4_t a = vorrq_u32(vld1q_u32(p), alpha);
+                uint32x4_t b = vorrq_u32(vld1q_u32(p + stride), alpha);
+                uint32x4_t c = vorrq_u32(vld1q_u32(p + (size_t)stride * 2u), alpha);
+                uint32x4_t d = vorrq_u32(vld1q_u32(p + (size_t)stride * 3u), alpha);
+                uint32x4x2_t ab = vtrnq_u32(a, b);
+                uint32x4x2_t cd = vtrnq_u32(c, d);
+                uint32_t *out = dst + (size_t)by * GP32_W + bx;
+                /* Transpose four rows, then reverse the column order for CCW. */
+                vst1q_u32(out, vcombine_u32(vget_high_u32(ab.val[1]), vget_high_u32(cd.val[1])));
+                vst1q_u32(out + GP32_W, vcombine_u32(vget_high_u32(ab.val[0]), vget_high_u32(cd.val[0])));
+                vst1q_u32(out + GP32_W * 2u, vcombine_u32(vget_low_u32(ab.val[1]), vget_low_u32(cd.val[1])));
+                vst1q_u32(out + GP32_W * 3u, vcombine_u32(vget_low_u32(ab.val[0]), vget_low_u32(cd.val[0])));
+            }
+        }
+#else
         /* Keep both sides of the transpose in cache. A full output row reads
          * 320 different source rows; small tiles reuse those source cache
          * lines before advancing to the next part of the image. */
@@ -453,6 +476,7 @@ static int stage_frame_320x240(const gp32_framebuffer_desc_t *fb, uint32_t *dst)
                 }
             }
         }
+#endif
         return 1;
     }
 

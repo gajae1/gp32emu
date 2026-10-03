@@ -206,6 +206,35 @@ static void test_video_dupe(void) {
     retro_set_environment(NULL);
 }
 
+static void test_portrait_video(void) {
+    uint32_t *raw = malloc((243u * 320u + 1u) * sizeof(*raw));
+    uint32_t *out = malloc((320u * 240u + 2u) * sizeof(*out));
+    if (!raw || !out) exit(2);
+    for (unsigned stride = 240u; stride <= 243u; stride += 3u) {
+        memset(raw, 0x5a, (243u * 320u + 1u) * sizeof(*raw));
+        for (unsigned y = 0; y < 320u; ++y)
+            for (unsigned x = 0; x < 240u; ++x)
+                raw[1u + y * stride + x] = (y << 16) | (x << 8) | ((x ^ y) & 0xffu);
+        gp32_framebuffer_desc_t fb = {
+            .pixels_rgba8888 = raw + 1, .width = 240, .height = 320,
+            .stride_pixels = stride
+        };
+        out[0] = out[320u * 240u + 1u] = 0x12345678u;
+        CHECK(stage_frame_320x240(&fb, out + 1), "portrait frame must stage");
+        int exact = 1;
+        /* Scatter source coordinates into the expected CCW destination. */
+        for (unsigned y = 0; y < 320u; ++y)
+            for (unsigned x = 0; x < 240u; ++x)
+                if (out[1u + (239u - x) * 320u + y] !=
+                    (raw[1u + y * stride + x] | 0xff000000u)) exact = 0;
+        CHECK(exact, "portrait rotation must preserve every RGB pixel and force opaque alpha");
+        CHECK(out[0] == 0x12345678u && out[320u * 240u + 1u] == 0x12345678u,
+              "portrait rotation must preserve destination guards");
+    }
+    free(raw);
+    free(out);
+}
+
 static void start_case(void) {
     retro_deinit();
     retro_init();
@@ -468,6 +497,7 @@ int main(int argc, char **argv) {
     test_sustained_backpressure();
     test_partial_overflow_recovery();
     test_video_dupe();
+    test_portrait_video();
     test_lifecycle(argc > 1 ? argv[1] : "libretro_audio_test.tmp");
     test_state_buffers(argc > 1 ? argv[1] : "libretro_audio_test.tmp");
     retro_deinit();
