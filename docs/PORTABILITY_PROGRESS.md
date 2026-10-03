@@ -2619,3 +2619,55 @@ usage are in `packaging/spruce/retroarch-patches/`. Evidence is under
 `F:/GP32/results/resume38-library/`, `resume38-audio/`, and the
 `resume38-padding-audio-*` result files. This turn does not claim a gameplay
 speedup or complete compatibility.
+
+### AArch64 immediate transfer addresses (resume39, 2026-10-04)
+
+The native single-transfer emitter previously materialized every immediate
+offset in a scratch register, then added/subtracted that register. ARM's
+decoded transfer immediate is already bounded to 12 bits, so it now emits
+ADD/SUB W immediate directly. A zero-offset pre-indexed access without
+writeback needs neither instruction. Post-indexed and writeback forms still
+preserve the computed base separately; register-offset shifts, unaligned word
+rotation, RAM/MMU guards, callback exits and instruction accounting are
+unchanged. The non-flag-setting W operations retain 32-bit address wrap.
+
+The existing full native H700 JIT differential passes, including memory,
+mapped pages, flags, alias/writeback, callbacks, budgets and loop fences:
+9,067 JIT events and 21 fallbacks. H700 and Android arm64-v8a libretro builds
+pass. Windows/x64 and ARM32 backends are not changed by this emitter patch.
+
+Initial interleaved measurements were guest-exact but disqualified because
+the first baseline still ramped from 1,416 to 1,512 MHz. Subsequent complete
+ABBA sets with normal priming sampled 1,512 MHz throughout; no governor or
+CPU affinity setting was changed. All seven CPU/video/audio fields match:
+
+| Korea replay | Baseline median | Candidate median | Change |
+| --- | ---: | ---: | ---: |
+| Little Wizard, warmup 2100 / measured 300 | 111.8315 fps | 114.0210 fps | +1.96% |
+| Tomak, warmup 300 / measured 600 | 112.0130 fps | 112.2965 fps | +0.25% |
+
+These are emulation-throughput measurements, not original-game animation
+rates. Wizard baseline runs were 111.785/111.878 and candidate runs
+114.037/114.005 fps; the improvement exceeds their within-role spread.
+Tomak's smaller difference is not a broad speedup claim. No conclusion about
+all games, audible quality or physical input latency follows from these runs.
+
+Evidence: `F:/GP32/results/resume39-a64/{jit.json,wizard-primed.json,
+tomak-primed.json}`. The disqualified initial sets are retained as
+`wizard-abba.json` and `tomak-abba.json`. Baseline benchmark SHA-256:
+`bf894eda5f2de53dd85e86a3362c107796c80f4ff5d66b84e42d40a4ab73b13e`;
+candidate:
+`4a59071c413c76f5b3a2a9db465c7673afe7e043c1022e31f65e01d10cb7ba0f`.
+
+The production core was installed with SHA-256
+`37884295e3f0a6c149be1ea1c91e835aa997325eff7e1615394e2ec21a3a6b0f`.
+Its previous version is preserved at
+`/mnt/SDCARD/gp32-dev/resume39-installed-core-before.so`. A bounded run through
+the installed Spruce frontend-selection/platform-setup functions loaded this
+core, matched the ANBERNIC controller profile, exited normally and returned
+to MainUI. ALSA accepted 1,032 full writes with zero errors or recoveries.
+This used private save/config bookkeeping and no scripted gameplay input;
+it is an integration check, not another comparable audio-quality replay.
+Emulator/platform settings and original system frontend hashes were unchanged.
+Evidence: `F:/GP32/results/resume39-a64/installed.json` and
+`F:/GP32/results/resume39-runtime/runtime-verified.json`.
