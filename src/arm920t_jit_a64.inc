@@ -21,6 +21,7 @@ typedef struct a64_emit {
     size_t pos, cap;
     int fail;
     int ram_read, ram_write, memory, mmu;
+    int nzcv_valid; /* host NZCV equals the committed guest flags */
     uint32_t expected_next, generation;
 } a64_emit_t;
 
@@ -318,6 +319,7 @@ static int a64_data(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
         }
         a64_bfxil_low(e, 5, 3, logical ? 29u : 28u);
         a64_store(e, 5, offsetof(arm920t_t, cpsr));
+        e->nzcv_valid = !logical;
     }
     if (!test) {
         if (op->c == 15u) a64_mask(e, 2, 2, ~3u);
@@ -665,6 +667,9 @@ static int a64_mrc_p15(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done);
 static int a64_psr_mov(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done);
 
 static int a64_one(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
+    /* Only an explicitly proven producer below may make host flags reusable.
+     * Memory guards, helpers and partial logical flag writes are barriers. */
+    e->nzcv_valid = 0;
     if (op->kind == ARM_JIT_OP_DATA) {
         if (op->d & ARM_BC_DATA_REGSHIFT) return a64_data_regshift(e, op, done);
         return a64_data(e, op, done);
@@ -738,15 +743,23 @@ static void arm_jit_compile_native(arm920t_t *c, arm_jit_block_t *b) {
         size_t skip = 0;
         if (op->cond == 15u) {
             /* ARMv4 NV is never, unlike A64's condition 15 (always). */
+            e.nzcv_valid = 0;
             a64_store_imm(&e, offsetof(arm920t_t, r) + 15u * 4u, op->pc + 4u);
         } else {
             if (op->cond != 14u) {
-                a64_load(&e, 3, offsetof(arm920t_t, cpsr));
-                a64_u32(&e, 0xd51b4203u);
+                /* An immediately preceding unconditional arithmetic flag
+                 * producer already left precisely these flags in NZCV. */
+                if (!e.nzcv_valid) {
+                    a64_load(&e, 3, offsetof(arm920t_t, cpsr));
+                    a64_u32(&e, 0xd51b4203u);
+                }
                 skip = a64_jump(&e, op->cond ^ 1u);
             }
             if (!a64_one(&e, op, i + 1u)) a64_slow(&e, op, i + 1u);
-            if (skip) a64_patch(&e, skip, e.pos);
+            if (skip) {
+                a64_patch(&e, skip, e.pos);
+                e.nzcv_valid = 0; /* taken/skipped paths join here */
+            }
             /* The next instruction sees its own pipeline PC; only exits and
              * helpers require a PC store. Taken control flow returned above. */
         }

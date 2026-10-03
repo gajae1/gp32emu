@@ -587,9 +587,14 @@ static void present_duplicate_frame(void) {
         return;
     }
     /* Nothing has been presented yet, so a blank frame is the only ABI-valid
-     * alternative to NULL for a frontend that cannot dupe. */
+     * alternative to NULL for a frontend that cannot dupe. Latch it like any
+     * presented frame: without that, every retro_run while no game is loaded
+     * re-fills the whole staging buffer instead of re-sending the same
+     * pixels through the last_video_ptr path. */
     for (size_t i = 0; i < GP32_W * GP32_H; ++i) frame_rgb[i] = 0xff000000u;
     video_cb(frame_rgb, GP32_W, GP32_H, GP32_W * sizeof(uint32_t));
+    last_video_ptr = frame_rgb;
+    have_last_video = 1;
 }
 
 void retro_run(void) {
