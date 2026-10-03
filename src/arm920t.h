@@ -56,6 +56,28 @@ uint64_t arm920t_get_jit_misses(const arm920t_t *cpu);
 uint64_t arm920t_get_jit_fallbacks(const arm920t_t *cpu);
 void arm920t_get_cpu_profile(const arm920t_t *cpu, gp32_cpu_profile_t *out);
 void arm920t_reset_cpu_profile(arm920t_t *cpu);
+/* Fixed v0002 wire image; stage it before committing a whole-machine load. */
+typedef struct arm920t_state_image {
+    uint32_t r[16];
+    uint32_t cpsr;
+    uint32_t bank_usr[7];
+    uint32_t bank_fiq[7];
+    uint32_t bank_svc[2];
+    uint32_t bank_abt[2];
+    uint32_t bank_irq[2];
+    uint32_t bank_und[2];
+    uint32_t spsr_fiq, spsr_svc, spsr_abt, spsr_irq, spsr_und;
+    uint32_t cp15[16];
+    uint32_t tlb_va_base[4096];
+    uint32_t tlb_pa_base[4096];
+    uint32_t tlb_mask[4096];
+    uint8_t tlb_valid[4096];
+    uint64_t cycles_total;
+    int irq_line, fiq_line;
+    int halted;
+} arm920t_state_image_t;
+
+void arm920t_state_apply(arm920t_t *cpu, const arm920t_state_image_t *state);
 int arm920t_state_save(const arm920t_t *cpu, FILE *f);
 int arm920t_state_load(arm920t_t *cpu, FILE *f);
 int arm920t_state_save_io(const arm920t_t *cpu, state_io_t *io);

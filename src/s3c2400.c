@@ -1667,15 +1667,22 @@ int s3c2400_state_load_io(s3c2400_t *s, state_io_t *io) {
     uint8_t *new_ram = (uint8_t *)malloc(st->ram_size);
     if (!new_ram) return 0;
     if (!state_io_read(io, new_ram, st->ram_size)) { free(new_ram); return 0; }
-    if (!smc_state_load_io(s->smc, io)) { free(new_ram); return 0; }
+    /* SmartMedia precedes audio in v0002. Stage a new device so truncated audio
+     * or an allocation failure cannot replace the currently mounted card. */
+    smc_t *new_smc = smc_create();
+    if (!new_smc || !smc_state_load_io(new_smc, io)) {
+        smc_destroy(new_smc); free(new_ram); return 0;
+    }
     int16_t *new_audio = NULL;
     uint64_t new_audio_cap = 0;
     if (st->audio_frames) {
         new_audio = (int16_t *)malloc((size_t)st->audio_frames * 2u * sizeof(int16_t));
-        if (!new_audio) { free(new_ram); return 0; }
-        if (!state_io_read(io, new_audio, (size_t)st->audio_frames * 2u * sizeof(int16_t))) { free(new_audio); free(new_ram); return 0; }
+        if (!new_audio) { smc_destroy(new_smc); free(new_ram); return 0; }
+        if (!state_io_read(io, new_audio, (size_t)st->audio_frames * 2u * sizeof(int16_t))) { free(new_audio); smc_destroy(new_smc); free(new_ram); return 0; }
         new_audio_cap = st->audio_frames;
     }
+    smc_destroy(s->smc);
+    s->smc = new_smc;
     free(s->ram);
     free(s->audio);
     s->ram = new_ram;

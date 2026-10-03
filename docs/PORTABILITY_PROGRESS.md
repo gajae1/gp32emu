@@ -1786,3 +1786,81 @@ Installed production SHA-256:
 `46fdcec8668efcb497665e7ef702f44e2a682bda4bf67eaeac30ffaace8e935f`.
 Backup: `/mnt/SDCARD/gp32-dev/resume24-final-installed-core-before.so`.
 Record: `F:/GP32/results/resume24-final-core-installed.json`.
+
+
+### Native branch boundary correctness (resume25)
+
+A long stitched branch chain exposed an x64 epilogue bug: when an unconditional
+branch occupies the final trace slot, the emitter previously committed the
+instruction's fallthrough rather than its branch target. A 128-branch chain
+that skips ADD traps reproduces r1=1 in native execution versus r1=0 in the
+interpreter. The epilogue now commits the unconditional branch target, matching
+the existing A64 behavior. The full x64 differential including this regression
+passes (110,940 events), and the new chain case passes on the current H700
+baseline. This fixes control flow; it is not a game-level speedup claim.
+Evidence: `F:/GP32/results/resume25-native/NOTES.md`, `chain-before.exe`,
+`chain-after.exe`, and `resume25-chain-h700.json`.
+
+Separately, removing an intermediate A64 PC store for stitched B/inlined BL
+passed native differential and all seven game exactness fields. A qualified
+1512 MHz ABBA measured 92.919 -> 93.456 median fps (+0.58%), but candidate runs
+varied 92.763/94.149 fps. This does not establish a useful improvement; that
+candidate remains outside production. Evidence:
+`F:/GP32/results/resume25-native-abba.json`, `resume25-native-jit-h700.json`.
+
+### Failed state loads preserve the live machine (resume25)
+
+The libretro lifecycle probe reproduced a previously documented limitation:
+loading a truncated state returned false but had already restored CPU state.
+The SoC also committed SmartMedia before reading the final queued audio, so a
+truncation there could change the card even when RAM/audio remained untouched.
+The loader now keeps the fixed CPU image pending until the SoC succeeds, and
+stages a new SmartMedia device until every RAM/card/audio read succeeds.
+The v0002 byte layout is unchanged. This requires no extra whole-machine
+snapshot or RAM/card copy on successful loads. A temporary 53 KiB CPU wire
+image and a small card object are added to the allocations the loader already
+performed. CPU staging uses the heap so it does not overlap the already large
+SoC image on the default Windows thread stack (identified in SWE review). The read-only
+file loader does not report a completed state as rejected merely because
+closing the already-consumed input stream fails.
+
+The existing H700 Korean Little Wizard combat state loads and replays with all
+seven CPU/video/audio exactness fields unchanged. Android ARM64 and ARMv7 core
+builds pass. Evidence: `F:/GP32/results/resume25-state/summary.json` (pre-fix
+reproduction), `resume25-state-wizard-h700.json` (valid existing state replay).
+
+The existing frontend probe now reports `mutated_advanced_machine=0` after a
+rejected truncated load (previously 1). Valid unserialize/reset still invalidate
+video, serialization capacity remains stable, and unload/reload works. Its
+`partial_sections_applied` label only compares with the older saved snapshot;
+it is not a mutation check and remains 1 because the live machine is preserved.
+Evidence: `F:/GP32/results/resume25-state/probe-after.log`.
+Before moving the CPU staging buffer from stack to heap, a qualified 1512 MHz
+ABBA preserves all seven exactness fields and measures
+93.023 baseline vs 93.262 candidate fps; this is performance preservation, not a
+claimed optimization. The earlier cold-run 67.592 fps was not clock-qualified;
+the primed baseline likewise started at 66.698 fps. Evidence:
+`F:/GP32/results/resume25-state-abba.json`.
+
+The synthetic whole-machine regression uses different CPU progress, RAM,
+SmartMedia data/device state, and nonempty queued PCM. The frozen baseline
+fails state preservation for a RAM truncation and the post-card audio gap;
+the final loader passes all component-boundary/mid-audio truncations and both
+memory/file valid-load round trips on H700. Evidence:
+`F:/GP32/results/resume25-state-regression-before-h700.json`,
+`resume25-state-regression-h700.json`.
+
+The final fixed-snapshot regression passes on both Windows and H700; Windows
+libretro audio and persistence tests also pass. Windows/Android ARM64/ARMv7
+cores rebuild after the staging-buffer allocation change. Evidence:
+`F:/GP32/results/resume25-state-regression-final-h700.json`,
+`F:/GP32/results/resume13-input-build/Testing/Temporary/LastTest.log`.
+
+Installed production core SHA-256:
+`340189dde99d73413fc7ebf9ed01fffd63eee356204cd482706512ece726cc42`.
+The prior core is preserved at
+`/mnt/SDCARD/gp32-dev/resume25-installed-core-before.so`. GP32 launcher and
+RetroArch settings hashes are unchanged; MainUI was running and RetroArch
+was stopped during the atomic core replacement. This round did not repeat
+physical audio/input-latency acceptance or claim all games are validated.
+Record: `F:/GP32/results/resume25-core-installed.json`.

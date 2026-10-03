@@ -3119,7 +3119,11 @@ static void arm_jit_compile_native(arm920t_t *c, arm_jit_block_t *b) {
        condition jumps past that return and still needs a normal epilogue.
        Extra epilogues after unconditional returns are unreachable and benign. */
     {
-        uint32_t final_pc = arm_jit_ops(c, b)[b->count - 1u].pc + 4u;
+        const arm_jit_op_t *last = &arm_jit_ops(c, b)[b->count - 1u];
+        uint32_t final_pc = last->pc + 4u;
+        /* A stitched branch may occupy the final slot at trace capacity. */
+        if (last->kind == ARM_JIT_OP_BRANCH && last->cond == 14u)
+            final_pc = arm_jit_branch_target(last->pc, last->insn);
         x64_mov_mem_cpu_imm(&e, arm_reg_off(15), final_pc);
         x64_emit_return_imm(&e, b->count);
     }
@@ -3302,26 +3306,6 @@ void arm920t_reset_cpu_profile(arm920t_t *c) {
 #endif
 }
 
-typedef struct arm920t_state_image {
-    uint32_t r[16];
-    uint32_t cpsr;
-    uint32_t bank_usr[7];
-    uint32_t bank_fiq[7];
-    uint32_t bank_svc[2];
-    uint32_t bank_abt[2];
-    uint32_t bank_irq[2];
-    uint32_t bank_und[2];
-    uint32_t spsr_fiq, spsr_svc, spsr_abt, spsr_irq, spsr_und;
-    uint32_t cp15[16];
-    uint32_t tlb_va_base[4096];
-    uint32_t tlb_pa_base[4096];
-    uint32_t tlb_mask[4096];
-    uint8_t tlb_valid[4096];
-    uint64_t cycles_total;
-    int irq_line, fiq_line;
-    int halted;
-} arm920t_state_image_t;
-
 int arm920t_state_save_io(const arm920t_t *c, state_io_t *io) {
     if (!c || !io) return 0;
     arm920t_state_image_t st;
@@ -3345,27 +3329,24 @@ int arm920t_state_save_io(const arm920t_t *c, state_io_t *io) {
     return state_io_write(io, &st, sizeof(st));
 }
 
-int arm920t_state_load_io(arm920t_t *c, state_io_t *io) {
-    if (!c || !io) return 0;
-    arm920t_state_image_t st;
-    if (!state_io_read(io, &st, sizeof(st))) return 0;
-    memcpy(c->r, st.r, sizeof(c->r));
-    c->cpsr = st.cpsr;
-    memcpy(c->bank_usr, st.bank_usr, sizeof(c->bank_usr));
-    memcpy(c->bank_fiq, st.bank_fiq, sizeof(c->bank_fiq));
-    memcpy(c->bank_svc, st.bank_svc, sizeof(c->bank_svc));
-    memcpy(c->bank_abt, st.bank_abt, sizeof(c->bank_abt));
-    memcpy(c->bank_irq, st.bank_irq, sizeof(c->bank_irq));
-    memcpy(c->bank_und, st.bank_und, sizeof(c->bank_und));
-    c->spsr_fiq = st.spsr_fiq; c->spsr_svc = st.spsr_svc; c->spsr_abt = st.spsr_abt; c->spsr_irq = st.spsr_irq; c->spsr_und = st.spsr_und;
-    memcpy(c->cp15, st.cp15, sizeof(c->cp15));
-    memcpy(c->tlb_va_base, st.tlb_va_base, sizeof(c->tlb_va_base));
-    memcpy(c->tlb_pa_base, st.tlb_pa_base, sizeof(c->tlb_pa_base));
-    memcpy(c->tlb_mask, st.tlb_mask, sizeof(c->tlb_mask));
-    memcpy(c->tlb_valid, st.tlb_valid, sizeof(c->tlb_valid));
+void arm920t_state_apply(arm920t_t *c, const arm920t_state_image_t *st) {
+    memcpy(c->r, st->r, sizeof(c->r));
+    c->cpsr = st->cpsr;
+    memcpy(c->bank_usr, st->bank_usr, sizeof(c->bank_usr));
+    memcpy(c->bank_fiq, st->bank_fiq, sizeof(c->bank_fiq));
+    memcpy(c->bank_svc, st->bank_svc, sizeof(c->bank_svc));
+    memcpy(c->bank_abt, st->bank_abt, sizeof(c->bank_abt));
+    memcpy(c->bank_irq, st->bank_irq, sizeof(c->bank_irq));
+    memcpy(c->bank_und, st->bank_und, sizeof(c->bank_und));
+    c->spsr_fiq = st->spsr_fiq; c->spsr_svc = st->spsr_svc; c->spsr_abt = st->spsr_abt; c->spsr_irq = st->spsr_irq; c->spsr_und = st->spsr_und;
+    memcpy(c->cp15, st->cp15, sizeof(c->cp15));
+    memcpy(c->tlb_va_base, st->tlb_va_base, sizeof(c->tlb_va_base));
+    memcpy(c->tlb_pa_base, st->tlb_pa_base, sizeof(c->tlb_pa_base));
+    memcpy(c->tlb_mask, st->tlb_mask, sizeof(c->tlb_mask));
+    memcpy(c->tlb_valid, st->tlb_valid, sizeof(c->tlb_valid));
     tlb_rebuild_mirror(c);
-    c->cycles_total = st.cycles_total;
-    c->irq_line = st.irq_line; c->fiq_line = st.fiq_line; c->halted = st.halted;
+    c->cycles_total = st->cycles_total;
+    c->irq_line = st->irq_line; c->fiq_line = st->fiq_line; c->halted = st->halted;
     /* The SoC savestate loader can replace the RAM allocation after the CPU
      * object has already cached fastmem pointers for native JIT helpers.
      * Drop those cached bases so the next JIT run reacquires current RAM/BIOS
@@ -3373,6 +3354,13 @@ int arm920t_state_load_io(arm920t_t *c, state_io_t *io) {
     c->jit_ram_base = NULL;
     c->jit_bios_base = NULL;
     arm920t_jit_invalidate_all(c, ARM_JIT_INV_STATE_LOAD);
+}
+
+int arm920t_state_load_io(arm920t_t *c, state_io_t *io) {
+    if (!c || !io) return 0;
+    arm920t_state_image_t st;
+    if (!state_io_read(io, &st, sizeof(st))) return 0;
+    arm920t_state_apply(c, &st);
     return 1;
 }
 

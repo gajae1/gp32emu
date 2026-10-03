@@ -269,6 +269,26 @@ static void case_branch(void) {
     teardown_pair();
 }
 
+/* A long stitched branch chain crosses native trace capacity. Each branch
+ * skips an ADD trap, so a wrong fallthrough at a trace boundary is observable
+ * even if execution eventually reaches the same final loop. */
+static void case_branch_chain(void) {
+    uint32_t program[258];
+    for (unsigned i = 0; i < 128u; ++i) {
+        program[2u * i] = 0xea000000u;      /* B pc+8 */
+        program[2u * i + 1u] = 0xe2811001u; /* ADD r1,r1,#1: must be skipped */
+    }
+    program[256] = 0xe3a00077u;
+    program[257] = 0xeafffffeu;
+    current_case = "stitched-branch-chain";
+    setup_pair(); load_both(program, GP32_ARRAY_COUNT(program));
+    CHECK(arm920t_run(cpu_jit, 256u) == arm920t_run(cpu_ref, 256u),
+          "branch chain budget");
+    compare_state();
+    CHECK(ref_reg(0) == 0x77u && ref_reg(1) == 0u, "branch chain oracle");
+    teardown_pair();
+}
+
 /* BX is a common ARM function return.  Check the native even-target path,
  * condition skip, Thumb interworking fallback, and the BX PC pipeline case. */
 static void case_bx(void) {
@@ -1596,8 +1616,11 @@ int main(int argc, char **argv) {
      * without rerunning unrelated differential workloads. */
     int ram_end_only = argc == 2 && !strcmp(argv[1], "--ram-end");
     int leaf_only = argc == 2 && !strcmp(argv[1], "--unframed-leaf");
+    int chain_only = argc == 2 && !strcmp(argv[1], "--branch-chain");
     int callback_only = argc == 2 && !strcmp(argv[1], "--callback-pc");
-    if (callback_only) {
+    if (chain_only) {
+        case_branch_chain();
+    } else if (callback_only) {
         case_callback_pc();
     } else if (leaf_only) {
         case_unframed_leaf();
@@ -1623,6 +1646,7 @@ int main(int argc, char **argv) {
     case_flags();
     case_shift();
     case_branch();
+    case_branch_chain();
     case_bx();
     case_mem();
     case_half_modes();
@@ -1641,7 +1665,7 @@ int main(int argc, char **argv) {
         return 1;
     }
     printf("PASS: arm jit differential (%s), jit events=%" PRIu64 " fallbacks=%" PRIu64 "\n",
-           callback_only ? "callback-PC" : (leaf_only ? "unframed-leaf" : (ram_end_only ? "mapped-page-RAM-end" : "flags/shift/branch/mem/half/block/mul/seeded/budget")),
+           chain_only ? "branch-chain" : callback_only ? "callback-PC" : (leaf_only ? "unframed-leaf" : (ram_end_only ? "mapped-page-RAM-end" : "flags/shift/branch/mem/half/block/mul/seeded/budget")),
            jit_events, jit_fallbacks);
     return 0;
 }
