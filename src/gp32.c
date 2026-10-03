@@ -10,6 +10,7 @@
 #define ARM_MODE_SVC 0x13u
 #define ARM_I_FLAG 0x00000080u
 #define ARM_F_FLAG 0x00000040u
+#define ARM_T_FLAG 0x00000020u
 #define GP32_DIRECT_GPOS_TIMER_COUNT 4u
 #define GP32_DIRECT_PCM_CHANNELS 4u
 
@@ -1631,7 +1632,8 @@ static int direct_call_guest_function3(gp32_t *g, uint32_t fn, uint32_t r0, uint
     if (!direct_ram_range(g, cb_stack - 0x300u, 0x300u)) return 0;
     g->direct_hle_callback_running = 1u;
     g->direct_hle_callback_returned = 0u;
-    arm920t_set_cpsr(g->cpu, ARM_MODE_SVC | ARM_I_FLAG | ARM_F_FLAG);
+    arm920t_set_cpsr(g->cpu, ARM_MODE_SVC | ARM_I_FLAG | ARM_F_FLAG |
+                    ((fn & 1u) ? ARM_T_FLAG : 0u));
     arm920t_set_reg(g->cpu, 0, r0);
     arm920t_set_reg(g->cpu, 1, r1);
     arm920t_set_reg(g->cpu, 2, r2);

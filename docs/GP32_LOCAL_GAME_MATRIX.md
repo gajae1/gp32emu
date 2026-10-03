@@ -8,10 +8,10 @@ different payloads. The menu shows 20 games; the BIOS is not a game entry.
 No ROM, save or configuration change was needed for this verification.
 
 Language evidence is cumulative across the captures below, not just the last
-autopulse pass. Twelve titles have at least one captured screen containing
-Hangul: Dooly Soccer 2002, Dyhard, GP Fight, Her Knights, Little Girl Mill,
+autopulse pass. Thirteen titles have at least one captured screen containing
+Hangul: Dooly Soccer 2002, Dungeon & Guarder, Dyhard, GP Fight, Her Knights, Little Girl Mill,
 OneShot Voca, Princess Maker 2, Tanggle's Magic Square, Therapy, W.B.W., Wizard
-Slayer, and Woody & Kunta. The other eight remain Korea-region-labelled with
+Slayer, and Woody & Kunta. The other seven remain Korea-region-labelled with
 their displayed language unverified. This does not establish complete
 localization or full-game compatibility for any title.
 
@@ -515,3 +515,21 @@ acceptance, a physical listening test, or proof of universal 60fps.
 Evidence: `F:/GP32/results/resume31-audio/probe.csv`,
 `resume31-audio-runtime-verified.json`, `resume31-audio-summary.json`,
 `resume31-audio-runtime.png`. User settings, ROMs and saves are unchanged.
+
+## Dungeon & Guarder dialogue and movement (resume46, 2026-10-04)
+
+The resume28 background-only state was advanced by 1,200 frames with BIOS
+autopulse disabled. It reaches a Hangul dialogue screen with multiple actors;
+1,800 additional frames of bounded A presses clear the dialogue and reach the
+first fight. Two replays then start from that identical state for 300 frames:
+no input versus held right with two A presses. The latter moves the player
+right and scrolls the castle background, while the idle replay stays at the
+initial position. This establishes visible movement response and adds one
+title to the cumulative Hangul evidence, not complete-game acceptance.
+The endpoint alone does not prove that the A presses inflicted damage.
+
+This was a Windows headless replay using the resume45 core, not an H700
+frontend/audio-latency measurement. The captures include generated PCM, but
+physical audio quality was not evaluated. Exact commands, private states,
+PCM and images (`advance.png`, `dialog.png`, `move.png`, `idle.png`) are under
+`F:/GP32/results/resume46-dungeon/`. No user save or ROM was modified.

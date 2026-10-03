@@ -2879,3 +2879,27 @@ Evidence and reproducible deployment record: `F:/GP32/results/resume45-timer/`.
 The H700 core SHA-256 is
 `7bad89507a776fb2d58cff672747b95f811d32640dc0e711279761ad1a745c1f`.
 No CPU multiplier or save-state format change is included.
+
+### Thumb HLE callback entry and Korean gameplay followup (resume46)
+
+Direct-mode guest callbacks now select ARM/Thumb state from function-pointer
+bit zero before entering the callback. Previously the pointer was accepted
+and its low bit cleared, but CPSR always selected ARM, so Thumb code was
+decoded as ARM instructions. The shared entry serves both GPOS callbacks and
+SDK PCM refill functions. The regression uses actual Thumb load/add/store/BX
+instructions and returns through the ARM firmware trap; the waiting caller's
+registers and CPSR must still be restored.
+
+The new callback case failed with both interpreter and JIT before the fix.
+Afterward the expanded timer regression passed on Windows and native H700,
+including existing disabled/split-period and IRQ/FIQ cases. The Windows PCM
+regression and Windows/H700/Android arm64-v8a/armeabi-v7a libretro builds passed.
+This proves the shared callback-entry mechanism, not a complete Thumb SDK
+application or Android runtime. Evidence: `F:/GP32/results/resume46-callback/`.
+
+A separate Windows replay advanced Korean Dungeon & Guarder beyond the old
+background-only capture, through Hangul dialogue into its first fight. Paired
+300-frame runs from the same state demonstrate rightward character movement
+and scrolling. The local matrix now records Hangul evidence for 13 of the
+20 owned Korea-labelled titles; seven remain language-unverified. See the
+resume46 matrix entry for exact scope and artifacts. No ROM was downloaded.

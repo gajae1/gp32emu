@@ -10,7 +10,7 @@ static void run_wait(gp32_t *g, uint32_t budget) {
     CHECK(g->direct_vblank_wait_cycles == 0u, "consume wait exactly once");
 }
 
-static void check_timer(int jit, uint32_t callback_mode) {
+static void check_timer(int jit, uint32_t callback_mode, int thumb) {
     gp32_t *g = gp32_create(NULL);
     CHECK(g != NULL, "create core");
     if (!g) return;
@@ -23,6 +23,14 @@ static void check_timer(int jit, uint32_t callback_mode) {
         0xe5801000u, /* STR r1,[r0] */
         0xe12fff1eu, /* BX lr: firmware callback-return trap */
         counter,
+    };
+    const uint16_t thumb_code[] = {
+        0x4802u, /* LDR r0,[pc,#8]: literal at callback + 12 */
+        0x6801u, /* LDR r1,[r0] */
+        0x3101u, /* ADD r1,#1 */
+        0x6001u, /* STR r1,[r0] */
+        0x4770u, /* BX lr: return to the ARM firmware trap */
+        0x46c0u, /* NOP: align literal */
     };
     const uint32_t mode_code[] = {
         0xe59f001cu, /* LDR r0,[pc,#28]: counter address */
@@ -41,6 +49,11 @@ static void check_timer(int jit, uint32_t callback_mode) {
     size_t count = callback_mode ? GP32_ARRAY_COUNT(mode_code) : GP32_ARRAY_COUNT(code);
     for (size_t i = 0; i < count; ++i)
         s3c2400_write32(g->soc, callback + (uint32_t)i * 4u, program[i]);
+    if (thumb) {
+        for (size_t i = 0; i < GP32_ARRAY_COUNT(thumb_code); ++i)
+            s3c2400_write16(g->soc, callback + (uint32_t)i * 2u, thumb_code[i]);
+        s3c2400_write32(g->soc, callback + 12u, counter);
+    }
     for (unsigned i = 0; i < 16u; ++i) arm920t_set_reg(g->cpu, i, 0x1000u + i * 4u);
     arm920t_set_cpsr(g->cpu, ARM_MODE_SVC | ARM_I_FLAG | ARM_F_FLAG);
     uint32_t regs[16], cpsr = arm920t_get_cpsr(g->cpu);
@@ -49,7 +62,7 @@ static void check_timer(int jit, uint32_t callback_mode) {
     g->direct_hle_gpos_timers_enabled = 1u;
     g->direct_hle_gpos_timer[0].configured = 1u;
     g->direct_hle_gpos_timer[0].enabled = 1u;
-    g->direct_hle_gpos_timer[0].callback = callback;
+    g->direct_hle_gpos_timer[0].callback = callback | (thumb ? 1u : 0u);
     g->direct_hle_gpos_timer[0].tps = 1000u;
     const uint32_t clock = direct_run_clock_hz(g);
     CHECK(clock >= 1000u && clock % 1000u == 0u, "integral millisecond fixture clock");
@@ -72,9 +85,10 @@ static void check_timer(int jit, uint32_t callback_mode) {
 
 int main(void) {
     for (int jit = 0; jit <= 1; ++jit) {
-        check_timer(jit, 0);
-        check_timer(jit, 0x12u); /* IRQ banks SP/LR. */
-        check_timer(jit, 0x11u); /* FIQ also banks r8-r12. */
+        check_timer(jit, 0, 0);
+        check_timer(jit, 0x12u, 0); /* IRQ banks SP/LR. */
+        check_timer(jit, 0x11u, 0); /* FIQ also banks r8-r12. */
+        check_timer(jit, 0, 1); /* Thumb callback, ARM caller and return trap. */
     }
     if (failures) return 1;
     puts("PASS: direct GPOS callbacks during vblank wait, disabled timer, split budget and CPU context");
