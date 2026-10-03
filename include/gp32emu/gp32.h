@@ -150,7 +150,7 @@ typedef struct gp32_cpu_profile {
     uint64_t jit_misses;
     uint64_t jit_fallbacks;          /* unclassified ops reaching the exact interpreter */
     uint64_t jit_blocks_compiled;
-    uint64_t jit_block_conflicts;    /* translate overwrote a live same-generation block */
+    uint64_t jit_block_conflicts;    /* translate evicted a live same-generation block at a different PC */
     uint64_t jit_translate_failures;
     uint64_t jit_native_compiled;
     uint64_t jit_native_failed;      /* includes code-cache-full on backends that cannot count it directly */

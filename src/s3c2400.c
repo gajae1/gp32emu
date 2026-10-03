@@ -1062,6 +1062,21 @@ static uint32_t lcd_word_permute(uint32_t raw, uint32_t mode) {
     return raw;
 }
 
+/* One contiguous-run word decoded to its two 16-bpp pixel halfwords in
+ * consumption order: *a is the first pixel, *b the second.  This is exactly
+ * the (HWSWP<<1)|BSWP assembly lcd_dma_read() performs, decomposed so the
+ * swap decisions fold once per frame instead of once per word: BSWP swaps
+ * the byte order of the whole word (which also exchanges the halfwords), and
+ * HWSWP then selects which half is consumed first.  mode 0/2 reduce to two
+ * halfword extracts, modes 1/3 add a single 32-bit byteswap. */
+static inline void lcd_pair16(uint32_t d, uint32_t mode, uint32_t *a, uint32_t *b) {
+    uint32_t v = d;
+    if (mode & 1u) v = (v >> 24) | ((v >> 8) & 0x0000ff00u) |
+                       ((v << 8) & 0x00ff0000u) | (v << 24); /* BSWP */
+    if (mode & 2u) { *a = v & 0xffffu; *b = v >> 16; }       /* HWSWP */
+    else           { *a = v >> 16;     *b = v & 0xffffu; }
+}
+
 /* Whole-run contiguous scanout.  With OFFSIZE == 0 no read is ever displaced:
  * halfword N of the run sits at start + 2*N no matter where the page counter
  * wraps, so the words the frame consumes are one straight RAM block.  The
@@ -1092,26 +1107,42 @@ static int lcd_render_contiguous(s3c2400_t *s, uint32_t w, uint32_t h, uint32_t 
     uint32_t i = 0u, y = 0u;
     uint32_t *row = s->fb;
     if (bits == 16u) {
-        while (y < h && i + wprow <= words) {
-            const uint8_t *p = src + (size_t)i * 4u;
-            uint32_t *dst = row;
-            for (uint32_t k = 0; k < wprow; ++k, p += 4, dst += 2) {
-                uint32_t d = gp32_ld32le(p);
-                d = lcd_word_permute(d, mode);
-                dst[0] = color16_lut[(uint16_t)(d >> 16)];
-                dst[1] = color16_lut[(uint16_t)d];
-            }
-            i += wprow; ++y; row += 240u;
-        }
-        /* Fewer words than one row are left, so this row can no longer wrap. */
-        uint32_t *dst = row;
-        while (i < words) {
-            uint32_t d = gp32_ld32le(src + (size_t)i * 4u);
-            d = lcd_word_permute(d, mode);
-            ++i;
-            dst[0] = color16_lut[(uint16_t)(d >> 16)];
-            dst[1] = color16_lut[(uint16_t)d];
-            dst += 2;
+        /* The swap mode is fixed for the whole run, so the word loop is
+         * specialized per mode: the two per-word lcd_word_permute() branch
+         * tests disappear, the no-swap modes become pure half extraction and
+         * the swap modes use one 32-bit byteswap per pixel pair. */
+        switch (mode) {
+#define LCD16_SCANOUT(MODE)                                                  \
+            do {                                                             \
+                while (y < h && i + wprow <= words) {                        \
+                    const uint8_t *p = src + (size_t)i * 4u;                 \
+                    uint32_t *dst = row;                                     \
+                    for (uint32_t k = 0; k < wprow; ++k, p += 4, dst += 2) { \
+                        uint32_t a, b;                                       \
+                        lcd_pair16(gp32_ld32le(p), MODE, &a, &b);            \
+                        dst[0] = color16_lut[a];                             \
+                        dst[1] = color16_lut[b];                             \
+                    }                                                        \
+                    i += wprow; ++y; row += 240u;                            \
+                }                                                            \
+                /* Fewer words than one row are left, so this row can no     \
+                 * longer wrap. */                                           \
+                uint32_t *dst = row;                                         \
+                while (i < words) {                                          \
+                    uint32_t a, b;                                           \
+                    lcd_pair16(gp32_ld32le(src + (size_t)i * 4u), MODE,      \
+                               &a, &b);                                      \
+                    ++i;                                                     \
+                    dst[0] = color16_lut[a];                                 \
+                    dst[1] = color16_lut[b];                                 \
+                    dst += 2;                                                \
+                }                                                            \
+            } while (0)
+        case 0u: LCD16_SCANOUT(0u); break;
+        case 1u: LCD16_SCANOUT(1u); break;
+        case 2u: LCD16_SCANOUT(2u); break;
+        default: LCD16_SCANOUT(3u); break;
+#undef LCD16_SCANOUT
         }
     } else {
         const unsigned shift = 32u - bits;
