@@ -1704,3 +1704,85 @@ The production core was atomically installed with SHA-256
 The previous core is backed up at
 `/mnt/SDCARD/gp32-dev/resume23-installed-core-before.so`.
 Installation record: `F:/GP32/results/resume23-core-installed.json`.
+
+
+### Callback pacing experiment and proven leaf returns (resume24)
+
+An external diagnostic core moved audio submission/flush before the video
+callback while freezing all guest core code at 7f99e06. The same 2400-frame
+Wizard replay still matched guest/source-audio state on every frame and all
+1,763,356 offered frames were accepted, with no ALSA errors or recoveries.
+However, late-300 intervals above 20 ms increased from 5 to 10, p99 rose from
+28.125 to 31.982 ms, and threaded-video drops rose from 19 to 28. This does not
+establish a general order-dependent regression, but provides no reason to
+adopt the change. The experiment was rejected; production callback order and
+all user settings remain unchanged. Evidence:
+`F:/GP32/results/resume24-pacing/comparison.json`,
+`resume24-aligned-summary.json`, `resume24-aligned-runtime-verified.json`.
+
+The installed frontend identifies itself as RetroArch 1.22.2 / 69a4f0e.
+That exact upstream [alsathread source](https://github.com/libretro/RetroArch/blob/69a4f0e/audio/drivers/alsathread.c)
+waits for FIFO space in its blocking write path and drains one ALSA period on
+a worker. This is consistent with the observed callback waits, not proof of
+a core defect or permission to replace the frontend/change its buffering.
+
+A separate checked-helper census found zero ordinary or inlined BX calls in
+the measured Wizard selection and Her Knights combat windows. Together with
+the previously rejected general BX candidate, this rules out prioritizing
+that path for these workloads. No BX-only production patch was added.
+Evidence: `F:/GP32/results/resume24-bx-census/{wizard,her}.json`.
+
+The retained return optimization keeps PC materialization and only removes
+the redundant LR load/alignment/target guard when a decoded caller successor
+follows a proven register-only leaf. The guest return op and cycle count stay
+in the trace; returns at a trace boundary retain their guarded path. Review
+rejected an earlier PC-store-elision prototype because x64 MMU-off MMIO
+callbacks could observe a stale PC. That prototype was never installed.
+
+The final H700 candidate improves qualified Wizard late-window ABBA median
+throughput from 91.3025 to 92.999 fps (+1.86%), with all seven CPU/video/audio
+fields matching and twelve measured clock samples at 1512 MHz. The earlier
+2.58% prototype result is superseded and is not a shipped speedup. The full
+A64 differential passed before the PC-store correction; the affected leaf
+subset was rerun after it and passed (68,050 events). Evidence:
+`F:/GP32/results/resume24-return-final-abba.json`,
+`resume24-return-jit-h700.json`, `resume24-return-final-leaf-h700.json`.
+
+SWE found an independent IIS scheduling inconsistency in byte-sized DMA2:
+each byte transfer already pushes a FIFO halfword, but the scheduler requested
+four transfers per stereo-frame tick. It now requests two, as in halfword DMA.
+This prevents two output frames per declared sample period and an early
+terminal-count IRQ. A focused regression demonstrates the old 8 frames/2 IRQs
+versus the expected 4 frames/1 IRQ after four ticks. H700 passes the corrected
+case and the prior LCD/PLL trace remains 47779e5037cd7b27. No state layout or
+16/32-bit DMA pacing changed; this is not a claim that the measured games'
+audible issues were caused by byte DMA. Evidence:
+`F:/GP32/results/resume24-iis-h700.json`, `resume24-iis/`.
+
+The return review also exposed a pre-existing x64 MMU-off callback-PC bug.
+Native word/byte/halfword load/store helpers could call MMIO with the PC of
+an earlier instruction. They now materialize the executing op's PC+4 only on
+the helper branches, leaving direct RAM/BIOS hits unchanged. A callback that
+returns/records the CPU PC reproduced 26 baseline mismatches; the fixed
+sequence matches exec_arm_at for all eight load/store variants after both
+MOV and BX leaf returns. The full x64 differential passes 110,874 events;
+H700's affected callback subset also passes. Evidence:
+`F:/GP32/results/resume24-x64/{callback-before,callback-after,differential-after}.log`,
+`resume24-callback-pc-h700.json`.
+
+Final real RetroArch replay again matches every guest/source-audio frame,
+accepts all 1,763,356 stereo frames without pending tails, and reports no ALSA
+errors/recoveries. Late core time averages 9.687 ms; frontend interval p99
+remains 31.880 ms, so the residual pacing issue is not declared fixed.
+MainUI returns normally and settings hashes are unchanged. Windows and Android
+ARM64/ARMv7 cores build successfully. The later x64-only source changes alter
+A64 debug metadata; the measured and final relinked probes are byte-identical
+after removing debug sections (SHA-256 45f6a97084e4bb94bc167a53962233fb45116ee47c0e00425ab6e582fd89d772),
+so the completed runtime evidence is reused. Evidence:
+`F:/GP32/results/resume24-final-aligned-runtime-verified.json`,
+`resume24-final-aligned-summary.json`, `resume24-return/relink-parity.json`.
+
+Installed production SHA-256:
+`46fdcec8668efcb497665e7ef702f44e2a682bda4bf67eaeac30ffaace8e935f`.
+Backup: `/mnt/SDCARD/gp32-dev/resume24-final-installed-core-before.so`.
+Record: `F:/GP32/results/resume24-final-core-installed.json`.

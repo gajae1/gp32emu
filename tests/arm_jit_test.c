@@ -26,12 +26,16 @@
 #define RAM_SIZE  0x800000u
 #define CODE_ADDR 0x00000400u           /* program base inside the BIOS region */
 #define DATA_ADDR (RAM_BASE + 0x1000u)
+#define IO_ADDR   0x14000000u
 #define MAX_REPORT 12
 
 typedef struct {
     arm_bus_t bus;
     uint8_t bios[BIOS_SIZE];
     uint8_t ram[RAM_SIZE];
+    arm920t_t *observe_cpu;
+    uint32_t io_pc[8];
+    unsigned io_count;
 } test_bus_t;
 
 static test_bus_t bus_jit, bus_ref;
@@ -57,29 +61,47 @@ static uint8_t *bus_ptr(test_bus_t *b, uint32_t a, size_t bytes) {
     if (a >= RAM_BASE && (uint64_t)(a - RAM_BASE) + bytes <= RAM_SIZE) return b->ram + (a - RAM_BASE);
     return NULL;
 }
+static uint32_t tb_io_value(test_bus_t *b, uint32_t a) {
+    if (b->observe_cpu && a == IO_ADDR) {
+        uint32_t pc = arm920t_get_pc(b->observe_cpu);
+        if (b->io_count < GP32_ARRAY_COUNT(b->io_pc)) b->io_pc[b->io_count] = pc;
+        ++b->io_count;
+        return pc;
+    }
+    return UINT32_MAX;
+}
 static uint8_t tb_read8(void *u, uint32_t a) {
-    uint8_t *p = bus_ptr((test_bus_t *)u, a, 1u);
-    return p ? p[0] : 0xffu;
+    test_bus_t *b = (test_bus_t *)u;
+    uint8_t *p = bus_ptr(b, a, 1u);
+    return p ? p[0] : (uint8_t)tb_io_value(b, a);
 }
 static uint16_t tb_read16(void *u, uint32_t a) {
-    uint8_t *p = bus_ptr((test_bus_t *)u, a, 2u);
-    return p ? gp32_ld16le(p) : 0xffffu;
+    test_bus_t *b = (test_bus_t *)u;
+    uint8_t *p = bus_ptr(b, a, 2u);
+    return p ? gp32_ld16le(p) : (uint16_t)tb_io_value(b, a);
 }
 static uint32_t tb_read32(void *u, uint32_t a) {
-    uint8_t *p = bus_ptr((test_bus_t *)u, a, 4u);
-    return p ? gp32_ld32le(p) : 0xffffffffu;
+    test_bus_t *b = (test_bus_t *)u;
+    uint8_t *p = bus_ptr(b, a, 4u);
+    return p ? gp32_ld32le(p) : tb_io_value(b, a);
 }
 static void tb_write8(void *u, uint32_t a, uint8_t v) {
-    uint8_t *p = bus_ptr((test_bus_t *)u, a, 1u);
+    test_bus_t *b = (test_bus_t *)u;
+    uint8_t *p = bus_ptr(b, a, 1u);
     if (p) p[0] = v;
+    else (void)tb_io_value(b, a);
 }
 static void tb_write16(void *u, uint32_t a, uint16_t v) {
-    uint8_t *p = bus_ptr((test_bus_t *)u, a, 2u);
+    test_bus_t *b = (test_bus_t *)u;
+    uint8_t *p = bus_ptr(b, a, 2u);
     if (p) gp32_st16le(p, v);
+    else (void)tb_io_value(b, a);
 }
 static void tb_write32(void *u, uint32_t a, uint32_t v) {
-    uint8_t *p = bus_ptr((test_bus_t *)u, a, 4u);
+    test_bus_t *b = (test_bus_t *)u;
+    uint8_t *p = bus_ptr(b, a, 4u);
     if (p) gp32_st32le(p, v);
+    else (void)tb_io_value(b, a);
 }
 static uint8_t *tb_fastmem(void *u, uint32_t a, size_t bytes, int write) {
     (void)write;
@@ -762,6 +784,51 @@ static void run_native_case(void) {
     uint32_t j = arm920t_run(cpu_jit, 64u), r = arm920t_run(cpu_ref, 64u);
     CHECK(j == 64u && r == 64u, "native case instruction budget");
     compare_state();
+}
+
+/* Bus callbacks observe the current instruction's PC+4, even after an inlined
+ * return. Cover each MMU-off native bus helper in one caller sequence. */
+static void case_callback_pc(void) {
+    const uint32_t returns[] = {0xe1a0f00eu, 0xe12fff1eu};
+    const uint32_t expected[] = {0x408u, 0x40cu, 0x410u, 0x414u,
+                                 0x418u, 0x41cu, 0x420u, 0x424u};
+    const uint32_t program[] = {
+        0xeb00001eu, /* BL CODE_ADDR+0x80 */
+        0xe5901000u, /* LDR r1,[r0] */
+        0xe5d02000u, /* LDRB r2,[r0] */
+        0xe1d030b0u, /* LDRH r3,[r0] */
+        0xe1d040d0u, /* LDRSB r4,[r0] */
+        0xe1d050f0u, /* LDRSH r5,[r0] */
+        0xe5806000u, /* STR r6,[r0] */
+        0xe5c06000u, /* STRB r6,[r0] */
+        0xe1c060b0u, /* STRH r6,[r0] */
+        0xeafffffeu,
+    };
+    for (unsigned ret = 0; ret < GP32_ARRAY_COUNT(returns); ++ret) {
+        current_case = ret ? "callback-PC-bx" : "callback-PC-mov";
+        setup_pair();
+        arm920t_set_trace(cpu_ref, 1, NULL, NULL); /* exec_arm_at oracle */
+        bus_ref.observe_cpu = cpu_ref;
+        bus_jit.observe_cpu = cpu_jit;
+        load_both(program, GP32_ARRAY_COUNT(program));
+        set_mem_both(CODE_ADDR + 0x80u, 0xe3a07001u); /* MOV r7,#1 */
+        set_mem_both(CODE_ADDR + 0x84u, returns[ret]);
+        set_reg_both(0, IO_ADDR);
+        set_reg_both(6, 0x12345678u);
+        run_native_case();
+        CHECK(bus_ref.io_count == GP32_ARRAY_COUNT(expected) &&
+              bus_jit.io_count == GP32_ARRAY_COUNT(expected), "callback access count");
+        CHECK(!memcmp(bus_ref.io_pc, expected, sizeof(expected)), "interpreter callback PC+4");
+        for (unsigned i = 0; i < GP32_ARRAY_COUNT(expected); ++i)
+            if (bus_jit.io_pc[i] != bus_ref.io_pc[i])
+                report("callback PC", bus_jit.io_pc[i], bus_ref.io_pc[i]);
+        CHECK(ref_reg(1) == 0x408u, "MMIO read did not return interpreter PC+4");
+        gp32_cpu_profile_t profile;
+        arm920t_get_cpu_profile(cpu_jit, &profile);
+        if (profile.supported && profile.native_backend)
+            CHECK(profile.native_block_calls != 0u, "callback case never entered native code");
+        teardown_pair();
+    }
 }
 
 /* An unframed BL leaf must retire the real return, including short budgets.
@@ -1529,7 +1596,10 @@ int main(int argc, char **argv) {
      * without rerunning unrelated differential workloads. */
     int ram_end_only = argc == 2 && !strcmp(argv[1], "--ram-end");
     int leaf_only = argc == 2 && !strcmp(argv[1], "--unframed-leaf");
-    if (leaf_only) {
+    int callback_only = argc == 2 && !strcmp(argv[1], "--callback-pc");
+    if (callback_only) {
+        case_callback_pc();
+    } else if (leaf_only) {
         case_unframed_leaf();
     } else if (ram_end_only) {
         case_native_mapped_ram_end();
@@ -1549,6 +1619,7 @@ int main(int argc, char **argv) {
     case_native_longmul_psr();
     case_native_mapped_block();
     case_unframed_leaf();
+    case_callback_pc();
     case_flags();
     case_shift();
     case_branch();
@@ -1570,7 +1641,7 @@ int main(int argc, char **argv) {
         return 1;
     }
     printf("PASS: arm jit differential (%s), jit events=%" PRIu64 " fallbacks=%" PRIu64 "\n",
-           leaf_only ? "unframed-leaf" : (ram_end_only ? "mapped-page-RAM-end" : "flags/shift/branch/mem/half/block/mul/seeded/budget"),
+           callback_only ? "callback-PC" : (leaf_only ? "unframed-leaf" : (ram_end_only ? "mapped-page-RAM-end" : "flags/shift/branch/mem/half/block/mul/seeded/budget")),
            jit_events, jit_fallbacks);
     return 0;
 }
