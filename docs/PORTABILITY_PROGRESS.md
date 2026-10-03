@@ -2238,3 +2238,53 @@ The production core is
 The prior core is backed up at
 `/mnt/SDCARD/gp32-dev/resume31-final-installed-core-before.so`.
 MainUI resumes normally; user ROMs, saves and settings remain unchanged.
+
+
+### NEON frontend rotation and input review (resume32, 2026-10-03)
+
+The native 240x320 LCD frame now uses a four-by-four NEON transpose for the
+libretro 320x240 counter-clockwise presentation. It retains opaque alpha,
+source stride handling, and the scalar path on targets without NEON. The
+landscape and unusual-size paths, callback order, guest CPU, and audio code
+are unchanged. This is a frontend conversion optimization, not a JIT gain.
+
+On H700, a same-process ABBA component comparison after a 30-second warmup
+measured scalar 242.349/242.795 microseconds and NEON 214.878/215.651
+microseconds per frame: means 242.572 -> 215.2645 us, an 11.26% reduction
+(0.0273 ms per frame). All eight boundary clock readings were 1512 MHz.
+The earlier short-warmup run crossed 480/720 MHz and is not used for a speed
+claim. Twelve combinations of source stride/alignment matched every output
+pixel and destination guards. These figures are isolated conversion timings;
+no equivalent whole-game FPS improvement is claimed.
+Evidence: `F:/GP32/results/resume32-video/bench.c`, `h700.json`,
+`h700-primed.json`, and `screenshot-comparison.json`.
+
+The existing libretro audio/video test now covers portrait rotation with both
+packed and padded source rows, an offset source pointer, RGB/alpha fidelity,
+and destination guards. The focused suite passed on Windows and native H700;
+Windows, H700, Android arm64 and Android ARMv7 production builds succeeded.
+H700 test record: `F:/GP32/results/resume32-video/audio-test-h700.json`.
+
+The real RetroArch Tomak Korea replay completed 901 runs (900 state-replay
+frames), with every guest PC, source PCM count/nonzero count and IISCON matching
+the standalone reference. All 661,990 offered stereo frames were accepted,
+with no partial/zero returns, queued tails, ALSA errors or recoveries. The
+final 640x480 gameplay screenshot is pixel-identical to resume31. MainUI
+returned and settings hashes were unchanged. Measured-600 core mean was
+8.036 ms; frontend interval p99 31.958 ms/max 32.071 ms remains a pacing
+limitation. This change does not fix the frontend audio waits or establish
+physical speaker/input-latency acceptance. Records:
+`F:/GP32/results/resume32-video-audio-runtime-verified.json`,
+`resume32-video-audio-summary.json`, `resume32-video-audio-runtime.png`.
+
+A bounded Sol input review found no concrete poll/latch delay: current input
+is applied before CPU execution, GPIO is excluded from stable-read skipping,
+and state-loaded button masks are overwritten before the next guest run.
+No input patch was warranted. The independent audio-state agent failed with
+HTTP 429 before yielding findings; no successful audio-state review is claimed.
+Review: `F:/GP32/results/resume32-input-review.md`.
+
+The production H700 core SHA-256 is
+`2b6b9883a53da4529bfd0f99936c62766a982cf98c5ce9281f7f8041a2920dd1`.
+Installation record: `F:/GP32/results/resume32-core-installed.json`; the previous
+core is retained as `/mnt/SDCARD/gp32-dev/resume32-installed-core-before.so`.
