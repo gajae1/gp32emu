@@ -548,3 +548,24 @@ records (`dialog.json`, `settle.json`, `follow.json`), private intermediate
 states and timed screenshots. Only private replay outputs were written; no
 device library, user save or ROM was modified. The cumulative language count
 is now 14 of the 20 installed Korea-labelled titles, with six still unverified.
+
+## Raphael menu and stage entry (resume56, 2026-10-04)
+
+Two Windows headless replays of 1,800 frames each advance the resume28
+background-only private state. The first reaches the Raphael title and
+PRESS START prompt. The second uses explicit START press/release, then A
+press/release, and reaches NEW GAME/LOAD GAME followed by a stage containing
+the player, enemies, platforms, ladders, four lives and SCORE 0. Timed and
+final captures show the stage. This establishes controlled menu-to-stage
+entry, not complete-game compatibility or movement/attack validation.
+
+No visible Hangul appears in these captures. Raphael remains language-
+unverified, so cumulative Hangul evidence stays at 14 of 20 titles. This
+uses the existing Windows executable; it does not measure the new AArch64
+shortcut, H700 frontend audio or physical input latency.
+
+Evidence: `F:/GP32/results/resume56-raphael/start.json` and `menu.json` retain
+the commands, with private states and screenshots including `menu-0.png`,
+`menu-1.png` and `menu.png`. ROM SHA-256 is
+`fef67e4ef302a8726e54ee7655acbb9defeb5f97dc347a2593008134577abbd1`.
+No ROM, device library, user save or configuration was changed.

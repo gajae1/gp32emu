@@ -835,3 +835,36 @@ candidate is `42c3d697a074917074e630bd91dea2739ef29347c6d50f24ed69c1d9822bd515`.
 Installed core is `3a0fb70ae46c3bcefc618e5a1100295130da291e26318f40ae3624571059f15a`;
 the previous core is backed up as `resume55-installed-core-before.so` under
 the device's `gp32-dev` directory. Protected settings are unchanged.
+
+## resume56: inactive interrupt-pair shortcut
+
+AArch64 native self-loop edges now load the adjacent 32-bit IRQ/FIQ lines
+as one 64-bit pair. When both are zero, they skip the independent CPSR-mask
+checks. Any nonzero bit, including a noncanonical value restored from a
+state, retains the original IRQ and FIQ checks. A compile-time assertion
+requires the expected field sizes and adjacency. Budget, generation and
+cache fences remain unchanged; no interrupt state is cached.
+
+Qualified H700 ABBA at observed 1,512 MHz preserves all seven CPU/video/PCM
+fields exactly:
+
+| Korea scene | Baseline core fps | Candidate core fps | Median change |
+| --- | --- | --- | --- |
+| Her Knights, warm 1200 / measured 1200 | 159.698 / 159.647 | 160.328 / 160.452 | +0.45% |
+| Tomak, warm 300 / measured 600 | 112.587 / 112.721 | 113.761 / 113.081 | +0.68% |
+| Little Wizard, warm 2100 / measured 300 | 404.352 / 402.205 | 402.443 / 405.771 | +0.21% |
+
+These sub-percent observations are near parity, not evidence of a robust
+speedup or higher display frame rate. The shortcut reduces the emitted work
+on the inactive path. H700 full native differential passes (9,510 events /
+21 fallbacks), as does stable-poll equivalence. Android ARM64 builds; no new
+Android runtime, physical audio or input-latency result is claimed.
+
+Evidence: `F:/GP32/results/resume56-edge/` contains the qualified comparisons,
+test/build logs and guarded deployment record. Baseline benchmark SHA-256 is
+`42c3d697a074917074e630bd91dea2739ef29347c6d50f24ed69c1d9822bd515`;
+candidate is `1c3ae96b1ba50b21585eb5f20d9e894ad96a6cead23cdc4ae7e81ec0fb4cf41d`.
+Installed core is `4d2e93cd8515f378e42c59ce21b94c9ac7b460331b3bcc8e517b49898db8c7ef`.
+The prior core is backed up as `gp32-dev/resume56-installed-core-before.so`.
+RetroArch was absent during replacement, MainUI was available, and protected
+settings retain their hashes.
