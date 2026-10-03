@@ -21,6 +21,43 @@ static void observe(s3c2400_t *s, uint32_t cycles) {
     record(s3c2400_run_clock_hz(s));
 }
 
+static int check_iis_clock_phase(s3c2400_t *s, FILE *state) {
+    s3c2400_reset(s);
+    s3c2400_write32(s, 0x14800004u, 0u); /* FCLK 48 MHz. */
+    s3c2400_write32(s, 0x14800014u, 0u);
+    s3c2400_write32(s, 0x14600040u, 0x0c000000u);
+    s3c2400_write32(s, 0x14600044u, 0x35508010u);
+    s3c2400_write32(s, 0x14600048u, 0x10800008u);
+    s3c2400_write32(s, 0x14600058u, 2u);
+    s3c2400_write32(s, 0x15508000u, 1u);
+    s3c2400_tick(s, 250u); /* Half a frame at the model's 96 kHz ceiling. */
+    for (unsigned step = 0; step < 2u; ++step) {
+        s3c2400_write32(s, 0x14800014u, step ? 0u : 3u);
+        if (!step) {
+            rewind(state);
+            if (!s3c2400_state_save(s, state)) return 0;
+            s3c2400_tick(s, 10000u);
+            rewind(state);
+            if (!s3c2400_state_load(s, state)) return 0;
+        }
+        uint32_t remaining = step ? 250u : 256u;
+        s3c2400_tick(s, remaining - 1u);
+        uint64_t frames = 0;
+        uint32_t rate = 0;
+        (void)s3c2400_audio_samples(s, &frames, &rate);
+        if (frames != 0u) goto fail;
+        s3c2400_tick(s, 1u);
+        (void)s3c2400_audio_samples(s, &frames, &rate);
+        if (frames != 1u || rate != (step ? 96000u : 46875u)) goto fail;
+        s3c2400_audio_clear(s);
+        if (!step) s3c2400_tick(s, 256u);
+    }
+    return 1;
+fail:
+    fputs("FAIL: IIS clock change shifts sample boundary\n", stderr);
+    return 0;
+}
+
 int main(void) {
     static const uint32_t clocks[] = {0x0005c080u, 0x0007d042u, 0x00048032u};
     static const uint32_t steps[] = {1u, 1023u, 32768u, 999999u, 7u, 800000u};
@@ -43,7 +80,9 @@ int main(void) {
         observe(s, 1u);
         if ((k % 3u) == 0u) { s3c2400_reset(s); observe(s, 31u); }
     }
+    int phase_ok = check_iis_clock_phase(s, state);
     fclose(state);
+    if (!phase_ok) { s3c2400_destroy(s); return 1; }
     printf("lcd_timing_trace=%016" PRIx64 "\n", hash);
     /* Recorded by running this replay against the previous core, before the
      * derived timing cache was introduced. */

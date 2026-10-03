@@ -3268,3 +3268,19 @@ builds pass, and Her Knights/Tomak replay outputs remain exact. Evidence:
 settlement remain open; this is not a whole-game or speaker acceptance claim.
 The verified core is installed with a backup and unchanged protected settings;
 the performance section records its deployed hash and backup path.
+
+### Hardware PWM/IIS phase through clock writes (resume65)
+
+Clock/power writes now preserve whole and fractional PWM/IIS progress when
+their periods change. Regressions cover all five PWM counters and interrupt
+boundaries in both divider directions, plus IIS sample boundaries through a
+state roundtrip. Both new cases fail against the previous library. The LCD
+trace and state format are unchanged.
+
+Windows/H700 PWM, timing, PCM, timer and state checks pass, as do Android
+ARM64/ARMv7 builds. Her Knights/Tomak CPU/video/PCM replay fields remain exact.
+The verified core is installed with a backup and unchanged protected settings.
+Evidence: `F:/GP32/results/resume65-soc-phase/`; deployment details are in the
+performance section. CPU-slice/MMIO ordering, LCD phase, prescaler transitions
+and nested-callback settlement remain open. No whole-game or audible-quality
+claim follows from these checks.

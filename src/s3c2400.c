@@ -131,6 +131,7 @@ static uint32_t clk_fclk(const s3c2400_t *s, int reg);
 static uint32_t clk_hclk(const s3c2400_t *s, int reg);
 static uint32_t clk_run(const s3c2400_t *s, int reg);
 static uint32_t clk_pclk(const s3c2400_t *s, int reg);
+static void clock_write(s3c2400_t *s, uint32_t addr, uint32_t value, uint32_t mask);
 static void color16_lut_build(void);
 
 static int s3c2400_is_stable_read32(void *user, uint32_t addr) {
@@ -864,17 +865,7 @@ static void io_write32(s3c2400_t *s, uint32_t addr, uint32_t value, uint32_t mas
         return;
     }
     if (addr >= 0x14800000u && addr <= 0x14800017u) {
-        uint32_t old_run_clock = clk_run(s, MPLLCON);
-        reg_array_write(s->clkpow,sizeof(s->clkpow),addr-0x14800000u,value,mask);
-        s->iis_clock_dirty = 1;
-        s->pwm_clock_dirty = 1;
-        s->lcd_line_valid = 0;
-        s->lcd_timing_valid = 0;
-        /* Finish this instruction at the old rate. The caller can account
-         * for the completed slice before starting work at the new rate.
-         * Host-side setup writes must not halt the following CPU run. */
-        if (old_run_clock != clk_run(s, MPLLCON) && arm920t_is_running(s->cpu_irq_sink))
-            arm920t_stop_run(s->cpu_irq_sink);
+        clock_write(s, addr, value, mask);
         return;
     }
     if (addr >= 0x14a00000u && addr <= 0x14a003ffu) {
@@ -1479,6 +1470,37 @@ static uint64_t iis_period_cpu_cycles(const s3c2400_t *s) {
     uint64_t period = ((uint64_t)runclk + (uint64_t)rate - 1u) / (uint64_t)rate;
     if (period < 256u) period = 256u;
     return period;
+}
+
+static uint64_t rescale_period_progress(uint64_t progress, uint64_t old_period, uint64_t new_period) {
+    if (old_period == new_period) return progress;
+    /* Preserve any whole pending periods as well as the fractional phase.
+     * Peripheral periods are bounded by their register widths; split the
+     * product so a long accumulated history is not multiplied directly. */
+    return (progress / old_period) * new_period +
+           ((progress % old_period) * new_period) / old_period;
+}
+
+static void clock_write(s3c2400_t *s, uint32_t addr, uint32_t value, uint32_t mask) {
+    uint32_t old_run_clock = clk_run(s, MPLLCON);
+    uint64_t old_iis_period = iis_period_cpu_cycles(s);
+    uint64_t old_pwm_period[5];
+    pwm_refresh_clock_cache(s);
+    memcpy(old_pwm_period, s->pwm_period_cycles, sizeof(old_pwm_period));
+    reg_array_write(s->clkpow, sizeof(s->clkpow), addr - 0x14800000u, value, mask);
+    s->iis_clock_dirty = 1;
+    s->pwm_clock_dirty = 1;
+    s->lcd_line_valid = 0;
+    s->lcd_timing_valid = 0;
+    pwm_refresh_clock_cache(s);
+    for (unsigned t = 0; t < 5u; ++t)
+        s->pwm_accum[t] = rescale_period_progress(s->pwm_accum[t], old_pwm_period[t], s->pwm_period_cycles[t]);
+    s->iis_accum = rescale_period_progress(s->iis_accum, old_iis_period, iis_period_cpu_cycles(s));
+    /* Finish this instruction at the old rate. Host setup writes must not
+     * halt the following CPU run. Peripheral elapsed-slice ordering remains
+     * separate from preserving the already accumulated counter phase. */
+    if (old_run_clock != clk_run(s, MPLLCON) && arm920t_is_running(s->cpu_irq_sink))
+        arm920t_stop_run(s->cpu_irq_sink);
 }
 
 static uint32_t iis_dma_transfers_per_frame(const s3c2400_t *s) {

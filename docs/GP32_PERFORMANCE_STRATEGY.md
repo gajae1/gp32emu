@@ -1160,3 +1160,29 @@ Installed core SHA-256 is
 `581a63b59d37f3f162cd9eb3e5e574e2a6fa0685ba0020bf496d4685999b716b`;
 backup is `gp32-dev/resume64-installed-core-before.so`. Protected settings
 remain unchanged, and user save files were not rewritten by deployment.
+
+## resume65: preserve hardware PWM/IIS progress across clock writes
+
+Clock/power register writes now capture the old and new PWM/IIS periods and
+rescale their accumulated CPU-cycle progress. Whole pending periods and the
+fractional position within a period survive a divider change, rather than
+being reinterpreted under the new period. Existing run-clock-change yields
+remain conditional on CPU execution. No CPU backend or state-format change
+is involved.
+
+New regressions fail against the previous library. All five PWM channels now
+retain counter position and expire at the expected boundary after both divider
+directions. IIS sample delivery retains its boundary across the same changes
+and a state roundtrip. The existing LCD trace remains `47779e5037cd7b27`.
+Windows and native H700 PWM, SoC timing, PCM, timer and state checks pass;
+Android ARM64/ARMv7 builds pass. Her Knights and Tomak retain all seven replay
+fields exactly. These checks establish phase preservation, not an FPS gain
+or physical speaker acceptance.
+
+Elapsed CPU-slice ordering at MMIO writes, LCD phase, PWM/IIS prescaler writes,
+queued IIS sample-rate metadata and nested-callback event settlement remain
+separate work. Evidence is in `F:/GP32/results/resume65-soc-phase/`.
+Installed core SHA-256 is
+`89062eb4582d845e93566cf261f5cb5e5ec9d91749ffbcd751078ff0a62f49ee`;
+backup is `gp32-dev/resume65-installed-core-before.so`. Protected settings
+remain unchanged; deployment did not rewrite user saves.
