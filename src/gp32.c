@@ -1627,9 +1627,8 @@ static uint32_t direct_find_sdk_timer_table(gp32_t *g) {
 
 static int direct_call_guest_function3(gp32_t *g, uint32_t fn, uint32_t r0, uint32_t r1, uint32_t r2) {
     if (!g || !g->cpu || g->direct_hle_callback_running || !direct_ram_range(g, fn & ~1u, 4u)) return 0;
-    uint32_t saved_regs[16];
-    for (unsigned i = 0; i < 16u; ++i) saved_regs[i] = arm920t_get_reg(g->cpu, i);
-    uint32_t saved_cpsr = arm920t_get_cpsr(g->cpu);
+    arm920t_register_context_t saved;
+    arm920t_get_register_context(g->cpu, &saved);
     uint32_t cb_stack = direct_stub_addr(g) + 0x1f00u;
     if (!direct_ram_range(g, cb_stack - 0x300u, 0x300u)) return 0;
     g->direct_hle_callback_running = 1u;
@@ -1647,10 +1646,7 @@ static int direct_call_guest_function3(gp32_t *g, uint32_t fn, uint32_t r0, uint
         uint32_t done = arm920t_run(g->cpu, 4096u);
         if (!done) break;
     }
-    /* Select the caller's register bank before restoring SP/LR (and r8-r12
-     * when returning from FIQ). The callback may have changed CPU mode. */
-    arm920t_set_cpsr(g->cpu, saved_cpsr);
-    for (unsigned i = 0; i < 16u; ++i) arm920t_set_reg(g->cpu, i, saved_regs[i]);
+    arm920t_set_register_context(g->cpu, &saved);
     g->direct_hle_callback_running = 0u;
     return g->direct_hle_callback_returned ? 1 : 0;
 }

@@ -178,6 +178,61 @@ static void check_halfword_thumb_callback(int jit) {
     gp32_destroy(g);
 }
 
+static void check_callback_register_banks(int jit, uint32_t caller_mode) {
+    gp32_t *g = gp32_create(NULL);
+    CHECK(g != NULL, "create callback register-bank core");
+    if (!g) return;
+    const uint32_t callback = GP32_RAM_BASE + 0x2000u;
+    const uint32_t counter = GP32_RAM_BASE + 0x3000u;
+    const uint32_t code[] = {
+        0xe1a0300eu, /* MOV r3,lr: return across arbitrary mode changes. */
+        0xe5801000u, /* STR r1,[r0]: callback memory effects must survive. */
+        0xe16ff001u, /* MSR SPSR_fsxc,r1: overwrite suspended SVC status. */
+        0xe321f0d1u, /* MSR CPSR_c,#0xd1: FIQ */
+        0xe3a08088u, 0xe3a0d066u, 0xe16ff001u,
+        0xe321f0d7u, /* ABT */
+        0xe3a0d055u, 0xe16ff001u,
+        0xe321f0dbu, /* UND */
+        0xe3a0d044u, 0xe16ff001u,
+        0xe321f0d2u, /* IRQ */
+        0xe3a08077u, 0xe3a0d033u, 0xe16ff001u,
+        0xe12fff13u, /* BX r3: return trap. */
+    };
+    g->direct_fxe_mode = 1;
+    direct_install_stubs(g);
+    gp32_set_jit(g, jit);
+    for (size_t i = 0; i < GP32_ARRAY_COUNT(code); ++i)
+        s3c2400_write32(g->soc, callback + (uint32_t)i * 4u, code[i]);
+    const uint32_t modes[] = {0x1fu, 0x11u, 0x13u, 0x17u, 0x12u, 0x1bu};
+    for (size_t i = 0; i < GP32_ARRAY_COUNT(modes); ++i) {
+        arm920t_set_cpsr(g->cpu, modes[i] | ARM_I_FLAG | ARM_F_FLAG);
+        for (unsigned r = 8u; r <= 14u; ++r)
+            arm920t_set_reg(g->cpu, r, 0x10000u * modes[i] + r * 4u);
+    }
+    arm920t_set_cpsr(g->cpu, caller_mode | ARM_I_FLAG | ARM_F_FLAG);
+    /* Canonicalize the active bank cache before comparing architectural state. */
+    arm920t_set_cpsr(g->cpu, 0x1fu | ARM_I_FLAG | ARM_F_FLAG);
+    arm920t_set_cpsr(g->cpu, caller_mode | ARM_I_FLAG | ARM_F_FLAG);
+    arm920t_state_image_t before, after;
+    state_io_t out = state_io_writer(&before, sizeof(before));
+    CHECK(arm920t_state_save_io(g->cpu, &out), "capture complete caller register state");
+    CHECK(direct_call_guest_function3(g, callback, counter, 0xa0000030u, 0u),
+          "mode-changing callback returns");
+    uint32_t returned_cpsr = arm920t_get_cpsr(g->cpu);
+    arm920t_set_cpsr(g->cpu, (returned_cpsr & ~0x1fu) | 0x1fu);
+    arm920t_set_cpsr(g->cpu, returned_cpsr);
+    out = state_io_writer(&after, sizeof(after));
+    CHECK(arm920t_state_save_io(g->cpu, &out), "capture callback result state");
+    CHECK(!memcmp(before.bank_svc, after.bank_svc, sizeof(before.bank_svc)),
+          "private callback stack does not leak into inactive SVC bank");
+    CHECK(!memcmp(&before, &after, offsetof(arm920t_state_image_t, cp15)),
+          "callback restores all register banks and saved status registers");
+    CHECK(s3c2400_debug_read32(g->soc, counter) == 0xa0000030u,
+          "register restoration retains callback RAM writes");
+    CHECK(after.cycles_total > before.cycles_total, "register restoration retains executed CPU cycles");
+    gp32_destroy(g);
+}
+
 int main(void) {
     for (int jit = 0; jit <= 1; ++jit) {
         check_timer(jit, 0, 0);
@@ -188,6 +243,8 @@ int main(void) {
         check_callback_starts_timer(jit, 1u, 0);
         check_callback_starts_timer(jit, 0u, 1);
         check_halfword_thumb_callback(jit);
+        check_callback_register_banks(jit, 0x13u);
+        check_callback_register_banks(jit, 0x11u);
     }
     if (failures) return 1;
     puts("PASS: direct GPOS callbacks during vblank wait, disabled timer, split budget and CPU context");

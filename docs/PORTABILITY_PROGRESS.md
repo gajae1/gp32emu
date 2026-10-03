@@ -2995,3 +2995,26 @@ Normal steady blocks do not use this exceptional path; no audible improvement
 in an ordinary game is established by this regression. Source/buffer size
 limits and sustained-stall discard behavior remain bounded. Final evidence:
 `resume48-thumb/audio-*`; all four libretro target builds passed.
+
+### Preserve inactive CPU banks across HLE callbacks (resume49)
+
+Saving only the active r0-r15 and CPSR was insufficient when a direct HLE
+callback changed CPU modes. Its private SVC stack could remain installed in
+the inactive SVC bank, changes to FIQ/shared registers survived, and SPSR
+values used by subsequent exception returns were not restored.
+
+The shared callback entry now snapshots and restores all register banks and
+saved status registers through a compact CPU register context. It preserves
+the callback's RAM/peripheral/CP15 effects and executed cycle count; it does
+not load a whole-machine save state or flush the translation cache. Existing
+CPU field layout and save-state wire format are unchanged.
+
+A guest ARM callback writes RAM, changes SVC/FIQ/ABT/UND/IRQ saved status and
+banked registers, then returns through the normal private trap. Both SVC and
+FIQ caller cases failed before the fix in interpreter and JIT modes. The
+expanded test now passes on Windows and native H700, including exact bank
+restoration and preservation of the guest RAM write and executed cycles.
+Existing Thumb/return-yield/timer cases, Windows PCM/save-state checks, and
+Windows/H700/Android ARM64/ARMv7 libretro builds pass. This fixes a concrete
+state-corruption path, not the still separate callback time-accounting issue.
+Evidence: `F:/GP32/results/resume49-banks/`.
