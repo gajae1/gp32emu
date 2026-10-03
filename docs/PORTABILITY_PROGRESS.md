@@ -2346,3 +2346,61 @@ full patched RetroArch build or a demonstrated gameplay pacing fix.
 Native evidence: `F:/GP32/results/resume33-alsa-review/native-check.json`;
 source/patch evidence: `REPORT.md`, `source-manifest.json`, `verification.json`
 in the same directory. A rebuilt frontend comparison remains outstanding.
+
+### Full frontend backport build and ABBA playback (resume34, 2026-10-03)
+
+The outstanding resume33 build comparison is now complete for one Tomak Korea
+scene. A Sol sidecar identified the official historical Spruce H700 build recipe
+at spruceUI/RA de0d03cbbe77936e1b590d68677858547b299e2f and its four common
+vendor patches. Both baseline and corrected RetroArch builds include those
+patches and use the recipe's feature selection. The private Windows build uses
+Zig 0.13.0 / Clang 18.1.6, `aarch64-linux-gnu.2.17`, Cortex-A53 and LTO, with
+focal arm64 development headers and device runtime libraries. Mesa EGL/GLES
+interfaces were used only for linking; the device still loads its Mali runtime.
+No SDK libraries or replacement SDL2 were installed. The baseline and corrected
+pair share this compiler, which differs from the installed GCC 9.4.0 build.
+
+Windows CRLF checkout initially prevented patch application. After verifying
+the normalized source against the known original SHA-256, the patch applied;
+the resulting file matches the proposed patched source SHA-256
+`294b3a6fa8f68a3d08bde4b00a27877e1e2f9f1c17592d634c34515b4413476f`.
+The successful corrected build recompiled only `audio/drivers/alsathread.c`
+before linking. Both full binaries passed native device `--version` preflight.
+Baseline SHA-256:
+`1c858af7a66d5b372dc6c6a75697e79f8080fa324541da65ee72614e5808ec57`;
+corrected SHA-256:
+`7d2c80673d114f448b0e2c09addeff023387dc09efc1506927b5a4d940bfee85`.
+
+An ABBA comparison used the same 900-frame Tomak Korea replay, unchanged
+diagnostic core and configuration. All sampled clocks were 1,512 MHz. Late-600
+frontend interval p99/max were 29.944/32.010 ms for baseline 1,
+17.270/17.520 ms for corrected 1, 17.288/18.143 ms for corrected 2, and
+30.289/31.959 ms for baseline 2. Intervals exceeding 20 ms numbered 17, 0, 0
+and 11 respectively; core means stayed between 8.014 and 8.062 ms. Thus this
+comparison supports better pacing, not faster emulated CPU execution. The
+initial state-load interval is excluded from these steady-scene measurements.
+
+All four runs completed normally, matched the standalone per-frame guest PC,
+source PCM frame/nonzero counts and IIS configuration, and accepted all
+661,990 offered stereo frames without partial/zero returns or pending tails.
+No ALSA errors or recoveries were recorded. All four final gameplay screenshots
+are pixel-identical to the installed frontend reference. Each run returned to
+MainUI and preserved the production core, frontend and settings hashes.
+This remains bounded scene evidence: prior unmodified runs sometimes also
+showed approximately 17 ms p99, and no direct observation attributes every
+long interval to the lost-wakeup race. Physical audio/input and full-game
+acceptance remain open.
+
+The installed frontend differs from the published Spruce v4.4.0 binary in only
+61 bytes across eight `.rodata` ranges, all Korean menu-label substitutions;
+executable code is identical. The rebuilt pair does not yet retain those local
+translations, so neither replaces the normal frontend. Production core SHA-256
+remains `2b6b9883a53da4529bfd0f99936c62766a982cf98c5ce9281f7f8041a2920dd1`.
+The backport README now records full-build evidence and the localization and
+frontend acceptance limits instead of the former unbuilt status.
+
+Evidence: `F:/GP32/results/resume34-frontend/{build-notes.md,build-manifest.json,
+runtime-abba.json,published-comparison.json,build-fixed-2.log}` and
+`F:/GP32/results/resume34-{base,fixed,fixed2,base2}-audio-{summary.json,
+runtime-verified.json,runtime.png}`. Private SDK files, third-party checkouts and
+diagnostic frontend binaries remain outside the repository.
