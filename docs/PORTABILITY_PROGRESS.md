@@ -2851,3 +2851,31 @@ Rebuilding after restoration reproduced the production core SHA-256
 and benchmark SHA-256
 `4a59071c413c76f5b3a2a9db465c7673afe7e043c1022e31f65e01d10cb7ba0f`.
 The resume43 GP32-only presentation profile remains the installed policy.
+
+### Direct-mode timer and callback context fixes (resume45)
+
+Direct-FXE vblank idle waits already advanced the SoC and audio but omitted
+GPOS timers. The same consumed idle budget now advances those timers once.
+The regression executes real ARM callbacks through `gp32_run_cycles`: a 10 ms
+wait fires ten 1 kHz callbacks, disabled timers stay stopped, and split budgets
+carry their fractional period without firing early. Both interpreter and JIT
+paths exercise the normal callback and callbacks switching to IRQ/FIQ mode.
+
+The mode-switching cases exposed a second bug: restoring registers before CPSR
+allowed bank switching to overwrite the restored caller SP/LR or r8-r12. The
+callback now selects the caller's CPU mode before restoring its registers.
+The test verifies all sixteen caller registers and CPSR after callback return.
+Both failures were reproduced before their respective fixes.
+
+The focused Windows timer/PCM checks and native H700 timer regression passed;
+Windows, H700 and Android arm64-v8a/armeabi-v7a libretro builds succeeded.
+Android runtime was not exercised. A BIOS-backed Her Knights Korea replay
+(1,200 warmup plus 1,200 measured frames) retained all seven CPU/video/audio
+result fields, including video hash `5a5e0fa9bcc8b1e0` and audio hash
+`17b3a2c9c611978d`. This is a bounded compatibility check, not a speedup claim
+or evidence that every direct-mode game now works.
+
+Evidence and reproducible deployment record: `F:/GP32/results/resume45-timer/`.
+The H700 core SHA-256 is
+`7bad89507a776fb2d58cff672747b95f811d32640dc0e711279761ad1a745c1f`.
+No CPU multiplier or save-state format change is included.

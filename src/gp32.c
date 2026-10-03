@@ -317,6 +317,7 @@ static uint32_t direct_consume_idle_wait(gp32_t *g, uint32_t budget) {
     if (n > 32768u) n = 32768u;
     arm920t_add_idle_cycles(g->cpu, n);
     s3c2400_tick(g->soc, n);
+    direct_hle_gpos_timer_tick(g, n);
     direct_hle_audio_tick(g, n);
     g->direct_vblank_wait_cycles -= (uint64_t)n;
     direct_update_fw_tick(g);
@@ -1642,8 +1643,10 @@ static int direct_call_guest_function3(gp32_t *g, uint32_t fn, uint32_t r0, uint
         uint32_t done = arm920t_run(g->cpu, 4096u);
         if (!done) break;
     }
-    for (unsigned i = 0; i < 16u; ++i) arm920t_set_reg(g->cpu, i, saved_regs[i]);
+    /* Select the caller's register bank before restoring SP/LR (and r8-r12
+     * when returning from FIQ). The callback may have changed CPU mode. */
     arm920t_set_cpsr(g->cpu, saved_cpsr);
+    for (unsigned i = 0; i < 16u; ++i) arm920t_set_reg(g->cpu, i, saved_regs[i]);
     g->direct_hle_callback_running = 0u;
     return g->direct_hle_callback_returned ? 1 : 0;
 }
