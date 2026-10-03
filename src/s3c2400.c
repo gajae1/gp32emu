@@ -1351,7 +1351,7 @@ void s3c2400_audio_append_u8_mono(s3c2400_t *s, const uint8_t *samples, uint32_t
     if (!s || !samples || !sample_count) return;
     s->audio_sample_rate_hz = sample_rate_hz ? sample_rate_hz : 11025u;
     for (uint32_t i = 0; i < sample_count; ++i) {
-        int16_t v = (int16_t)(((int)samples[i] - 128) << 8);
+        int16_t v = (int16_t)(((int)samples[i] - 128) * 256);
         audio_append_stereo(s, v, v);
     }
 }

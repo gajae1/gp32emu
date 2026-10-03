@@ -1380,8 +1380,8 @@ static int direct_pcm_channel_sample(gp32_t *g, uint32_t ch, uint32_t out_rate, 
     uint32_t addr = g->direct_hle_pcm_ch[ch].src_addr + g->direct_hle_pcm_ch[ch].pos_bytes;
     int16_t l = 0, r = 0;
     if (g->direct_hle_pcm_ch[ch].bits == 8u) {
-        l = (int16_t)(((int)direct_read8_if_ram(g, addr) - 128) << 8);
-        if (g->direct_hle_pcm_ch[ch].stereo) r = (int16_t)(((int)direct_read8_if_ram(g, addr + 1u) - 128) << 8);
+        l = (int16_t)(((int)direct_read8_if_ram(g, addr) - 128) * 256);
+        if (g->direct_hle_pcm_ch[ch].stereo) r = (int16_t)(((int)direct_read8_if_ram(g, addr + 1u) - 128) * 256);
         else r = l;
     } else {
         l = (int16_t)((int32_t)direct_read_u16_if_ram(g, addr) - 32768);
@@ -1418,7 +1418,7 @@ static int direct_hle_sef_sample(gp32_t *g, uint32_t out_rate, int32_t *left, in
     if (g->direct_hle_audio_pos >= g->direct_hle_audio_size) { direct_stop_sef(g); return 0; }
     uint32_t off = 8u + g->direct_hle_audio_pos;
     const uint8_t *d = g->direct_hle_audio_asset->data;
-    int16_t s = (int16_t)(((int)d[off] - 128) << 8);
+    int16_t s = (int16_t)(((int)d[off] - 128) * 256);
     *left += s;
     *right += s;
 

@@ -2671,3 +2671,43 @@ it is an integration check, not another comparable audio-quality replay.
 Emulator/platform settings and original system frontend hashes were unchanged.
 Evidence: `F:/GP32/results/resume39-a64/installed.json` and
 `F:/GP32/results/resume39-runtime/runtime-verified.json`.
+
+### Defined U8 PCM conversion and Her Knights padding evidence (resume40)
+
+Four audio conversion sites left-shifted `(unsigned_sample - 128)` as a signed
+integer. Values below 128 therefore invoked undefined signed-shift behavior.
+They now multiply by 256, whose complete result range [-32768,32512] fits the
+destination. This covers SoC mono append and the direct-HLE mono/stereo PCM
+and SEF mixers without changing their rate, cursor or mixing behavior.
+
+The new focused `gp32_pcm` fixture exercises those actual conversion sites
+with explicit endpoint/midpoint expected values and reversed stereo channel
+polarity. Both real conversion translation units were compiled with C23,
+`-O1 -fsanitize=shift -fsanitize-trap=shift`: the pre-change Windows binary
+trapped with status `0xc000001d`; the corrected binary passes. The fixture also
+passes as a normal CMake target on Windows and native H700. The existing
+libretro audio test passes. Windows, H700, Android arm64-v8a and armeabi-v7a
+libretro builds pass. No unrelated full test suite was rerun.
+
+The optimized H700 production core still has SHA-256
+`37884295e3f0a6c149be1ea1c91e835aa997325eff7e1615394e2ec21a3a6b0f`
+and the benchmark still has
+`4a59071c413c76f5b3a2a9db465c7673afe7e043c1022e31f65e01d10cb7ba0f`.
+Thus the current compiler already emitted the intended machine arithmetic;
+this source correction is not a new speed/quality claim or binary deployment.
+Her Knights' fixed 1,200/1,200 replay preserves all seven existing
+CPU/video/audio fields.
+
+A separate 2,400-frame real frontend Her Knights replay now distinguishes
+software FIFO padding from silent sample values: no padding in a central
+37-second output window, no empty source frames, all 1,764,180 submitted
+stereo frames accepted, and no ALSA errors. Late core execution averages
+6.991 ms at the observed 1,512 MHz, but 34 of the late 1,200 frame intervals
+exceed 20 ms (p99 31.935 ms). Frontend waiting and physical input/audio
+acceptance remain open; see `HER_KNIGHTS_KOREA_BENCHMARK.md` for scope.
+
+Evidence: `F:/GP32/results/resume40-audio/` and
+`resume40-her-audio-*`. A separate read-only CPU-speed design review exists
+as `resume40-cpu-clock-design.md`. It proposes separating instruction budgets
+from peripheral time, but its rounding/state proposals are unimplemented and
+require further review; no clock option or user setting was changed.

@@ -1,5 +1,43 @@
 # Her Knights: Korean combat benchmark (2026-10-03)
 
+## Current frontend audio evidence (2026-10-04, resume40)
+
+A bounded 2,400-frame scripted combat replay used the corrected Spruce
+frontend plus the explicit FIFO-padding diagnostic from resume38. The current
+core's final PC/cycles and last-1,200-frame source count match the standalone
+replay: `0x0c00a6a0`, 6,441,235,000 cycles and 220,631 stereo source frames.
+No replay frame had an empty source-audio buffer. The frontend accepted all
+1,764,180 offered resampled stereo frames (including its initial BIOS run),
+without partial or zero returns. All 2,590 ALSA writes returned a full period,
+with zero errors or recoveries. The padding trace allocated successfully and
+did not overflow.
+
+Explicit FIFO padding is zero in output frames [96,000,1,872,000), a central
+37-second window at 48 kHz. Padding occurs at the session edges; small counts
+of zero-valued samples inside the window are not software-inserted padding.
+This distinguishes that mechanism from silent game/resampler samples; it
+does not prove clipping-free sound or physical speaker quality.
+
+The late 1,200 frames sampled the host at 1,512 MHz and averaged 6.991 ms of
+core execution. Frame-start intervals averaged 16.618 ms, but p99 was 31.935 ms
+and maximum 32.131 ms, with 34 intervals over 20 ms. Video/audio callback
+waiting contributes to long runs. CPU headroom and uninterrupted sample
+delivery therefore do not establish smooth presentation or low input latency.
+
+Separately, unsigned 8-bit PCM conversion no longer left-shifts negative
+signed values in the SoC append and HLE PCM/SEF paths. A C23 shift-sanitized
+fixture traps before the correction and passes afterwards. This is a
+portability fix, not the identified cause of this BIOS/IIS playback's pacing.
+The optimized H700 core and benchmark remain byte-identical to resume39, so
+the installed production core was not needlessly replaced.
+
+Evidence: `F:/GP32/results/resume40-audio/{before.json,after.json,
+pcm-h700.json,her-equivalence.json,padding.csv,her-runtime-summary.json}` and
+`F:/GP32/results/resume40-her-audio-runtime-verified.json`. The gameplay
+screenshot is `resume40-her-audio-runtime.png`. The run exited normally and
+returned to MainUI; installed binaries and checked settings retained their
+hashes. The older measurements below describe their named revisions/scenes.
+
 ## Content and workload
 
 `Her Knights - All for Princess - Deadline (Korea).smc` is **그녀의 기사단 강행돌파**.
