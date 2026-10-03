@@ -3205,3 +3205,24 @@ establish whole-game performance or speaker continuity. Forced guest-clock
 overrides remain deferred; callback-time settlement and elapsed-time
 continuity across clock changes remain open. Evidence and deployment hash:
 the resume61 performance section and `F:/GP32/results/resume61-pcm-clock/`.
+
+### SDK mixer descriptor reads (resume62)
+
+The mixer resolves its RAM descriptor table once per span between callbacks,
+while continuing to read live channel words and perform the same ordered
+writes. Partial tables retain guarded access. Complete 16-bit sample reads
+avoid duplicate HLE range checks; partial edge samples keep zero-fill.
+
+The H700 synthetic streaming fixture improves from roughly 3.60 to 2.12
+seconds for 2,205,000 stereo frames, with identical PCM and callback results.
+The qualified ABBA runs all observe 1,512 MHz; earlier ramping runs are
+excluded. This 1.694x mixer throughput does not establish a game FPS gain.
+
+Windows/H700 PCM, timer and state checks pass, including new multichannel,
+loop/one-shot and RAM-boundary coverage. Android ARM64/ARMv7 builds pass;
+Her Knights/Tomak replay fields remain exact. Evidence is in the resume62
+performance section and `F:/GP32/results/resume62-mixer/`. Guest clock-change
+continuity, callback-time settlement and whole-game acceptance remain open.
+
+The core is installed on H700 with a backup and unchanged protected settings;
+the performance section records the deployed SHA-256 and backup path.

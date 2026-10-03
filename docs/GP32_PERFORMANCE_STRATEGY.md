@@ -1038,3 +1038,48 @@ Installed core SHA-256 is
 `c14b01fc0ef443966289cc1b686768c861ada27bfa2cfc144455a5a26bf61a76`;
 backup is `gp32-dev/resume61-installed-core-before.so`. Protected settings
 remain unchanged.
+
+## resume62: reduce SDK mixer RAM-access overhead
+
+Resolve the four-channel descriptor table once per callback-free mix span,
+then read its live little-endian words directly. The table is not copied:
+cursor writes and possible aliases still become visible to subsequent reads.
+Resolve it again after a refill callback, and retain the guarded per-word
+path when the table crosses RAM boundaries. Sample conversion also uses one
+complete-range check for a 16-bit RAM read, keeping bytewise zero-fill for
+partial samples at either RAM edge. Callback cadence, cursor writes and
+saved-state layout remain unchanged.
+
+At observed 1,512 MHz, an interleaved H700 ABBA comparison of the existing
+SDK streaming fixture gives:
+
+| Variant | Elapsed seconds for 2,205,000 stereo frames |
+| --- | --- |
+| resume61 baseline | 3.596697 / 3.594255 |
+| candidate | 2.115468 / 2.128300 |
+
+Median throughput is 1.694x baseline, about 41% less processing time. All
+runs retain PCM hash `6ceffc2ff53a9aa1`, callback counter 2147547916 and
+189,000 callback CPU cycles. The initial clock-ramping comparison is excluded;
+the qualified comparison starts only after a whole warmup run observes
+1,512 MHz. This is SDK mixer fixture performance, not whole-game FPS or
+physical speaker acceptance.
+
+A four-slot test checks mixed signed output, looping and one-shot sources,
+invalid-source cleanup, cursor state, unaligned data, a partial descriptor
+table and zero-filled edge reads. Windows/H700 PCM, timer and state checks
+pass; Android ARM64/ARMv7 builds pass. Her Knights/Tomak retain all seven
+accepted replay fields. The CPU backend is unchanged.
+
+Evidence: `F:/GP32/results/resume62-mixer/`, including both frequency-sampled
+comparisons, native checks, build logs and game equivalence. Clock-change
+continuity and nested-callback time accounting remain open. In particular,
+the CPU commits `cycles_total` only when `arm920t_run` returns: reading that
+counter in a clock-register write handler alone cannot timestamp the write
+within the active slice. A future timing fix must address that boundary,
+as well as preserving old-state loading, before exposing clock overrides.
+
+Installed core SHA-256 is
+`b841afd42adabadfc8c30bd07e3ecfba0b5d868461a954a1f1dd132744f2dd07`;
+backup is `gp32-dev/resume62-installed-core-before.so`. Protected settings
+remain unchanged; `installed.json` records the verified deployment hashes.
