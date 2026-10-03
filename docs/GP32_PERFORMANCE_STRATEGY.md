@@ -1129,3 +1129,34 @@ Installed core SHA-256 is
 `df361f96b5ce4748ec1090d3a120161554464916293caf7b479a5f5b222a9bab`;
 backup is `gp32-dev/resume63-installed-core-before.so`. Protected settings
 remain unchanged. Existing user save files were not rewritten during deployment.
+
+## resume64: retain HLE timer/audio phase across clock-changing callbacks
+
+HLE consumers now receive the effective clock captured before their elapsed
+CPU/idle slice. Previously a timer callback could lower the clock before the
+audio mixers processed that same slice, making them generate extra samples
+for time that had already elapsed. At the slice boundary, normalize the
+timer and output-sample fractional accumulators to the final current clock.
+Disabled sources retain their fractional progress too. Source resampling
+and SDK refill polling phases use different units and are left unchanged.
+
+The regression uses real guest timer callbacks to change 66-to-33-to-66 MHz,
+with a separate 1 kHz counter and a state roundtrip after the first change.
+The old PCM path emits 43 frames where only 21 are due. Both corrected HLE
+PCM and SDK mixer paths emit 21, 22 and 45 frames over the three intervals,
+while the counter stays at zero through the first two and reaches one in
+the third. Fractional sample/timer progress survives the roundtrip.
+
+Windows and H700 PCM, timer and state checks pass; Android ARM64/ARMv7 builds
+pass. Her Knights/Tomak replay fields remain exact. CPU/SoC backends and the
+v0003 save format are unchanged. This addresses elapsed-slice clock selection
+and HLE fractional phase, not audible acceptance or game FPS. Hardware SoC
+post-slice ordering, audio-source activation within callbacks and accounting
+for nested callback time still require the separate event-settlement work.
+
+Evidence: `F:/GP32/results/resume64-hle-phase/`, including the old-code
+failure, native regression results, platform build logs and game comparisons.
+Installed core SHA-256 is
+`581a63b59d37f3f162cd9eb3e5e574e2a6fa0685ba0020bf496d4685999b716b`;
+backup is `gp32-dev/resume64-installed-core-before.so`. Protected settings
+remain unchanged, and user save files were not rewritten by deployment.

@@ -45,8 +45,8 @@ static int check_sdk_refill_slicing(uint32_t half_samples) {
     gp32_t *batch = sdk_stream_fixture(half_samples), *split = sdk_stream_fixture(half_samples);
     if (!batch || !split) { gp32_destroy(batch); gp32_destroy(split); return 0; }
     uint32_t clock = direct_run_clock_hz(batch);
-    direct_sdk_sound_tick(batch, clock / 100u);
-    for (unsigned i = 0; i < 100u; ++i) direct_sdk_sound_tick(split, clock / 10000u);
+    direct_sdk_sound_tick(batch, clock / 100u, clock);
+    for (unsigned i = 0; i < 100u; ++i) direct_sdk_sound_tick(split, clock / 10000u, clock);
     uint64_t a_frames = 0, b_frames = 0;
     uint32_t a_rate = 0, b_rate = 0;
     const int16_t *a = s3c2400_audio_samples(batch->soc, &a_frames, &a_rate);
@@ -137,7 +137,7 @@ static int check_sdk_channel_mix(void) {
         g->direct_hle_sdk_sndmixer_addr = mixer;
         g->direct_hle_sdk_sndsrcexist_addr = status;
         uint32_t budget = (uint32_t)(((uint64_t)direct_run_clock_hz(g) * 5u + 44099u) / 44100u);
-        direct_sdk_sound_tick(g, budget);
+        direct_sdk_sound_tick(g, budget, direct_run_clock_hz(g));
         uint64_t frames = 0;
         uint32_t rate = 0;
         const int16_t *pcm = s3c2400_audio_samples(g->soc, &frames, &rate);
@@ -162,7 +162,74 @@ static int check_sdk_channel_mix(void) {
     return 1;
 }
 
+static int check_callback_clock_audio(int sdk) {
+    gp32_t *g = sdk ? sdk_stream_fixture(70u) : gp32_create(NULL);
+    if (!g) return 0;
+    g->direct_fxe_mode = 1;
+    direct_install_stubs(g);
+    gp32_set_jit(g, 1);
+    s3c2400_write32(g->soc, 0x14800004u, 0x3000u);
+    s3c2400_write32(g->soc, 0x14800014u, 0u);
+    if (!sdk) {
+        const uint32_t source = GP32_RAM_BASE + 0x1000u;
+        s3c2400_write32(g->soc, source, 0x80808080u);
+        g->direct_hle_pcm_ch[0].active = 1u;
+        g->direct_hle_pcm_ch[0].src_addr = source;
+        g->direct_hle_pcm_ch[0].size_bytes = 4u;
+        g->direct_hle_pcm_ch[0].bits = 8u;
+        g->direct_hle_pcm_ch[0].rate = 44100u;
+        g->direct_hle_pcm_ch[0].repeat = 1u;
+    }
+    const uint32_t callback = GP32_RAM_BASE + 0x2000u;
+    const uint32_t counter_fn = GP32_RAM_BASE + 0x2400u;
+    const uint32_t counter = GP32_RAM_BASE + 0x2800u;
+    const uint32_t change[] = {0xe59f0008u, 0xe3a01002u, 0xe5801000u, 0xe12fff1eu, 0x14800014u};
+    const uint32_t count[] = {0xe59f000cu, 0xe5901000u, 0xe2811001u, 0xe5801000u, 0xe12fff1eu, counter};
+    for (unsigned i = 0; i < GP32_ARRAY_COUNT(change); ++i)
+        s3c2400_write32(g->soc, callback + i * 4u, change[i]);
+    for (unsigned i = 0; i < GP32_ARRAY_COUNT(count); ++i)
+        s3c2400_write32(g->soc, counter_fn + i * 4u, count[i]);
+    g->direct_hle_gpos_timers_enabled = 1u;
+    for (unsigned i = 0; i < 2u; ++i) {
+        g->direct_hle_gpos_timer[i].configured = 1u;
+        g->direct_hle_gpos_timer[i].enabled = 1u;
+        g->direct_hle_gpos_timer[i].tps = 1000u;
+        g->direct_hle_gpos_timer[i].callback = i ? counter_fn : callback;
+    }
+    const uint32_t budgets[] = {32768u, 16500u, 66000u};
+    const uint32_t want[] = {21u, 22u, 45u};
+    int ok = 1;
+    for (unsigned step = 0; step < 3u && ok; ++step) {
+        if (step < 2u) {
+            g->direct_hle_gpos_timer[0].accum = direct_run_clock_hz(g) - budgets[step] * 1000u;
+            s3c2400_write32(g->soc, callback + 4u, step ? 0xe3a01000u : 0xe3a01002u);
+            arm920t_flush_jit(g->cpu);
+        } else g->direct_hle_gpos_timer[0].enabled = 0u;
+        g->direct_vblank_wait_cycles = budgets[step];
+        ok = gp32_run_cycles(g, budgets[step]) == GP32_OK;
+        uint64_t frames = 0;
+        uint32_t rate = 0;
+        (void)s3c2400_audio_samples(g->soc, &frames, &rate);
+        ok = ok && frames == want[step] && rate == 44100u &&
+            direct_run_clock_hz(g) == (step ? 66000000u : 33000000u) &&
+            s3c2400_debug_read32(g->soc, counter) == (step == 2u ? 1u : 0u);
+        if (!ok) fprintf(stderr, "FAIL: clock-changing callback SDK=%d step=%u frames=%llu\n",
+                         sdk, step, (unsigned long long)frames);
+        gp32_clear_audio(g);
+        if (ok && step == 0u) {
+            size_t size = gp32_state_size(g);
+            uint8_t *state = malloc(size);
+            ok = state && gp32_save_state_data(g, state, size) == GP32_OK &&
+                gp32_load_state_data(g, state, size) == GP32_OK;
+            free(state);
+        }
+    }
+    gp32_destroy(g);
+    return ok;
+}
+
 int main(void) {
+    if (!check_callback_clock_audio(0) || !check_callback_clock_audio(1)) return 1;
     if (!check_sdk_channel_mix()) return 1;
     if (!check_hle_pcm_clock_domains()) return 1;
     if (!check_sdk_refill_slicing(32u) || !check_sdk_refill_slicing(64u) ||

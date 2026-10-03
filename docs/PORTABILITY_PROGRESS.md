@@ -3250,3 +3250,21 @@ clock ordering and nested-callback event settlement remain open. Evidence:
 `F:/GP32/results/resume63-clock/` and the resume63 performance section.
 The verified core is installed with a backup and unchanged protected settings;
 deployment did not rewrite existing user saves.
+
+### HLE sample/timer phase through clock changes (resume64)
+
+Timer callbacks can change the guest clock before the audio update for an
+already completed slice. Both HLE mixers and the GPOS timer now use that
+slice's original effective rate. Their fractional progress is converted to
+the final clock at the boundary, so it is not reinterpreted at the next slice
+or after a save/load. No new saved-state fields are needed.
+
+A real callback regression previously produced 43 PCM frames instead of 21.
+HLE PCM and SDK audio now produce the expected 21/22/45-frame sequence across
+clock decrease/increase and a state roundtrip, with correct separate timer
+expiry. Windows/H700 PCM, timer and state checks pass; Android ARM64/ARMv7
+builds pass, and Her Knights/Tomak replay outputs remain exact. Evidence:
+`F:/GP32/results/resume64-hle-phase/`. SoC ordering and nested-callback event
+settlement remain open; this is not a whole-game or speaker acceptance claim.
+The verified core is installed with a backup and unchanged protected settings;
+the performance section records its deployed hash and backup path.

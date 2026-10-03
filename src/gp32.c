@@ -255,8 +255,8 @@ static uint32_t direct_pcm_cursor_addr(const gp32_t *g) {
 }
 
 static void direct_update_fw_tick(gp32_t *g);
-static void direct_hle_audio_tick(gp32_t *g, uint32_t cycles);
-static void direct_hle_gpos_timer_tick(gp32_t *g, uint32_t cycles);
+static void direct_hle_audio_tick(gp32_t *g, uint32_t cycles, uint32_t clock);
+static void direct_hle_gpos_timer_tick(gp32_t *g, uint32_t cycles, uint32_t clock);
 static gp32_status_t gp32_load_fxe_image_internal(gp32_t *g, fxe_image_t *img, int update_reset_image, int scan_file_hle, int init_smc_gpio, int preserve_hle_options);
 static int direct_handle_swi_gpos_timer(gp32_t *g, arm920t_t *cpu, uint32_t pc);
 static void direct_tick_sdk_task_sleepers(gp32_t *g, uint32_t first_task, uint32_t last_task, uint32_t ticks);
@@ -291,11 +291,27 @@ static void direct_account_elapsed(gp32_t *g, uint32_t cycles, uint32_t clock) {
     g->elapsed.clock_hz = clock;
 }
 
-static uint32_t direct_run_cpu(gp32_t *g, uint32_t cycles) {
-    uint32_t clock = direct_run_clock_hz(g);
+static uint32_t direct_run_cpu(gp32_t *g, uint32_t cycles, uint32_t clock) {
     uint32_t done = arm920t_run(g->cpu, cycles);
     direct_account_elapsed(g, done, clock);
     return done;
+}
+
+static void direct_hle_tick(gp32_t *g, uint32_t cycles, uint32_t clock) {
+    /* Every consumer receives the rate at which these cycles elapsed, even
+     * if a timer/refill callback changes the clock before mixing finishes. */
+    direct_hle_gpos_timer_tick(g, cycles, clock);
+    direct_hle_audio_tick(g, cycles, clock);
+    uint32_t next_clock = direct_run_clock_hz(g);
+    if (next_clock == clock) return;
+    /* Remainders are fractions with the old clock as denominator. Normalize
+     * them at the slice boundary, including disabled sources, so public
+     * save/load boundaries continue to use the current SoC clock. Source
+     * resampling phases and the SDK's 64-sample poll phase use other units. */
+    g->direct_hle_pcm_accum = g->direct_hle_pcm_accum * next_clock / clock;
+    g->direct_hle_sdk_accum = g->direct_hle_sdk_accum * next_clock / clock;
+    for (unsigned i = 0; i < GP32_DIRECT_GPOS_TIMER_COUNT; ++i)
+        g->direct_hle_gpos_timer[i].accum = g->direct_hle_gpos_timer[i].accum * next_clock / clock;
 }
 
 static uint32_t direct_lcd_frame_cycles(const gp32_t *g) {
@@ -343,11 +359,11 @@ static uint32_t direct_consume_idle_wait(gp32_t *g, uint32_t budget) {
     uint32_t n = budget;
     if (g->direct_vblank_wait_cycles < (uint64_t)n) n = (uint32_t)g->direct_vblank_wait_cycles;
     if (n > 32768u) n = 32768u;
+    uint32_t clock = direct_run_clock_hz(g);
     arm920t_add_idle_cycles(g->cpu, n);
-    direct_account_elapsed(g, n, direct_run_clock_hz(g));
+    direct_account_elapsed(g, n, clock);
     s3c2400_tick(g->soc, n);
-    direct_hle_gpos_timer_tick(g, n);
-    direct_hle_audio_tick(g, n);
+    direct_hle_tick(g, n, clock);
     g->direct_vblank_wait_cycles -= (uint64_t)n;
     direct_update_fw_tick(g);
     return n;
@@ -1483,13 +1499,12 @@ static uint32_t direct_hle_mix_output_rate(gp32_t *g) {
     return 44100u;
 }
 
-static void direct_hle_pcm_tick(gp32_t *g, uint32_t cycles) {
+static void direct_hle_pcm_tick(gp32_t *g, uint32_t cycles, uint32_t clock) {
     if (!g || !g->soc || !cycles) return;
     if (!g->direct_hle_audio_asset && !direct_hle_pcm_any_active(g)) return;
     uint32_t out_rate = direct_hle_mix_output_rate(g);
     /* cycles arrive in the same effective instruction-budget domain used
      * by gp32_run_cycles, not the PLL frequency reported to firmware. */
-    uint32_t clock = direct_run_clock_hz(g);
     uint64_t scaled = g->direct_hle_pcm_accum + (uint64_t)cycles * (uint64_t)out_rate;
     uint32_t frames = (uint32_t)(scaled / (uint64_t)clock);
     g->direct_hle_pcm_accum = scaled % (uint64_t)clock;
@@ -1651,7 +1666,7 @@ static int direct_call_guest_function3(gp32_t *g, uint32_t fn, uint32_t r0, uint
     uint32_t remaining = 256u * 4096u;
     while (remaining && !g->direct_hle_callback_returned) {
         uint32_t slice = remaining < 4096u ? remaining : 4096u;
-        uint32_t done = direct_run_cpu(g, slice);
+        uint32_t done = direct_run_cpu(g, slice, direct_run_clock_hz(g));
         if (!done) break;
         /* Clock-write yields consume cycles, not whole 4096-cycle attempts. */
         remaining -= done;
@@ -1756,10 +1771,8 @@ static int direct_gpos_callback_is_scheduler(gp32_t *g, uint32_t callback) {
     return g->direct_hle_gpos_scheduler_callback == (callback & ~1u);
 }
 
-static void direct_hle_gpos_timer_tick(gp32_t *g, uint32_t cycles) {
+static void direct_hle_gpos_timer_tick(gp32_t *g, uint32_t cycles, uint32_t clock) {
     if (!g || !g->direct_fxe_mode || !g->direct_hle_gpos_timers_enabled || !cycles) return;
-    uint32_t clock = direct_run_clock_hz(g);
-    if (!clock) clock = 66000000u;
     struct { uint32_t callback, tps, fires, epoch; } pending[GP32_DIRECT_GPOS_TIMER_COUNT] = {0};
     /* Settle elapsed time for every slot before guest callbacks can start or
      * reconfigure another timer. New timers must not inherit pre-start time. */
@@ -1959,11 +1972,9 @@ static uint32_t direct_sdk_pcm_refill_tick(gp32_t *g, int allow_refill) {
     return 1u;
 }
 
-static void direct_sdk_sound_tick(gp32_t *g, uint32_t cycles) {
+static void direct_sdk_sound_tick(gp32_t *g, uint32_t cycles, uint32_t clock) {
     if (!g || !g->soc || !cycles || !g->direct_hle_sdk_sndmixer_addr) return;
     uint32_t rate = g->direct_hle_sdk_rate ? g->direct_hle_sdk_rate : 44100u;
-    uint32_t clock = direct_run_clock_hz(g);
-    if (!clock) clock = 66000000u;
     if (g->direct_hle_sdk_last_submit_cycle && g->cpu) {
         uint64_t now = arm920t_get_cycles(g->cpu);
         if (now >= g->direct_hle_sdk_last_submit_cycle && now - g->direct_hle_sdk_last_submit_cycle < (uint64_t)clock / 30u) return;
@@ -2046,10 +2057,10 @@ static int direct_handle_swi_iis(gp32_t *g, arm920t_t *cpu) {
     return 1;
 }
 
-static void direct_hle_audio_tick(gp32_t *g, uint32_t cycles) {
+static void direct_hle_audio_tick(gp32_t *g, uint32_t cycles, uint32_t clock) {
     if (!g || !cycles) return;
-    direct_hle_pcm_tick(g, cycles);
-    direct_sdk_sound_tick(g, cycles);
+    direct_hle_pcm_tick(g, cycles, clock);
+    direct_sdk_sound_tick(g, cycles, clock);
 }
 
 static uint32_t direct_alloc_fpk_handle(gp32_t *g, const fpk_asset_t *asset) {
@@ -3744,10 +3755,10 @@ gp32_status_t gp32_run_cycles(gp32_t *g, uint32_t cycles) {
         }
         uint32_t slice = remaining > 32768u ? 32768u : remaining;
         direct_update_fw_tick(g);
-        uint32_t done = direct_run_cpu(g, slice);
+        uint32_t clock = direct_run_clock_hz(g);
+        uint32_t done = direct_run_cpu(g, slice, clock);
         s3c2400_tick(g->soc, done);
-        direct_hle_gpos_timer_tick(g, done);
-        direct_hle_audio_tick(g, done);
+        direct_hle_tick(g, done, clock);
         direct_update_fw_tick(g);
         direct_process_asset_autoload(g);
         direct_schedule_vblank_wait(g);
