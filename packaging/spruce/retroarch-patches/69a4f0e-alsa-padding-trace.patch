@@ -18,7 +18,7 @@
 +      snd_pcm_sframes_t written;
 +   };
 +   const char *trace_path = getenv("GP32_ALSA_PADDING_LOG");
-+   const size_t capacity = 4096;
++   const size_t capacity = 16384;
 +   struct padding_event *events = trace_path
 +      ? (struct padding_event *)calloc(capacity, sizeof(*events)) : NULL;
 +   size_t event_count = 0, overflow = 0;
