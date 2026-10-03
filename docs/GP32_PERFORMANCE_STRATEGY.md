@@ -749,3 +749,46 @@ unchanged; MainUI returns and the launch queue is empty. Evidence is in
 `F:/GP32/results/resume53-diag/integrity.json`, and their companion raw CSV,
 runtime verification, delivery and ALSA records. These results validate the
 existing code; this step introduces no new runtime change.
+
+## resume54: rejected nonconverging-poll native promotion
+
+Four implemented prototypes investigated the native suppression of polling
+candidates whose registers continue changing. All qualified Her Knights and
+Tomak ABBA runs preserve all seven CPU/video/PCM fields at observed 1,512 MHz,
+but none improves either measured scene:
+
+| Prototype | Her core-throughput change | Tomak core-throughput change |
+| --- | --- | --- |
+| Three portable probes, then native for the remaining timeslice | -0.47% | -0.79% |
+| Same adaptive policy plus plain forward-loop stitching | -1.07% | -2.07% |
+| Static counter exclusion plus plain forward-loop stitching | -2.94% | -3.63% |
+| Static counter exclusion with original trace layout | -2.92% | -3.09% |
+
+The adaptive prototype rechecks each timeslice, preserves the existing
+fixed-point proof and caches failed native compilation. Its H700 full JIT
+differential and polling suite pass. A stronger fixture subsequently exposed
+that disabling RAM fastmem also disables JIT in `arm920t_set_jit`; the fixture
+was corrected to retain both memory bases and count a mock stable device word.
+The Windows test then confirms actual native allocation for a changing loop
+and later recovery of the stable-read shortcut. The corrected broad adaptive
+fixture also passes on H700. These correctness results do not imply speedup.
+
+The static alternative detects unconditional nonzero ADD/SUB to a register
+with no other writes in the polling prefix. It adds no per-dispatch probes.
+Its Windows regression demonstrates that the old core leaves the counter
+portable and that the prototype compiles it, while preserving a genuinely
+stable increment-then-restore loop. Nevertheless the real-scene results above
+reject this policy too. No static-prototype full H700 JIT result is claimed.
+
+All prototype source and private binaries are retained under
+`F:/GP32/results/resume54-poll/`, with `rejected.json` linking the exact
+candidate hashes and measurements. None was installed. Runtime source was
+restored to the pre-experiment revision; rebuilding restores the identical
+H700 core SHA-256 `9abfb0e44d4aafe280871ce50f0948aa1a89a4c37cb39a0e7aae6be6549b69f3`
+and benchmark SHA-256 `b33c4f0476b35c91d5c98521bb507617511faaffa468423836ed3eec75bfa5ce`.
+Installed core and protected settings also match their prior hashes.
+
+Do not promote more polling candidates merely because they fail to converge:
+native eligibility alone is not a performance result. Further work on this
+path first needs attribution of native/helper costs in the actual affected
+blocks. The broad forward-loop restriction remains in production.
