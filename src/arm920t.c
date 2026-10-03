@@ -1221,11 +1221,11 @@ static uint32_t arm_jit_branch_target(uint32_t pc, uint32_t insn) {
 }
 
 static int arm_jit_is_leaf_pop_pc(uint32_t insn) {
-    return insn == 0xe8bd8000u; /* ldmia sp!, {pc} */
+    return insn == 0xe8bd8000u || insn == 0xe49df004u; /* LDM / LDR pc,[sp],#4 */
 }
 
 static int arm_jit_is_leaf_push_lr(uint32_t insn) {
-    return insn == 0xe92d4000u; /* stmdb sp!, {lr} */
+    return insn == 0xe92d4000u || insn == 0xe52de004u; /* STM / STR lr,[sp,#-4]! */
 }
 
 static int arm_jit_insn_mentions_sp(uint32_t insn) {
@@ -1403,6 +1403,54 @@ static int arm_jit_is_unframed_leaf_data(uint32_t insn) {
 
 static void arm_jit_compile_native(arm920t_t *c, arm_jit_block_t *b);
 
+/* Flatten a short framed call, optionally containing one level of framed
+ * calls. Every instruction and stack transfer remains real: the emitters
+ * must check a loaded return against the decoded successor. Translation
+ * peeks only mapped code, never speculative MMIO, and each callee stays on
+ * its own fetch page. A failed collection publishes no partial trace. */
+static unsigned arm_jit_collect_framed(arm920t_t *c, uint32_t pc,
+                                      arm_jit_op_t *out, unsigned capacity,
+                                      unsigned depth) {
+    unsigned count = 0;
+    int no_sp_refs = 1;
+    int nested_call = 0;
+    for (unsigned i = 0; i < (depth ? 8u : 16u); ++i) {
+        uint32_t cur = pc + i * 4u, insn;
+        if (count == capacity || ((cur ^ pc) & ~ARM_JIT_PAGE_MASK) ||
+            !arm_jit_peek_fetch(c, cur, &insn)) return 0;
+        if (!i && !arm_jit_is_leaf_push_lr(insn)) return 0;
+        arm_jit_op_t *op = &out[count++];
+        *op = (arm_jit_op_t){.pc = cur, .insn = insn,
+            .cond = (uint8_t)(insn >> 28), .kind = (uint8_t)arm_jit_classify(insn),
+            .stop = (uint8_t)arm_jit_may_write_pc(insn)};
+        arm_bc_decode_op(op);
+        if (arm_jit_is_leaf_pop_pc(insn)) {
+            if (i >= 8u && !nested_call) return 0;
+            op->stop = 0;
+            op->reserved = no_sp_refs ? 5u : 3u;
+            if (no_sp_refs) out[0].reserved = 4u;
+            return count;
+        }
+        if (!depth && out[0].insn == 0xe52de004u && arm_jit_is_uncond_bl(insn)) {
+            unsigned nested = arm_jit_collect_framed(c,
+                arm_jit_branch_target(cur, insn), out + count, capacity - count, 1u);
+            if (!nested) return 0;
+            op->stop = 0;
+            op->reserved = 2u;
+            count += nested;
+            nested_call = 1;
+            no_sp_refs = 0; /* nested frames are not a stable-poll proof */
+            continue;
+        }
+        if (op->kind == ARM_JIT_OP_UNDEFINED || op->kind == ARM_JIT_OP_COPROC ||
+            op->kind == ARM_JIT_OP_SWI || op->kind == ARM_JIT_OP_BRANCH ||
+            op->kind == ARM_JIT_OP_PSR || op->kind == ARM_JIT_OP_SWP || op->stop)
+            return 0;
+        if (i && arm_jit_insn_mentions_sp(insn)) no_sp_refs = 0;
+    }
+    return 0;
+}
+
 /* Keep translation (including the native emitter's large scratch buffer) out
  * of the dispatch loop. Inlining it inflates the hot frame and register spills
  * even when every block lookup hits already compiled code. */
@@ -1449,36 +1497,15 @@ static ARM_NOINLINE arm_jit_block_t *arm_jit_translate(arm920t_t *c, uint32_t pc
             uint32_t first = 0;
             (void)arm_jit_peek_fetch(c, tpc, &first);
             if (arm_jit_is_leaf_push_lr(first)) {
-                uint8_t nleaf = 0;
-                int ok = 0;
-                int no_sp_refs = 1;
-                for (; nleaf < 8u; ++nleaf) {
-                    uint32_t cpc = tpc + (uint32_t)nleaf * 4u;
-                    uint32_t cinsn = rb32(c, cpc);
-                    arm_jit_kind_t k = arm_jit_classify(cinsn);
-                    if (k == ARM_JIT_OP_UNDEFINED || k == ARM_JIT_OP_COPROC || k == ARM_JIT_OP_SWI || k == ARM_JIT_OP_BRANCH || k == ARM_JIT_OP_PSR || k == ARM_JIT_OP_SWP) break;
-                    if (nleaf != 0u && !arm_jit_is_leaf_pop_pc(cinsn) && arm_jit_insn_mentions_sp(cinsn)) no_sp_refs = 0;
-                    if (arm_jit_may_write_pc(cinsn) && !arm_jit_is_leaf_pop_pc(cinsn)) break;
-                    if (arm_jit_is_leaf_pop_pc(cinsn)) { ok = 1; nleaf++; break; }
-                }
-                if (ok && i + nleaf < ARM_JIT_MAX_INSNS) {
+                arm_jit_op_t leaf[32];
+                unsigned nleaf = arm_jit_collect_framed(c, tpc, leaf,
+                    GP32_ARRAY_COUNT(leaf), 0u);
+                if (nleaf && i + nleaf < ARM_JIT_MAX_INSNS) {
                     op->stop = 0;
-                    op->reserved = 2; /* inlined BL: set LR, run leaf, continue at BL fallthrough. */
-                    for (uint8_t k = 0; k < nleaf; ++k) {
-                        uint32_t cpc = tpc + (uint32_t)k * 4u;
-                        uint32_t cinsn = rb32(c, cpc);
-                        ++i;
-                        arm_jit_op_t *cop = &arm_jit_ops(c, b)[i];
-                        cop->pc = cpc;
-                        cop->insn = cinsn;
-                        cop->cond = (uint8_t)(cinsn >> 28);
-                        cop->kind = (uint8_t)arm_jit_classify(cinsn);
-                        cop->stop = (uint8_t)arm_jit_may_write_pc(cinsn);
-                        cop->reserved = arm_jit_is_leaf_pop_pc(cinsn) ? (no_sp_refs ? 5u : 3u) : ((no_sp_refs && k == 0u && arm_jit_is_leaf_push_lr(cinsn)) ? 4u : ((cop->kind == ARM_JIT_OP_COPROC && arm_jit_is_safe_cp15_mrc(cinsn)) ? 6u : 0u));
-                        arm_bc_decode_op(cop);
-                        if (cop->reserved == 3u || cop->reserved == 5u) cop->stop = 0;
-                        b->count = (uint8_t)(i + 1u);
-                    }
+                    op->reserved = 2u;
+                    memcpy(&arm_jit_ops(c, b)[i + 1u], leaf, nleaf * sizeof(leaf[0]));
+                    i = (uint8_t)(i + nleaf);
+                    b->count = (uint8_t)(i + 1u);
                     cur += 4u;
                     continue;
                 }
