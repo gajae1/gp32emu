@@ -1,7 +1,7 @@
 /* Transactional savestate regression: a truncated or otherwise rejected load
  * must leave the live machine byte-identical, including CPU, RAM, SmartMedia
- * and queued PCM. The v0002 stream is
- * magic | gp32 image | arm920t image | s3c2400 image | ram | smc | audio, and
+ * and queued PCM. The v0003 stream is
+ * magic | gp32 image | elapsed time | arm920t image | s3c2400 image | ram | smc | audio, and
  * a cut past the CPU image used to rewind the CPU while the caller still saw
  * GP32_ERR_IO, with the mounted SmartMedia committed before the trailing PCM
  * had been read. Synthetic fixture, no ROM needed; GP32_SOURCE can select a
@@ -138,7 +138,8 @@ int main(int argc, char **argv) {
 
     /* Truncation boundaries from the live component sizes, not a copied wire
      * layout: gp32 header, CPU image, ram blob, then smc tail and PCM tail. */
-    const size_t soc_off = sizeof(gp32_state_magic) + sizeof(gp32_state_image_t);
+    const size_t time_off = sizeof(gp32_state_magic) + sizeof(gp32_state_image_t);
+    const size_t soc_off = time_off + sizeof(gp32_elapsed_time_t);
     const size_t cpu_len = cpu_image_bytes(source);
     const size_t ram_len = s3c2400_ram_size(target->soc);
     const size_t cpu_cut = soc_off + cpu_len / 2u;
@@ -159,6 +160,13 @@ int main(int argc, char **argv) {
     CHECK(live != NULL, "capture live target state");
     if (!live) return 2;
 
+    expect_rejected_load(target, live, live_size, src, soc_off - 1u, NULL, "elapsed time cut rejected without mutation");
+    uint8_t saved_time[sizeof(gp32_elapsed_time_t)];
+    memcpy(saved_time, src + time_off, sizeof(saved_time));
+    gp32_elapsed_time_t invalid_time = {1u, 0u, 0u};
+    memcpy(src + time_off, &invalid_time, sizeof(invalid_time));
+    expect_rejected_load(target, live, live_size, src, src_size, NULL, "invalid elapsed time rejected without mutation");
+    memcpy(src + time_off, saved_time, sizeof(saved_time));
     expect_rejected_load(target, live, live_size, src, cpu_cut, NULL, "cpu image cut rejected with byte-identical state");
     expect_rejected_load(target, live, live_size, src, ram_cut, NULL, "ram blob cut rejected with byte-identical state");
     expect_rejected_load(target, live, live_size, src, smc_cut, NULL, "smc tail cut rejected with byte-identical state");
@@ -187,6 +195,20 @@ int main(int argc, char **argv) {
         free(got);
     }
 
+    /* v2 has the same component payloads without the elapsed-time extension. */
+    size_t legacy_size = src_size - sizeof(gp32_elapsed_time_t);
+    uint8_t *legacy = malloc(legacy_size);
+    CHECK(legacy != NULL, "allocate legacy state");
+    if (legacy) {
+        memcpy(legacy, src, time_off);
+        memcpy(legacy, gp32_state_magic_v2, sizeof(gp32_state_magic_v2));
+        memcpy(legacy + time_off, src + soc_off, src_size - soc_off);
+        CHECK(gp32_load_state_data(target, legacy, legacy_size) == GP32_OK, "v2 state remains readable");
+        uint32_t old_ms = (uint32_t)(gp32_get_cycles(source) * 1000u / direct_run_clock_hz(source));
+        CHECK(direct_elapsed_ms(target) == old_ms, "v2 migration starts at former observable time");
+        CHECK(gp32_get_cycles(target) == gp32_get_cycles(source), "v2 migration preserves CPU time");
+        free(legacy);
+    }
     free(src);
     free(ref);
     free(live);

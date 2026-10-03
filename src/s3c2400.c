@@ -863,7 +863,20 @@ static void io_write32(s3c2400_t *s, uint32_t addr, uint32_t value, uint32_t mas
         }
         return;
     }
-    if (addr >= 0x14800000u && addr <= 0x14800017u) { reg_array_write(s->clkpow,sizeof(s->clkpow),addr-0x14800000u,value,mask); s->iis_clock_dirty = 1; s->pwm_clock_dirty = 1; s->lcd_line_valid = 0; s->lcd_timing_valid = 0; return; }
+    if (addr >= 0x14800000u && addr <= 0x14800017u) {
+        uint32_t old_run_clock = clk_run(s, MPLLCON);
+        reg_array_write(s->clkpow,sizeof(s->clkpow),addr-0x14800000u,value,mask);
+        s->iis_clock_dirty = 1;
+        s->pwm_clock_dirty = 1;
+        s->lcd_line_valid = 0;
+        s->lcd_timing_valid = 0;
+        /* Finish this instruction at the old rate. The caller can account
+         * for the completed slice before starting work at the new rate.
+         * Host-side setup writes must not halt the following CPU run. */
+        if (old_run_clock != clk_run(s, MPLLCON) && arm920t_is_running(s->cpu_irq_sink))
+            arm920t_stop_run(s->cpu_irq_sink);
+        return;
+    }
     if (addr >= 0x14a00000u && addr <= 0x14a003ffu) {
         off = addr - 0x14a00000u;
         s->lcd_line_valid = 0;

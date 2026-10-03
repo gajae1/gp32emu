@@ -1,5 +1,8 @@
 /* Exercise real guest callbacks while a direct-mode title waits for vblank. */
-#include "../src/gp32.c"
+#ifndef GP32_SOURCE
+#define GP32_SOURCE "../src/gp32.c"
+#endif
+#include GP32_SOURCE
 
 static int failures;
 #define CHECK(c, msg) do { if (!(c)) { fprintf(stderr, "FAIL: %s (%d)\n", msg, __LINE__); ++failures; } } while (0)
@@ -287,9 +290,68 @@ static void check_scheduler_catchup(void) {
     gp32_destroy(split);
 }
 
+static void check_elapsed_clock_change(int jit) {
+    gp32_t *g = gp32_create(NULL);
+    gp32_t *restored = gp32_create(NULL);
+    CHECK(g && restored, "create elapsed-time cores");
+    if (!g || !restored) { gp32_destroy(g); gp32_destroy(restored); return; }
+    const uint32_t code = GP32_RAM_BASE + 0x4000u;
+    const uint32_t divider = 0x14800014u;
+    g->direct_fxe_mode = 1;
+    gp32_set_jit(g, jit);
+    s3c2400_write32(g->soc, 0x14800004u, 0x3000u);
+    s3c2400_write32(g->soc, divider, 0u);
+    run_wait(g, 6600000u);
+    CHECK(direct_elapsed_ms(g) == 100u, "initial 100 ms at 66 MHz");
+    s3c2400_write32(g->soc, code, 0xe5801000u); /* STR r1,[r0]: change clock */
+    s3c2400_write32(g->soc, code + 4u, 0xeafffffeu); /* B . */
+    arm920t_set_reg(g->cpu, 0, divider);
+    arm920t_set_reg(g->cpu, 1, 2u);
+    arm920t_set_reg(g->cpu, 15, code);
+    CHECK(gp32_run_cycles(g, 330001u) == GP32_OK, "guest clock decrease and 10 ms");
+    CHECK(direct_run_clock_hz(g) == 33000000u && direct_elapsed_ms(g) == 110u,
+          "old time preserved and slice split at clock write");
+    size_t size = gp32_state_size(g);
+    uint8_t *state = malloc(size);
+    CHECK(state && gp32_save_state_data(g, state, size) == GP32_OK, "save divided-clock elapsed time");
+    if (state) {
+        CHECK(gp32_load_state_data(restored, state, size) == GP32_OK, "restore elapsed time");
+        CHECK(direct_elapsed_ms(restored) == 110u, "restored time retains prior clock history");
+        run_wait(restored, 330000u);
+        CHECK(direct_elapsed_ms(restored) == 120u, "restored time advances at loaded clock");
+        free(state);
+    }
+    arm920t_set_reg(g->cpu, 1, 0u);
+    arm920t_set_reg(g->cpu, 15, code);
+    CHECK(gp32_run_cycles(g, 660001u) == GP32_OK, "guest clock increase and 10 ms");
+    CHECK(direct_elapsed_ms(g) == 120u, "clock increase never rewinds elapsed time");
+    CHECK(gp32_reset(g) == GP32_OK && direct_elapsed_ms(g) == 0u, "reset clears firmware time");
+
+    g->direct_fxe_mode = 1;
+    direct_install_stubs(g);
+    s3c2400_write32(g->soc, 0x14800004u, 0x3000u);
+    s3c2400_write32(g->soc, divider, 0u);
+    run_wait(g, 6600000u);
+    const uint32_t callback[] = {0xe5801000u, 0xe2522001u, 0x1afffffdu, 0xe12fff1eu};
+    for (unsigned i = 0; i < GP32_ARRAY_COUNT(callback); ++i)
+        s3c2400_write32(g->soc, code + i * 4u, callback[i]);
+    arm920t_flush_jit(g->cpu);
+    CHECK(direct_call_guest_function3(g, code, divider, 2u, 33000u), "callback changes clock and returns");
+    CHECK(direct_elapsed_ms(g) == 102u, "callback time uses both clock domains");
+    const uint32_t toggles[] = {0xe5801000u, 0xe2211002u, 0xe2522001u, 0x1afffffbu, 0xe12fff1eu};
+    for (unsigned i = 0; i < GP32_ARRAY_COUNT(toggles); ++i)
+        s3c2400_write32(g->soc, code + i * 4u, toggles[i]);
+    arm920t_flush_jit(g->cpu);
+    CHECK(direct_call_guest_function3(g, code, divider, 0u, 300u),
+          "frequent clock yields do not prematurely exhaust callback budget");
+    gp32_destroy(g);
+    gp32_destroy(restored);
+}
+
 int main(void) {
     check_scheduler_catchup();
     for (int jit = 0; jit <= 1; ++jit) {
+        check_elapsed_clock_change(jit);
         check_timer(jit, 0, 0);
         check_timer(jit, 0x12u, 0); /* IRQ banks SP/LR. */
         check_timer(jit, 0x11u, 0); /* FIQ also banks r8-r12. */

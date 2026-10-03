@@ -225,6 +225,7 @@ struct arm920t {
     uint64_t cycles_total;
     int irq_line, fiq_line;
     int halted;
+    int running; /* Runtime only; not part of the v0002 CPU wire image. */
     int trace;
     arm_log_fn log;
     void *log_user;
@@ -609,6 +610,7 @@ uint32_t arm920t_get_pc(const arm920t_t *c) { return c ? c->r[15] : 0; }
 uint64_t arm920t_get_cycles(const arm920t_t *c) { return c ? c->cycles_total : 0; }
 void arm920t_add_idle_cycles(arm920t_t *c, uint32_t cycles) { if (c) c->cycles_total += cycles; }
 void arm920t_stop_run(arm920t_t *c) { if (c) c->halted |= HALT_END_RUN; }
+int arm920t_is_running(const arm920t_t *c) { return c && c->running; }
 uint32_t arm920t_get_reg(const arm920t_t *c, unsigned r) { return c && r < 16 ? c->r[r] : 0; }
 uint32_t arm920t_get_cpsr(const arm920t_t *c) { return c ? c->cpsr : 0; }
 uint32_t arm920t_get_cp15(const arm920t_t *c, unsigned reg) { return c && reg < 16 ? c->cp15[reg] : 0; }
@@ -3141,6 +3143,7 @@ static uint32_t arm_jit_run(arm920t_t *c, uint32_t cycles) {
 
 uint32_t arm920t_run(arm920t_t *c, uint32_t cycles) {
     if (!c) return 0;
+    c->running = 1;
     uint32_t done = 0;
     while (done < cycles && !c->halted) {
         maybe_irq(c);
@@ -3152,6 +3155,7 @@ uint32_t arm920t_run(arm920t_t *c, uint32_t cycles) {
     }
     c->halted &= ~HALT_END_RUN;
     c->cycles_total += done;
+    c->running = 0;
     return done;
 }
 
