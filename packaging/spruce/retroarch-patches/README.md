@@ -345,3 +345,76 @@ Both temporary frontend source changes were restored after building. All
 runs returned to MainUI with installed binary/configuration hashes unchanged.
 Evidence: `F:/GP32/results/resume41-periods/{summary.json,build-manifest.json,
 patch-check.json,*-padding.csv}` and `resume41-periods-*-runtime-verified.json`.
+
+## Presentation trace and rejected pacing experiments (resume42)
+
+`69a4f0e-video-presentation-trace.patch` is a **Linux diagnostic only** for
+the pinned frontend. It records producer submissions and video-worker driver
+calls separately using `CLOCK_MONOTONIC`. Set `GP32_PRESENT_LOG` to a private
+CSV path; each worker lifecycle overwrites that file on normal teardown.
+The two 4,096-event arrays have separate single writers and are dumped after
+the worker joins. Require `allocated=1`, `submit_overflow=0` and
+`present_overflow=0`. There is no crash flush or playback-time file I/O.
+Without the variable the arrays are not allocated. This trace is not installed.
+
+Apply using the LF procedure above. Expected input SHA-256:
+
+| File | LF SHA-256 |
+| --- | --- |
+| `gfx/video_thread_wrapper.c` | `e76d76c0ae2765a7cefd2481fe06ae05306bedfb6be2e5cbf6e942808e2edc41` |
+| `gfx/video_thread_wrapper.h` | `48cf9a0f891ad76393d12152cf3430fed954ade723068ff2b6abe65b1d0e499e` |
+
+Use a clean frontend build: the patch changes a shared structure. An initial
+experimental field insertion with stale header consumers crashed before game
+initialization; the corrected patch appends the field and was rebuilt with
+all affected consumers. The corrected trace frontend completed the replay.
+Patch application reproduces those compiled diagnostic sources exactly.
+
+CSV records are grouped by kind, not globally time-sorted. Join by frame ID.
+For `submit`, `start_ns` precedes the producer mutex, `ready_ns` follows its
+deadline wait, `accepted` indicates whether the pending slot was available,
+and `end_ns` follows submission. For `present`, `start_ns` precedes video-info
+construction, `end_ns` follows `driver->frame`, and `accepted` is that driver's
+return value; `ready_ns` is unused. The within-worker viewport readback path
+bypasses this trace. Driver return is **not physical scanout or input latency**.
+
+Her Knights Korea used the same 2,400-frame scripted combat replay, with the
+last 1,200 frames used for pacing and all sampled late host clocks at 1,512 MHz.
+P99 uses nearest rank. The isolated experiments below are not shipped patches.
+
+| Run | Driver-return interval p99 (ms) | Core-start to driver-return p99 (ms) | Late frames not presented | Central FIFO padding (stereo frames) |
+| --- | ---: | ---: | ---: | ---: |
+| A1, existing policy | 19.596 | 32.704 | 12 | 0 |
+| B1, up to 1 ms extra video wait | 17.060 | 32.831 | 0 | 4,742 |
+| B2, up to 1 ms extra video wait | 17.048 | 32.830 | 0 | 5,003 |
+| A2, existing policy | 19.822 | 32.790 | 9 | 0 |
+| M1, two buffers with latest pending frame | 17.102 | 38.485 | 14 | 0 |
+| M2, M1 plus 8 ms ALSA periods | 17.047 | 38.781 | 13 | 0 |
+
+The central padding window is output frames [96,000,1,872,000), or 37 seconds
+at 48 kHz. Every replay frame matched A1's guest cycles, PC, source PCM count,
+nonzero count and IIS register; all final screenshots matched. Every run
+accepted all 1,764,180 source stereo frames and had no ALSA error/recovery.
+Those facts do not exclude software FIFO starvation: B1/B2 explicitly padded
+with zeros and were rejected. Per-frame PCM hashes were not measured.
+
+M1/M2 overwrite an older pending frame while the worker owns the active buffer.
+All submission callbacks can therefore be accepted while some frames never
+reach the driver. Count unmatched submitted/presented frame IDs, not merely
+rejected callbacks. The smoother driver cadence came with worse software
+delivery latency; these single exploratory runs do not justify adoption.
+The unshipped mailbox prototype also needs allocator consistency on 3DS,
+geometry-change/NULL-frame and menu validation before any portable use.
+
+In the earlier A0 trace, all 14 late rejected submissions preceded the previous
+driver call's completion by only 0.004-0.244 ms. This identifies a narrow
+deadline race, but the grace experiment shows why simply waiting longer is
+insufficient. `FBIO_WAITFORVSYNC` returned immediately on this device, so it
+did not provide a usable physical-vblank measurement. Reported framebuffer
+timing also disagreed with observed driver cadence; no refresh setting changed.
+
+All runs returned to MainUI; installed binaries and protected configurations
+retained their hashes. Four temporary frontend source files were restored
+byte-for-byte. Evidence: `F:/GP32/results/resume42-video/{summary.json,
+patch-check.json,restored.json,a0-drop-release.json,*-present.csv,*-padding.csv}`
+and `resume42-video-*-runtime-verified.json`. Production pacing is unchanged.

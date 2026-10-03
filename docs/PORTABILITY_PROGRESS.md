@@ -2743,3 +2743,32 @@ results are retained under `F:/GP32/results/resume41-a64/`. The rebuilt
 production core again has the resume39 SHA-256
 `37884295e3f0a6c149be1ea1c91e835aa997325eff7e1615394e2ec21a3a6b0f`.
 Installed core, frontend and user settings were not changed.
+
+### Presentation timing and audio/latency tradeoffs (resume42)
+
+A bounded Linux frontend trace now separates core submission from video-driver
+completion. Her Knights' late frame rejection often races driver completion
+by less than 0.25 ms. Adding up to 1 ms of wait removed late presentation drops
+in an ABBA comparison, but introduced 4,742/5,003 explicitly padded stereo
+frames in the central 37-second audio window. It was rejected.
+
+A two-buffer prototype lets the producer replace a pending frame while the
+worker renders the active one. Its driver-return interval p99 improved from
+about 19.6-19.8 ms to 17.1 ms without central-window padding. However, the
+core-start-to-driver-return p99 rose from about 32.7 ms to 38.5 ms. Combining
+it with 8 ms ALSA periods gave 17.0/38.8 ms respectively. These software
+timestamps do not measure physical input latency. Neither prototype was
+adopted; lower interval p99 alone is insufficient when delivery delay worsens.
+
+All six replay runs retained per-frame guest/source-audio fields, accepted all
+audio, and produced identical final screenshots. Only the reusable diagnostic
+trace patch and findings are added to the repository. See
+`packaging/spruce/retroarch-patches/README.md` for scope and exact evidence.
+Production core/frontend/settings remain unchanged and the temporary external
+source changes were restored.
+
+CPU-speed design review also found that inverse absolute-clock rounding loses
+fractional instruction credit on repeated short CPU runs. A single carried
+residue passed 21,152 bounded arithmetic cases and preserves 1:1 accounting.
+This is design evidence only: idle/HLE integration and save-state semantics
+remain unresolved, and no 166/200 MHz option is implemented or validated.
