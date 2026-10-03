@@ -205,6 +205,22 @@ int main(void) {
             for (unsigned p = 0; p < sizeof(pads) / sizeof(pads[0]); ++p) {
                 if (!check_pad(modes[mi], jit, pads[p])) { retro_deinit(); return 1; }
             }
+            /* Disabling a port must release the guest even when the physical
+             * pad remains held. Reconnecting must expose the live pad again. */
+            simulated_mask = 0xffffu;
+            retro_set_controller_port_device(0, RETRO_DEVICE_NONE);
+            bitmask_queries = individual_queries = polled = presented = 0;
+            retro_run();
+            if ((observed_gpio & 0xff00u) != 0xff00u ||
+                (gp32_debug_read32(emu, 0x15600030u) & 0xc0u) != 0xc0u ||
+                bitmask_queries || individual_queries || polled != 1 || presented != 1) {
+                fprintf(stderr, "FAIL: disconnected input mode=%d jit=%d gpio=%08x queries=%u/%u\n",
+                        modes[mi], jit, observed_gpio, bitmask_queries, individual_queries);
+                retro_deinit(); return 1;
+            }
+            retro_set_controller_port_device(0, RETRO_DEVICE_JOYPAD);
+            retro_set_controller_port_device(1, RETRO_DEVICE_NONE); /* Other ports are irrelevant. */
+            if (!check_pad(modes[mi], jit, 0xffffu)) { retro_deinit(); return 1; }
             retro_deinit();
         }
     }

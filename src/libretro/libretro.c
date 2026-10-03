@@ -48,6 +48,7 @@ static const uint32_t *last_video_ptr;
 static int have_last_video;
 static int can_dupe;
 static int input_bitmasks;
+static unsigned input_device = RETRO_DEVICE_JOYPAD;
 static int effects_ready;
 static char system_dir[4096];
 static char save_dir[4096];
@@ -357,6 +358,7 @@ static void invalidate_last_video(void) {
 static void refresh_input_bitmask_support(void);
 
 void retro_init(void) {
+    input_device = RETRO_DEVICE_JOYPAD;
     set_default_dirs();
     reset_audio();
     if (!effects_ready) effects_ready = gp32_video_effects_init(&effects);
@@ -373,7 +375,9 @@ void retro_deinit(void) {
     reset_audio();
 }
 void retro_reset(void) { if (emu) { gp32_reset(emu); gp32_video_effects_reset(&effects); reset_audio(); invalidate_last_video(); } }
-void retro_set_controller_port_device(unsigned port, unsigned device) { (void)port; (void)device; }
+void retro_set_controller_port_device(unsigned port, unsigned device) {
+    if (port == 0) input_device = device & RETRO_DEVICE_MASK;
+}
 
 /* Optional single-query joypad polling. A frontend that answers
  * RETRO_ENVIRONMENT_GET_INPUT_BITMASKS can return every RetroPad button from
@@ -388,7 +392,7 @@ static void refresh_input_bitmask_support(void) {
 }
 
 static uint32_t read_buttons(void) {
-    if (!input_state_cb) return 0;
+    if (!input_state_cb || input_device != RETRO_DEVICE_JOYPAD) return 0;
     uint32_t m = 0;
     if (input_bitmasks) {
         /* Bit N of the mask is RETRO_DEVICE_ID_JOYPAD_<N>; the 16-button

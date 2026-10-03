@@ -1,0 +1,43 @@
+--- a/spruce_igm.c
++++ b/spruce_igm.c
+@@ -48,12 +48,12 @@
+ };
+ 
+ static const char *igm_labels[IGM_ITEM_COUNT] = {
+-   "Resume",
+-   "Save",
+-   "Load",
+-   "Reset",
+-   "RetroArch Menu",
+-   "Exit Game"
++   "계속",
++   "저장",
++   "로드",
++   "리셋",
++   "RA 메뉴",
++   "종료"
+ };
+ 
+ /* ── Colours — matched to spruceOS theme ───────────────────── */
+@@ -489,7 +489,7 @@
+ 
+    /* ── Title ─────────────────────────────────────────── */
+    if (igm.font_small)
+-      igm_draw_text(igm.font_small, "spruceOS Menu",
++      igm_draw_text(igm.font_small, "spruceOS 메뉴",
+             (float)text_cx,
+             (float)(panel_y + title_h * 0.68f),
+             video_width, video_height,
+@@ -533,10 +533,10 @@
+          {
+             int slot = settings->ints.state_slot;
+             if (slot < 0)
+-               snprintf(slot_buf, sizeof(slot_buf), "%s Auto",
++               snprintf(slot_buf, sizeof(slot_buf), "%s 자동",
+                      igm_labels[i]);
+             else
+-               snprintf(slot_buf, sizeof(slot_buf), "%s Slot %d",
++               snprintf(slot_buf, sizeof(slot_buf), "%s 슬롯 %d",
+                      igm_labels[i], slot);
+             label = slot_buf;
+          }
