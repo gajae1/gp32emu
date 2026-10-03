@@ -10,8 +10,9 @@ no remote file is created, edited or deleted. Missing files and permission
 errors are recorded in "errors" and per capture instead of aborting the run.
 
 Paths follow docs/PORTABILITY_PROGRESS.md and the F:/GP32/results scripts: the
-core is /mnt/SDCARD/Emu/GP32/gp32emu_libretro.so and the RA process name is
-ra64.h700. Set GP32_SSH_PASSWORD in the environment.
+core is /mnt/SDCARD/Emu/GP32/gp32emu_libretro.so and the RA process names are
+ra64.h700 and the GP32-only ra64.gp32.h700. Set GP32_SSH_PASSWORD in the
+environment.
 """
 import argparse
 import datetime
@@ -25,7 +26,7 @@ from pathlib import Path
 HOST = "192.168.0.204"
 USER = "spruce"
 ROOT = "/mnt/SDCARD"
-PROCESS = "ra64.h700"
+PROCESSES = ("ra64.h700", "ra64.gp32.h700")
 KERNEL_LINES = 300
 MAPS_LIMIT = 262144
 TIMEOUT = 20
@@ -95,7 +96,7 @@ def collect(client):
         record("kernel_kern_log", f"tail -n {KERNEL_LINES} /var/log/kern.log")
     record("meminfo", "cat /proc/meminfo")
 
-    pidof = record("ra_pidof", f"pidof {PROCESS}", 1024)
+    pidof = record("ra_pidof", "pidof " + " ".join(PROCESSES), 1024)
     pids = pidof["stdout"].split() if pidof["ok"] else []
     for pid in pids:
         base = f"/proc/{pid}"

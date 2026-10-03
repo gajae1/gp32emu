@@ -2,7 +2,8 @@
 
 This is an optional **frontend source patch for OS/RetroArch builders**. It is
 not part of the gp32emu core build and is not installed by the Spruce package.
-The tested handheld still runs its original RetroArch binary and settings.
+The tested handheld retains its original system RetroArch binary and settings;
+the optional GP32-only selection described below uses a separate frontend.
 
 ## Source and scope
 
@@ -161,6 +162,62 @@ is not a 900 emulated-frame performance comparison.
 
 Evidence: `F:/GP32/results/resume35-frontend/{localization.json,build.log,
 preflight.json,menu.png,menu-validation.json}`. This closes the missing-label
-issue for the rebuilt in-game menu. The normal installed RetroArch still has
-not been replaced; physical button navigation, automatic-slot rendering and
-frontend adoption for the normal GP32 launcher remain separate acceptance work.
+issue for the rebuilt in-game menu. The system-wide RetroArch remains unchanged.
+GP32-only adoption is described below; physical button navigation and
+automatic-slot rendering remain separate acceptance work.
+
+## GP32-only selection in Spruce (2026-10-04)
+
+`gp32-h700-frontend-selection.patch` updates Spruce's
+`spruce/scripts/emu/lib/ra_functions.sh` after its usual 32/64-bit selection.
+It selects `RetroArch/ra64.gp32.h700` only when all four conditions hold:
+
+- The system is `GP32`.
+- The selected core is `gp32emu`.
+- The normal frontend would be `ra64.h700`.
+- The separate frontend exists and is executable.
+
+Other systems, other cores, 32-bit and generic 64-bit frontends keep their
+existing selection. If the separate file is absent, the original H700 frontend
+is used. No emulator JSON, core options or RetroArch settings need changing.
+
+For OS builders, first build and validate the frontend with the historical
+vendor patches, ALSA correction and desired menu localization described above.
+With RetroArch stopped, retain a backup of `ra_functions.sh`, install the
+validated executable as `RetroArch/ra64.gp32.h700`, and apply this selection
+patch to a staging copy of the SD-card tree:
+
+```sh
+git apply --check /path/to/gp32-h700-frontend-selection.patch
+git apply /path/to/gp32-h700-frontend-selection.patch
+sh -n spruce/scripts/emu/lib/ra_functions.sh
+```
+
+Run those commands from the staging tree root. Stop if the patch does not match
+the local Spruce version; do not replace an updated OS script wholesale.
+Deploy the patched script only after checking the candidate's dependencies and
+native `--version`. To revert selection, move the separate frontend out of that
+filename while RetroArch is stopped, or restore the saved script. An OS update
+may replace the script and require reapplying the small patch.
+
+The tested device has this selector and the localized corrected binary
+`e4a4ea8feebe9776b867a23f61380c7fb2b78605a4bcf6d8e31b6144d70e4b50` installed.
+The original `ra64.h700` and GP32/RetroArch config hashes are unchanged. The
+selector's seven routing cases, including a missing binary, passed on-device.
+The installed `run_retroarch` function then launched the installed GP32 core
+and new frontend, matched the existing ANBERNIC controller profile, displayed
+Tomak gameplay, exited with code 0 and returned to MainUI without ALSA errors.
+That run used private config/save paths and a bounded-duration wrapper. It
+does not establish full `standard_launch.sh` bookkeeping or physical input/audio
+acceptance. No new frame-pacing speedup is claimed from this integration run.
+
+Spruce's unchanged CPU-pinning helper emitted `sched_setaffinity: Invalid
+argument`: the launcher passes `23`, while the bundled `pin_cpu` expects a
+comma-separated list such as `2,3`. The observed frontend still had CPUs 0-3
+available. This separate launcher issue remains to be corrected; no governor
+or affinity policy was changed as part of frontend selection.
+
+Local evidence: `F:/GP32/results/resume36-integration/{installed.json,
+routing.txt,source-manifest.json}` and
+`F:/GP32/results/resume36-launch2/{runtime-verified.json,frontend.exit,
+active-exe.txt,active-status.txt,runtime.log,final.png}`.

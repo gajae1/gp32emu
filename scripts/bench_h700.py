@@ -39,6 +39,9 @@ RESULT_KEYS = EXACT_KEYS + ("fps", "elapsed")
 EXPECTED_ORDER = ("baseline", "candidate", "candidate", "baseline")
 MIN_CLOCK_SAMPLES = 2
 LOG_TAIL_LIMIT = 1024   # kept stdout log prefix / stderr tail per row
+# Any of these running holds the framebuffer/CPU and skews the benchmark.
+RA_PROCESSES = ("ra64.h700", "ra64.gp32.h700", "ra32.h700",
+                "ra64.universal", "ra32.universal", "retroarch")
 
 
 def parse_result(text):
@@ -189,8 +192,10 @@ def main():
     try:
         client.connect(options.host, username=options.user, password=password,
                        timeout=8, look_for_keys=False, allow_agent=False)
-        if command("pidof ra64.h700 || true", 10):
-            raise RuntimeError("RetroArch is running; benchmark deferred")
+        running = command("pidof " + " ".join(RA_PROCESSES) + " || true", 10)
+        if running:
+            raise RuntimeError("RetroArch is running (pids %s); benchmark deferred"
+                               % running.replace("\n", " "))
         command("test -x " + shlex.quote(options.baseline), 10)
         baseline_digest = command("sha256sum " + shlex.quote(options.baseline), 10).split()[0]
         invocation = {"host": options.host, "user": options.user, "root": options.root,

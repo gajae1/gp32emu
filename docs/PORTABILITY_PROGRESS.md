@@ -2466,3 +2466,64 @@ menu navigation, automatic-slot rendering, normal GP32 frontend integration
 and broader audio acceptance remain open. CommandCode's scoped input review
 failed with HTTP 429 before producing findings; the input fix above was
 reproduced and implemented by the parent.
+
+### GP32-only frontend deployment (resume36, 2026-10-04)
+
+The localized ALSA-corrected frontend is now installed as
+`/mnt/SDCARD/RetroArch/ra64.gp32.h700`, SHA-256
+`e4a4ea8feebe9776b867a23f61380c7fb2b78605a4bcf6d8e31b6144d70e4b50`.
+A seven-line selector in Spruce's existing `run_retroarch` function activates
+it only for system GP32, core gp32emu, and original frontend ra64.h700, with
+an executable-file check. Other systems/cores and 32-bit/generic frontends
+retain their original selection; removing the optional binary restores the
+original H700 selection. The source patch is provided under
+`packaging/spruce/retroarch-patches/gp32-h700-frontend-selection.patch`.
+
+On-device shell syntax and seven routing cases passed, including missing-file
+fallback. The modified OS script SHA-256 is
+`85cea0f6449cdbe3489c1a97216180264ae7c8778c1b32b9ee94364480e4fcef`;
+the original, SHA-256
+`c843c915201f3179aa8d8cf1071e9deae47b466ddb7efc9b5cd1c5a4f779be8f`,
+is backed up at
+`/mnt/SDCARD/gp32-dev/resume36-integration/ra_functions.before.sh`.
+The original frontend, production core, emulator JSON and platform RetroArch
+configuration hashes remained unchanged. There were no governor/volume edits.
+
+An integration run sourced the installed `run_retroarch` and real device setup
+functions, used private config/save paths and save-bookkeeping stubs, and invoked
+the installed binary through a timed wrapper. It loaded the actual production
+core `7f6111e5d492682ec2be3301cb9bdf007337843892febb4102e7d30e02ef243e`.
+The first private HOME omitted the normal joypad profile path. The corrected
+run explicitly referenced the existing autoconfig/assets directories; the
+ANBERNIC-keys profile matched with affinity 50 and the unconfigured warning
+disappeared. The initial verifier incorrectly expected a filename in the log;
+that RetroArch build reports profile affinity instead, so the check was
+corrected against the captured output without rerunning gameplay.
+
+The live process executable resolved to the installed `ra64.gp32.h700`, the
+frontend exit code was 0, the log recorded 15 seconds of content execution and
+normal teardown, and MainUI returned. The gameplay screenshot was inspected.
+ALSA recorded 1,029 writes / 790,272 frames and zero errors or recoveries.
+This is launch/input-profile/audio-output plumbing evidence, not a new pacing
+benchmark, physical input-latency test, or acceptance of all normal launcher
+bookkeeping. Production settings hashes were again verified after the run.
+
+A SWE worker updated `scripts/bench_h700.py` to defer while any of the six
+known RetroArch binaries is running, including the new name, and updated
+`scripts/h700_snapshot.py` to capture both H700 frontend names without changing
+its JSON shape. Python syntax validation passed. A live snapshot found the
+new process but it exited during subsequent `/proc` reads, which were recorded
+as errors; the second run's in-launch capture establishes its executable and
+CPU mask without relying on that incomplete snapshot.
+
+One separate Spruce issue remains: `DEVICE_MAX_CORES_ONLINE=0123` is shortened
+to `23` by `pin_to_dedicated_cores`, but the bundled `pin_cpu` explicitly expects
+`2,3` (or a range), so it reports invalid affinity. Captured frontend affinity
+remains CPUs 0-3. The selection patch leaves this existing helper untouched;
+repairing and qualifying that intended CPU assignment is the next launcher
+performance task.
+
+Evidence: `F:/GP32/results/resume36-integration/{source-manifest.json,
+installed.json,routing.txt,live-snapshot.json}` and
+`F:/GP32/results/resume36-launch2/{runtime-verified.json,frontend.exit,
+active-exe.txt,active-status.txt,runtime.log,function.log,final.png}`.
