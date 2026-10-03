@@ -4081,10 +4081,17 @@ static int gp32_state_write(const gp32_t *g, state_io_t *io) {
 
 static int gp32_state_read(gp32_t *g, state_io_t *io, gp32_state_image_t *direct) {
     uint8_t got[sizeof(gp32_state_magic)];
-    return state_io_read(io, got, sizeof(got)) && memcmp(got, gp32_state_magic, sizeof(got)) == 0 &&
-           state_io_read(io, direct, sizeof(*direct)) &&
-           arm920t_state_load_io(g->cpu, io) &&
-           s3c2400_state_load_io(g->soc, io);
+    if (!state_io_read(io, got, sizeof(got)) || memcmp(got, gp32_state_magic, sizeof(got)) != 0 ||
+        !state_io_read(io, direct, sizeof(*direct))) return 0;
+    /* Keep CPU state pending until the SoC has read every section. Its large
+     * state image already uses most of a Windows thread's default stack, so
+     * the CPU image must not remain on that stack during the SoC call. */
+    arm920t_state_image_t *cpu = malloc(sizeof(*cpu));
+    if (!cpu) return 0;
+    int ok = state_io_read(io, cpu, sizeof(*cpu)) && s3c2400_state_load_io(g->soc, io);
+    if (ok) arm920t_state_apply(g->cpu, cpu);
+    free(cpu);
+    return ok;
 }
 
 static void gp32_state_loaded(gp32_t *g, const gp32_state_image_t *direct) {
@@ -4145,7 +4152,9 @@ gp32_status_t gp32_load_state(gp32_t *g, const char *path) {
     state_io_t io = state_io_file(f);
     gp32_state_image_t direct;
     int ok = gp32_state_read(g, &io, &direct);
-    if (fclose(f) != 0) ok = 0;
+    /* Read-only stream: the complete payload is already committed on success.
+     * A close error must not report rejection of an applied state. */
+    (void)fclose(f);
     if (!ok) { seterr(g, "load savestate %s failed or unsupported version", path); return GP32_ERR_IO; }
     gp32_state_loaded(g, &direct);
     return GP32_OK;
