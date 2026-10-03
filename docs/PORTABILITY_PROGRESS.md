@@ -2943,3 +2943,24 @@ accepted every offered audio frame and reported no ALSA errors. The last
 not whole-library 60 fps, physical input latency or Android runtime proof.
 See `GP32_PERFORMANCE_STRATEGY.md` for the checks, rejected candidate and
 active-audio limitation of the late window.
+
+### Halfword-aligned Thumb callback entry and return (resume48)
+
+The CPU register setter previously cleared both low PC bits regardless of
+instruction set. Consequently a valid Thumb callback at address `...2002`
+entered at `...2000`, and a suspended Thumb caller at `...5002` resumed at
+`...5000`. This can skip the callback body or repeat a caller instruction.
+PC writes now align to two bytes in Thumb state and four bytes in ARM state.
+
+A real guest-code regression reaches the caller's halfword PC by executing
+a Thumb instruction, then invokes the shared HLE callback path. A preceding
+`BX lr` makes the wrong callback entry return without its RAM write. Both
+the entry and restored-PC assertions failed before the fix with JIT enabled
+and disabled; both now pass on Windows and native H700. ARM PC alignment
+remains checked. Existing Windows PCM and save-state tests pass, and Windows,
+H700, Android ARM64 and ARMv7 libretro builds succeed. This is a correctness
+fix; no new speedup or whole-game compatibility result is claimed.
+
+Evidence: `F:/GP32/results/resume48-thumb/` (red/green test logs and native
+H700 result). Nested callback cycle accounting remains unresolved; this
+change does not alter it.
