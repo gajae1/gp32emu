@@ -83,12 +83,74 @@ static void check_timer(int jit, uint32_t callback_mode, int thumb) {
     gp32_destroy(g);
 }
 
+static void check_callback_starts_timer(int jit, unsigned starter, int reconfigure) {
+    gp32_t *g = gp32_create(NULL);
+    CHECK(g != NULL, "create timer mutation core");
+    if (!g) return;
+    const unsigned target = 1u - starter;
+    const uint32_t start_fn = GP32_RAM_BASE + 0x2000u;
+    const uint32_t count_fn = GP32_RAM_BASE + 0x4000u;
+    const uint32_t command = GP32_RAM_BASE + 0x6000u;
+    const uint32_t counter = GP32_RAM_BASE + 0x7000u;
+    const uint32_t start_code[] = {0xe59f0004u, 0xef000013u, 0xe12fff1eu, command};
+    const uint32_t restart_code[] = {
+        0xe59f000cu, 0xef000013u, 0xe59f0008u, 0xef000013u, 0xe12fff1eu,
+        command, command + 20u,
+    };
+    const uint32_t count_code[] = {
+        0xe59f000cu, 0xe5901000u, 0xe2811001u, 0xe5801000u, 0xe12fff1eu, counter,
+    };
+    g->direct_fxe_mode = 1;
+    direct_install_stubs(g);
+    gp32_set_jit(g, jit);
+    s3c2400_write32(g->soc, 0x14800004u, 0x3000u);
+    s3c2400_write32(g->soc, 0x14800014u, 0u);
+    CHECK(direct_run_clock_hz(g) == 66000000u, "66 MHz timer fixture");
+    for (size_t i = 0; i < GP32_ARRAY_COUNT(start_code); ++i)
+        s3c2400_write32(g->soc, start_fn + (uint32_t)i * 4u, start_code[i]);
+    if (reconfigure)
+        for (size_t i = 0; i < GP32_ARRAY_COUNT(restart_code); ++i)
+            s3c2400_write32(g->soc, start_fn + (uint32_t)i * 4u, restart_code[i]);
+    for (size_t i = 0; i < GP32_ARRAY_COUNT(count_code); ++i)
+        s3c2400_write32(g->soc, count_fn + (uint32_t)i * 4u, count_code[i]);
+    for (unsigned i = 0; i < 2u; ++i) {
+        g->direct_hle_gpos_timer[i].configured = 1u;
+        g->direct_hle_gpos_timer[i].enabled = i == starter || reconfigure;
+        g->direct_hle_gpos_timer[i].tps = 1000u;
+        g->direct_hle_gpos_timer[i].callback = i == starter ? start_fn : count_fn;
+    }
+    g->direct_hle_gpos_timers_enabled = 1u;
+    s3c2400_write32(g->soc, command, 4u); /* Guest callback starts the other slot. */
+    s3c2400_write32(g->soc, command + 4u, target);
+    if (reconfigure) {
+        s3c2400_write32(g->soc, command, 1u); /* Same function/rate, new timer lifetime. */
+        s3c2400_write32(g->soc, command + 8u, count_fn);
+        s3c2400_write32(g->soc, command + 12u, 1000u);
+        s3c2400_write32(g->soc, command + 16u, 0u);
+        s3c2400_write32(g->soc, command + 20u, 4u);
+        s3c2400_write32(g->soc, command + 24u, target);
+    }
+    run_wait(g, 66000u); /* Last 464-cycle slice invokes the starter. */
+    g->direct_hle_gpos_timer[starter].enabled = 0u;
+    CHECK(g->direct_hle_gpos_timer[target].enabled, "guest SWI starts target timer");
+    CHECK(s3c2400_debug_read32(g->soc, counter) == 0u, "new timer does not inherit pending expiry");
+    CHECK(g->direct_hle_gpos_timer[target].accum == 0u, "new timer gets no pre-start time");
+    run_wait(g, 65536u);
+    CHECK(s3c2400_debug_read32(g->soc, counter) == 0u, "started timer does not expire early");
+    run_wait(g, 464u);
+    CHECK(s3c2400_debug_read32(g->soc, counter) == 1u, "started timer expires after full period");
+    gp32_destroy(g);
+}
+
 int main(void) {
     for (int jit = 0; jit <= 1; ++jit) {
         check_timer(jit, 0, 0);
         check_timer(jit, 0x12u, 0); /* IRQ banks SP/LR. */
         check_timer(jit, 0x11u, 0); /* FIQ also banks r8-r12. */
         check_timer(jit, 0, 1); /* Thumb callback, ARM caller and return trap. */
+        check_callback_starts_timer(jit, 0u, 0);
+        check_callback_starts_timer(jit, 1u, 0);
+        check_callback_starts_timer(jit, 0u, 1);
     }
     if (failures) return 1;
     puts("PASS: direct GPOS callbacks during vblank wait, disabled timer, split budget and CPU context");
