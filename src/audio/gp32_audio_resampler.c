@@ -166,19 +166,43 @@ size_t gp32_audio_resampler_process(gp32_audio_resampler_t *r,
      * and src[idx + 1]; with prev, virtual idx >= 1 maps to src[idx - 1] and
      * src[idx].  Neither case needs a bound test or a prev branch per output. */
     size_t lead = have_prev ? 1u : 0u;
-    while (room != 0u && phase < limit_q32) {
-        const int16_t *p = src_s16_stereo + (((size_t)(phase >> 32) - lead) * 2u);
-        uint32_t frac = (uint32_t)phase;
-        int16_t l = lerp_s16_q32(p[0], p[2], frac);
-        int16_t rr = lerp_s16_q32(p[1], p[3], frac);
-        dst[0] = l;
-        dst[1] = rr;
-        dst += 2;
-        --room;
-        last_l = l;
-        last_r = rr;
-        have_last = 1;
-        phase += step;
+    /* Count the steady outputs once, avoiding two bounds tests per sample.
+     * Retain the guarded loop for a step large enough to wrap phase. */
+    if (phase < limit_q32 && room && step <= UINT64_MAX - limit_q32) {
+        uint64_t need = (limit_q32 - phase - 1u) / step + 1u;
+        size_t n = need < (uint64_t)room ? (size_t)need : room;
+        /* The prefix has consumed virtual sample zero when prev is present.
+         * Bias phase, not the pointer, to keep every address inside src. */
+        phase -= (uint64_t)lead << 32;
+        do {
+            const int16_t *p = src_s16_stereo + (size_t)(phase >> 32) * 2u;
+            uint32_t frac = (uint32_t)phase;
+            int16_t l = lerp_s16_q32(p[0], p[2], frac);
+            int16_t rr = lerp_s16_q32(p[1], p[3], frac);
+            dst[0] = l;
+            dst[1] = rr;
+            dst += 2;
+            last_l = l;
+            last_r = rr;
+            have_last = 1;
+            phase += step;
+        } while (--n);
+        phase += (uint64_t)lead << 32;
+    } else {
+        while (room != 0u && phase < limit_q32) {
+            const int16_t *p = src_s16_stereo + (((size_t)(phase >> 32) - lead) * 2u);
+            uint32_t frac = (uint32_t)phase;
+            int16_t l = lerp_s16_q32(p[0], p[2], frac);
+            int16_t rr = lerp_s16_q32(p[1], p[3], frac);
+            dst[0] = l;
+            dst[1] = rr;
+            dst += 2;
+            --room;
+            last_l = l;
+            last_r = rr;
+            have_last = 1;
+            phase += step;
+        }
     }
 
     r->fade_left = fade_left;
