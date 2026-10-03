@@ -1864,3 +1864,70 @@ RetroArch settings hashes are unchanged; MainUI was running and RetroArch
 was stopped during the atomic core replacement. This round did not repeat
 physical audio/input-latency acceptance or claim all games are validated.
 Record: `F:/GP32/results/resume25-core-installed.json`.
+
+### Condition-code experiments and audio conversion (resume26)
+
+Two external A64 candidates were compared with 4143c95. Retaining proven
+host-NZCV equivalence across flagless ALU/branch operations passes the full
+H700 differential (113,128 events, 21 fallbacks), including additional RRX,
+ADC and conditional flagless joins. Its first Wizard ABBA baseline ramps
+1320-1512 MHz, disqualifying a percentage claim. Steady candidates are
+93.411/93.366 fps against the final steady baseline 93.010: insufficient
+reason to adopt another compiler change. The candidate stays external.
+
+CommandCode's separate conditional MOV/RSB-to-CSEL candidate also passes the
+native differential (110,938 events, 21 fallbacks). Qualified Wizard late
+ABBA at 1512 MHz regresses 92.792 -> 91.9475 median fps (-0.91%) with all seven
+CPU/video/audio fields identical. It is rejected. OpenCode and one additional
+CommandCode LCD worker hit provider 429 before producing a candidate; no LCD
+change is inferred or shipped. Evidence: `F:/GP32/results/resume26-flags/`,
+`resume26-flags-jit-h700.json`, `resume26-flags-wizard-abba.json`,
+`resume26-csel-jit-h700.json`, `resume26-csel-wizard-abba.json`.
+
+SWE's shared audio resampler candidate removes two steady-loop bounds checks
+per output by computing the output count once, then biases the local Q32 phase
+to remove the carried-sample index adjustment. The prefix still handles gap
+fades and the carried sample. Parent removed a pre-array-pointer construction
+from the prototype and retained the original guarded loop when a very large
+step could wrap phase. PCM, phase, capacity behavior and rate/quality stay the
+same. Libretro's equal-rate memcpy path is already separate and unchanged.
+
+C23 Clang -O3 baseline/candidate comparisons match all PCM and complete
+resampler state across 3,000 varied capacity/rate/fade/carry calls; a separate
+scripted session matches 35,208 stereo frames. Windows libretro-audio and
+win64-audio tests pass, as do H700/Windows and both Android ABI core builds.
+The initial cold H700 timing varies with frequency and is not used for a
+percentage claim. A subsequent workload warmup reaches 1512 MHz without
+changing the governor; every measured A/B/B/A endpoint reports that frequency:
+
+| Conversion workload | Baseline us | Candidate us | Time reduction |
+| --- | ---: | ---: | ---: |
+| up4x 735frm | 42.979 | 34.254 | 20.30% |
+| up4x 4096frm | 239.691 | 191.201 | 20.23% |
+| down 1470frm | 19.803 | 15.784 | 20.30% |
+| frac 2048frm | 40.270 | 32.083 | 20.33% |
+
+These are isolated conversion timings, not game FPS or physical audio-quality
+claims. Windows C23 measurements also improve, but noisy workstation timing
+is kept separate from the device table. Evidence:
+`F:/GP32/results/resume26-resample-clocked-h700.json`,
+`resume26-resample/clang-final-win.log`, `resume26-resample/bench-clocked.c`.
+
+The integrated candidate also completes a real Spruce RetroArch Korean Wizard
+combat replay (2,401 frontend runs, correctly aligned after auto-state load).
+Every replay frame's guest PC/source PCM count/nonzero count/IISCON matches
+the prior standalone reference. All 1,763,356 offered stereo frames are
+accepted with zero partial/zero returns or pending tails; ALSA reports zero
+errors and recoveries. The captured image shows the expected combat/loss
+screen. The late 300-frame core time averages 9.686 ms and frontend interval
+p99 is 17.217 ms in this run. The lower interval tail than a previous run is
+an observation, not a controlled claim that this small conversion change
+fixed all frontend pacing. Physical speaker quality/input latency remain open.
+MainUI returns normally; launcher/RetroArch setting hashes are unchanged.
+Evidence: `F:/GP32/results/resume26-audio-runtime-verified.json`,
+`resume26-audio-summary.json`, `resume26-audio-runtime.png`.
+
+Installed production SHA-256:
+`935ce388a2bf69014158ed0b48d7d31f587058a6290ea7d0ed700620ae58a913`.
+Prior core backup: `/mnt/SDCARD/gp32-dev/resume26-installed-core-before.so`.
+Deployment record: `F:/GP32/results/resume26-core-installed.json`.
