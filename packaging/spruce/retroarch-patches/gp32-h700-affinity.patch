@@ -1,0 +1,10 @@
+--- a/spruce/scripts/emu/lib/general_functions.sh
++++ b/spruce/scripts/emu/lib/general_functions.sh
+@@ -197,4 +197,7 @@
+ 
+ pin_to_dedicated_cores() {
++    # Keep GP32 CPU/video/audio workers on the inherited CPU set.
++    [ "$1" = "ra64.gp32.h700" ] && return 0
++
+ 	comm="$1"
+ 	delay="${2:-1}"
