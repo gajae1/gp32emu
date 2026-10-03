@@ -1067,24 +1067,31 @@ static void exec_thumb(arm920t_t *c) {
     exception_enter(c, MODE_UND, 0x04, pc + 2, 0);
 }
 
+/* Unlike rb32, speculative leaf fetches and cache revalidation must not walk
+ * page tables, refill the TLB, update fault state or read an MMIO callback. */
+ARM_FORCE_INLINE int arm_jit_peek_fetch(arm920t_t *c, uint32_t pc, uint32_t *insn) {
+    uint32_t pa = pc;
+    if (pa & 3u) return 0;
+    if (c->cp15[1] & 1u) {
+        const arm_tlb_entry_t *e = &c->tlb_entry[(pa >> 12) & 0xfffu];
+        if (!e->valid || (pa & ~e->mask) != e->va_base || e->mask < 3u ||
+            (pa & e->mask) > e->mask - 3u) return 0;
+        pa = e->pa_base | (pa & e->mask);
+    }
+    const uint8_t *p = fastmem(c, pa, 4u, 0);
+    if (!p) return 0;
+    *insn = gp32_ld32le(p);
+    return 1;
+}
+
 /* Prove every recorded fetch, including stitched branches and inlined leaves.
- * Unlike mmu_translate/rb32 this never walks page tables, refills the TLB,
- * updates fault registers or calls an MMIO read callback. A missing mapping
- * or fastmem word is unprovable, even when identity memory happens to match. */
+ * A missing mapping is unprovable, even if identity memory happens to match. */
 static int arm_jit_fetch_unchanged(arm920t_t *c, const arm_jit_block_t *b) {
     if (!b->count || b->count > ARM_JIT_MAX_INSNS) return 0;
     for (unsigned i = 0; i < b->count; ++i) {
         const arm_jit_op_t *op = &arm_jit_ops(c, b)[i];
-        uint32_t pa = op->pc;
-        if (pa & 3u) return 0;
-        if (c->cp15[1] & 1u) {
-            const arm_tlb_entry_t *e = &c->tlb_entry[(pa >> 12) & 0xfffu];
-            if (!e->valid || (pa & ~e->mask) != e->va_base || e->mask < 3u ||
-                (pa & e->mask) > e->mask - 3u) return 0;
-            pa = e->pa_base | (pa & e->mask);
-        }
-        const uint8_t *p = fastmem(c, pa, 4u, 0);
-        if (!p || gp32_ld32le(p) != op->insn) return 0;
+        uint32_t insn;
+        if (!arm_jit_peek_fetch(c, op->pc, &insn) || insn != op->insn) return 0;
     }
     return 1;
 }
@@ -1341,6 +1348,21 @@ static int arm_jit_alloc(arm920t_t *c) {
     return 1;
 }
 
+static int arm_jit_is_unframed_leaf_data(uint32_t insn) {
+    if ((insn >> 28) == 15u || arm_jit_classify(insn) != ARM_JIT_OP_DATA ||
+        arm_jit_may_write_pc(insn)) return 0;
+    arm_jit_op_t op;
+    arm_bc_decode_data(&op, insn);
+    int test = op.a >= 8u && op.a <= 11u;
+    if (!test && op.c >= 13u) return 0; /* no SP/LR/PC writes */
+    if (op.a != 13u && op.a != 15u && op.b == 13u) return 0;
+    if (!(op.d & ARM_BC_DATA_IMM) &&
+        (op.e == 13u || ((op.d & ARM_BC_DATA_REGSHIFT) && op.f == 13u))) return 0;
+    /* Read-only LR and pipeline PC operands use the existing op->pc paths.
+     * Only ALU flags can change CPSR; there are no memory/status callbacks. */
+    return 1;
+}
+
 static void arm_jit_compile_native(arm920t_t *c, arm_jit_block_t *b);
 
 /* Keep translation (including the native emitter's large scratch buffer) out
@@ -1386,7 +1408,8 @@ static ARM_NOINLINE arm_jit_block_t *arm_jit_translate(arm920t_t *c, uint32_t pc
 
         if (arm_jit_is_uncond_bl(insn) && i + 8u < ARM_JIT_MAX_INSNS) {
             uint32_t tpc = arm_jit_branch_target(cur, insn);
-            uint32_t first = rb32(c, tpc);
+            uint32_t first = 0;
+            (void)arm_jit_peek_fetch(c, tpc, &first);
             if (arm_jit_is_leaf_push_lr(first)) {
                 uint8_t nleaf = 0;
                 int ok = 0;
@@ -1418,6 +1441,39 @@ static ARM_NOINLINE arm_jit_block_t *arm_jit_translate(arm920t_t *c, uint32_t pc
                         if (cop->reserved == 3u || cop->reserved == 5u) cop->stop = 0;
                         b->count = (uint8_t)(i + 1u);
                     }
+                    cur += 4u;
+                    continue;
+                }
+            } else {
+                uint32_t leaf[8];
+                uint8_t nleaf = 0;
+                int ok = 0;
+                for (; nleaf < GP32_ARRAY_COUNT(leaf); ++nleaf) {
+                    uint32_t cpc = tpc + (uint32_t)nleaf * 4u;
+                    if (((cpc ^ tpc) & ~ARM_JIT_PAGE_MASK) ||
+                        !arm_jit_peek_fetch(c, cpc, &leaf[nleaf])) break;
+                    if (leaf[nleaf] == 0xe1a0f00eu || leaf[nleaf] == 0xe12fff1eu) {
+                        ok = 1; ++nleaf; break; /* unconditional MOV pc,lr / BX lr */
+                    }
+                    if (!arm_jit_is_unframed_leaf_data(leaf[nleaf])) break;
+                }
+                if (ok && i + nleaf < ARM_JIT_MAX_INSNS) {
+                    op->stop = 0;
+                    op->reserved = 2u; /* retain the real BL link and callee PCs */
+                    for (uint8_t k = 0; k < nleaf; ++k) {
+                        arm_jit_op_t *cop = &arm_jit_ops(c, b)[++i];
+                        cop->pc = tpc + (uint32_t)k * 4u;
+                        cop->insn = leaf[k];
+                        cop->cond = (uint8_t)(leaf[k] >> 28);
+                        cop->kind = (uint8_t)arm_jit_classify(leaf[k]);
+                        cop->stop = 0;
+                        cop->reserved = k + 1u == nleaf ? 7u : 0u;
+                        arm_bc_decode_op(cop);
+                    }
+                    b->count = (uint8_t)(i + 1u);
+                    /* Marker 7 keeps the real return instruction. Native
+                     * MOV guards its aligned PC; BX uses the checked helper.
+                     * Portable execution checks PC/Thumb after every op. */
                     cur += 4u;
                     continue;
                 }
@@ -2274,7 +2330,14 @@ static int x64_emit_data_proc(x64_emit_t *e, const arm_jit_op_t *op, uint32_t do
         if (!s && opc == 0xdu && !(insn & (1u << 25)) && !(insn & (1u << 4)) && (((insn >> 5) & 3u) == 0u) && (((insn >> 7) & 0x1fu) == 0u)) {
             unsigned rm = insn & 0xfu;
             x64_emit_load_arm_reg(e, X64_EAX, rm, op->pc);
-            x64_emit_return_pc_reg(e, X64_EAX, done);
+            if (op->reserved == 7u) {
+                x64_alu_r32_imm(e, 4, X64_EAX, ~3u);
+                x64_mov_mem_cpu_r32(e, arm_reg_off(15), X64_EAX);
+                x64_alu_r32_imm(e, 7, X64_EAX, e->expected_next);
+                size_t matched = x64_jcc32(e, 0x4); /* EQ */
+                x64_emit_return_imm(e, done);
+                x64_patch32(e, matched, e->pos);
+            } else x64_emit_return_pc_reg(e, X64_EAX, done);
             return 1;
         }
         return 0;
@@ -2952,6 +3015,12 @@ static int x64_emit_coproc_mrc(x64_emit_t *e, const arm_jit_op_t *op, uint32_t d
 }
 
 static int x64_emit_one(x64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
+    if (op->kind == ARM_JIT_OP_INTERP && op->reserved == 7u) {
+        /* BX lr must commit interworking and prove PC/status/interrupt state
+         * before following the caller. Reuse the precise checked helper. */
+        x64_emit_call_helper_op(e, op);
+        return 1;
+    }
     if (op->kind == ARM_JIT_OP_INTERP && x64_emit_bx(e, op, done)) return 1;
     switch ((arm_jit_kind_t)op->kind) {
     case ARM_JIT_OP_DATA: return x64_emit_data_proc(e, op, done);

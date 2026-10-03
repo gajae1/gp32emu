@@ -1627,3 +1627,80 @@ The production core was atomically installed with SHA-256
 The previous core is backed up at
 `/mnt/SDCARD/gp32-dev/resume22-installed-core-before.so`.
 Installation record: `F:/GP32/results/resume22-core-installed.json`.
+
+
+### Unframed leaf calls and redundant LCD clears (resume23)
+
+A diagnostic census of the Korean Little Wizard combat replay (warmup 2100,
+measured 300 frames) found 13,959,799 dispatches to the three-instruction abs
+leaf at 0x0c077884. The surrounding caller blocks contributed another
+21,898,315 dispatches. The instrumented run matches the previous baseline's
+seven CPU/video/audio exactness fields; its slower timing is not a benchmark.
+Evidence: `F:/GP32/results/resume23-hot/summary.json` and `wizard.json`.
+
+The translator now stitches small register-only BL leaves ending in an
+unconditional MOV pc,lr or BX lr. It retains every guest instruction and
+original PC, the real LR write, cycle budgets and code-fetch revalidation.
+Speculative new leaf reads use existing direct mappings without MMIO callbacks
+or page-table walks. SP/LR writes and conditional returns reject inlining.
+The native MOV return guards the actual aligned target before continuing;
+BX retains the checked helper and interworking. This is a generic ARM path,
+not a patch to a game's address or clock. Both x64 and A64 emitters support it.
+
+LCD scanout no longer clears 307,200 bytes before a confirmed full 240x320
+rewrite. Partial, unsupported and fallback scanouts retain the black clear.
+The decision uses the accepted contiguous span in the renderer itself, without
+duplicating its range/stride checks. The existing LCD differential harness
+passes 868 cases with identical framebuffer and DMA/frame state.
+
+H700 passes the complete existing JIT differential with the new leaf cases
+(110,818 JIT events), native arena churn/generation wrap, and stable-poll
+regressions. Sol's focused x64 leaf differential and exception/cache checks
+also pass. Windows and Android ARM64/ARMv7 cores build; Android runtime remains
+unverified. Evidence: `F:/GP32/results/resume23-jit-h700.json`,
+`resume23-recycle-h700.json`, `resume23-poll-h700.json`, `resume23-leaf/`,
+and `resume23-lcd/`.
+
+The clock-qualified Wizard ABBA comparison improves median unrestricted core
+throughput from 70.6235 to 91.89 fps (+30.11%). All seven CPU/video/audio fields
+match, with 14 measured clock samples at 1512 MHz. This combines the leaf and
+LCD changes; it is not a per-change attribution or an all-games/display-fps
+claim. Evidence: `F:/GP32/results/resume23-wizard-late-abba.json`.
+
+CommandCode's separate libretro audio review found no demonstrated defect to
+change. Its existing focused audio test passed; a scratch carried-phase
+resampler capacity probe found no writes beyond the declared output bound.
+The production libretro source, latency settings and stall policy are unchanged.
+
+Her Knights Korea combat (1200 warmup / 1200 measured) also preserves every
+CPU/video/audio field across ABBA. Candidate runs measured 122.320/122.495 fps,
+but baseline clock ramping introduced 1320/1416/1512 MHz samples, so this
+sequence is explicitly disqualified as a speedup claim. It remains exactness
+evidence. No governor setting was changed and no repeat was needed to establish
+that result. Evidence: `F:/GP32/results/resume23-her-abba.json`.
+
+The aligned real RetroArch replay completed 2401 frontend runs (2400 after
+state load), with every replay frame's guest PC, source-audio count/nonzero
+count and IISCON matching the standalone reference. All 1,763,356 offered
+stereo frames were accepted; zero/partial returns, queued tails, ALSA errors
+and recoveries were all zero. The final gameplay image was visually checked.
+Settings hashes are unchanged and MainUI returned normally.
+
+In that run the late-300 average core time falls from the previous run's
+13.014 ms to 9.879 ms; the candidate maximum core time is 12.930 ms.
+Frontend intervals average 16.488 ms but p99 is 28.125 ms (previous run:
+17.166/19.021 ms). The longest calls spend roughly 11-18 ms in the frontend
+audio callback after the guest disables IIS; threaded video reports 2383
+pushed / 19 dropped frames. These single runtime captures are not a qualified
+pacing A/B. They do establish that residual stalls are outside guest CPU work
+in the observed calls; physical sound quality, end-to-end input latency and
+steady 60 fps across all scenes remain open. No latency/governor/volume setting
+was altered. Evidence: `F:/GP32/results/resume23-aligned-summary.json`,
+`resume23-aligned.csv`, `resume23-aligned-runtime-verified.json`, and
+`resume23-aligned-runtime.png`.
+
+The production core was atomically installed with SHA-256
+`f511b8c5719be6519255e1d9585bf105b5030f73aa0719da84cf69071981431f`.
+The previous core is backed up at
+`/mnt/SDCARD/gp32-dev/resume23-installed-core-before.so`.
+Installation record: `F:/GP32/results/resume23-core-installed.json`.

@@ -328,7 +328,17 @@ static int a64_data(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
     if (!test) {
         if (op->c == 15u) a64_mask(e, 2, 2, ~3u);
         a64_put_guest(e, op->c, 2);
-        if (op->c == 15u) a64_return(e, done);
+        if (op->c == 15u) {
+            if (op->reserved == 7u) {
+                /* Retire the real MOV pc,lr; an unexpected LR exits with its
+                 * actual aligned PC instead of following a stale caller. */
+                a64_imm(e, 6, e->expected_next);
+                a64_cmp(e, 2, 6);
+                size_t matched = a64_jump(e, 0); /* EQ */
+                a64_return(e, done);
+                a64_patch(e, matched, e->pos);
+            } else a64_return(e, done);
+        }
     }
     return 1;
 }

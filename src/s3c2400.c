@@ -1104,6 +1104,11 @@ static int lcd_render_contiguous(s3c2400_t *s, uint32_t w, uint32_t h, uint32_t 
     const uint64_t run = frame_words < range_words ? frame_words : range_words;
     if (run == 0u) return 0;
     if (cur0 < RAM_BASE || (uint64_t)(cur0 - RAM_BASE) + 4u * run > (uint64_t)s->ram_size) return 0;
+    /* A full aperture is overwritten below. Short or partial scanouts still
+     * need black pixels outside the written region. Decide after acceptance
+     * so the range/stride guards stay in one place. */
+    if (w != 240u || h != 320u || run != frame_words)
+        memset(s->fb, 0, sizeof(s->fb));
     const uint8_t *src = &s->ram[cur0 - RAM_BASE];
     const uint32_t words = (uint32_t)run;
     const uint32_t wprow = w / ppw;
@@ -1185,7 +1190,6 @@ void s3c2400_render_lcd(s3c2400_t *s) {
     if (!s || !(s->lcd_regs[0] & 1u)) return;
     lcd_dma_init(s);
     uint32_t w=s->lcd.width?s->lcd.width:240, h=s->lcd.height?s->lcd.height:320;
-    memset(s->fb,0,sizeof(s->fb));
     /* Decode the pixel format once per frame instead of once per DMA word.
      * An unsupported bppmode still consumes one DMA word and returns before
      * the frame tail, exactly like the original per-word switch, whenever the
@@ -1193,9 +1197,11 @@ void s3c2400_render_lcd(s3c2400_t *s) {
     int pixels = 0, bits = 0;
     switch(s->lcd.bppmode){case BPPMODE_TFT_01:pixels=32;bits=1;break;case BPPMODE_TFT_02:pixels=16;bits=2;break;case BPPMODE_TFT_04:pixels=8;bits=4;break;case BPPMODE_TFT_08:pixels=4;bits=8;break;case BPPMODE_TFT_16:pixels=2;bits=16;break;default:break;}
     if (!pixels) {
+        memset(s->fb,0,sizeof(s->fb));
         if (s->lcd.vramaddr_cur < s->lcd.vramaddr_max && h != 0u) { (void)lcd_dma_read(s); return; }
     }
     else if (!lcd_render_contiguous(s, w, h, bits == 16 ? 2u : (uint32_t)pixels, (uint32_t)bits)) {
+        memset(s->fb,0,sizeof(s->fb));
         if (bits == 16) lcd_render16(s, w, h);
         else lcd_render_indexed(s, w, h, pixels, bits);
     }

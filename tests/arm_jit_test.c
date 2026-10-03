@@ -764,6 +764,94 @@ static void run_native_case(void) {
     compare_state();
 }
 
+/* An unframed BL leaf must retire the real return, including short budgets.
+ * The complete four-insn call needs one dispatch; changing LR or the return
+ * condition must retain ordinary control flow rather than a stale caller PC. */
+static void case_unframed_leaf(void) {
+    const uint32_t returns[] = {0xe1a0f00eu, 0xe12fff1eu}; /* MOV pc,lr; BX lr */
+    const uint32_t inputs[] = {0xfffffff9u, 0u, 7u, 0x80000000u};
+    const uint32_t outputs[] = {7u, 0u, 7u, 0x80000000u};
+    const uint32_t budgets[] = {0u, 1u, 2u, 3u, 4u, 7u};
+    for (unsigned ret = 0; ret < GP32_ARRAY_COUNT(returns); ++ret) {
+        for (unsigned input = 0; input < GP32_ARRAY_COUNT(inputs); ++input) {
+            for (unsigned budget = 0; budget < GP32_ARRAY_COUNT(budgets); ++budget) {
+                uint32_t program[] = {
+                    0xeb000006u, 0xe3a02055u, 0xeafffffeu,
+                    0xe1a00000u, 0xe3a07077u, 0xeafffffeu,
+                    0xe1a00000u, 0xe1a00000u,
+                    0xe3500000u, 0xb2600000u, returns[ret],
+                };
+                current_case = ret ? "unframed-leaf-bx" : "unframed-leaf-mov";
+                setup_pair(); load_both(program, GP32_ARRAY_COUNT(program));
+                set_reg_both(0, inputs[input]);
+                CHECK(arm920t_run(cpu_jit, budgets[budget]) ==
+                      arm920t_run(cpu_ref, budgets[budget]), "unframed leaf partial budget");
+                compare_state();
+                if (budgets[budget] == 4u) {
+                    CHECK(arm920t_get_jit_hits(cpu_jit) + arm920t_get_jit_misses(cpu_jit) == 1u,
+                          "complete unframed call was not one dispatch");
+                    CHECK(ref_reg(0) == outputs[input] && ref_reg(14) == CODE_ADDR + 4u &&
+                          ref_reg(15) == CODE_ADDR + 4u, "unframed leaf result/return");
+                }
+                if (budgets[budget] == 7u) {
+                    gp32_cpu_profile_t profile;
+                    arm920t_get_cpu_profile(cpu_jit, &profile);
+                    if (profile.supported && profile.native_backend)
+                        CHECK(profile.native_block_calls == 1u && profile.native_arm_insns == 7u,
+                              "native leaf did not continue through caller fallthrough");
+                }
+                run_native_case(); run_chunks();
+                CHECK(ref_reg(0) == outputs[input] && ref_reg(2) == 0x55u,
+                      "unframed leaf abs/fallthrough");
+                teardown_pair();
+            }
+        }
+    }
+
+    /* PC/LR operands must use the callee's pipeline PC and the BL link. */
+    {
+        const uint32_t program[] = {
+            0xeb000002u, 0xe3a02055u, 0xeafffffeu, 0xe1a00000u,
+            0xe28f3000u, 0xe1a0500eu, 0xe1a0f00eu,
+        };
+        current_case = "unframed-leaf-pc-lr";
+        setup_pair(); load_both(program, GP32_ARRAY_COUNT(program));
+        run_native_case(); run_chunks();
+        CHECK(ref_reg(3) == CODE_ADDR + 24u && ref_reg(5) == CODE_ADDR + 4u,
+              "unframed callee PC/LR operands");
+        teardown_pair();
+    }
+
+    for (unsigned ret = 0; ret < GP32_ARRAY_COUNT(returns); ++ret) {
+        uint32_t program[] = {
+            0xeb000006u, 0xe3a02055u, 0xeafffffeu, 0xe1a00000u,
+            ret ? 0xe7fe2777u : 0xe3a07077u, 0xeafffffeu,
+            0xe1a00000u, 0xe1a00000u,
+            0xe1a0e004u, returns[ret], /* MOV lr,r4; return to changed target */
+        };
+        current_case = "unframed-leaf-changed-lr";
+        setup_pair(); load_both(program, GP32_ARRAY_COUNT(program));
+        set_reg_both(4, CODE_ADDR + 16u + ret);
+        run_native_case(); run_chunks();
+        CHECK(ref_reg(2) == 0u && ref_reg(7) == 0x77u &&
+              !!(arm920t_get_cpsr(cpu_ref) & 0x20u) == !!ret,
+              "changed LR continued caller or lost BX interworking");
+        teardown_pair();
+    }
+    {
+        const uint32_t program[] = {
+            0xeb000002u, 0xe3a02055u, 0xeafffffeu, 0xe1a00000u,
+            0xe3500000u, 0x11a0f00eu, 0xe3a07077u, 0xeafffffeu,
+        };
+        current_case = "unframed-leaf-conditional-return";
+        setup_pair(); load_both(program, GP32_ARRAY_COUNT(program));
+        run_native_case(); run_chunks();
+        CHECK(ref_reg(2) == 0u && ref_reg(7) == 0x77u,
+              "failed conditional return continued caller");
+        teardown_pair();
+    }
+}
+
 /* A helper must observe every ALU result before exception entry banks SP/LR.
  * Comparing only the state after arm920t_run would miss stale callback state. */
 static int alu_region_swi(void *user, arm920t_t *cpu, uint32_t imm,
@@ -1440,7 +1528,10 @@ int main(int argc, char **argv) {
     /* Native gate triage can isolate this mapped physical-boundary case
      * without rerunning unrelated differential workloads. */
     int ram_end_only = argc == 2 && !strcmp(argv[1], "--ram-end");
-    if (ram_end_only) {
+    int leaf_only = argc == 2 && !strcmp(argv[1], "--unframed-leaf");
+    if (leaf_only) {
+        case_unframed_leaf();
+    } else if (ram_end_only) {
         case_native_mapped_ram_end();
     } else {
     case_native_mapped_pages();
@@ -1457,6 +1548,7 @@ int main(int argc, char **argv) {
     case_native_regshift();
     case_native_longmul_psr();
     case_native_mapped_block();
+    case_unframed_leaf();
     case_flags();
     case_shift();
     case_branch();
@@ -1478,7 +1570,7 @@ int main(int argc, char **argv) {
         return 1;
     }
     printf("PASS: arm jit differential (%s), jit events=%" PRIu64 " fallbacks=%" PRIu64 "\n",
-           ram_end_only ? "mapped-page-RAM-end" : "flags/shift/branch/mem/half/block/mul/seeded/budget",
+           leaf_only ? "unframed-leaf" : (ram_end_only ? "mapped-page-RAM-end" : "flags/shift/branch/mem/half/block/mul/seeded/budget"),
            jit_events, jit_fallbacks);
     return 0;
 }
