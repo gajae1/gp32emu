@@ -242,6 +242,16 @@ static void a64_selfloop(a64_emit_t *e, uint32_t done) {
      * halt/trace/JIT disable, mode/base/PC changes or pending interrupts.
      * Retain edge cache and interrupt fences; avoid rechecking the same
      * control state on every callback-free repetition. */
+    _Static_assert(sizeof(((arm920t_t *)0)->irq_line) == 4u &&
+                   sizeof(((arm920t_t *)0)->fiq_line) == 4u &&
+                   offsetof(arm920t_t, fiq_line) == offsetof(arm920t_t, irq_line) + 4u,
+                   "AArch64 interrupt pair layout");
+    /* Both inactive is the common case. Test the complete pair, including
+     * noncanonical nonzero values restored from a state image. Pending lines
+     * still take the original independent CPSR-mask checks below. */
+    a64_cpu_mem(e, 0xf9400000u, 0, offsetof(arm920t_t, irq_line), 3);
+    size_t no_pending = e->pos;
+    a64_u32(e, 0xb4000000u); /* cbz x0: both 32-bit lines are zero */
     a64_load(e, 3, offsetof(arm920t_t, cpsr));
     a64_load(e, 0, offsetof(arm920t_t, irq_line));
     a64_cmp_imm(e, 0, 0);
@@ -257,6 +267,7 @@ static void a64_selfloop(a64_emit_t *e, uint32_t done) {
     a64_cmp_imm(e, 0, 0);
     exits[n++] = a64_jump(e, 0);
     a64_patch(e, no_fiq, e->pos);
+    a64_patch(e, no_pending, e->pos);
     a64_u32(e, 0x51000000u | (done << 10) | (22u << 5)); /* sub w0, w22, #done */
     a64_cmp_imm(e, 0, e->block_count);
     exits[n++] = a64_jump(e, 3); /* LO */

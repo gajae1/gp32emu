@@ -3101,3 +3101,20 @@ Story R (Korea), increasing cumulative Hangul evidence to 14 of the 20 owned
 installed titles. This is language/scene evidence, not whole-game acceptance;
 six titles still lack language confirmation and six catalogued releases still
 lack supplied dumps. No ROM or user save was changed.
+
+### Inactive interrupt pair and Raphael gameplay entry (resume56)
+
+AArch64 self-loop edges use one 64-bit load to recognize two inactive
+interrupt lines. Nonzero IRQ/FIQ values retain the previous independent
+mask checks; all other edge fences remain intact. H700 native differential
+and stable-poll checks pass. Three qualified exact game comparisons are near
+parity (+0.21% to +0.68% observed core throughput); no robust speedup is
+claimed. Android ARM64 builds. The core is installed with a backup and
+unchanged protected settings. See the resume56 performance section for
+measurements and hashes.
+
+Two bounded Windows replays advance Raphael (Korea) from its previous
+background-only state through the title/menu into a playable-stage display.
+The captured menu/HUD is English; Hangul remains unverified. Cumulative
+language coverage stays at 14 of 20 installed Korea-labelled titles. This
+adds scene-entry evidence, not full gameplay, audio or device acceptance.
