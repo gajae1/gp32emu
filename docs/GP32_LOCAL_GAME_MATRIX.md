@@ -292,6 +292,29 @@ attack response. Round completion, later scenes and physical sound remain open.
 Full commands and screenshots are in `resume17-gpfight/README.md` and `shots/`.
 ROMs and saved states remain outside Git.
 
+## Korean-language evidence (resume18)
+
+Device inventory contains 20 `.smc` files, all named `(Korea)`, as checked via
+SSH after resume17 deployment. Region labels establish which release is
+installed; they do not alone prove that every screen is Korean. Existing
+captures provide these narrower visual confirmations:
+
+| Installed title | Korean text actually observed | Existing local capture |
+| --- | --- | --- |
+| Her Knights - All for Princess - Deadline | Title `그녀의 기사단 강행돌파`; Korean mode labels including `열혈모드`, `근성모드` | `F:/GP32/results/resume9-her3000.png`, `resume9-her4200.png` |
+| Little Girl Mill of a Gingko, The | Title `은행나무소녀 밀`, `시작하기` / `끝내기`; Korean village dialogue | `F:/GP32/results/resume13-mil-r2-f7200.png`, `resume16-mill/can-d1300.png` |
+| GP Fight | Korean fighter names including `나이수` and `주미라` in the match HUD | `F:/GP32/results/resume17-gpfight/shots/08-match-state-f5400.png` |
+
+Little Wizard's inspected Korean-release combat capture
+(`F:/GP32/results/resume13-wizard-korea-combat.png`) uses English fighter names
+and numbers, so that frame cannot prove or disprove Korean text elsewhere.
+The remaining installed titles (Astonishia Story R, Dooly Soccer 2002, Dungeon
+& Guarder, Dyhard, Hany Party Game, Kimchiman, OneShot Voca, Princess Maker 2,
+Rally Pop, Raphael, Tanggle's Magic Square, Therapy, Tomak, W.B.W., Wizard
+Slayer, Woody & Kunta) still need game-specific language evidence. No ROM was
+replaced or relabelled based on these incomplete visual observations, and no
+whole-game translation or completion claim is made.
+
 ## Open items
 
 - Korean Her Knights and Little Wizard now have H700 combat measurements;

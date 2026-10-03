@@ -961,6 +961,52 @@ static void case_native_immshift(void) {
     }
 }
 
+/* Conditions immediately after arithmetic can reuse native NZCV. A logical
+ * flag update, RAM range guard, helper or skipped predicated producer must
+ * not accidentally reuse a different set of host flags. Store each decision
+ * so later instructions cannot hide a wrong conditional execution. */
+static void case_native_condition_flags(void) {
+    const uint32_t operands[][2] = {
+        {0u, 0u}, {0u, 1u}, {1u, 0u},
+        {0x80000000u, 1u}, {0x7fffffffu, 0xffffffffu}, {0xffffffffu, 0u}
+    };
+    const uint32_t between[] = {
+        0u, 0xe1100000u, /* TST r0,r0: preserves guest C/V */
+        0xe59a4000u,     /* LDR r4,[r10]: host range-check flags */
+        0x00904001u,     /* ADDSEQ r4,r0,r1: taken/skipped join */
+        0xe10a4091u      /* SWP r4,r1,[r10]: classified helper */
+    };
+    for (unsigned v = 0; v < GP32_ARRAY_COUNT(operands); ++v) {
+        for (unsigned path = 0; path < GP32_ARRAY_COUNT(between); ++path) {
+            uint32_t program[127];
+            unsigned n = 0;
+            current_case = "native-condition-flags";
+            setup_pair();
+            set_reg_both(0, operands[v][0]);
+            set_reg_both(1, operands[v][1]);
+            set_reg_both(10, DATA_ADDR);
+            set_reg_both(11, DATA_ADDR + 0x100u);
+            for (unsigned cond = 0; cond < 14u; ++cond) {
+                program[n++] = 0xe3a02000u; /* MOV r2,#0 */
+                program[n++] = 0xe3a03000u; /* MOV r3,#0 */
+                program[n++] = 0xe1500001u; /* CMP r0,r1 */
+                if (between[path]) program[n++] = between[path];
+                program[n++] = (cond << 28) | 0x03a02001u;
+                program[n++] = ((cond ^ 1u) << 28) | 0x03a03001u;
+                program[n++] = 0xe48b2004u; /* STR r2,[r11],#4 */
+                program[n++] = 0xe48b3004u; /* STR r3,[r11],#4 */
+            }
+            program[n++] = 0xeafffffeu;
+            load_both(program, n);
+            CHECK(arm920t_run(cpu_jit, 256u) == arm920t_run(cpu_ref, 256u),
+                  "condition flag instruction budget");
+            compare_state();
+            CHECK(ref_reg(2) + ref_reg(3) == 1u, "inverse conditions must partition");
+            teardown_pair();
+        }
+    }
+}
+
 static void case_native_regshift(void) {
     const unsigned amounts[] = {0, 1, 31, 32, 33, 255, 256};
     for (unsigned carry = 0; carry != 2; ++carry) {
@@ -1407,6 +1453,7 @@ int main(int argc, char **argv) {
     case_native_forwarding();
     case_native_immediates();
     case_native_immshift();
+    case_native_condition_flags();
     case_native_regshift();
     case_native_longmul_psr();
     case_native_mapped_block();

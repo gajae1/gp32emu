@@ -16,7 +16,7 @@ single-game throughput. The device was observed with the `conservative` CPU
 governor, 480 MHz idle frequency and 1512 MHz maximum; comparisons must record
 actual frequency and temperature or use interleaved runs at a matched clock.
 
-The latest H700 core-only windows include Blue Angelo gameplay at 54.705 fps
+Earlier H700 core-only windows included Blue Angelo gameplay at 54.705 fps
 (600 warmup / 300 measured frames) and Little Wizard character selection at
 47.846 fps (2400 / 300, observed 1512 MHz).
 Wizard first improved from 37.226 to 45.108 fps in a complete matched-clock
@@ -28,8 +28,10 @@ Resolving RAM once for the existing Blue shadow repair then improved Blue by
 another 1.13% in Blue and 1.89% in Wizard against that framebuffer candidate.
 Blue's original 60/180 window still has a ramping first baseline and its
 aggregate ratio is disqualified. Do not combine different windows or multiply
-independent experimental gains. The two current scenes still need about 1.10x
-and 1.25x throughput respectively to clear 60 before RetroArch overhead.
+independent experimental gains. Those historical samples were below 60 before
+RetroArch overhead. Later workload-specific results are recorded below; the
+resume18 Wizard 2400/300 window reaches 60.319 core fps, with little headroom
+for frontend overhead and no whole-game guarantee.
 These are **different fixed scenes**, not game-wide minima or a ranking of
 the hardest GP32 titles. See `PORTABILITY_PROGRESS.md` and the raw JSON in
 `F:/GP32/results/` for workloads, hashes and clock caveats.
@@ -287,3 +289,30 @@ folding; it does not isolate a single optimization or establish displayed fps.
 The final candidate bench SHA-256 is
 `36020feaedb425b2ce232d41b171c15142cfba4f006956032db8d1ef103fc81f`.
 Evidence: `F:/GP32/results/resume17-gpfight-abba.json`.
+
+## resume18: reuse adjacent arithmetic condition flags
+
+After an unconditional native arithmetic instruction writes all four guest
+flags, the next conditional instruction can branch on the already matching
+AArch64 NZCV instead of loading CPSR and writing NZCV again. CPSR and guest
+registers are still committed per instruction. Memory guards, helpers, logical
+partial-flag writes, register-shift paths and predicated joins conservatively
+invalidate this compile-time fact; nothing is cached across native blocks.
+
+Qualified primed ABBA on the Korean Her Knights combat script (1200/1200,
+observed 1512 MHz) measured baseline 106.784/106.724 and candidate
+110.172/110.639 core fps. The medians are 106.754 -> 110.4055 (+3.42%), with
+all seven CPU/video/PCM fields unchanged and all 42 clock samples steady.
+This measures the core's execution headroom in this scene, not game animation
+rate or end-to-end input latency. Baseline SHA-256:
+`36020feaedb425b2ce232d41b171c15142cfba4f006956032db8d1ef103fc81f`;
+candidate: `12739009cc093f7e7d00d5d808a40986d4da37505957568c0ffb6f41000f870e`.
+Evidence: `F:/GP32/results/resume18-flags-her-abba.json`.
+
+The previously slower Little Wizard selection workload (cold boot, 2400 warmup
+then 300 measured frames) measured 58.047/58.280 baseline and 60.274/60.364
+candidate core fps. Medians 58.1635 -> 60.319 give +3.71%. All seven fields
+matched and all 20 clock samples were 1512 MHz. Crossing 60 in this core-only
+window leaves little frontend headroom; it is not evidence of sustained 60-fps
+RetroArch presentation. Evidence:
+`F:/GP32/results/resume18-flags-wizard-menu-abba.json`.

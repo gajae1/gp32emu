@@ -1364,3 +1364,66 @@ The previous resume16 core is retained at
 `/mnt/SDCARD/gp32-dev/resume17-installed-core-before.so`. MainUI was running,
 RetroArch was stopped, and both configuration hashes remained unchanged.
 Deployment evidence: `F:/GP32/results/resume17-core-installed.json`.
+
+### Adjacent AArch64 condition flags (resume18)
+
+An unconditional native arithmetic flag producer now marks host NZCV valid for
+the immediately following conditional instruction. That one condition can omit
+its CPSR load/MSR pair. Guest CPSR remains committed after every instruction;
+the fact is invalidated at other producers, memory/helper paths and predicated
+joins. No register caching, guest-cycle skipping or cross-block flag state is
+introduced. The focused differential adds all fourteen conditions over six
+operand pairs and intervening logical, RAM, helper and predicated paths, storing
+each decision to RAM so later writes cannot hide a mismatch.
+
+H700 differential passed before and after the optimization: 42,769 events,
+four expected fallbacks. Windows ARM JIT regression passed, and Android ARM64
+built successfully. Existing compiler warnings remain. Evidence:
+`F:/GP32/results/resume18-condition-{before,after}.json`. Qualified H700 ABBA
+improves Her Knights combat by 3.42% and the slower Wizard selection window by
+3.71%, with identical CPU/video/PCM fields; the latter reaches 60.319 core fps
+but still lacks frontend headroom. See [performance strategy](GP32_PERFORMANCE_STRATEGY.md).
+
+The input worker verified the existing same-run GPIO path and retained its
+per-run button update: suppressing repeated masks could leak the pad state
+restored by a savestate. Its focused input regression passed. The only frontend
+change caches the first blank fallback for frontends without frame duplication,
+avoiding a repeated 307,200-byte fill when no game is loaded. This does not claim
+lower gameplay input latency. The existing libretro audio/video-duplicate test
+passed after integration; physical button-to-display latency remains unmeasured.
+
+The audio worker's proposed modulo phase reduction was rejected in parent review:
+downsampling can legitimately carry a phase across several tiny input blocks;
+reducing modulo the current block invents output samples. The original sources
+were restored. The worker's streaming/monolithic ramp check subsequently agreed
+across tiny and normal chunks, including 44100 -> 8000/11025 and 11025 -> 44100.
+No resampler change or audio speedup is claimed. External evidence is under
+`F:/GP32/results/resume18-audio/` (`ramp_law.c` and
+`rejected-modulo-phase-owned.patch`); input evidence is under `resume18-input/`.
+
+### Her Knights runtime (resume18)
+
+The CPU candidate ran 2400 scripted combat frames through Spruce's normal
+MainUI/RetroArch handoff, exiting successfully after 43 seconds including
+startup/shutdown (39 seconds of content runtime). The final capture shows an
+attack hitting enemies; the OSD reads 60.64 fps. All 1,763,445 offered stereo
+frames were accepted, no partial/zero returns or pending output occurred, and
+the ALSA interposer recorded zero write errors or recoveries. Threaded video
+reported 2384 pushed / 17 dropped frames, so this is not zero-drop acceptance.
+
+The final OSD also reads 26.14% audio "underrun" and 40.54% saturation. As
+explained in [the Her Knights report](HER_KNIGHTS_KOREA_BENCHMARK.md), this is
+the frontend FIFO near-empty statistic, not an audible-dropout rate. These
+delivery counters and silence counts do not prove physical sound quality.
+User configuration hashes were unchanged and MainUI returned. The diagnostic
+wrapper predates only the no-game blank-frame cache change; that change was
+validated separately by the existing frontend regression and does not affect
+this loaded-game path. Evidence: `F:/GP32/results/resume18-runtime-verified.json`,
+`resume18-runtime.log`, `resume18-runtime.png`.
+
+The production core including the blank-frame cache was atomically installed
+with SHA-256 `3477e6cbe4e59ee273a6eff41471fe23ddb43697d2d344e95409fbc91df26598`.
+The prior core remains at `/mnt/SDCARD/gp32-dev/resume18-installed-core-before.so`;
+both user configuration hashes were preserved. Android ARM64 and ARMv7 builds
+also passed after the frontend integration. Device deployment record:
+`F:/GP32/results/resume18-core-installed.json`.
