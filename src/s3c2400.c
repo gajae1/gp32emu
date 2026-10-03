@@ -514,6 +514,11 @@ static uint32_t dma_iis_fast_trigger_count(s3c2400_t *s, uint32_t *r, uint32_t r
     uint32_t frames = 0;
     int direct = audio_reserve_frames(s, (halfwords + idx) >> 1);
     int16_t *out = direct && s->audio ? s->audio + (size_t)base_frames * 2u : NULL;
+    const uint32_t step = (dsz == 1u) ? 2u : 4u;
+    /* Prove the whole increasing/fixed source span once. Partial RAM spans
+     * and MMIO keep the per-unit checks and read side effects below. */
+    const uint8_t *fp = ram_ptr(s, src, inc_src ? (size_t)units * step : (size_t)step);
+    const size_t fstep = inc_src ? (size_t)step : 0u;
 #define IIS_PCM_APPEND(left, right)                                    \
     do {                                                               \
         if (direct) {                                                  \
@@ -527,8 +532,8 @@ static uint32_t dma_iis_fast_trigger_count(s3c2400_t *s, uint32_t *r, uint32_t r
         last_right = (uint16_t)(right);                                \
     } while (0)
     for (uint32_t i = 0; i < units; ++i) {
+        const uint8_t *rp = fp ? fp + (size_t)i * fstep : ram_ptr(s, src, step);
         if (dsz == 1u) {
-            uint8_t *rp = ram_ptr(s, src, 2);
             uint16_t v = rp ? (uint16_t)(rp[0] | ((uint16_t)rp[1] << 8)) : s3c2400_read16(s, src);
             if (idx) {
                 IIS_PCM_APPEND(pending, v);
@@ -539,7 +544,6 @@ static uint32_t dma_iis_fast_trigger_count(s3c2400_t *s, uint32_t *r, uint32_t r
             }
             if (inc_src) src += 2u;
         } else {
-            uint8_t *rp = ram_ptr(s, src, 4);
             uint32_t v = rp ? gp32_ld32le(rp) : s3c2400_read32(s, src);
             uint16_t lo = (uint16_t)v;
             uint16_t hi = (uint16_t)(v >> 16);

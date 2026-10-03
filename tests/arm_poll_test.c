@@ -254,17 +254,18 @@ static void load_prog(const uint32_t *prog, size_t n) {
 static void case_poll_stable(int fastmem_ram) {
     current_case = fastmem_ram ? "poll-stable-fastmem" : "poll-stable";
     setup_pair(fastmem_ram);
+    if (fastmem_ram) arm920t_set_jit(cpu_fast, 1);
     load_prog(PROG_POLL, sizeof(PROG_POLL) / sizeof(PROG_POLL[0]));
     add_stable(&bus_fast, DATA_ADDR);
     set_reg_both(1u, DATA_ADDR);
 
     uint64_t fr = 0, rr = 0;
     run_chunks(CHUNKS, NCHUNKS, 0, &fr, &rr);
+    CHECK(bus_fast.stable_queries > 0u, "stability callback was never consulted");
     if (!fastmem_ram) {
         /* fastmem would bypass the read32 counter, so only the callback-bus
          * variant can observe the polling rate and the reduction. */
         CHECK(rr >= 250u, "reference did not poll the word enough times");
-        CHECK(bus_fast.stable_queries > 0u, "stability callback was never consulted");
         CHECK(fr * 8u <= rr, "fast path did not significantly reduce polling reads");
     }
     teardown_pair();
@@ -376,14 +377,24 @@ static void case_callback_off(void) {
     for (int variant = 0; variant < 2; ++variant) {
         current_case = names[variant];
         setup_pair(0);
+        if (!variant) {
+            /* CPU creation copies the bus; editing the original bus afterward
+             * does not remove the installed callback. Recreate before running. */
+            arm920t_destroy(cpu_fast);
+            bus_fast.bus.is_stable_read32 = NULL;
+            cpu_fast = arm920t_create(&bus_fast.bus);
+            if (!cpu_fast) { fprintf(stderr, "arm920t_create failed\n"); exit(2); }
+            arm920t_reset(cpu_fast, CODE_ADDR);
+        }
         load_prog(PROG_POLL, sizeof(PROG_POLL) / sizeof(PROG_POLL[0]));
         set_reg_both(1u, DATA_ADDR);
-        if (!variant) bus_fast.bus.is_stable_read32 = NULL;
         /* else: no stable addresses are registered, so every query answers 0 */
 
         uint64_t fr = 0, rr = 0;
         run_chunks(CHUNKS, NCHUNKS, 0, &fr, &rr);
         CHECK(fr == rr, "disabled callback must not change the read pattern");
+        CHECK(variant ? bus_fast.stable_queries > 0u : bus_fast.stable_queries == 0u,
+              "callback presence did not match the requested variant");
         teardown_pair();
     }
 }
