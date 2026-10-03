@@ -274,8 +274,8 @@ static void check_scheduler_catchup(void) {
     if (!batch || !split) { gp32_destroy(batch); gp32_destroy(split); return; }
     CHECK(direct_run_clock_hz(batch) == 66000000u, "scheduler fixture clock");
     /* The same elapsed time must wake the same tasks regardless of slicing. */
-    direct_hle_gpos_timer_tick(batch, 33000u); /* 100 scheduler ticks. */
-    for (unsigned i = 0; i < 100u; ++i) direct_hle_gpos_timer_tick(split, 330u);
+    direct_hle_gpos_timer_tick(batch, 33000u, direct_run_clock_hz(batch)); /* 100 scheduler ticks. */
+    for (unsigned i = 0; i < 100u; ++i) direct_hle_gpos_timer_tick(split, 330u, direct_run_clock_hz(split));
     uint32_t tasks = GP32_RAM_BASE + 0x4000u;
     CHECK(s3c2400_debug_read32(batch->soc, tasks + 0x14u) == 2u,
           "scheduler does not discard ticks beyond 64");
