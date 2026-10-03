@@ -1395,6 +1395,33 @@ static uint64_t cache_code_used(void) {
     arm920t_get_cpu_profile(cpu_jit, &p);
     return p.jit_code_used;
 }
+static void case_native_literal_addresses(void) {
+    const uint32_t pc = RAM_BASE + 0x2000u;
+    for (unsigned down = 0; down < 2u; ++down) {
+        for (unsigned lane = 0; lane < 4u; ++lane) {
+            current_case = "native-literal-addresses";
+            setup_pair();
+            const uint32_t addr = (down ? pc - 0x100u : pc + 0x100u) + lane;
+            const uint32_t off0 = down ? pc + 8u - addr : addr - pc - 8u;
+            const uint32_t off1 = down ? pc + 12u - addr : addr - pc - 12u;
+            set_mem_both(pc, (down ? 0xe51f1000u : 0xe59f1000u) | off0); /* LDR r1 */
+            set_mem_both(pc + 4u, (down ? 0xe55f2000u : 0xe5df2000u) | off1); /* LDRB r2 */
+            set_mem_both(pc + 8u, 0xe58f3100u | lane); /* STR r3,[pc,#256+lane] */
+            set_mem_both(pc + 12u, 0xeafffffeu);
+            set_reg_both(3, 0x98765432u);
+            for (unsigned pass = 0; pass < 2u; ++pass) {
+                uint32_t value = pass ? 0x88776655u : 0x44332211u;
+                set_mem_both(addr & ~3u, value);
+                run_cache_pair(pc, 20u);
+                CHECK(ref_reg(1) == gp32_ror32(value, lane * 8u), "literal LDR preserves ARM rotation");
+                CHECK(ref_reg(2) == ((value >> (lane * 8u)) & 0xffu), "literal LDRB selects exact byte");
+                CHECK(gp32_ld32le(bus_ptr(&bus_ref, pc + 0x110u, 4u)) == 0x98765432u,
+                      "PC-relative STR aligns its destination");
+            }
+            teardown_pair();
+        }
+    }
+}
 static uint32_t cache_branch(uint32_t pc, uint32_t target, int link) {
     return (link ? 0xeb000000u : 0xea000000u) | (((target - pc - 8u) >> 2) & 0x00ffffffu);
 }
@@ -2013,6 +2040,7 @@ int main(int argc, char **argv) {
         case_native_mapped_ram_end();
     } else {
     case_native_mapped_pages();
+    case_native_literal_addresses();
     case_native_mmu_mode_changes();
     case_native_mapped_ram_end();
     case_cache_unchanged();
