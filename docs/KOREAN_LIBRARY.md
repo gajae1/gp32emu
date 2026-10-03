@@ -6,6 +6,32 @@ duplicates, what is BIOS, and what is untagged, malformed or ambiguous. It
 never downloads, extracts, renames or deletes anything and never touches a
 device.
 
+## Installed Korean library (2026-10-04, resume53)
+
+The current local inventory contains 20 unique Korea-tagged game payloads.
+The H700 library contains exactly those 20 payloads, with no missing or extra
+games; the fresh comparison uses SHA-256, not filenames alone. Raw and ZIP
+copies of the same local game count once. BIOS files are excluded from the
+game menu. Evidence: `F:/GP32/results/resume53-diag/korean-library.json`,
+`library-device.json` and `installed-sha256.txt` in the same directory.
+
+Displayed-language evidence is cumulative from the captures documented in
+[the local game matrix](GP32_LOCAL_GAME_MATRIX.md), including its resume46
+Dungeon & Guarder followup. It is separate from the inventory tool's
+filename-based classification; the tool still reports language as unverified.
+
+| Captured language evidence | Installed Korea-tagged titles |
+| --- | --- |
+| Hangul visible (13) | Dooly Soccer 2002; Dungeon & Guarder; Dyhard; GP Fight; Her Knights; Little Girl Mill; OneShot Voca; Princess Maker 2; Tanggle's Magic Square; Therapy; W.B.W.; Wizard Slayer; Woody & Kunta |
+| Not yet established (7) | Astonishia Story R; Hany Party Game; Kimchiman GP32; Little Wizard; Rally Pop; Raphael; Tomak |
+
+The six catalogued Korea-region releases without supplied dumps are Funny
+Soccer 2002, Holeman Battle Race 2002, Story of Bug eyed Monster, Winter Is,
+Tales of Windy Land and Tears - Another Story. Adding those requires the
+missing dumps. No game was downloaded or removed during this verification.
+Neither a Korean-region label nor one Hangul capture establishes complete
+localization, whole-game compatibility or a complete GP32 collection.
+
 ZIP reading and hashing come from `scripts/bench_catalog.py` (`sha256_file`,
 `inspect_zip`), so both tools share one implementation and one set of archive
 limits; keep the two files together in `scripts/`. Archive status names below

@@ -695,3 +695,57 @@ real framed calls, native-plus-partial budgets, flag-consuming exits and
 post-indexed sentinel reads against single-step execution. The focused cases
 also pass on Windows. Windows/H700/Android ARM64/ARMv7 cores build; no Android
 runtime or new physical audio/input-latency result is implied.
+
+## resume53: real frontend audio delivery and software input timing
+
+The resume52 core was replayed through actual H700 RetroArch twice: once with
+the installed production GP32 frontend and once with a private frontend that
+logs FIFO padding. Both use the production GP32 profile (synchronous video,
+rate-control delta 0.02), a private save/config directory and the same Korean
+Her Knights combat state and scripted input. Each run completes 2,401 calls
+(one boot call followed by 2,400 state-replay frames). The diagnostic frontend's
+experimental threaded completion path is inactive because video is synchronous;
+it was not installed. The normal installed core remains SHA-256
+`9abfb0e44d4aafe280871ce50f0948aa1a89a4c37cb39a0e7aae6be6549b69f3`.
+
+Every replay frame matches between the two runs in guest cycles, PC, source
+audio frame count, nonzero-source count and IISCON. The production run also
+matches the resume43 production replay in these fields. Final RGB screenshots
+match between the two new runs. Both deliver all 1,764,180 offered audio frames
+with no partial/zero callback returns or retained queue backlog. ALSA reports
+no write errors or recovery calls.
+
+The explicit diagnostic FIFO trace contains **zero padded frames** in the
+48 kHz output sample window [96,000, 1,872,000), corresponding to seconds 2-39.
+There are 74,895 padded frames outside that window; startup/shutdown padding
+is not presented as missing gameplay audio. This checks inserted padding,
+not just PCM zeros, which can legitimately occur in the source waveform.
+
+Late 1,200 frames, observed CPU clock 1,512 MHz throughout:
+
+| Metric | Production mean / p99 / max (ms) | Diagnostic mean / p99 / max (ms) |
+| --- | --- | --- |
+| Core execution | 5.660 / 7.282 / 12.479 | 5.667 / 7.516 / 7.922 |
+| Frame interval | 16.787 / 17.154 / 21.117 | 16.787 / 17.133 / 18.275 |
+| Input latch to synchronous video callback return | Not instrumented | 16.087 / 16.374 / 16.791 |
+
+All late-window rows have enabled, nonzero source audio. The production run
+has one frame interval above 20 ms; this result does not claim a universal
+60 fps floor. Compared with the earlier resume43 run of the same scene, mean
+core time falls from 6.998 to 5.660 ms and p99 from 10.171 to 7.282 ms, while
+display pacing remains frontend-limited. This is not a new controlled ABBA
+performance comparison.
+
+Input timestamps bracket the core's button latch and return from the video
+callback. They exclude physical button sampling before the latch and actual
+panel scanout afterward. The existing Windows libretro input regression also
+passes press/release, save/load, disconnect/reconnect and bitmask/fallback
+paths with JIT off/on, showing GPIO observes input before same-run video.
+No physical button-to-photon or speaker recording was performed.
+
+Protected frontend settings, installed core and original frontend hashes are
+unchanged; MainUI returns and the launch queue is empty. Evidence is in
+`F:/GP32/results/resume53-runtime/production-analysis.json`,
+`F:/GP32/results/resume53-diag/integrity.json`, and their companion raw CSV,
+runtime verification, delivery and ALSA records. These results validate the
+existing code; this step introduces no new runtime change.

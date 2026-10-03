@@ -3060,3 +3060,27 @@ speedups; all three retain exact CPU/video/PCM results. Native H700 full JIT
 and stable-poll checks, Windows forward-loop differential, and Windows/H700/
 Android ARM64/ARMv7 builds pass. Actual speaker continuity and input latency
 were not newly measured. Evidence: `F:/GP32/results/resume52-branch/`.
+
+### Active-audio playback and input timing (resume53)
+
+Two actual H700 RetroArch replays of Korean Her Knights combat complete with
+the resume52 core. All 2,400 state-replay frames match in CPU/source-audio
+fields, and final RGB screenshots match. All 1,764,180 offered audio frames
+are accepted, with no ALSA error/recovery or core queue backlog. A private
+FIFO diagnostic records zero inserted padding in output seconds 2-39;
+startup/shutdown padding remains outside that window.
+
+The production run's late-window core mean/p99 is 5.660/7.282 ms. Frame
+interval p99 is 17.154 ms, with one 21.117 ms interval. In the diagnostic run,
+software button latch to synchronous video callback return is 16.087 ms
+mean / 16.374 ms p99. This is not physical button-to-photon latency. Existing
+Windows input-path checks pass; physical speaker continuity and whole-game
+performance remain separate acceptance work. Settings and installed core
+hashes are unchanged, and both launches return to MainUI.
+
+The fresh local/device Korean library comparison still matches all 20 owned
+Korea-labelled payloads. Cumulative Hangul captures cover 13 titles; seven
+remain language-unverified and six catalogued releases lack supplied dumps.
+See `KOREAN_LIBRARY.md` and the resume53 section of
+`GP32_PERFORMANCE_STRATEGY.md` for scope and evidence. No runtime source change
+or new ROM installation was needed in this step.
