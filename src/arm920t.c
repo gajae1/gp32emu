@@ -1806,14 +1806,19 @@ ARM_FORCE_INLINE uint32_t arm_bc_ld_word_phys(arm920t_t *c, uint32_t addr) {
     if (c->jit_ram_base && arm_jit_addr_in_ram(a, 4u)) v = gp32_ld32le(c->jit_ram_base + (a - ARM_JIT_RAM_BASE_ADDR));
     else if (c->jit_bios_base && arm_jit_addr_in_bios(a, 4u)) v = gp32_ld32le(c->jit_bios_base + a);
     else if (arm_jit_addr_in_identity_io(a, 4u)) v = (c->bus.read32_io ? c->bus.read32_io : c->bus.read32)(c->bus.user, a);
-    else v = rb32(c, a);
+    else {
+        /* This address is already physical, including outside direct windows. */
+        uint8_t *p = fastmem(c, a, 4u, 0);
+        v = p ? gp32_ld32le(p) : c->bus.read32(c->bus.user, a);
+    }
     return (addr & 3u) ? gp32_ror32(v, (addr & 3u) * 8u) : v;
 }
 ARM_FORCE_INLINE uint32_t arm_bc_ld_byte_phys(arm920t_t *c, uint32_t addr) {
     if (c->jit_ram_base && arm_jit_addr_in_ram(addr, 1u)) return c->jit_ram_base[addr - ARM_JIT_RAM_BASE_ADDR];
     if (c->jit_bios_base && arm_jit_addr_in_bios(addr, 1u)) return c->jit_bios_base[addr];
     if (arm_jit_addr_in_identity_io(addr, 1u)) return c->bus.read8(c->bus.user, addr);
-    return rb8(c, addr);
+    uint8_t *p = fastmem(c, addr, 1u, 0);
+    return p ? p[0] : c->bus.read8(c->bus.user, addr);
 }
 ARM_FORCE_INLINE uint32_t arm_bc_ld_half_phys(arm920t_t *c, uint32_t addr) {
     if (c->jit_ram_base && arm_jit_addr_in_ram(addr, 2u)) return gp32_ld16le(c->jit_ram_base + (addr - ARM_JIT_RAM_BASE_ADDR));
@@ -1828,12 +1833,16 @@ ARM_FORCE_INLINE void arm_bc_st_word_phys(arm920t_t *c, uint32_t addr, uint32_t 
     uint32_t a = addr & ~3u;
     if (c->jit_ram_base && arm_jit_addr_in_ram(a, 4u)) { gp32_st32le(c->jit_ram_base + (a - ARM_JIT_RAM_BASE_ADDR), v); return; }
     if (arm_jit_addr_in_identity_io(a, 4u)) { c->bus.write32(c->bus.user, a, v); return; }
-    wb32(c, a, v);
+    uint8_t *p = fastmem(c, a, 4u, 1);
+    if (p) gp32_st32le(p, v);
+    else c->bus.write32(c->bus.user, a, v);
 }
 ARM_FORCE_INLINE void arm_bc_st_byte_phys(arm920t_t *c, uint32_t addr, uint32_t v) {
     if (c->jit_ram_base && arm_jit_addr_in_ram(addr, 1u)) { c->jit_ram_base[addr - ARM_JIT_RAM_BASE_ADDR] = (uint8_t)v; return; }
     if (arm_jit_addr_in_identity_io(addr, 1u)) { c->bus.write8(c->bus.user, addr, (uint8_t)v); return; }
-    wb8(c, addr, (uint8_t)v);
+    uint8_t *p = fastmem(c, addr, 1u, 1);
+    if (p) p[0] = (uint8_t)v;
+    else c->bus.write8(c->bus.user, addr, (uint8_t)v);
 }
 ARM_FORCE_INLINE void arm_bc_st_half_phys(arm920t_t *c, uint32_t addr, uint32_t v) {
     if (c->jit_ram_base && arm_jit_addr_in_ram(addr, 2u)) { gp32_st16le(c->jit_ram_base + (addr - ARM_JIT_RAM_BASE_ADDR), (uint16_t)v); return; }
@@ -3186,10 +3195,9 @@ static int arm_poll_load_mapping_cached(const arm920t_t *c, const arm_jit_op_t *
     const arm_tlb_entry_t *e = &c->tlb_entry[(va >> 12) & 0xfffu];
     if (!e->valid || (va & ~e->mask) != e->va_base) return 0;
     uint32_t pa = (e->pa_base | (va & e->mask)) & ~3u;
-    /* arm_bc_ld_word_phys's fallback calls rb32 and translates PA again.
-     * Reject it: a VA hit alone does not exclude that second walk/fault or
-     * establish the stability of the final bus address. Direct RAM/BIOS and
-     * physical-I/O paths read exactly this PA without another translation. */
+    /* Keep poll skipping within the existing direct RAM/BIOS/I/O windows.
+     * Other physical fallback accesses now translate only once too, but
+     * widening the skip proof is a separate change from that correctness fix. */
     return (c->jit_ram_base && arm_jit_addr_in_ram(pa, 4u)) ||
            (c->jit_bios_base && arm_jit_addr_in_bios(pa, 4u)) ||
            arm_jit_addr_in_identity_io(pa, 4u);

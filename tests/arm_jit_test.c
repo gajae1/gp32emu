@@ -3245,10 +3245,56 @@ static void case_checked_access(void) {
     }
 }
 
+/* A physical fallback must not reinterpret its PA as a second guest VA. */
+static void case_physical_access_once(void) {
+    const uint32_t ttb = RAM_BASE + 0x4000u, va = 0x10000000u, pa = 0x13000000u;
+    const uint32_t accesses[] = {0xe5901000u, 0xe5d01000u, 0xe5801000u, 0xe5c01000u};
+    for (unsigned native = 0; native < 2u; ++native) {
+        for (unsigned alias = 0; alias < 2u; ++alias) {
+            for (unsigned op = 0; op < GP32_ARRAY_COUNT(accesses); ++op) {
+                current_case = "physical-access-translated-once";
+                setup_pair();
+                arm920t_set_jit(cpu_jit, (int)native);
+                arm920t_set_trace(cpu_ref, 1, NULL, NULL);
+                const uint32_t program[] = {
+                    0xee02af10u, 0xee01bf10u, accesses[op], 0xeafffffeu,
+                };
+                load_both(program, GP32_ARRAY_COUNT(program));
+                set_mem_both(ttb, 2u); /* BIOS identity */
+                set_mem_both(ttb + ((va >> 18) & 0x3ffcu), pa | 2u);
+                /* A second translation would either read/write RAM instead of
+                 * the physical bus or spuriously update the fault registers. */
+                set_mem_both(ttb + ((pa >> 18) & 0x3ffcu), alias ? RAM_BASE | 2u : 0u);
+                set_reg_both(0u, va); set_reg_both(1u, 0x12345678u);
+                set_reg_both(10u, ttb); set_reg_both(11u, 1u);
+                bus_jit.observe_cpu = cpu_jit; bus_ref.observe_cpu = cpu_ref;
+                bus_jit.mem_probe = bus_ref.mem_probe = 1u;
+                CHECK(arm920t_run(cpu_jit, 2u) == 2u && arm920t_run(cpu_ref, 2u) == 2u,
+                      "physical access MMU setup");
+                CHECK(arm920t_run(cpu_jit, 32u) == 32u && arm920t_run(cpu_ref, 32u) == 32u,
+                      "physical access execution");
+                compare_state();
+                CHECK(bus_jit.mem_calls == 1u && bus_ref.mem_calls == 1u &&
+                      bus_jit.mem_addr == pa && bus_ref.mem_addr == pa,
+                      "exactly one data access at translated physical address");
+                CHECK(bus_jit.mem_pc == CODE_ADDR + 12u && bus_ref.mem_pc == CODE_ADDR + 12u,
+                      "physical callback observes architectural PC");
+                CHECK(arm920t_get_cp15(cpu_jit, 5u) == arm920t_get_cp15(cpu_ref, 5u) &&
+                      arm920t_get_cp15(cpu_jit, 6u) == arm920t_get_cp15(cpu_ref, 6u),
+                      "physical fallback does not cause a second translation fault");
+                if (op < 2u) CHECK(ref_reg(1u) == (op ? 0x80u : 0x8877ff80u), "physical load value");
+                else CHECK(bus_jit.mem_value == bus_ref.mem_value &&
+                           bus_ref.mem_value == (op == 3u ? 0x78u : 0x12345678u), "physical store value");
+                teardown_pair();
+            }
+        }
+    }
+}
+
 /* One mapped non-RAM miss, BIOS literal, and fault-tolerant identity access.
- * No callbacks mutate the page tables or CPU here; this isolates VA retention
- * from the RAM guard and checks the existing CP15 fault-address semantics. */
+ * The following replay isolates VA retention and CP15 fault semantics. */
 static void case_checked_access_translation(void) {
+    case_physical_access_once();
     const uint32_t ttb = DATA_ADDR + 0x3000u, va = 0x10000000u;
     const uint32_t program[] = {
         0xee02af10u, 0xee01bf10u, /* MCR TTB/control */

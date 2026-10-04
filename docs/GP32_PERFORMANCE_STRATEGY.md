@@ -2510,3 +2510,28 @@ source is unchanged. Windows GUI/libretro, H700, and Android ARM64/ARMv7
 builds succeed; Android runtime remains unverified. Digital audio tests do
 not establish physical speaker quality. Volume, mixer, governor, stock
 frontend and user settings were not changed.
+
+### Physical byte/word fallback translation (2026-10-04)
+
+The decoded CPU memory helpers translated a guest address to a physical
+address, then used the ordinary virtual-address accessors when the result
+fell outside the direct RAM/BIOS/I/O windows. That translated the physical
+address a second time. A mapping at that numeric address could redirect the
+access to unrelated RAM; without such a mapping, the tolerant MMU fallback
+could spuriously modify its fault registers. Byte and word loads/stores now
+use fastmem or the physical bus directly, matching the existing halfword
+fallback. Poll-skipping eligibility retains its existing conservative windows.
+
+A regression maps a VA to a non-direct physical bus address, then makes that
+physical address either unmapped as a VA or mapped to unrelated RAM. It checks
+loads/stores of both widths, exactly one physical callback, callback-visible
+PC, store values and MMU fault registers, with native JIT and decoded portable
+execution compared to the instruction interpreter. The old source fails with
+52 mismatches; the corrected Windows checked-access group passes. The full
+H700 JIT differential suite passes, including this fixture. Three saved-scene
+replays on PC and H700 preserve all seven compared CPU/clock/video/PCM fields.
+This is a generic correctness fix; no game-specific workaround or measured
+throughput improvement is claimed. Windows GUI/libretro, H700 and Android
+ARM64/ARMv7 builds succeed; Android runtime remains unverified. Evidence is
+private `results/resume105-physical-access/`. No volume or device configuration
+was changed.
