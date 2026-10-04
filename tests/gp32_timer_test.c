@@ -45,7 +45,7 @@ static void check_timer(int jit, uint32_t callback_mode, int thumb) {
         0xe12fff1eu, /* BX lr */
         counter,
     };
-    g->direct_fxe_mode = 1;
+    direct_set_fxe_mode(g, 1u);
     direct_install_stubs(g);
     gp32_set_jit(g, jit);
     const uint32_t *program = callback_mode ? mode_code : code;
@@ -103,7 +103,7 @@ static void check_callback_starts_timer(int jit, unsigned starter, int reconfigu
     const uint32_t count_code[] = {
         0xe59f000cu, 0xe5901000u, 0xe2811001u, 0xe5801000u, 0xe12fff1eu, counter,
     };
-    g->direct_fxe_mode = 1;
+    direct_set_fxe_mode(g, 1u);
     direct_install_stubs(g);
     gp32_set_jit(g, jit);
     s3c2400_write32(g->soc, 0x14800004u, 0x3000u);
@@ -152,7 +152,7 @@ static void check_halfword_thumb_callback(int jit) {
     const uint32_t callback = GP32_RAM_BASE + 0x2002u;
     const uint32_t counter = GP32_RAM_BASE + 0x3000u;
     const uint32_t caller_pc = GP32_RAM_BASE + 0x5002u;
-    g->direct_fxe_mode = 1;
+    direct_set_fxe_mode(g, 1u);
     direct_install_stubs(g);
     gp32_set_jit(g, jit);
     s3c2400_write16(g->soc, callback - 2u, 0x4770u); /* BX lr: wrong aligned entry. */
@@ -201,7 +201,7 @@ static void check_callback_register_banks(int jit, uint32_t caller_mode) {
         0xe3a08077u, 0xe3a0d033u, 0xe16ff001u,
         0xe12fff13u, /* BX r3: return trap. */
     };
-    g->direct_fxe_mode = 1;
+    direct_set_fxe_mode(g, 1u);
     direct_install_stubs(g);
     gp32_set_jit(g, jit);
     for (size_t i = 0; i < GP32_ARRAY_COUNT(code); ++i)
@@ -244,7 +244,7 @@ static gp32_t *scheduler_fixture(void) {
     const uint32_t entry = GP32_RAM_BASE + 0x6000u;
     const uint32_t limits[] = {80u, 200u, UINT32_MAX};
     const uint32_t elapsed[] = {0u, 7u, UINT32_MAX};
-    g->direct_fxe_mode = 1;
+    direct_set_fxe_mode(g, 1u);
     s3c2400_write32(g->soc, 0x14800004u, 0x3000u);
     s3c2400_write32(g->soc, 0x14800014u, 0u);
     g->direct_hle_gpos_scheduler_callback = callback;
@@ -297,7 +297,7 @@ static void check_elapsed_clock_change(int jit) {
     if (!g || !restored) { gp32_destroy(g); gp32_destroy(restored); return; }
     const uint32_t code = GP32_RAM_BASE + 0x4000u;
     const uint32_t divider = 0x14800014u;
-    g->direct_fxe_mode = 1;
+    direct_set_fxe_mode(g, 1u);
     gp32_set_jit(g, jit);
     s3c2400_write32(g->soc, 0x14800004u, 0x3000u);
     s3c2400_write32(g->soc, divider, 0u);
@@ -327,7 +327,7 @@ static void check_elapsed_clock_change(int jit) {
     CHECK(direct_elapsed_ms(g) == 120u, "clock increase never rewinds elapsed time");
     CHECK(gp32_reset(g) == GP32_OK && direct_elapsed_ms(g) == 0u, "reset clears firmware time");
 
-    g->direct_fxe_mode = 1;
+    direct_set_fxe_mode(g, 1u);
     direct_install_stubs(g);
     s3c2400_write32(g->soc, 0x14800004u, 0x3000u);
     s3c2400_write32(g->soc, divider, 0u);
@@ -388,7 +388,7 @@ static void check_peripheral_clock_boundary(int jit) {
             gp32_run_cycles(g, 1u);
             CHECK(s3c2400_read32(g->soc, 0x14400000u) & (1u << 10), "PWM expires at old/new clock boundary");
             s3c2400_write32(g->soc, 0x14400000u, 1u << 10);
-            g->direct_fxe_mode = 1;
+            direct_set_fxe_mode(g, 1u);
             direct_install_stubs(g);
             for (unsigned i = 0; i < 400u; ++i)
                 s3c2400_write32(g->soc, code + i * 4u, 0xe1a00000u);
@@ -454,7 +454,7 @@ static void check_frame_callback_debt(int jit) {
     gp32_t *g = gp32_create(NULL), *clone = gp32_create(NULL);
     CHECK(g && clone, "create callback frame cores");
     if (!g || !clone) { gp32_destroy(g); gp32_destroy(clone); return; }
-    g->direct_fxe_mode = 1;
+    direct_set_fxe_mode(g, 1u);
     direct_install_stubs(g);
     gp32_set_jit(g, jit);
     s3c2400_write32(g->soc, 0x14800004u, 0x3000u);

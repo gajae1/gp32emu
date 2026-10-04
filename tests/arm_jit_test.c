@@ -1342,7 +1342,52 @@ static int terminal_swi_yield(void *user, arm920t_t *cpu, uint32_t imm,
     return 1;
 }
 
+static int terminal_swi_decline(void *user, arm920t_t *cpu, uint32_t imm,
+                                uint32_t pc, int is_thumb) {
+    ++*(unsigned *)user;
+    CHECK(imm == 0x123456u && pc == CODE_ADDR && !is_thumb &&
+          arm920t_get_pc(cpu) == CODE_ADDR + 4u, "declined SWI callback arguments");
+    arm920t_set_cpsr(cpu, 0x600000d1u); /* mutation precedes architectural entry */
+    arm920t_set_reg(cpu, 13u, 0x12340000u);
+    arm920t_set_reg(cpu, 15u, CODE_ADDR + 0x80u);
+    arm920t_flush_jit(cpu);
+    return 0;
+}
+
+static void case_terminal_swi_decline(void) {
+    const uint32_t instructions[] = {0xef123456u, 0x0f123456u, 0x0f123456u, 0xff123456u};
+    for (unsigned i = 0; i < GP32_ARRAY_COUNT(instructions); ++i) {
+        current_case = "terminal-swi-declined-or-predicated";
+        setup_pair();
+        arm920t_set_trace(cpu_ref, 1, NULL, NULL);
+        uint32_t cpsr = i == 1u ? 0x400000d3u : 0xd3u;
+        arm920t_set_cpsr(cpu_jit, cpsr); arm920t_set_cpsr(cpu_ref, cpsr);
+        unsigned observed_jit = 0, observed_ref = 0;
+        arm920t_set_swi_handler(cpu_jit, terminal_swi_decline, &observed_jit);
+        arm920t_set_swi_handler(cpu_ref, terminal_swi_decline, &observed_ref);
+        load_both(&instructions[i], 1u);
+        CHECK(arm920t_run(cpu_jit, 1u) == 1u && arm920t_run(cpu_ref, 1u) == 1u,
+              "SWI or failed predicate consumes one instruction");
+        compare_state();
+        arm920t_register_context_t actual = {0}, expected = {0};
+        arm920t_get_register_context(cpu_jit, &actual);
+        arm920t_get_register_context(cpu_ref, &expected);
+        CHECK(!memcmp(&actual, &expected, sizeof(actual)), "SWI preserves all exception banks");
+        CHECK(observed_jit == (i < 2u) && observed_ref == (i < 2u),
+              "only passing SWI predicates invoke the handler");
+        if (i < 2u) {
+            CHECK(arm920t_get_pc(cpu_ref) == 8u && ref_reg(14u) == CODE_ADDR + 4u,
+                  "declined hook enters SVC with original SWI return address");
+            CHECK(expected.spsr_svc == 0x600000d1u && expected.bank_fiq[5] == 0x12340000u,
+                  "exception entry saves the handler's updated live state");
+        } else CHECK(arm920t_get_pc(cpu_ref) == CODE_ADDR + 4u &&
+                     arm920t_get_cpsr(cpu_ref) == cpsr, "failed predicate has no exception effects");
+        teardown_pair();
+    }
+}
+
 static void case_terminal_swi_yield(void) {
+    case_terminal_swi_decline();
     current_case = "terminal-swi-yield";
     setup_pair();
     const uint32_t program[] = {0xef000043u, 0xe3a05055u, 0xeafffffeu};
