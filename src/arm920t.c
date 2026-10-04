@@ -255,6 +255,9 @@ struct arm920t {
     uint64_t jit_fallbacks;
     /* Transient workload counters (GP32EMU_CPU_PROFILE); never serialized. */
     gp32_cpu_profile_t prof;
+    /* Runtime certificates; appended to retain all existing hot-field offsets. */
+    const arm_live_read32_t *live_read32;
+    size_t live_read32_count;
 };
 
 /* Native dispatch only needs the compact header. Decoded instructions live
@@ -615,6 +618,15 @@ void arm920t_set_jit(arm920t_t *c, int enabled) {
     }
 }
 void arm920t_flush_jit(arm920t_t *c) { arm920t_jit_invalidate_all(c, ARM_JIT_INV_API_FLUSH); }
+int arm920t_set_live_read32(arm920t_t *c, const arm_live_read32_t *reads, size_t count) {
+    if (!c || c->running || (!reads && count)) return 0;
+    for (size_t i = 0; i < count; ++i)
+        if ((reads[i].pa & 3u) || !reads[i].word || ((uintptr_t)reads[i].word & 3u)) return 0;
+    arm920t_jit_invalidate_all(c, ARM_JIT_INV_API_FLUSH);
+    c->live_read32 = reads;
+    c->live_read32_count = count;
+    return 1;
+}
 uint32_t arm920t_get_pc(const arm920t_t *c) { return c ? c->r[15] : 0; }
 uint64_t arm920t_get_cycles(const arm920t_t *c) { return c ? c->cycles_total : 0; }
 void arm920t_add_idle_cycles(arm920t_t *c, uint32_t cycles) { if (c) c->cycles_total += cycles; }

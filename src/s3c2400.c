@@ -147,6 +147,12 @@ struct s3c2400 {
     gp32_smc_lines_t smc_lines;
     s3c2400_log_fn log;
     void *log_user;
+    /* Live GPIO readback mirrors and their CPU-facing descriptors (GPBDAT
+     * 0x1560000c, GPEDAT 0x15600030). Appended last so every earlier field
+     * keeps its offset. Derived state: never serialized, refreshed after
+     * every mutation, storage stable until s3c2400_destroy. */
+    volatile uint32_t live_gpbdat, live_gpedat;
+    arm_live_read32_t live_read32[2];
 };
 
 static uint8_t *s3c2400_fastmem(void *user, uint32_t addr, size_t bytes, int write);
@@ -181,8 +187,40 @@ static void slog(s3c2400_t *s, const char *fmt, ...) {
     s->log(s->log_user, buf);
 }
 
+/* Guest-visible GPBDAT/GPEDAT composition: the single source for ordinary
+ * reads, the specialized read32_io path and the live readback mirrors. */
+static uint32_t gp32_gpbdat_readback(const s3c2400_t *s) {
+    return (s->gpio[0x0cu >> 2] & ~0xffffu) | s->smc_lines.datarx | (s->button_in0 & 0xff00u);
+}
+static uint32_t gp32_gpedat_readback(const s3c2400_t *s) {
+    uint32_t data = s->gpio[0x30u >> 2] & ~0xfcu;
+    if (s->smc_lines.cmd_latch) data |= 0x20u;
+    if (s->smc_lines.add_latch) data |= 0x10u;
+    if (!s->smc_lines.do_write) data |= 0x08u;
+    if (!smc_is_present(s->smc)) data |= 0x04u;
+    return data | (s->button_in1 & 0xc0u);
+}
+
+/* Keep both live words equal to an ordinary GPIO read. Must run after every
+ * mutation of gpio[], smc_lines, cached buttons or card presence: the CPU
+ * loads these words instead of issuing a bus read. */
+static void live_read32_refresh(s3c2400_t *s) {
+    s->live_gpbdat = gp32_gpbdat_readback(s);
+    s->live_gpedat = gp32_gpedat_readback(s);
+}
+
+/* Fill the SoC-owned descriptor list once, before the first reset (which
+ * populates both mirrors). Addresses stay fixed until s3c2400_destroy. */
+static void live_read32_init(s3c2400_t *s) {
+    s->live_read32[0].pa = 0x1560000cu;
+    s->live_read32[0].word = &s->live_gpbdat;
+    s->live_read32[1].pa = 0x15600030u;
+    s->live_read32[1].word = &s->live_gpedat;
+}
+
 /* Recompute the guest-visible GPIO input bits from the host button mask.
- * Called wherever buttons is assigned: set_buttons, reset and state load. */
+ * Called wherever buttons is assigned: set_buttons, reset and state load.
+ * Refreshes the live GPIO mirrors too, so all three callers stay fresh. */
 static void buttons_refresh(s3c2400_t *s) {
     const uint32_t b = s->buttons;
     uint32_t v = 0xffffu;
@@ -199,6 +237,7 @@ static void buttons_refresh(s3c2400_t *s) {
     if (b & GP32_BUTTON_START)  v &= ~0x0040u;
     if (b & GP32_BUTTON_SELECT) v &= ~0x0080u;
     s->button_in1 = v;
+    live_read32_refresh(s);
 }
 
 s3c2400_t *s3c2400_create(size_t ram_size) {
@@ -212,6 +251,7 @@ s3c2400_t *s3c2400_create(size_t ram_size) {
     memset(s->bios, 0xff, sizeof(s->bios));
     memset(s->eeprom, 0xff, sizeof(s->eeprom));
     s->fb_w = 240; s->fb_h = 320;
+    live_read32_init(s);
     s3c2400_reset(s);
     return s;
 }
@@ -295,6 +335,13 @@ arm_bus_t s3c2400_get_bus(s3c2400_t *s) {
     return b;
 }
 
+const arm_live_read32_t *s3c2400_live_read32(const s3c2400_t *s, size_t *count) {
+    if (count) *count = 0u;
+    if (!s || !s->live_read32[0].word) return NULL;
+    if (count) *count = GP32_ARRAY_COUNT(s->live_read32);
+    return s->live_read32;
+}
+
 static int load_file_exact_or_less(uint8_t *dst, size_t cap, const char *path, char *err, size_t err_len) {
     if (gp32_zip_path_maybe(path)) {
         uint8_t *buf = NULL;
@@ -334,8 +381,19 @@ void s3c2400_install_hle_bios(s3c2400_t *s) {
        NULL while real BIOS boot remains controlled by s3c2400_load_bios(). */
     memset(s->bios, 0x00, BIOS_SIZE);
 }
-int s3c2400_load_smartmedia(s3c2400_t *s, const char *path, char *err, size_t err_len) { return s && smc_load_file(s->smc, path, err, err_len); }
-int s3c2400_load_smartmedia_buffer(s3c2400_t *s, const uint8_t *data, size_t size, char *err, size_t err_len) { return s && smc_load_buffer(s->smc, data, size, err, err_len); }
+int s3c2400_load_smartmedia(s3c2400_t *s, const char *path, char *err, size_t err_len) {
+    if (!s) return 0;
+    int ok = smc_load_file(s->smc, path, err, err_len);
+    /* A failed load can still drop the mounted card; refresh either way. */
+    live_read32_refresh(s);
+    return ok;
+}
+int s3c2400_load_smartmedia_buffer(s3c2400_t *s, const uint8_t *data, size_t size, char *err, size_t err_len) {
+    if (!s) return 0;
+    int ok = smc_load_buffer(s->smc, data, size, err, err_len);
+    live_read32_refresh(s);
+    return ok;
+}
 int s3c2400_save_smartmedia(s3c2400_t *s, const char *path, char *err, size_t err_len) { return s && smc_save_file(s->smc, path, err, err_len); }
 
 int s3c2400_load_ram_image(s3c2400_t *s, uint32_t addr, const uint8_t *data, size_t size, char *err, size_t err_len) {
@@ -820,7 +878,7 @@ static uint32_t io_read32(s3c2400_t *s, uint32_t addr) {
         uint32_t data = reg_array_read(s->gpio, sizeof(s->gpio), off);
         switch (off) {
         case 0x08: data = (data & ~1u) | (!s->smc_lines.read ? 1u : 0u); break;
-        case 0x0c: data = (data & ~0xffffu) | s->smc_lines.datarx | (s->button_in0 & 0xff00u); break;
+        case 0x0c: data = gp32_gpbdat_readback(s); break;
         case 0x24:
             data &= ~0x3c0u;
             if (!s->smc_lines.busy) data |= 0x200u;
@@ -828,14 +886,7 @@ static uint32_t io_read32(s3c2400_t *s, uint32_t addr) {
             if (!s->smc_lines.chip) data |= 0x080u;
             if (!smc_is_protected(s->smc)) data |= 0x040u;
             break;
-        case 0x30:
-            data &= ~0xfcu;
-            if (s->smc_lines.cmd_latch) data |= 0x20u;
-            if (s->smc_lines.add_latch) data |= 0x10u;
-            if (!s->smc_lines.do_write) data |= 0x08u;
-            if (!smc_is_present(s->smc)) data |= 0x04u;
-            data |= s->button_in1 & 0xc0u;
-            break;
+        case 0x30: data = gp32_gpedat_readback(s); break;
         }
         return data;
     }
@@ -861,7 +912,7 @@ static uint32_t s3c2400_read32_io(void *user, uint32_t addr) {
     case 0x15100040u: return pwm_current_count(s, 4u);
     case 0x15400004u: return s->iic[1] & ~0x0fu;
     case 0x15600008u: return (s->gpio[0x08u >> 2] & ~1u) | (!s->smc_lines.read ? 1u : 0u);
-    case 0x1560000cu: return (s->gpio[0x0cu >> 2] & ~0xffffu) | s->smc_lines.datarx | (s->button_in0 & 0xff00u);
+    case 0x1560000cu: return s->live_gpbdat;
     case 0x15600024u: {
         uint32_t data = s->gpio[0x24u >> 2] & ~0x3c0u;
         if (!s->smc_lines.busy) data |= 0x200u;
@@ -870,14 +921,7 @@ static uint32_t s3c2400_read32_io(void *user, uint32_t addr) {
         if (!smc_is_protected(s->smc)) data |= 0x040u;
         return data;
     }
-    case 0x15600030u: {
-        uint32_t data = s->gpio[0x30u >> 2] & ~0xfcu;
-        if (s->smc_lines.cmd_latch) data |= 0x20u;
-        if (s->smc_lines.add_latch) data |= 0x10u;
-        if (!s->smc_lines.do_write) data |= 0x08u;
-        if (!smc_is_present(s->smc)) data |= 0x04u;
-        return data | (s->button_in1 & 0xc0u);
-    }
+    case 0x15600030u: return s->live_gpedat;
     default:
         return io_read32(s, addr);
     }
@@ -931,6 +975,9 @@ static void io_write32(s3c2400_t *s, uint32_t addr, uint32_t value, uint32_t mas
         case 0x24: s->smc_lines.do_read=((s->gpio[off>>2]&0x100u)==0); s->smc_lines.chip=((s->gpio[off>>2]&0x80u)==0); s->smc_lines.wp=((s->gpio[off>>2]&0x40u)==0); gp32_smc_update(s); break;
         case 0x30: s->smc_lines.cmd_latch=((s->gpio[off>>2]&0x20u)!=0); s->smc_lines.add_latch=((s->gpio[off>>2]&0x10u)!=0); s->smc_lines.do_write=((s->gpio[off>>2]&0x08u)==0); gp32_smc_update(s); break;
         }
+        /* Every GPIO width/offset funnels here: register, NAND and latch
+         * effects are already applied, so refresh both live words last. */
+        live_read32_refresh(s);
         return;
     }
     if (s->cpu_run_active && ((addr >= 0x14600000u && addr <= 0x1460007bu) ||
@@ -2094,6 +2141,9 @@ int s3c2400_state_load_io(s3c2400_t *s, state_io_t *io, int has_audio_spans, int
     memcpy(s->mmc, st->mmc, sizeof(s->mmc));
     s->lcd = st->lcd;
     s->smc_lines = st->smc_lines;
+    /* The new card object, restored GPIO and SmartMedia lines must be visible
+     * to the live mirrors before any IRQ can resume the CPU. */
+    live_read32_refresh(s);
     check_irq(s);
     return 1;
 bad_audio:

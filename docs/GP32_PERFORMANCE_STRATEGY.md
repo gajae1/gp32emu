@@ -2913,3 +2913,50 @@ CPU hot-field layout must be resolved before adoption; simply appending a bus
 field would shift following CPU fields. No dynamic pointer cache, speculative
 page walk, game-address match or retained input value is justified by these
 measurements. See `results/resume113-helper-attribution/mmio-design.md`.
+
+### Live GPIO readbacks on A64 and the shared I/O path (2026-10-05)
+
+The preceding proposal is now implemented as an explicit CPU registration,
+without enlarging arm_bus_t or shifting existing CPU/SoC fields. S3C2400 owns
+two stable, live GPIO words. GPIO writes, NAND latch changes, buttons, card
+replacement (including failures), reset and completed state restoration refresh
+them synchronously. The ordinary bus read still composes its result independently;
+the specialized C I/O path reads the live words, benefiting portable/x64 callers
+as well as A64. There is no serialized addition or game-specific address check.
+
+After the existing RAM guard rejects an aligned word LDR without writeback or
+PC destination, A64 checks the current full-mask TLB entry and provider physical
+address. A hit reads the current host word, then commits the guest register.
+Misses retain the checked helper, including page walks and callback fences.
+Registration replacement is rejected during a CPU run and invalidates native
+code outside a run. The provider owns descriptor/word lifetime; decorated buses
+must explicitly opt in. No input value or loop iteration is retained or skipped.
+
+Matched-clock H700 ABBA, 1512 MHz, baseline release SHA `e686dcff152d` versus
+final candidate `390e48c73f0b` (headless core throughput, not display FPS):
+
+| Replay | Baseline median | Candidate median | Change |
+| --- | ---: | ---: | ---: |
+| Princess Maker 2 slot 0, 600 warmup / 600 measured | 77.876 | 83.0675 | +6.67% |
+| Her Knights combat, 1200 warmup / 1200 measured | 142.503 | 142.936 | +0.30%, effectively neutral |
+
+All seven CPU/video/PCM outputs match in every run; 30/31 measured frequency
+samples match, respectively. The native-only intermediate improved Princess
+5.04% but regressed Her 0.98%; sharing the existing live words with the C I/O
+path removed that observed regression. No clocks/settings were changed.
+
+The native-path profile (600/1200 Princess replay, before the final C-read
+reuse) removes exactly 6,608,179 checked word-load calls: 6,776,580 -> 168,401.
+Native/portable instruction counts and all seven outputs are unchanged.
+Generated-code high-water rises from 6,482,012 to 7,182,468 bytes; the code-size
+cost is real and performance results are limited to the measured scenes.
+
+H700 full ARM differential, arena recycling, polling, GPIO freshness/state/card
+failure, and libretro audio tests pass. The new CPU fixture verifies native
+callback bypass, fresh values after writes/input changes, nonidentity and tiny
+page mappings, unsupported-access fallback and registration revocation. PC
+focused CPU/GPIO/audio checks pass. The GPIO fixture's old 8 MiB device-ID
+expectation also failed without the new tests; it now expects the existing
+small-raw-image geometry's exact 4 MiB ID. Windows GUI/libretro and Android
+arm64/v7a builds pass. Android runtime, acoustic output and all-game/long-session
+acceptance remain unverified. Evidence: `results/resume114-live-mmio/`.

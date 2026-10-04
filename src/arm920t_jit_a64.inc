@@ -27,6 +27,8 @@ typedef struct a64_emit {
     uint32_t expected_next, generation;
     uint32_t loop_done, block_count;
     size_t loop_head;
+    const arm_live_read32_t *live_read32;
+    size_t live_read32_count;
 } a64_emit_t;
 
 ARM_FORCE_INLINE int arm_a64_can_continue(const arm920t_t *c, int stop,
@@ -568,6 +570,51 @@ static void a64_ram_offset(a64_emit_t *e, size_t *slow, unsigned *nslow, unsigne
     }
 }
 
+/* Cold path only: preserve the original VA in w12 for the checked fallback.
+ * Read the authoritative TLB, without filling it or widening a restored mask.
+ * Certificates contain live storage, never a cached value or skipped read. */
+static void a64_live_read32(a64_emit_t *e, unsigned rd, size_t next) {
+    if (!e->live_read32_count) return;
+    size_t reject[3];
+    unsigned nreject = 0;
+    a64_mask(e, 6, 12, 3u);
+    a64_cmp(e, 6, 31);
+    reject[nreject++] = a64_jump(e, 1);
+    if (e->mmu) {
+        _Static_assert(sizeof(arm_tlb_entry_t) == 16u &&
+                       offsetof(arm_tlb_entry_t, pa_base) == 4u &&
+                       offsetof(arm_tlb_entry_t, mask) == 8u &&
+                       offsetof(arm_tlb_entry_t, valid) == 12u,
+                       "live read packed TLB layout");
+        a64_ubfx(e, 6, 12, 12, 12);
+        a64_cpu_addr(e, 10, offsetof(arm920t_t, tlb_entry));
+        a64_rr(e, 0x8b001000u, 10, 10, 6); /* add x10, x10, x6, lsl #4 */
+        a64_u32(e, 0x29400000u | (9u << 10) | (10u << 5) | 7u); /* VA, PA */
+        a64_u32(e, 0x29410000u | (8u << 10) | (10u << 5) | 6u); /* mask, valid */
+        a64_cmp(e, 8, 31);
+        reject[nreject++] = a64_jump(e, 0);
+        a64_rr(e, 0x0a200000u, 8, 12, 6); /* bic w8, w12, w6 */
+        a64_cmp(e, 8, 7);
+        reject[nreject++] = a64_jump(e, 1);
+        a64_rr(e, 0x0a000000u, 0, 12, 6);
+        a64_rr(e, 0x2a000000u, 0, 0, 9);
+        a64_mask(e, 0, 0, ~3u);
+    } else a64_mov(e, 0, 12);
+    for (size_t i = 0; i < e->live_read32_count && !e->fail; ++i) {
+        a64_imm(e, 6, e->live_read32[i].pa);
+        a64_cmp(e, 0, 6);
+        size_t unmatched = a64_jump(e, 1);
+        a64_ptr(e, 10, (uintptr_t)e->live_read32[i].word);
+        a64_u32(e, 0xb9400000u | (10u << 5) | 1u); /* fresh ldr w1, [x10] */
+        a64_put_guest(e, rd, 1);
+        /* Reuse the RAM path's forward continuation branch. This edge alone
+         * points backward; a64_patch deliberately accepts only forward fixups. */
+        a64_u32(e, 0x14000000u | ((uint32_t)(next - e->pos) & 0x03ffffffu));
+        a64_patch(e, unmatched, e->pos);
+    }
+    for (unsigned i = 0; i < nreject; ++i) a64_patch(e, reject[i], e->pos);
+}
+
 static int a64_single_dt(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
     unsigned d = op->d;
     int load = !!(d & ARM_BC_SD_L), byte = !!(d & ARM_BC_SD_B);
@@ -643,6 +690,7 @@ static int a64_single_dt(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
     }
     size_t next = a64_jump(e, 14);
     for (unsigned i = 0; i < nslow; ++i) a64_patch(e, slow[i], e->pos);
+    if (access && load && !byte && !wb) a64_live_read32(e, op->b, next);
     if (access) a64_mem_slow(e, op, done, load, wb);
     else a64_slow(e, op, done);
     a64_patch(e, next, e->pos);
@@ -1026,6 +1074,8 @@ static void arm_jit_compile_native(arm920t_t *c, arm_jit_block_t *b) {
     e.code = tmp;
     e.cap = sizeof(tmp) / sizeof(tmp[0]);
     e.mmu = !!(c->cp15[1] & 1u);
+    e.live_read32 = c->live_read32;
+    e.live_read32_count = c->live_read32_count;
     e.loop_done = a64_selfloop_prefix(c, b);
     e.block_count = b->count;
     /* Validate the complete direct window, including write permission.

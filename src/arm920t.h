@@ -33,6 +33,22 @@ typedef struct arm_bus {
     int (*is_stable_read32)(void *user, uint32_t addr);
 } arm_bus_t;
 
+typedef struct arm_live_read32 {
+    uint32_t pa;
+    const volatile uint32_t *word;
+} arm_live_read32_t;
+
+/* Optional certificate for side-effect-free physical word reads. Each aligned,
+ * host-order word must always equal the ordinary bus read, without observers,
+ * logging, CPU mutation or deadline changes. Values are read anew per access;
+ * volatile is not synchronization: CPU/bus mutation remains synchronous.
+ * The immutable descriptors and word storage must outlive this registration.
+ * Register/replace/disable only outside arm920t_run; success flushes native
+ * code, reset/state load preserve registration. NULL + zero disables it.
+ * Returns zero without changes for invalid arguments or a running CPU.
+ * Decorated buses must explicitly opt in only if they preserve this contract. */
+int arm920t_set_live_read32(arm920t_t *cpu, const arm_live_read32_t *reads, size_t count);
+
 arm920t_t *arm920t_create(const arm_bus_t *bus);
 void arm920t_destroy(arm920t_t *cpu);
 void arm920t_reset(arm920t_t *cpu, uint32_t vector);
