@@ -2169,6 +2169,44 @@ static void case_block_callback_exit(void) {
     printf("block callback cases=%u\n", cases);
 }
 
+/* Data-cache maintenance updates c7 but must not end a decoded trace or
+ * invalidate executable code. I-cache/MMU operations retain their exits. */
+static void case_cache_maintenance_native(void) {
+    const uint32_t program[] = {
+        0xee070f5eu, /* MCR p15,0,r0,c7,c14,2: clean/invalidate by index */
+        0xee171f10u, /* MRC p15,0,r1,c7,c0,0: observe modeled c7 value */
+        0xe2800001u, /* ADD r0,r0,#1 */
+        0xe2522001u, /* SUBS r2,r2,#1 */
+        0x1afffffau, /* BNE start */
+        0xee070f9au, /* MCR p15,0,r0,c7,c10,4: drain write buffer */
+        0x0e073f16u, /* MCREQ p15,0,r3,c7,c6,0 */
+        0x1e074f16u, /* MCRNE: failed condition must not write c7 */
+        0xee175f10u, /* MRC r5,c7 */
+        0xeafffffeu,
+    };
+    current_case = "cache-maintenance-native";
+    setup_pair();
+    load_both(program, GP32_ARRAY_COUNT(program));
+    set_reg_both(0u, 0x12340000u);
+    set_reg_both(2u, 200u);
+    set_reg_both(3u, 0x43210000u);
+    set_reg_both(4u, 0xbad00000u);
+    const uint32_t budgets[] = {1u, 2u, 3u, 17u, 300u, 701u};
+    for (unsigned i = 0; i < GP32_ARRAY_COUNT(budgets); ++i) {
+        CHECK(arm920t_run(cpu_jit, budgets[i]) == arm920t_run(cpu_ref, budgets[i]), "maintenance cycle budget");
+        compare_state();
+        CHECK(arm920t_get_cp15(cpu_jit, 7u) == arm920t_get_cp15(cpu_ref, 7u), "maintenance c7 matches interpreter");
+    }
+    CHECK(ref_reg(0u) == 0x123400c8u && ref_reg(1u) == 0x123400c7u,
+          "maintenance loop completes every index");
+    CHECK(ref_reg(5u) == 0x43210000u, "conditional maintenance preserves c7");
+    gp32_cpu_profile_t profile;
+    arm920t_get_cpu_profile(cpu_jit, &profile);
+    if (profile.supported && profile.native_backend)
+        CHECK(profile.helper_op_kinds[10u] == 0u, "maintenance stays in native code");
+    teardown_pair();
+}
+
 int main(int argc, char **argv) {
     /* Native gate triage can isolate this mapped physical-boundary case
      * without rerunning unrelated differential workloads. */
@@ -2183,7 +2221,12 @@ int main(int argc, char **argv) {
     int irq_only = argc == 2 && !strcmp(argv[1], "--callback-irq");
     int block_only = argc == 2 && !strcmp(argv[1], "--block-callback");
     int portable_only = argc == 2 && !strcmp(argv[1], "--portable-callback");
-    if (cold_only) {
+    if (argc == 2 && !strcmp(argv[1], "--cache-maintenance")) {
+        case_cache_maintenance_native();
+        case_cache_unchanged();
+        case_cache_modified(0);
+        case_cache_modified(1);
+    } else if (cold_only) {
         case_cold_leaf_mapping();
     } else if (nested_only) {
         case_nested_framed_leaf();
@@ -2230,6 +2273,7 @@ int main(int argc, char **argv) {
     case_native_condition_flags();
     case_native_regshift();
     case_native_longmul_psr();
+    case_cache_maintenance_native();
     case_native_mapped_block();
     case_unframed_leaf();
     case_callback_pc();

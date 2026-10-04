@@ -792,7 +792,7 @@ static int a64_mul(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
 static void a64_regshift_op2(a64_emit_t *e, unsigned type, int carry);
 static int a64_data_regshift(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done);
 static int a64_long_mul(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done);
-static int a64_mrc_p15(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done);
+static int a64_local_p15(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done);
 static int a64_psr_mov(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done);
 
 static int a64_one(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
@@ -811,7 +811,7 @@ static int a64_one(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
     if (op->kind == ARM_JIT_OP_SINGLE_DT) return a64_single_dt(e, op, done);
     if (op->kind == ARM_JIT_OP_BLOCK_DT) return a64_block_dt(e, op, done);
     if (op->kind == ARM_JIT_OP_PSR) return a64_psr_mov(e, op, done);
-    if (op->kind == ARM_JIT_OP_COPROC) return a64_mrc_p15(e, op, done);
+    if (op->kind == ARM_JIT_OP_COPROC) return a64_local_p15(e, op, done);
     if (op->kind == ARM_JIT_OP_BRANCH) {
         if (op->insn & (1u << 24))
             a64_store_imm(e, offsetof(arm920t_t, r) + 14u * 4u, op->pc + 4u);
@@ -842,6 +842,7 @@ static uint32_t a64_selfloop_prefix(arm920t_t *c, arm_jit_block_t *b) {
             continue;
         if (op->kind == ARM_JIT_OP_SINGLE_DT &&
             (op->reserved == 3u || op->reserved == 5u)) continue;
+        if (op->kind == ARM_JIT_OP_COPROC && op->reserved == 6u) continue;
         if (op->reserved == 8u) continue; /* checked conditional taken successor */
         if (op->reserved && op->reserved != 2u) return 0;
         if (op->kind == ARM_JIT_OP_BRANCH) {
@@ -1211,18 +1212,17 @@ static int a64_long_mul(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
     return 1;
 }
 
-/* ARM_JIT_OP_COPROC p15 read, the reserved == 6 shape that
- * arm_jit_is_safe_cp15_mrc accepts (MRC, L=1, cp15, Rd != 15).  op_coproc
- * performs write_r(Rd, cp15_read(crn, crm, op1, op2)); cp15_read ignores
- * crm/op1/op2 and returns the Main ID constant for crn 0 and c->cp15[crn] for
- * every other crn, so the read is a load plus a guest-register store.  MCR and
- * every other coprocessor encoding keep the helper. */
-static int a64_mrc_p15(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
+/* Local p15 operations have no bus callback or control-flow effects. Reads
+ * mirror cp15_read; allowed MCR data-cache/drain operations only record c7,
+ * matching cp15_write. I-cache/MMU maintenance retains the checked helper. */
+static int a64_local_p15(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
     const uint32_t insn = op->insn;
-    unsigned cp = (insn >> 8) & 0xfu, l = (insn >> 20) & 1u,
-             crn = (insn >> 16) & 0xfu, rd = (insn >> 12) & 0xfu;
-    if ((insn & 0x0f000010u) != 0x0e000010u || cp != 15u || !l || rd == 15u) return 0;
-    if (crn == 0u) a64_store_imm(e, offsetof(arm920t_t, r) + rd * 4u, 0x41129200u);
+    if (!arm_jit_is_local_cp15_op(insn)) return 0;
+    unsigned crn = (insn >> 16) & 0xfu, rd = (insn >> 12) & 0xfu;
+    if (!GP32_BIT(insn, 20)) {
+        a64_guest(e, 1, rd, op->pc);
+        a64_store(e, 1, offsetof(arm920t_t, cp15) + crn * 4u);
+    } else if (crn == 0u) a64_store_imm(e, offsetof(arm920t_t, r) + rd * 4u, 0x41129200u);
     else {
         a64_load(e, 1, offsetof(arm920t_t, cp15) + crn * 4u);
         a64_put_guest(e, rd, 1);

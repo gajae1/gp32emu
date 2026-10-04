@@ -1475,3 +1475,59 @@ Installed H700 core SHA-256:
 Backup: `gp32-dev/resume77-installed-core-before.so`. Stock RetroArch,
 launcher and protected configuration hashes are unchanged. User ROMs and
 saves were not modified. Reopen the game to load the updated core.
+
+
+## resume78: inline modeled data-cache maintenance in both native JITs
+
+The remaining H700 title profile included 39,501 coprocessor helper calls in
+180 frames. The guest's cache-maintenance loop repeatedly executes an MCR to
+c7/c14. In the current core, data-cache maintenance and write-buffer drain
+(c7, CRm 6/10/14) only update the modeled c7 value; they neither invalidate
+translated instructions nor change mappings. The decoder now retains those
+operations in the trace, and x86-64/AArch64 emit the register store directly.
+AArch64 can retain eligible maintenance loops inside a native block. PC
+operands, I-cache maintenance, MMU/TLB changes and other coprocessor writes
+keep their existing helper/exit behavior. Guest instruction counts, CP15 state
+and interrupt checks are preserved; no hardware timing model is changed.
+
+A differential fixture observes c7, executes successful/failed conditional
+maintenance and compares ragged execution budgets against the interpreter.
+The baseline fails its native-helper assertion and the candidate passes.
+The focused maintenance plus modified-code cache checks pass on Windows and
+H700. Windows CPU JIT, polling and exception tests pass; Android ARM64/ARMv7
+libraries build. Short PC title/Blue NPC replays preserve all seven CPU/video/
+PCM fields, and H700 title output matches the same pre-change reference.
+
+For the same 180-frame H700 title, coprocessor helpers fall from 39,501 to 77
+and native block calls from 3,459,717 to 3,390,725. Remaining helpers include
+the necessary I-cache invalidations. Release measurements were 70.626 fps
+before (480 to 480 MHz) and 77.109 after (480 to 720 MHz); frequency differed,
+so these establish no matched-clock FPS speedup. Profile-instrumented FPS is
+not representative of the release core. Evidence is in the private
+`F:/GP32/results/resume78-jit/` directory.
+
+CommandCode, SWE, OpenCode DeepSeek and 6.1 Sol attempts all ended with HTTP
+429 before producing edits. The change was completed locally. The user asked
+to finish only this in-flight optimization, then pause while fixing agent
+availability; no subsequent optimization is started.
+
+Installed H700 core SHA-256:
+`44f999a512cd22f07d0a112b7cc5acc1950338d74c44d76e7cdf851ca859c815`.
+Backup: `gp32-dev/resume78-installed-core-before.so`. Stock RetroArch,
+launcher and protected configuration hashes remain unchanged.
+
+### User-reported acceptance gaps at pause
+
+- GP32 BIOS UI menu changes produce a tick/click before sound plays. PC Link
+  itself is not a priority; the transition artifact remains unresolved.
+- Astonishia Story R opening video sometimes produces crackling audio.
+- Frame delivery is still not uniformly satisfactory in real use.
+
+These are user observations, not newly reproduced or diagnosed cases. The
+short title/NPC core replays above do not cover these audio transitions or
+opening-video acceptance. On resumption, distinguish discontinuous source PCM,
+resampler/rate transitions and frontend underruns before attributing crackle
+to CPU throughput. Favor usable sound, frame delivery and input over speculative
+cycle-perfect ARM920T pipeline/wait-state modeling. Greater timing fidelity
+can fix scheduling errors but is not itself a host-performance optimization.
+No new investigation was started after the user's pause request.
