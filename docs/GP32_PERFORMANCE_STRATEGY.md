@@ -2238,3 +2238,40 @@ Windows GUI/libretro builds are staged privately. No speaker playback or
 volume/mixer/frontend setting was changed. Evidence: private
 `results/resume96-x64-ldmpc/` (manifest, focused logs, profile and both raw
 timing rounds). Android runtime and broad long-session pacing remain open.
+
+
+### Terminal helper dispatch (2026-10-04)
+
+Fresh H700 profiling of Princess slot 0 (300 frames) found 662,608 classified
+PC/flags data operations and 655,454 SWIs, in addition to 663,633 PSR helpers.
+The A64 and x64 classified-helper emitters now call the existing semantic
+operation and return immediately for known terminal operations: stop, SWI,
+undefined, or nonlocal coprocessor operations. These cannot have a native
+successor, so capturing and comparing continuation state serves no purpose.
+Nonterminal helpers retain the full mapping, budget, status and interrupt
+guards. The opcode semantics and profiling counters are unchanged.
+
+A new callback fixture redirects PC, flushes the JIT, shortens the current
+run, and asserts IRQ during a handled SWI. Both backends return after exactly
+one native instruction, retain the redirect, and service IRQ before executing
+the target. Existing ALU/SWI observation, SPSR exception return, CPSR and cache
+maintenance cases pass in the same focused bundle; Windows exception tests
+also pass. No full suite was repeated.
+
+H700 ABBA against `88c495c`, with two samples per variant and all clock
+endpoints at 1512 MHz: Princess 73.604 -> 74.5085 core fps (+1.23%),
+Astonishia title 176.769 -> 177.5665 (+0.45%), Blue 74.1265 -> 73.685
+(-0.60%). Retain the small mixed control differences; endpoint clocks and
+short replays do not prove a universal throughput gain. Every CPU, clock,
+audio-count, video and PCM comparison field is identical. Windows Blue's
+3000-frame replay also preserves all seven fields; this is not a new PC
+speed claim.
+
+H700, Windows GUI/libretro and Android arm64/ARMv7 builds pass. A bounded
+review checked terminal decoding, inlined-leaf exclusions, ABI arguments and
+dispatch revalidation. Audio queue review separately raised a recovery-seam
+hypothesis, not a reproduced bug: adding resampler gap fade at append would
+use the generated tail, whereas a dropped oldest queue creates its gap at the
+retained head. That proposal is not applied without a correct delivered-PCM
+reproducer. No volume, mixer, governor or frontend setting was changed.
+Evidence: private `results/resume97-h700/`.

@@ -1330,6 +1330,48 @@ static void case_unframed_leaf(void) {
 
 /* A helper must observe every ALU result before exception entry banks SP/LR.
  * Comparing only the state after arm920t_run would miss stale callback state. */
+static int terminal_swi_yield(void *user, arm920t_t *cpu, uint32_t imm,
+                              uint32_t pc, int is_thumb) {
+    ++*(unsigned *)user;
+    CHECK(imm == 0x43u && pc == CODE_ADDR && !is_thumb &&
+          arm920t_get_pc(cpu) == CODE_ADDR + 4u, "terminal SWI callback PC");
+    arm920t_set_reg(cpu, 15u, CODE_ADDR + 0x80u);
+    arm920t_flush_jit(cpu);
+    arm920t_limit_run(cpu, 1u);
+    arm920t_set_irq(cpu, 1);
+    return 1;
+}
+
+static void case_terminal_swi_yield(void) {
+    current_case = "terminal-swi-yield";
+    setup_pair();
+    const uint32_t program[] = {0xef000043u, 0xe3a05055u, 0xeafffffeu};
+    load_both(program, GP32_ARRAY_COUNT(program));
+    set_mem_both(CODE_ADDR + 0x80u, 0xe3a05055u);
+    set_mem_both(0x18u, 0xe3a06066u);
+    arm920t_set_cpsr(cpu_jit, 0x53u);
+    arm920t_set_cpsr(cpu_ref, 0x53u);
+    unsigned observed_jit = 0, observed_ref = 0;
+    arm920t_set_swi_handler(cpu_jit, terminal_swi_yield, &observed_jit);
+    arm920t_set_swi_handler(cpu_ref, terminal_swi_yield, &observed_ref);
+    CHECK(arm920t_run(cpu_jit, 32u) == 1u && arm920t_run(cpu_ref, 32u) == 1u,
+          "terminal callback yields after its instruction");
+    compare_state();
+    CHECK(observed_jit == 1u && observed_ref == 1u && ref_reg(5u) == 0u &&
+          arm920t_get_pc(cpu_ref) == CODE_ADDR + 0x80u, "callback redirect survives return");
+    gp32_cpu_profile_t profile;
+    arm920t_get_cpu_profile(cpu_jit, &profile);
+    if (profile.supported && profile.native_backend)
+        CHECK(profile.native_block_calls == 1u && profile.native_arm_insns == 1u,
+              "yield must leave an active native block");
+    CHECK(arm920t_run(cpu_jit, 1u) == arm920t_run(cpu_ref, 1u), "pending IRQ budget");
+    compare_state();
+    CHECK(ref_reg(5u) == 0u && ref_reg(6u) == 0x66u &&
+          (arm920t_get_cpsr(cpu_ref) & 31u) == 0x12u,
+          "dispatcher takes pending IRQ before the redirected successor");
+    teardown_pair();
+}
+
 static int alu_region_swi(void *user, arm920t_t *cpu, uint32_t imm,
                           uint32_t pc, int is_thumb) {
     const uint32_t expected[] = {
@@ -3044,7 +3086,13 @@ int main(int argc, char **argv) {
     int access_only = argc == 2 && !strcmp(argv[1], "--checked-access");
     int poll_only = argc == 2 && !strcmp(argv[1], "--poll-progress");
     int psr_only = argc == 2 && !strcmp(argv[1], "--psr");
-    if (argc == 2 && !strcmp(argv[1], "--ldm-pc-native")) {
+    if (argc == 2 && !strcmp(argv[1], "--terminal-helper")) {
+        case_terminal_swi_yield();
+        case_native_alu_region();
+        case_native_spsr_exception_return();
+        case_cache_maintenance_native();
+        case_native_cpsr();
+    } else if (argc == 2 && !strcmp(argv[1], "--ldm-pc-native")) {
         case_native_ldm_pc();
         case_ldm_pc();
         case_native_mapped_block();
@@ -3106,6 +3154,7 @@ int main(int argc, char **argv) {
     } else if (ram_end_only) {
         case_native_mapped_ram_end();
     } else {
+    case_terminal_swi_yield();
     case_native_ldm_pc();
     case_poll_progress();
     case_native_mapped_pages();
@@ -3170,6 +3219,7 @@ int main(int argc, char **argv) {
         return 1;
     }
     printf("PASS: arm jit differential (%s), jit events=%" PRIu64 " fallbacks=%" PRIu64 "\n",
+           (argc == 2 && !strcmp(argv[1], "--terminal-helper")) ? "terminal-helper" :
            (argc == 2 && !strcmp(argv[1], "--ldm-pc-native")) ? "ldm-pc-native" :
            (argc == 2 && !strcmp(argv[1], "--psr-blocks")) ? "psr-blocks" :
            (argc == 2 && !strcmp(argv[1], "--cpsr")) ? "cpsr" : psr_only ? "spsr" : poll_only ? "poll-progress" : access_only ? "checked-access" : pairs_only ? "block-pairs/fences" : portable_only ? "portable-callback" : block_only ? "block-callback" : irq_only ? "callback-IRQ" : chain_only ? "branch-chain" : forward_only ? "forward-loop" : callback_only ? "callback-PC" : (leaf_only ? "unframed-leaf" : (ram_end_only ? "mapped-page-RAM-end" : (loops_only ? "loop-fences" : "flags/shift/branch/mem/half/block/mul/seeded/budget/loop-fences"))),

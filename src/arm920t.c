@@ -2413,6 +2413,14 @@ static void x64_emit_call_helper_op(x64_emit_t *e, const arm_jit_op_t *op) {
     x64_mov_mem_cpu_imm(e, arm_reg_off(15), op->pc + 4u);
     x64_emit_arg0_cpu(e);
     x64_emit_arg1_ptr_imm(e, (uintptr_t)op);
+    if (op->stop || op->kind == ARM_JIT_OP_SWI || op->kind == ARM_JIT_OP_UNDEFINED ||
+        (op->kind == ARM_JIT_OP_COPROC && op->reserved != 6u)) {
+        /* The dispatcher rechecks the committed state after every terminal
+         * helper. No native successor can consume a stale mapping/budget. */
+        x64_call_abs(e, (uintptr_t)arm_jit_exec_classified);
+        x64_emit_return_imm(e, e->done);
+        return;
+    }
     x64_mov_r32_imm(e, X64_HOST_ARG2, e->expected_next);
     x64_mov_r32_imm(e, X64_HOST_ARG3, e->generation);
     x64_call_abs(e, (uintptr_t)arm_x64_exec_checked);
