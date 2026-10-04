@@ -73,8 +73,9 @@ size_t gp32_audio_resampler_max_output_frames(const gp32_audio_resampler_t *r,
     rate_adjust_ppm = clamp_ppm(rate_adjust_ppm);
     double ratio = 1.0 + (double)rate_adjust_ppm / 1000000.0;
     if (ratio < 0.50) ratio = 0.50;
-    double frames = ((double)(input_frames + 2u) * (double)dst_rate_hz * ratio) / (double)src_rate_hz;
+    double frames = (((double)input_frames + 2.0) * (double)dst_rate_hz * ratio) / (double)src_rate_hz;
     if (frames < 8.0) frames = 8.0;
+    if (frames + 32.0 >= (double)SIZE_MAX) return SIZE_MAX;
     return (size_t)(frames + 32.0);
 }
 
@@ -98,12 +99,20 @@ size_t gp32_audio_resampler_process(gp32_audio_resampler_t *r,
                                     size_t dst_cap_frames) {
     if (!r || !src_s16_stereo || !dst_s16_stereo || !input_frames || !src_rate_hz || !dst_rate_hz || !dst_cap_frames) return 0;
 
-    if (r->src_rate != src_rate_hz || r->dst_rate != dst_rate_hz) {
-        r->src_rate = src_rate_hz;
-        r->dst_rate = dst_rate_hz;
+    if (!r->src_rate || r->dst_rate != dst_rate_hz) {
         r->phase_q32 = 0;
         r->have_prev = 0;
+    } else if (r->src_rate != src_rate_hz) {
+        /* Phase is remaining time expressed in source-sample intervals.
+         * Convert its units without dropping the carried sample. Split the
+         * multiply so ordinary Q32 phases need no wider integer type. */
+        uint64_t whole = r->phase_q32 / r->src_rate;
+        uint64_t fraction = (r->phase_q32 % r->src_rate) * src_rate_hz / r->src_rate;
+        r->phase_q32 = whole > (UINT64_MAX - fraction) / src_rate_hz ?
+            UINT64_MAX : whole * src_rate_hz + fraction;
     }
+    r->src_rate = src_rate_hz;
+    r->dst_rate = dst_rate_hz;
 
     int have_prev = r->have_prev;
     size_t total_samples = input_frames + (have_prev ? 1u : 0u);

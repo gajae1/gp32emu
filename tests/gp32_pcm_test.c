@@ -290,7 +290,62 @@ static int check_iis_dma_word_order(void) {
     return ok;
 }
 
+static int check_mixed_rate_queue(void) {
+    gp32_t *mixed = gp32_create(NULL);
+    if (!mixed) return 0;
+    s3c2400_audio_append_s16_stereo(mixed->soc, 1, -1, 11025u);
+    s3c2400_audio_append_s16_stereo(mixed->soc, 2, -2, 11025u);
+    s3c2400_audio_append_s16_stereo(mixed->soc, 3, -3, 22050u);
+    gp32_audio_desc_t span;
+    if (gp32_get_audio(mixed, &span) != GP32_OK || span.frame_count != 2u || span.sample_rate_hz != 11025u) {
+        fputs("FAIL: mixed-rate queue must expose its original first span\n", stderr);
+        gp32_destroy(mixed);
+        return 0;
+    }
+    int ok = gp32_consume_audio(mixed, 3u) == GP32_ERR_INVALID_ARGUMENT;
+    ok &= gp32_consume_audio(mixed, 1u) == GP32_OK;
+    ok &= gp32_get_audio(mixed, &span) == GP32_OK && span.frame_count == 1u &&
+          span.sample_rate_hz == 11025u && span.samples_s16_interleaved[0] == 2;
+    /* Persist unread data, not the already consumed prefix. Component state
+     * retains PCM; a complete machine load intentionally discards host audio. */
+    state_io_t count = state_io_counter();
+    ok &= s3c2400_state_save_io(mixed->soc, &count);
+    uint8_t *data = malloc(count.pos);
+    if (!data) { gp32_destroy(mixed); return 0; }
+    state_io_t writer = state_io_writer(data, count.pos);
+    ok &= s3c2400_state_save_io(mixed->soc, &writer);
+    gp32_clear_audio(mixed);
+    state_io_t reader = state_io_reader(data, count.pos);
+    ok &= s3c2400_state_load_io(mixed->soc, &reader, 1);
+    free(data);
+    ok &= gp32_get_audio(mixed, &span) == GP32_OK && span.frame_count == 1u &&
+          span.sample_rate_hz == 11025u && span.samples_s16_interleaved[0] == 2;
+    ok &= gp32_consume_audio(mixed, 1u) == GP32_OK;
+    ok &= gp32_get_audio(mixed, &span) == GP32_OK && span.frame_count == 1u &&
+          span.sample_rate_hz == 22050u && span.samples_s16_interleaved[0] == 3;
+    /* Refill after partial consumption forces PCM compaction (loaded capacity
+     * is only two frames) and then repeated rate metadata reuse. */
+    s3c2400_audio_append_s16_stereo(mixed->soc, 4, -4, 22050u);
+    s3c2400_audio_append_s16_stereo(mixed->soc, 5, -5, 44100u);
+    ok &= gp32_get_audio(mixed, &span) == GP32_OK && span.frame_count == 2u &&
+          span.sample_rate_hz == 22050u && span.samples_s16_interleaved[2] == 4;
+    ok &= gp32_consume_audio(mixed, 2u) == GP32_OK;
+    for (unsigned i = 0; i < 32u; ++i) {
+        uint32_t rate = i & 1u ? 44100u : 11025u;
+        s3c2400_audio_append_s16_stereo(mixed->soc, (int16_t)(6u + i), 0, rate);
+        ok &= gp32_consume_audio(mixed, 1u) == GP32_OK;
+        ok &= gp32_get_audio(mixed, &span) == GP32_OK && span.frame_count == 1u &&
+              span.sample_rate_hz == rate && span.samples_s16_interleaved[0] == (int16_t)(6u + i);
+    }
+    gp32_clear_audio(mixed);
+    ok &= gp32_get_audio(mixed, &span) == GP32_OK && span.frame_count == 0;
+    gp32_destroy(mixed);
+    if (!ok) fputs("FAIL: rate spans, consumption, state or refill\n", stderr);
+    return ok;
+}
+
 int main(void) {
+    if (!check_mixed_rate_queue()) return 1;
     int queued_rate_ok = check_iis_queued_rate();
     int dma_order_ok = check_iis_dma_word_order();
     if (!queued_rate_ok || !dma_order_ok) return 1;

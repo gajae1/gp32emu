@@ -1,6 +1,7 @@
 #include "gp32emu/gp32.h"
 #include "input_script.h"
 #include "media/gp32_media.h"
+#include "audio/gp32_audio_resampler.h"
 #include <errno.h>
 #include <inttypes.h>
 #include <stdint.h>
@@ -77,22 +78,64 @@ static void put_le32(FILE *f, uint32_t v) {
     put_le16(f, (uint16_t)(v >> 16));
 }
 
-static int write_wav(const char *path, const gp32_audio_desc_t *audio) {
-    if (!path || !audio || !audio->samples_s16_interleaved || audio->frame_count == 0) return 0;
-    uint64_t data_bytes64 = audio->frame_count * 2u * sizeof(int16_t);
-    if (data_bytes64 > UINT32_MAX - 36u) return 0;
-    uint32_t data_bytes = (uint32_t)data_bytes64;
-    uint32_t rate = audio->sample_rate_hz ? audio->sample_rate_hz : 44100u;
+static int write_wav_pcm(FILE *f, gp32_audio_resampler_t *r, const int16_t *pcm,
+                         size_t frames, uint32_t src_rate, uint32_t dst_rate,
+                         uint64_t *written) {
+    size_t cap = gp32_audio_resampler_max_output_frames(r, frames, src_rate, dst_rate, 0);
+    if (!cap || cap > SIZE_MAX / (2u * sizeof(int16_t))) return 0;
+    int16_t *out = malloc(cap * 2u * sizeof(*out));
+    if (!out) return 0;
+    size_t n = gp32_audio_resampler_process(r, pcm, frames, src_rate, dst_rate, 0, out, cap);
+    if (n > (UINT32_MAX - 36u) / 4u - *written) { free(out); return 0; }
+    for (size_t i = 0; i < n * 2u; ++i) put_le16(f, (uint16_t)out[i]);
+    free(out);
+    *written += n;
+    return !ferror(f);
+}
+
+static int write_wav(const char *path, gp32_t *g, uint64_t *written, uint32_t *rate_out) {
+    gp32_audio_desc_t audio;
+    if (!path || gp32_get_audio(g, &audio) != GP32_OK || !audio.frame_count) return 0;
+    uint32_t rate = audio.sample_rate_hz ? audio.sample_rate_hz : 44100u;
+    if (rate > UINT32_MAX / 4u) return 0;
     FILE *f = fopen(path, "wb");
     if (!f) return 0;
-    fwrite("RIFF", 1, 4, f); put_le32(f, 36u + data_bytes); fwrite("WAVE", 1, 4, f);
+    *written = 0;
+    *rate_out = rate;
+    fwrite("RIFF", 1, 4, f); put_le32(f, 0u); fwrite("WAVE", 1, 4, f);
     fwrite("fmt ", 1, 4, f); put_le32(f, 16u); put_le16(f, 1u); put_le16(f, 2u);
-    put_le32(f, rate); put_le32(f, rate * 2u * 2u); put_le16(f, 4u); put_le16(f, 16u);
-    fwrite("data", 1, 4, f); put_le32(f, data_bytes);
-    for (uint64_t i = 0; i < audio->frame_count * 2u; ++i) put_le16(f, (uint16_t)audio->samples_s16_interleaved[i]);
+    put_le32(f, rate); put_le32(f, rate * 4u); put_le16(f, 4u); put_le16(f, 16u);
+    fwrite("data", 1, 4, f); put_le32(f, 0u);
+    gp32_audio_resampler_t resampler;
+    gp32_audio_resampler_init(&resampler);
+    do {
+        uint64_t offset = 0;
+        while (offset < audio.frame_count) {
+            size_t n = audio.frame_count - offset > 4096u ? 4096u : (size_t)(audio.frame_count - offset);
+            if (!write_wav_pcm(f, &resampler, audio.samples_s16_interleaved + (size_t)offset * 2u,
+                               n, audio.sample_rate_hz, rate, written)) goto fail;
+            offset += n;
+        }
+        if (gp32_consume_audio(g, audio.frame_count) != GP32_OK) goto fail;
+    } while (gp32_get_audio(g, &audio) == GP32_OK && audio.frame_count);
+    /* The shared interpolator carries one source sample between blocks.
+     * Hold that final sample for its last interval when closing the file. */
+    if (resampler.have_prev) {
+        int16_t tail[2] = {resampler.prev_l, resampler.prev_r};
+        if (!write_wav_pcm(f, &resampler, tail, 1u, resampler.src_rate, rate, written)) goto fail;
+    }
+    uint32_t bytes = (uint32_t)(*written * 4u);
+    if (fseek(f, 4, SEEK_SET)) goto fail;
+    put_le32(f, 36u + bytes);
+    if (fseek(f, 40, SEEK_SET)) goto fail;
+    put_le32(f, bytes);
+    if (ferror(f)) goto fail;
+    return fclose(f) == 0;
+fail:
     fclose(f);
-    return 1;
+    return 0;
 }
+
 
 typedef struct button_event { uint32_t at_cycles; uint32_t mask; } button_event_t;
 typedef struct dump_at_event { uint64_t at_cycles; const char *path; int done; } dump_at_event_t;
@@ -289,10 +332,11 @@ int main(int argc, char **argv) {
             if (recorder) {
                 gp32_framebuffer_desc_t fb;
                 gp32_audio_desc_t aud;
-                if (gp32_get_audio(g, &aud) == GP32_OK && aud.frame_count > 0) {
+                while (gp32_get_audio(g, &aud) == GP32_OK && aud.frame_count > 0) {
                     if (!gp32_media_recorder_add_audio(recorder, &aud)) { fprintf(stderr, "mkv audio write failed: %s\n", gp32_media_recorder_error(recorder)); st = GP32_ERR_IO; break; }
-                    gp32_clear_audio(g);
+                    if (gp32_consume_audio(g, aud.frame_count) != GP32_OK) { st = GP32_ERR_IO; break; }
                 }
+                if (st != GP32_OK) break;
                 if (gp32_get_framebuffer(g, &fb) == GP32_OK) {
                     (void)rotate;
                     if (!gp32_media_recorder_add_frame(recorder, &fb, frame)) { fprintf(stderr, "mkv video write failed: %s\n", gp32_media_recorder_error(recorder)); st = GP32_ERR_IO; break; }
@@ -393,9 +437,10 @@ int main(int argc, char **argv) {
         } else fprintf(stderr, "memory dump failed: %s\n", strerror(errno));
     }
     if (dump_wav) {
-        gp32_audio_desc_t audio;
-        if (gp32_get_audio(g, &audio) == GP32_OK && write_wav(dump_wav, &audio)) {
-            printf("wrote %s (%" PRIu64 " stereo frames @ %u Hz)\n", dump_wav, audio.frame_count, audio.sample_rate_hz);
+        uint64_t written = 0;
+        uint32_t rate = 0;
+        if (write_wav(dump_wav, g, &written, &rate)) {
+            printf("wrote %s (%" PRIu64 " stereo frames @ %u Hz)\n", dump_wav, written, rate);
         } else {
             fprintf(stderr, "wav dump failed or no audio samples captured\n");
         }

@@ -158,14 +158,22 @@ static void stage_frame(void) {
 static void collect_audio_append(void) {
     if (!g_gp32 || g_audio_frames >= GP32_WASM_AUDIO_MAX_FRAMES) { if (g_gp32) gp32_clear_audio(g_gp32); return; }
     gp32_audio_desc_t ad;
-    if (gp32_get_audio(g_gp32, &ad) != GP32_OK || !ad.samples_s16_interleaved || !ad.frame_count || !ad.sample_rate_hz) return;
-    size_t remaining = GP32_WASM_AUDIO_MAX_FRAMES - (size_t)g_audio_frames;
-    size_t max_out = gp32_audio_resampler_max_output_frames(&g_resampler, (size_t)ad.frame_count, ad.sample_rate_hz, g_audio_rate, 0);
-    if (max_out > remaining) max_out = remaining;
-    size_t out = gp32_audio_resampler_process(&g_resampler, ad.samples_s16_interleaved, (size_t)ad.frame_count, ad.sample_rate_hz, g_audio_rate, 0, g_audio + (size_t)g_audio_frames * 2u, max_out);
-    if (out > remaining) out = remaining;
-    g_audio_frames += (uint32_t)out;
-    gp32_clear_audio(g_gp32);
+    while (gp32_get_audio(g_gp32, &ad) == GP32_OK && ad.samples_s16_interleaved && ad.frame_count && ad.sample_rate_hz) {
+        size_t remaining = GP32_WASM_AUDIO_MAX_FRAMES - (size_t)g_audio_frames;
+        size_t max_out = gp32_audio_resampler_max_output_frames(&g_resampler, (size_t)ad.frame_count, ad.sample_rate_hz, g_audio_rate, 0);
+        int overflow = max_out > remaining;
+        if (overflow) max_out = remaining;
+        size_t out = gp32_audio_resampler_process(&g_resampler, ad.samples_s16_interleaved, (size_t)ad.frame_count, ad.sample_rate_hz, g_audio_rate, 0, g_audio + (size_t)g_audio_frames * 2u, max_out);
+        g_audio_frames += (uint32_t)out;
+        if (overflow) {
+            /* Preserve the browser's bounded-latency overflow policy, but
+             * do not interpolate future PCM through discarded input. */
+            gp32_clear_audio(g_gp32);
+            gp32_audio_resampler_mark_gap(&g_resampler, g_audio_rate);
+            break;
+        }
+        if (gp32_consume_audio(g_gp32, ad.frame_count) != GP32_OK) break;
+    }
 }
 
 

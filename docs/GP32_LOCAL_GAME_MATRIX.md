@@ -11,15 +11,15 @@ not be excluded from the library or performance work.
 
 The six missing Korea-labelled MAME payloads were subsequently downloaded,
 matched against MAME SHA-1s and added using verified temporary uploads. The
-current device total is **27 distinct SMC games: 26 Korea-labelled entries
-and Blue Angelo Europe**. This is not a claim of 27 retail releases or of
-full-game compatibility. Device SHA-256 records:
+intermediate device total was 27 distinct SMC games. Device SHA-256 records:
 `F:/GP32/results/resume72-library/missing-six-installed.json`.
 
-The four other MAME catalog titles not present in this device library are
-GlooP Deluxe, Pinball Dreams, Super Plusha and Topy Topy Gogo (Europe entries).
-Thus neither the original 28 ZIPs nor the current 27 installed titles prove
-complete commercial or MAME-catalog coverage.
+GlooP Deluxe, Pinball Dreams, Super Plusha and Topy Topy Gogo (Europe entries)
+were then installed with matching MAME SHA-1 and device SHA-256. The current
+library has **31 distinct SMC titles: 26 Korea-labelled and five Europe entries**,
+covering the distinct titles in the retained MAME catalog snapshot. This is
+not a claim of 31 retail releases or of full-game compatibility. Additional
+records: `F:/GP32/results/resume72-library/remaining-four-installed.json`.
 
 ### Previous Korean-only verification (resume65)
 

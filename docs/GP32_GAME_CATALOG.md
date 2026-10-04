@@ -23,6 +23,11 @@ whether an unreleased/demo-labelled product became a retail release. Blue
 Angelo has also been restored to the device library and remains a priority
 heavy-game target even though the supplied edition is European.
 
+GlooP Deluxe, Pinball Dreams, Super Plusha and Topy Topy Gogo were subsequently
+verified and installed too. Device coverage is now 31 distinct catalog titles,
+with Korean variants preferred when available. Installation/hash coverage is
+not gameplay acceptance. Evidence: `resume72-library/remaining-four-installed.json`.
+
 The research snapshot below remains historical; its earlier missing-file
 statements do not describe the newly downloaded library.
 

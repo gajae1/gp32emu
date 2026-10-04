@@ -668,10 +668,10 @@ static void run_one_frame(app_state_t *a) {
     if (gp32_run_cycles(a->emu, cycles) != GP32_OK) { app_set_status(a, gp32_get_error(a->emu)); a->running = 0; return; }
     if (a->audio || a->recorder) {
         gp32_audio_desc_t aud;
-        if (gp32_get_audio(a->emu, &aud) == GP32_OK && aud.frame_count > 0) {
+        while (gp32_get_audio(a->emu, &aud) == GP32_OK && aud.frame_count > 0) {
             if (a->audio) gp32_win64_audio_submit(a->audio, &aud);
             if (a->recorder && !gp32_media_recorder_add_audio(a->recorder, &aud)) { app_set_status(a, gp32_media_recorder_error(a->recorder)); app_stop_recording(a); }
-            gp32_clear_audio(a->emu);
+            if (gp32_consume_audio(a->emu, aud.frame_count) != GP32_OK) break;
         }
     }
     a->frame_index++;

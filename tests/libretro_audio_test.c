@@ -12,6 +12,7 @@ static FILE *counted_fopen(const char *path, const char *mode) {
 #define fopen counted_fopen
 #define gp32_run_cycles test_run_cycles
 #define gp32_get_audio test_get_audio
+#define gp32_consume_audio test_consume_audio
 #define gp32_clear_audio test_clear_audio
 #define gp32_get_framebuffer test_get_framebuffer
 #ifndef LIBRETRO_SOURCE
@@ -21,11 +22,13 @@ static FILE *counted_fopen(const char *path, const char *mode) {
 #undef fopen
 #undef gp32_run_cycles
 #undef gp32_get_audio
+#undef gp32_consume_audio
 #undef gp32_clear_audio
 #undef gp32_get_framebuffer
 
 gp32_status_t gp32_run_cycles(gp32_t *, uint32_t);
 gp32_status_t gp32_get_audio(gp32_t *, gp32_audio_desc_t *);
+gp32_status_t gp32_consume_audio(gp32_t *, uint64_t);
 gp32_status_t gp32_clear_audio(gp32_t *);
 gp32_status_t gp32_get_framebuffer(gp32_t *, gp32_framebuffer_desc_t *);
 
@@ -34,6 +37,7 @@ static int16_t input_pcm[4096u * 2u];
 static int16_t captured[CAPTURE_FRAMES * 2u];
 static int16_t expected[CAPTURE_FRAMES * 2u];
 static gp32_audio_desc_t scripted_audio;
+static gp32_audio_desc_t scripted_next_audio;
 static gp32_framebuffer_desc_t scripted_fb;
 static int scripted = 1;
 static size_t captured_frames, allowance, per_call, callback_calls;
@@ -61,6 +65,27 @@ gp32_status_t test_clear_audio(gp32_t *g) {
     /* Make retaining a borrowed source pointer observably wrong. */
     memset(input_pcm, 0x5a, sizeof(input_pcm));
     scripted_audio.frame_count = 0;
+    scripted_next_audio.frame_count = 0;
+    return GP32_OK;
+}
+
+gp32_status_t test_consume_audio(gp32_t *g, uint64_t frames) {
+    if (!scripted) return gp32_consume_audio(g, frames);
+    if (frames > scripted_audio.frame_count) return GP32_ERR_INVALID_ARGUMENT;
+    /* The oversized-source fixture lives in separate read-only storage. */
+    uintptr_t ptr = (uintptr_t)scripted_audio.samples_s16_interleaved;
+    if (ptr >= (uintptr_t)input_pcm && ptr < (uintptr_t)(input_pcm + 8192u)) {
+        size_t offset = (ptr - (uintptr_t)input_pcm) / 4u;
+        size_t poison = frames < 4096u - offset ? (size_t)frames : 4096u - offset;
+        memset(input_pcm + offset * 2u, 0x5a, poison * 4u);
+    }
+    if (frames < scripted_audio.frame_count)
+        scripted_audio.samples_s16_interleaved += (size_t)frames * 2u;
+    scripted_audio.frame_count -= frames;
+    if (!scripted_audio.frame_count) {
+        scripted_audio = scripted_next_audio;
+        memset(&scripted_next_audio, 0, sizeof(scripted_next_audio));
+    }
     return GP32_OK;
 }
 
@@ -244,6 +269,7 @@ static void start_case(void) {
     captured_frames = callback_calls = 0;
     allowance = per_call = SIZE_MAX;
     memset(&scripted_audio, 0, sizeof(scripted_audio));
+    memset(&scripted_next_audio, 0, sizeof(scripted_next_audio));
     retro_set_audio_sample_batch(capture_batch);
     retro_set_audio_sample(capture_sample);
 }
@@ -309,6 +335,48 @@ static void test_resampled_and_sample_callback(void) {
     feed(1, 44100, 9000);
     CHECK(captured_frames == count && !memcmp(expected, captured, count * 2u * sizeof(int16_t)),
           "resampled PCM/rate changes must be bit-exact under backpressure and fallback");
+}
+
+static void test_mixed_spans(void) {
+    start_case();
+    feed(11, 11025, 100);
+    feed(17, 22050, 1000);
+    size_t count = captured_frames;
+    memcpy(expected, captured, count * 4u);
+
+    start_case();
+    for (unsigned i = 0; i < 28; ++i) {
+        int v = i < 11 ? 100 + (int)i : 1000 + (int)i - 11;
+        input_pcm[i * 2u] = (int16_t)v;
+        input_pcm[i * 2u + 1u] = (int16_t)-v;
+    }
+    scripted_audio = (gp32_audio_desc_t){input_pcm, 11, 11025};
+    scripted_next_audio = (gp32_audio_desc_t){input_pcm + 22, 17, 22050};
+    allowance = 3;
+    retro_run();
+    CHECK(!scripted_audio.frame_count && !scripted_next_audio.frame_count,
+          "one run must retain both rate spans before releasing borrowed PCM");
+    CHECK(captured_frames == 3, "mixed spans respect frontend backpressure");
+    allowance = SIZE_MAX;
+    flush_audio();
+    CHECK(captured_frames == count && !memcmp(expected, captured, count * 4u),
+          "mixed spans match separate deliveries without loss, replay or padding");
+}
+
+static void test_source_rate_phase(void) {
+    gp32_audio_resampler_t r;
+    gp32_audio_resampler_init(&r);
+    const int16_t first[] = {0, 0, 1000, -1000};
+    const int16_t second[] = {2000, -2000, 3000, -3000};
+    int16_t out[80];
+    size_t n = gp32_audio_resampler_process(&r, first, 2, 72000, 48000, 0, out, 40);
+    CHECK(n == 1 && out[0] == 0, "first output precedes source rate switch");
+    n = gp32_audio_resampler_process(&r, second, 2, 24000, 48000, 0, out, 40);
+    /* Half of a 72-kHz interval is one sixth of a 24-kHz interval.
+     * Subsequent output timestamps are spaced half a new interval apart. */
+    const int16_t want[] = {1166, -1167, 1666, -1667, 2166, -2167, 2666, -2667};
+    CHECK(n == 4 && !memcmp(out, want, sizeof(want)),
+          "rate switch preserves wall-time phase and the previous sample");
 }
 
 static void test_silence_and_gap(void) {
@@ -513,6 +581,8 @@ static void test_partial_overflow_recovery(void) {
 int main(int argc, char **argv) {
     test_partial_and_blocked();
     test_resampled_and_sample_callback();
+    test_mixed_spans();
+    test_source_rate_phase();
     test_silence_and_gap();
     test_sustained_backpressure();
     test_partial_overflow_recovery();

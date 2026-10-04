@@ -3423,5 +3423,59 @@ in `F:/GP32/downloads/verified/`; installed records in
 `F:/GP32/results/resume72-library/`. No new gameplay performance claim is made.
 Three requested cheap-model workers (CommandCode, SWE, OpenCode) each failed
 with HTTP 429 before work and were closed; the parent completed the downloads.
-The four remaining MAME titles are documented as missing, not silently counted
-as present. ROM/FPK files are outside the Git repository.
+The four remaining titles (GlooP Deluxe, Pinball Dreams, Super Plusha and Topy
+Topy Gogo) were subsequently verified and installed, bringing distinct-title
+coverage to 31. This does not establish retail status or gameplay compatibility.
+ROM/FPK files are outside the Git repository.
+
+### Mixed-rate PCM delivery and source-rate continuity (resume69 completion)
+
+The core now exposes a borrowed uniform-rate audio span and validates explicit
+consumption with `gp32_consume_audio`. Later spans remain queued with their
+original sample rates. Rate boundaries allocate metadata only when the rate
+changes; fixed-rate DMA still writes contiguous PCM. Consumed prefixes are
+compacted only when needed for capacity. Libretro, Win64, Qt, SDL1/3, WASM,
+recording and benchmark callers drain the spans in order. WAV export converts
+all spans with the shared interpolator and finalizes its RIFF length.
+
+Source-only resampler rate changes retain the carried sample and convert phase
+units instead of resetting. Libretro preserves this continuity when returning
+to its output rate, and resets it explicitly for silent-core gaps. Short
+frontend backpressure remains lossless; existing bounded overflow behavior
+remains deliberate. This does not remove a game's period of producing no PCM.
+
+State v4 stores normalized unread PCM boundaries; v2/v3 remain readable.
+Malformed metadata is staged and rejected before replacing the live SoC.
+Older binaries cannot read new v4 states. A whole-machine load still discards
+host-facing queued audio to avoid replaying stale sound.
+
+Windows: 16 existing tests pass, including added mixed-span, partial-delivery,
+source-phase, unread-state/refill and legacy-state regressions. Four focused
+H700 checks pass. Blue Angelo's user slot-0 NPC replay (360 frames) and Little
+Wizard Korea combat (300 frames) preserve all seven CPU/video/PCM comparison
+fields against the previously installed build. These short cold comparisons
+are correctness checks, not speedup claims. Android ARM64/ARMv7 link; Win64,
+SDL1/3 and WASM bridge translation units compile on the host. Qt and browser /
+Android runtime behavior were not exercised. Fixed/mixed WAV probes pass.
+Evidence: `F:/GP32/results/resume69-audio-spans/`.
+
+The verified core was installed with SHA-256
+`9d1b356db7ce313abed9884b32126a73db23cc3e737fc5481b28077b589277a0`;
+the previous core is `gp32-dev/resume69-installed-core-before.so` on the device.
+The stock RetroArch binary, launcher selector and protected GP32/platform
+settings retain their verified hashes. Speaker quality still needs live use.
+
+### Blue Angelo NPC transition diagnosis (resume73)
+
+The user's slot 0 was copied without modifying its original file. Holding left
+for 180 frames reaches the NPC and dialogue. PC and H700 produce the same
+360-frame PC/clock/PCM-count/rate/video-change trace with the prior core.
+Frames 85-149 produce no PCM, and frames 85-150 show no new pixels: approximately
+1.1 seconds of guest time. PC processes the zero-PCM interval in 75.676 ms,
+so host CPU exhaustion alone cannot explain the pause. It may be guest resource
+loading or an emulated timing discrepancy; real-hardware behavior is unverified.
+
+H700 takes 1510.460 ms for that interval, but its frequency ramps from 720 MHz
+before the run to 1104 MHz after. No peak-throughput or optimization ratio is
+claimed from it. Next diagnosis should trace guest resource/audio stop/start
+behavior in frames 84-151. Evidence: `F:/GP32/results/resume73-blue-dialogue/`.

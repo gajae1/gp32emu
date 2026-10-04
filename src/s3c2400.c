@@ -63,6 +63,13 @@ typedef struct lcd_state {
     uint32_t width, height;
 } lcd_state_t;
 
+typedef struct audio_boundary {
+    uint64_t end_frame;
+    uint32_t rate_hz;
+    uint32_t reserved;
+} audio_boundary_t;
+static_assert(sizeof(audio_boundary_t) == 16u, "audio span wire record");
+
 struct s3c2400 {
     uint8_t bios[BIOS_SIZE];
     uint8_t *ram;
@@ -112,6 +119,9 @@ struct s3c2400 {
     int16_t *audio;
     uint64_t audio_frames;
     uint64_t audio_cap_frames;
+    uint64_t audio_read_frames;
+    audio_boundary_t *audio_boundaries;
+    uint32_t audio_boundary_count, audio_boundary_head, audio_boundary_cap;
     uint32_t audio_sample_rate_hz;
     uint32_t iis_cached_rate_hz;
     uint64_t iis_cached_period_cycles;
@@ -173,6 +183,7 @@ void s3c2400_destroy(s3c2400_t *s) {
     smc_destroy(s->smc);
     free(s->ram);
     free(s->audio);
+    free(s->audio_boundaries);
     free(s);
 }
 
@@ -204,7 +215,8 @@ void s3c2400_reset(s3c2400_t *s) {
     memset(s->iis_fifo, 0, sizeof(s->iis_fifo));
     s->iis_fifo_index = 0;
     s->iis_accum = 0;
-    s->audio_frames = 0;
+    s->audio_frames = s->audio_read_frames = 0;
+    s->audio_boundary_head = s->audio_boundary_count = 0;
     s->audio_sample_rate_hz = 44100u;
     s->iis_cached_rate_hz = 44100u;
     s->iis_cached_period_cycles = 0;
@@ -466,6 +478,17 @@ static int audio_reserve_frames(s3c2400_t *s, uint64_t frames) {
     if (s->audio_frames > max_frames || frames > max_frames - s->audio_frames) return 0;
     uint64_t need = s->audio_frames + frames;
     if (need <= s->audio_cap_frames) return 1;
+    if (s->audio_read_frames) {
+        uint64_t read = s->audio_read_frames;
+        s->audio_frames -= read;
+        memmove(s->audio, s->audio + (size_t)read * 2u,
+                (size_t)s->audio_frames * 2u * sizeof(*s->audio));
+        for (uint32_t i = s->audio_boundary_head; i < s->audio_boundary_count; ++i)
+            s->audio_boundaries[i].end_frame -= read;
+        s->audio_read_frames = 0;
+        need -= read;
+        if (need <= s->audio_cap_frames) return 1;
+    }
     uint64_t new_cap = s->audio_cap_frames ? s->audio_cap_frames : 65536u;
     while (new_cap < need) {
         if (new_cap > max_frames / 2u) {
@@ -479,6 +502,34 @@ static int audio_reserve_frames(s3c2400_t *s, uint64_t frames) {
     if (!n) return 0;
     s->audio = n;
     s->audio_cap_frames = new_cap;
+    return 1;
+}
+
+/* Only rate transitions allocate metadata. Fixed-rate playback keeps its
+ * contiguous PCM fast path. Call after reserving PCM, before appending it. */
+static int audio_prepare_rate(s3c2400_t *s, uint32_t rate) {
+    if (!rate) rate = 44100u;
+    if (s->audio_frames != s->audio_read_frames && s->audio_sample_rate_hz != rate) {
+        if (s->audio_boundary_count == s->audio_boundary_cap) {
+            uint32_t live = s->audio_boundary_count - s->audio_boundary_head;
+            if (s->audio_boundary_head) {
+                memmove(s->audio_boundaries, s->audio_boundaries + s->audio_boundary_head,
+                        (size_t)live * sizeof(*s->audio_boundaries));
+                s->audio_boundary_count = live;
+                s->audio_boundary_head = 0;
+            } else {
+                uint32_t cap = s->audio_boundary_cap ? s->audio_boundary_cap * 2u : 8u;
+                if (cap <= s->audio_boundary_cap || cap > SIZE_MAX / sizeof(*s->audio_boundaries)) return 0;
+                audio_boundary_t *next = realloc(s->audio_boundaries, (size_t)cap * sizeof(*next));
+                if (!next) return 0;
+                s->audio_boundaries = next;
+                s->audio_boundary_cap = cap;
+            }
+        }
+        s->audio_boundaries[s->audio_boundary_count++] =
+            (audio_boundary_t){s->audio_frames, s->audio_sample_rate_hz, 0};
+    }
+    s->audio_sample_rate_hz = rate;
     return 1;
 }
 
@@ -521,9 +572,11 @@ static uint32_t dma_iis_fast_trigger_count(s3c2400_t *s, uint32_t *r, uint32_t r
     uint16_t last_right = s->iis_fifo[1];
     unsigned idx = s->iis_fifo_index & 1u;
     uint32_t halfwords = (dsz == 1u) ? units : units * 2u;
-    uint64_t base_frames = s->audio_frames;
     uint32_t frames = 0;
-    int direct = audio_reserve_frames(s, (halfwords + idx) >> 1);
+    uint32_t expected_frames = (halfwords + idx) >> 1;
+    int direct = audio_reserve_frames(s, expected_frames) &&
+                 (!expected_frames || audio_prepare_rate(s, s->iis_cached_rate_hz));
+    uint64_t base_frames = s->audio_frames;
     int16_t *out = direct && s->audio ? s->audio + (size_t)base_frames * 2u : NULL;
     const uint32_t step = (dsz == 1u) ? 2u : 4u;
     /* Prove the whole increasing/fixed source span once. Partial RAM spans
@@ -1355,10 +1408,10 @@ static void audio_append_stereo(s3c2400_t *s, int16_t left, int16_t right, uint3
     if (s->audio_frames >= s->audio_cap_frames) {
         if (!audio_reserve_frames(s, 1u)) return;
     }
+    if (!audio_prepare_rate(s, rate)) return;
     s->audio[s->audio_frames * 2u + 0u] = left;
     s->audio[s->audio_frames * 2u + 1u] = right;
     s->audio_frames++;
-    s->audio_sample_rate_hz = rate;
 }
 
 void s3c2400_audio_append_u8_mono(s3c2400_t *s, const uint8_t *samples, uint32_t sample_count, uint32_t sample_rate_hz) {
@@ -1677,9 +1730,26 @@ const uint32_t *s3c2400_framebuffer(s3c2400_t *s, uint32_t *w, uint32_t *h, uint
 
 const int16_t *s3c2400_audio_samples(s3c2400_t *s, uint64_t *frames, uint32_t *sample_rate_hz) {
     if (!s) return NULL;
-    if (frames) *frames = s->audio_frames;
-    if (sample_rate_hz) *sample_rate_hz = s->audio_sample_rate_hz ? s->audio_sample_rate_hz : 44100u;
-    return s->audio;
+    const audio_boundary_t *span = s->audio_boundary_head < s->audio_boundary_count ?
+        &s->audio_boundaries[s->audio_boundary_head] : NULL;
+    if (frames) *frames = (span ? span->end_frame : s->audio_frames) - s->audio_read_frames;
+    if (sample_rate_hz) *sample_rate_hz = span ? span->rate_hz : s->audio_sample_rate_hz;
+    return s->audio ? s->audio + (size_t)s->audio_read_frames * 2u : NULL;
+}
+
+int s3c2400_audio_consume(s3c2400_t *s, uint64_t frames) {
+    if (!s) return 0;
+    uint64_t available = 0;
+    s3c2400_audio_samples(s, &available, NULL);
+    if (frames > available) return 0;
+    s->audio_read_frames += frames;
+    if (s->audio_read_frames == s->audio_frames) {
+        s3c2400_audio_clear(s);
+    } else if (frames == available && s->audio_boundary_head < s->audio_boundary_count) {
+        if (++s->audio_boundary_head == s->audio_boundary_count)
+            s->audio_boundary_head = s->audio_boundary_count = 0;
+    }
+    return 1;
 }
 
 void s3c2400_audio_clear(s3c2400_t *s) {
@@ -1691,7 +1761,8 @@ void s3c2400_audio_clear(s3c2400_t *s) {
      * frontend chunk boundaries drops a pending left/right halfword and causes
      * audible clicks/chopping.
      */
-    s->audio_frames = 0;
+    s->audio_frames = s->audio_read_frames = 0;
+    s->audio_boundary_head = s->audio_boundary_count = 0;
 }
 
 typedef struct s3c2400_state_image {
@@ -1779,7 +1850,7 @@ int s3c2400_state_save_io(const s3c2400_t *s, state_io_t *io) {
     memcpy(st->iis_fifo, s->iis_fifo, sizeof(st->iis_fifo));
     st->iis_fifo_index = s->iis_fifo_index;
     st->iis_accum = s->iis_accum;
-    st->audio_frames = s->audio_frames;
+    st->audio_frames = s->audio_frames - s->audio_read_frames;
     st->audio_sample_rate_hz = s->audio_sample_rate_hz;
     st->iis_cached_rate_hz = s->iis_cached_rate_hz;
     st->iis_cached_period_cycles = s->iis_cached_period_cycles;
@@ -1794,11 +1865,19 @@ int s3c2400_state_save_io(const s3c2400_t *s, state_io_t *io) {
     if (!state_io_write(io, st, sizeof(*st))) return 0;
     if (!state_io_write(io, s->ram, st->ram_size)) return 0;
     if (!smc_state_save_io(s->smc, io)) return 0;
-    if (!state_io_write(io, s->audio, (size_t)st->audio_frames * 2u * sizeof(int16_t))) return 0;
+    const int16_t *unread = s->audio ? s->audio + (size_t)s->audio_read_frames * 2u : NULL;
+    if (!state_io_write(io, unread, (size_t)st->audio_frames * 2u * sizeof(int16_t))) return 0;
+    uint32_t count = s->audio_boundary_count - s->audio_boundary_head;
+    if (!state_io_write(io, &count, sizeof(count))) return 0;
+    for (uint32_t i = s->audio_boundary_head; i < s->audio_boundary_count; ++i) {
+        audio_boundary_t span = s->audio_boundaries[i];
+        span.end_frame -= s->audio_read_frames;
+        if (!state_io_write(io, &span, sizeof(span))) return 0;
+    }
     return 1;
 }
 
-int s3c2400_state_load_io(s3c2400_t *s, state_io_t *io) {
+int s3c2400_state_load_io(s3c2400_t *s, state_io_t *io, int has_audio_spans) {
     if (!s || !io) return 0;
 #ifdef GP32EMU_WASM
     static s3c2400_state_image_t st_storage;
@@ -1826,6 +1905,22 @@ int s3c2400_state_load_io(s3c2400_t *s, state_io_t *io) {
         if (!state_io_read(io, new_audio, (size_t)st->audio_frames * 2u * sizeof(int16_t))) { free(new_audio); smc_destroy(new_smc); free(new_ram); return 0; }
         new_audio_cap = st->audio_frames;
     }
+    uint32_t span_count = 0;
+    audio_boundary_t *new_spans = NULL;
+    if (has_audio_spans) {
+        if (!state_io_read(io, &span_count, sizeof(span_count)) ||
+            span_count > st->audio_frames || span_count > SIZE_MAX / sizeof(*new_spans)) goto bad_audio;
+        if (span_count) {
+            new_spans = malloc((size_t)span_count * sizeof(*new_spans));
+            if (!new_spans || !state_io_read(io, new_spans, (size_t)span_count * sizeof(*new_spans))) goto bad_audio;
+            uint64_t previous = 0;
+            for (uint32_t i = 0; i < span_count; ++i) {
+                if (new_spans[i].end_frame <= previous || new_spans[i].end_frame >= st->audio_frames ||
+                    !new_spans[i].rate_hz || new_spans[i].reserved) goto bad_audio;
+                previous = new_spans[i].end_frame;
+            }
+        }
+    }
     smc_destroy(s->smc);
     s->smc = new_smc;
     free(s->ram);
@@ -1834,6 +1929,10 @@ int s3c2400_state_load_io(s3c2400_t *s, state_io_t *io) {
     s->ram_size = st->ram_size;
     s->audio = new_audio;
     s->audio_cap_frames = new_audio_cap;
+    free(s->audio_boundaries);
+    s->audio_boundaries = new_spans;
+    s->audio_boundary_count = s->audio_boundary_cap = span_count;
+    s->audio_read_frames = s->audio_boundary_head = 0;
     memcpy(s->bios, st->bios, sizeof(s->bios));
     s->buttons = st->buttons;
     memcpy(s->fb, st->fb, sizeof(s->fb));
@@ -1867,7 +1966,7 @@ int s3c2400_state_load_io(s3c2400_t *s, state_io_t *io) {
     s->iis_fifo_index = st->iis_fifo_index;
     s->iis_accum = st->iis_accum;
     s->audio_frames = st->audio_frames;
-    s->audio_sample_rate_hz = st->audio_sample_rate_hz;
+    s->audio_sample_rate_hz = st->audio_sample_rate_hz ? st->audio_sample_rate_hz : 44100u;
     s->iis_cached_rate_hz = st->iis_cached_rate_hz;
     s->iis_cached_period_cycles = st->iis_cached_period_cycles;
     s->iis_clock_dirty = st->iis_clock_dirty;
@@ -1880,6 +1979,12 @@ int s3c2400_state_load_io(s3c2400_t *s, state_io_t *io) {
     s->smc_lines = st->smc_lines;
     check_irq(s);
     return 1;
+bad_audio:
+    free(new_spans);
+    free(new_audio);
+    smc_destroy(new_smc);
+    free(new_ram);
+    return 0;
 }
 
 int s3c2400_state_save(const s3c2400_t *s, FILE *f) {
@@ -1889,5 +1994,5 @@ int s3c2400_state_save(const s3c2400_t *s, FILE *f) {
 
 int s3c2400_state_load(s3c2400_t *s, FILE *f) {
     state_io_t io = state_io_file(f);
-    return s3c2400_state_load_io(s, &io);
+    return s3c2400_state_load_io(s, &io, 1);
 }
