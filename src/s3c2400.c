@@ -174,6 +174,7 @@ static uint32_t clk_run(const s3c2400_t *s, int reg);
 static uint32_t clk_pclk(const s3c2400_t *s, int reg);
 static void clock_refresh_values(s3c2400_t *s);
 static void clock_write(s3c2400_t *s, uint32_t addr, uint32_t value, uint32_t mask);
+static void check_irq(s3c2400_t *s);
 static void color16_lut_build(void);
 
 static int s3c2400_is_stable_read32(void *user, uint32_t addr) {
@@ -276,7 +277,9 @@ void s3c2400_destroy(s3c2400_t *s) {
     free(s);
 }
 
-void s3c2400_set_irq_sink(s3c2400_t *s, arm920t_t *cpu) { if (s) s->cpu_irq_sink = cpu; }
+void s3c2400_set_irq_sink(s3c2400_t *s, arm920t_t *cpu) {
+    if (s) { s->cpu_irq_sink = cpu; check_irq(s); }
+}
 void s3c2400_set_log(s3c2400_t *s, s3c2400_log_fn fn, void *user) { if (s) { s->log = fn; s->log_user = user; } }
 
 void s3c2400_reset(s3c2400_t *s) {
@@ -334,6 +337,7 @@ void s3c2400_reset(s3c2400_t *s) {
     /* buttons survives reset as host-owned input; keep the derived port
      * bits in lockstep (also covers the calloc'ed create path). */
     buttons_refresh(s);
+    check_irq(s);
 }
 
 arm_bus_t s3c2400_get_bus(s3c2400_t *s) {
@@ -538,6 +542,10 @@ static void gp32_smc_update(s3c2400_t *s) {
 static void check_irq(s3c2400_t *s) {
     if (!s->cpu_irq_sink) return;
     uint32_t pending = s->irq[0] & ~s->irq[2]; /* SRCPND masked by INTMSK */
+    /* INTMOD selects the separate FIQ line. These sources bypass IRQ
+     * arbitration and must not populate INTPND or INTOFFSET (manual ch.14). */
+    arm920t_set_fiq(s->cpu_irq_sink, (pending & s->irq[1]) != 0u);
+    pending &= ~s->irq[1];
     if (pending) {
 #if defined(__GNUC__) || defined(__clang__)
         /* pending is nonzero: select the same lowest IRQ without scanning

@@ -23,7 +23,7 @@ the deadline. Restoring a saved register context would discard legitimate ISR
 effects. Checking CPU mode alone would mishandle FIQ, nested exceptions, mode
 switches and scheduler context switches. None of these shortcuts is applied.
 
-The next implementation needs a CPU-owned parked-continuation guard: accept an
+One implementation option is a CPU-owned parked-continuation guard: accept an
 eligible exception without fetching the foreground, execute the handler under
 a bounded budget, and stop before resuming that continuation if time remains.
 The guard must cover native/decoded dispatch and chaining. ISR and HLE callback
@@ -40,3 +40,37 @@ contract before a production change is accepted.
 Evidence: private `results/resume130-compat/idle-wait-review.md` (source review,
 proposed diagnostic and design), `idle-wait-probe.c`, `.exe` and `.log` (parent's
 executed reproduction). This remains an open implementation item.
+
+## Guest-loop prototype (2026-10-05, resume131-wait)
+
+A private alternative implements the callback's wait as ordinary guest ARM
+instructions, with its deadline and preserved registers in the guest context
+and stack. Normal exception entry/return then handles interruption without a
+new CPU continuation guard. A stopped display SWI finalizes the deadline after
+its elapsed prefix, before subsequent HLE callbacks. This path also permits
+an ordinary guest scheduler to save and resume the waiting task's real stack.
+
+The prototype initially exposed a separate controller defect: INTMOD was
+ignored and a timer configured as FIQ entered IRQ mode. After the common
+controller correction, all 16 combinations of IRQ/FIQ, interpreter/JIT,
+ARM/Thumb return and legacy display-entry instruction pass the short probe:
+handlers execute before the wait ends, foreground code stays parked, and
+the preserved caller registers and stack are restored. This is a private
+prototype result, not a production fix for the wait path.
+
+The current low-32-bit cycle mirror is not acceptable for arbitrary task
+suspension: after half the 32-bit range beyond expiry, its signed comparison
+can mistake an expired deadline for a future one. A wide elapsed-time target
+and explicit clock/cadence conversion are needed. The synchronous HLE callback
+executor can also exhaust its fixed cycle budget during a display wait and
+discard the callback context. Its continuation policy and legacy in-flight
+wait migration remain unresolved. New stub entry migration alone does not
+repair an old state's already-pending host wait.
+
+Next work should use the simpler guest-loop direction with per-invocation
+wide deadlines, preserving ordinary IRQ/FIQ and guest stack semantics, then
+address callback continuation and save-state compatibility explicitly. The
+prototype is retained outside the repository in
+`results/resume131-wait/{gp32-candidate.c,wait-probe.c,wait-after-fiq.log}`;
+`design.md` records the review and remaining boundaries. No prototype changes
+to `src/gp32.c` were promoted.

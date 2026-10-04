@@ -3212,3 +3212,25 @@ remain unchanged and no SD deployment occurred. Private evidence:
 
 The separate direct-HLE display wait still suppresses hardware interrupt
 execution: [reproduction and required execution boundary](HLE_WAIT_INTERRUPTS.md).
+
+### Peripheral FIQ routing (2026-10-05)
+
+The interrupt controller now routes unmasked INTMOD-selected sources to the
+ARM FIQ line and excludes them from IRQ arbitration. Previously all sources
+went to IRQ, choosing the wrong vector, register bank and mask semantics.
+Reset and attaching the CPU sink also reconcile both lines with controller
+state. Existing IRQ arbitration policy is otherwise unchanged. This follows
+the [Samsung S3C2400 manual, chapter 14, pages 14-8 to 14-10](https://datasheets.chipdb.org/Samsung/S3C2400.pdf#page=311):
+FIQ does not update INTPND/INTOFFSET and remains subject to INTMSK and CPSR.F.
+
+The new synthetic timer regression failed before the change and passes with
+both interpreter and JIT: controller/CPU masking, pending-source rerouting,
+simultaneous IRQ/FIQ priority, acknowledgement and reset. Five focused PC
+checks and H700 routing/ARM exception checks pass. Windows/H700/Android arm64
+and armv7 release builds pass; Android runtime remains unverified. The H700
+checks used RAM staging and retained protected installation/settings hashes.
+
+This correction was found during the private display-wait prototype, not
+attributed to a particular game's symptom or claimed as a speed gain. The
+wait prototype is not promoted; its long-suspension, callback and state
+compatibility boundaries are recorded in [HLE wait interrupts](HLE_WAIT_INTERRUPTS.md).
