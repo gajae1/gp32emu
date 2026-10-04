@@ -38,9 +38,62 @@ Frozen core baseline: 2341f6c (before GPIO cache/audio delivery changes). 33 col
 | 32 | Dynamate v2.0 (2003-03-25)(Flavor)(FW) | BIOS loading stalled |
 | 33 | SmashGP v0.4c (2005-08-11)(mATkEUpON)(FR)(FW) | BIOS loading stalled |
 
-Summary: 26 reached gameplay/story/application, two menu/setup only, five loading-stalled (including two homebrews). Winter Is story progression is not established merely by selecting Start. Funny Soccer reached character hub/shop but no match.
+Baseline summary: 26 reached gameplay/story/application, two menu/setup only, five loading-stalled (including two homebrews). The dated follow-ups below supersede the individual baseline limitations where stated.
 
 Source SMC hashes, exact inputs, states and screenshots are in the private `resume83-library` manifest/coverage and per-game run directories. No ROM, BIOS, state or screenshots are committed. Parallel probe/profile timings are not performance acceptance.
+
+## Funny Soccer match follow-up (core `6cb7d8c`)
+
+Funny Soccer 2002 Korea now reaches a match from its saved hub/shop state with
+the original BIOS and SMC. In the shop, three DOWN presses move from the first
+item through the second row and item belt to Exit. A confirms; the following
+loading interval must finish before navigating again. From the hub's Item Shop
+selection, four DOWN presses select SEOGWIPO, and A starts the match after
+another loading interval. No game-specific emulator change was needed.
+
+The 1,200-frame continuation captures the field, opposing teams, HUD and a
+0:1 score. Matched 120-frame replays from that state compare LEFT held for
+90 frames with no input: player positions differ visibly, proving directional
+control rather than merely an attract scene. Both replays produce 44,112
+source PCM frames with identical PCM hashes. This is a short gameplay/input
+and digital-output check, not a complete match, audio-listening or H700
+performance verdict. It does not replace the earlier cold-start evidence.
+
+A fresh 300-frame PC profile records 100 CP15 cache-maintenance events,
+7,517 translated blocks, and no code-arena recycle. Those maintenance counts
+do not mean 100 full cache flushes: the existing cache-epoch path lazily checks
+recorded instruction bytes and retains unchanged blocks. The profile alone
+does not justify changing invalidation semantics.
+
+Evidence: private `resume101-coverage/funny-result.json`, `funny-profile.json`,
+`funny-match/`, and the matched `funny-control-{left,idle}/` captures. Intermediate
+generated state files can be reconstructed from the retained input chain;
+the original user state and final match state are preserved.
+
+## Winter Is story follow-up (core `6cb7d8c`)
+
+Three bounded 600-frame PC replays resolve the earlier menu-only observation.
+From the saved NOVEL start/continue submenu, A dismisses the submenu, whereas
+B confirms Start. Subsequent B presses advance narration into the night
+train-station scene and the chapter card "여행 첫날." No emulator change or
+per-title input remapping was necessary; the earlier input sequence assumed
+the wrong confirm button.
+
+This verifies story entry and text advancement from the saved menu state,
+not full-game, cold-boot, H700 or sound compatibility. The final continuation
+produces zero source PCM frames; reaching a visible story scene alone does
+not establish whether its silence matches original hardware.
+
+Evidence: private `resume101-coverage/winter/REPORT.md`, `SHA256.txt`, and
+`run-{1,2,3}/` commands, inputs, logs and captures. The final chapter-card
+state is retained; intermediate generated states and duplicate PPMs were
+removed after preserving PNG captures.
+
+Together with the firmware and Pinball follow-ups below, all 31 commercial
+families now have evidence beyond the initial menu/loading screen (some only
+level selection or a playfield). These observations span different core
+revisions, firmware versions and saved-state continuations. They are not a
+single-build compatibility pass or proof that every title is fully playable.
 
 ## Firmware follow-up
 
