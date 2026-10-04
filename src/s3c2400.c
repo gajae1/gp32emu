@@ -1342,11 +1342,10 @@ static int lcd_render_contiguous(s3c2400_t *s, uint32_t w, uint32_t h, uint32_t 
     } else {
         const unsigned shift = 32u - bits;
         const uint32_t mask = (1u << bits) - 1u;
-        /* Indexed scanout reads the same palette entry for every pixel that
-         * shares an 8-bit index, so expand the palette once instead of
-         * chasing lcd_palette -> color16_lut per pixel. */
+        /* Expand only the colors addressable at this bit depth; every pixel
+         * index below is masked, so the remaining entries are never read. */
         uint32_t pal_lut[256];
-        for (uint32_t k = 0; k < 256u; ++k) pal_lut[k] = color16_lut[s->lcd_palette[k]];
+        for (uint32_t k = 0; k <= mask; ++k) pal_lut[k] = color16_lut[s->lcd_palette[k]];
         if (bits == 8u) {
             while (y < h && i + wprow <= words) {
                 lcd_row8(src + (size_t)i * 4u, row, wprow, pal_lut, mode);

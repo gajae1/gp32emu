@@ -2704,3 +2704,18 @@ The separate SWE renderer audit found one remaining small optimization:
 where every consumer masks the index. The fallback already expands only
 `mask + 1` entries. This is a concrete follow-up for the existing scanout hash
 harness; it was not folded into the already-tested IRQ build.
+
+### Limit contiguous palette expansion to addressable colors (2026-10-04)
+
+Contiguous indexed scanout now expands `mask + 1` colors, matching the existing
+fallback. The 1/2/4-bpp paths prepare 2/4/16 entries instead of 256; 8-bpp still
+prepares 256 and 16-bpp bypasses this table. Consumers already mask every index.
+The pre-existing eight-case PC scanout harness preserves framebuffer hashes
+and nonzero-pixel counts. Inspection showed its 240-pixel 1-bpp row takes the
+fallback, so a 224-pixel aligned case was added to exercise the changed path.
+H700 before/after hashes and nonzero counts match in all nine cases, including
+that new contiguous 1-bpp case. Evidence: `results/resume110-palette/`.
+
+Windows standalone/libretro, H700 and Android ARM64/ARMv7 builds pass. These
+short harness runs establish output parity, not a game FPS improvement;
+uncontrolled per-render timings are not used for performance claims.

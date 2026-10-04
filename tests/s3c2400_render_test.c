@@ -83,6 +83,9 @@ static const lcd_case_t k_cases[] = {
     { "4bpp-tight",   0x0au, 240, 320, 60,  0,  0 },
     { "2bpp-tight",   0x09u, 240, 320, 30,  0,  0 },
     { "1bpp-tight",   0x08u, 240, 320, 15,  0,  0 },
+    /* 240 pixels ends inside a 32-pixel word and takes the fallback.
+     * A 224-pixel row also exercises the contiguous 1-bpp palette path. */
+    { "1bpp-aligned", 0x08u, 224, 320, 14,  0,  0 },
 };
 
 static const uint32_t k_frame_bytes = 240u * 320u * 4u;
