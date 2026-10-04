@@ -74,3 +74,18 @@ prototype is retained outside the repository in
 `results/resume131-wait/{gp32-candidate.c,wait-probe.c,wait-after-fiq.log}`;
 `design.md` records the review and remaining boundaries. No prototype changes
 to `src/gp32.c` were promoted.
+
+## Callback return identity prerequisite
+
+The callback executor previously accepted the private return SWI immediate
+from any guest address, even without an active callback. A synthetic ARM
+callback that saves LR, executes the same SWI at its own address, restores LR
+and writes a marker reproduced early termination in both interpreter and JIT:
+the marker was never written. A minimal BIOS SWI handler returns normally, so
+the fixture distinguishes a guest exception from an actual callback return.
+
+The handler now requires an active callback and the exact private return-stub
+address. The callback reaches its tail before returning through that stub.
+PC timer, PCM, file and state checks pass; the timer regression also passes on
+the H700 native backend from RAM with protected files unchanged. This is a return-identity fix; the
+larger resumable-callback and interruptible-display-wait work remains open.
