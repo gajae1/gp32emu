@@ -1856,3 +1856,38 @@ produced no audible playback. Evidence under the local results directory:
 `resume84-lcd/{device-demand,demand-parity,candidate-manifest}.json` and
 `resume84-lcd/demand-120frames/`. Original-BIOS loading-pointer corruption is a
 separate unresolved issue, described in `PC_LIBRARY_COVERAGE.md`.
+
+### AArch64 checked word-load specialization (2026-10-04)
+
+A follow-up LCD count/deadline cache experiment shared the phase arithmetic.
+Fixed-clock H700 replay changes were -0.29%, +0.24%, and +0.46% for Princess,
+Astonishia and Blue respectively, with exact output parity. These are treated
+as flat; the extra cache field and code were discarded. Evidence and the rejected
+patch remain locally in `resume85-lcd-cache/`. Its instrumented workload capture
+had changing device frequency and is used only for operation counts, not speed.
+
+That capture reports 26,210,800 word-load helper calls in the 300-frame Princess
+cutscene. The AArch64 emitter now selects a dedicated checked helper for word
+loads without base-register writeback and with an ordinary destination. This
+removes repeated transfer-kind/size/writeback decoding and two unused call
+arguments. It retains MMU translation, unaligned rotation, callback-visible PC,
+decoded-field capture before callbacks, and the complete interrupt, generation,
+control-state and live-deadline guard. Other access shapes retain the existing
+helper. There are no title, address or firmware-specific exceptions.
+
+Paired ABBA replay at 1512 MHz compares against the LCD-corrected development
+core, not the installed FIFO core:
+
+| Replay | Before | Specialized word load | Change |
+| --- | ---: | ---: | ---: |
+| Princess Maker cutscene | 54.829 | 57.437 | +4.76% |
+| Astonishia title | 181.556 | 180.964 | -0.33% |
+| Blue Angelo NPC approach | 73.920 | 73.899 | -0.03% |
+
+The latter two are approximately flat. Every replay matches the PC reference's
+cycles, PC, CPSR, emulated clock, PCM frame count, video hash and PCM hash.
+Native H700 `arm_jit` and `arm_poll` tests pass, including existing memory
+callback and live-deadline coverage. Android ARM64 builds. The x86 backend is
+unchanged. Private evidence: `resume85-ldr/{device,summary,source-manifest}.json`.
+The candidate is not installed; volume/frontend settings remain untouched.
+Princess is still below 60 core fps, so the performance goal remains open.
