@@ -64,6 +64,39 @@ static uint64_t frame_count(s3c2400_t *s) {
     return frames;
 }
 
+static int check_iis_fifo_restart(s3c2400_t *s) {
+    /* SDK stop disables TX FIFO to discard pending data. A completed stereo
+     * frame stays available to the host, but a lone old channel must not be
+     * paired with the first channel of the next playback. */
+    s3c2400_reset(s);
+    s3c2400_write32(s, 0x1550800cu, 0xa00u);
+    s3c2400_write16(s, 0x15508010u, 1000u);
+    s3c2400_write16(s, 0x15508010u, 2000u);
+    s3c2400_write16(s, 0x15508010u, 3000u);
+    s3c2400_write8(s, 0x1550800du, 0u); /* Masked TX-disable write. */
+    s3c2400_write32(s, 0x1550800cu, 0xa00u);
+    s3c2400_write16(s, 0x15508010u, 4000u);
+    s3c2400_write16(s, 0x15508010u, 5000u);
+    uint64_t frames = 0;
+    const int16_t *pcm = s3c2400_audio_samples(s, &frames, NULL);
+    if (!pcm || frames != 2u || pcm[0] != 1000 || pcm[1] != 2000 ||
+        pcm[2] != 4000 || pcm[3] != 5000) {
+        fputs("FAIL: IIS FIFO disable leaks a pending channel into new playback\n", stderr);
+        return 0;
+    }
+    s3c2400_audio_clear(s);
+    s3c2400_write16(s, 0x15508010u, 6000u);
+    s3c2400_write32(s, 0x1550800cu, 0xa00u); /* Same enable must retain it. */
+    s3c2400_write8(s, 0x1550800cu, 0u); /* Unrelated lane must retain it. */
+    s3c2400_write16(s, 0x15508010u, 7000u);
+    pcm = s3c2400_audio_samples(s, &frames, NULL);
+    if (!pcm || frames != 1u || pcm[0] != 6000 || pcm[1] != 7000) {
+        fputs("FAIL: IIS enabled FIFO loses a pending channel\n", stderr);
+        return 0;
+    }
+    return 1;
+}
+
 static int check_lcd_clock_phase(s3c2400_t *s, FILE *state) {
     s3c2400_reset(s);
     s3c2400_write32(s, 0x14800004u, 0u); /* 48 MHz, 800,000 cycles per frame. */
@@ -118,7 +151,8 @@ int main(void) {
         observe(s, 1u);
         if ((k % 3u) == 0u) { s3c2400_reset(s); observe(s, 31u); }
     }
-    int phase_ok = check_lcd_clock_phase(s, state) && check_iis_clock_phase(s, state);
+    int phase_ok = check_lcd_clock_phase(s, state) && check_iis_clock_phase(s, state) &&
+                   check_iis_fifo_restart(s);
     fclose(state);
     if (!phase_ok) { s3c2400_destroy(s); return 1; }
     printf("lcd_timing_trace=%016" PRIx64 "\n", hash);

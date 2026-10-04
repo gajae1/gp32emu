@@ -1017,6 +1017,13 @@ static void io_write32(s3c2400_t *s, uint32_t addr, uint32_t value, uint32_t mas
         uint32_t old = reg_array_read(s->iis, sizeof(s->iis), off);
         reg_array_write(s->iis, sizeof(s->iis), off, value, mask);
         if (off == 0x00u && ((old ^ s->iis[0]) & 1u)) s->iis_accum = 0;
+        if (off == 0x0cu && (old & ~s->iis[3] & 0x200u)) {
+            /* Disabling TX FIFO flushes the pending half-frame. GP32 SDKs
+             * use this when stopping PCM, before starting a fresh stream.
+             * Already delivered stereo frames belong to the host queue. */
+            s->iis_fifo_index = 0;
+            memset(s->iis_fifo, 0, sizeof(s->iis_fifo));
+        }
         if (off == 0x04u || off == 0x08u) {
             s->iis_clock_dirty = 1;
         }

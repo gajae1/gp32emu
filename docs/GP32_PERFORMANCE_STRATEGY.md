@@ -1783,3 +1783,26 @@ configuration hashes were unchanged. Evidence: `resume84-install/installed.json`
 The user's volume remains untouched at their selected zero setting. No game
 frontend or mixer command was run during promotion. Continue digital PCM,
 buffer and timing validation silently; audible speaker acceptance remains open.
+
+### IIS transmit-FIFO restart (2026-10-04)
+
+The newly collected [Mirko SDK 0.91](https://dl.openhandhelds.org/gp32/uploads/Home/GP32%20-%20Development/Libraries/mirkoSDK091.tar.gz)
+uses IISFCON TX-disable as a FIFO flush in `lib.src/sound/init1330.c`,
+`GpPcmStop` (lines 274-279). The [Samsung S3C2400 manual](https://datasheets.chipdb.org/Samsung/S3C2400.pdf)
+identifies TX FIFO enable as IISFCON bit 9 (chapter 21). The related
+[Linux Samsung I2S driver](https://code.googlesource.com/linux/torvalds/linux/+/c6e169bc146a76d5ccbf4d3825f705414352bd03/sound/soc/samsung/s3c24xx-i2s.c)
+also disables the FIFO on stop to reset pending transfer state. No external
+implementation code was copied.
+
+The emulator previously retained a pending unpaired channel across TX-disable.
+A public-API sequence with one completed frame and one pending channel then
+restarted playback, incorrectly pairing the stale channel with the new stream.
+The falling edge of bit 9 now clears only that pending FIFO state; completed
+host PCM remains queued. Same-value enable writes and unrelated byte lanes
+preserve the partial pair. This adds no serialized fields or title checks.
+
+The focused restart case fails before the change and passes after it. Existing
+SoC timing, PCM and state tests pass on Windows; the same timing/restart fixture
+passes natively on H700 without audio playback. Win64 and H700 cores build.
+Private evidence: `resume84-fifo/h700-test.txt`. Correlation with a particular
+game's audible pop remains unverified; this is a reproduced FIFO lifecycle bug.
