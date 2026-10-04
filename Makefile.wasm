@@ -28,6 +28,7 @@ WASM_EXPORTS := \
 CORE_SRCS := \
   src/arm920t.c \
   src/s3c2400.c \
+  src/gp32_codec.c \
   src/smartmedia.c \
   src/smc_direct.c \
   src/fxe.c \

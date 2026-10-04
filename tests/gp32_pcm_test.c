@@ -407,7 +407,7 @@ static int check_mixed_rate_queue(void) {
     ok &= s3c2400_state_save_io(mixed->soc, &writer);
     gp32_clear_audio(mixed);
     state_io_t reader = state_io_reader(data, count.pos);
-    ok &= s3c2400_state_load_io(mixed->soc, &reader, 1, 1, 1, 1);
+    ok &= s3c2400_state_load_io(mixed->soc, &reader, 1, 1, 1, 1, 1);
     free(data);
     ok &= gp32_get_audio(mixed, &span) == GP32_OK && span.frame_count == 1u &&
           span.sample_rate_hz == 11025u && span.samples_s16_interleaved[0] == 2;
@@ -468,7 +468,7 @@ static int check_timed_idle_audio(void) {
                 state_io_t out = state_io_writer(bytes, counter.pos);
                 ok &= s3c2400_state_save_io(s, &out);
                 state_io_t in = state_io_reader(bytes, counter.pos);
-                ok &= s3c2400_state_load_io(s, &in, 1, 1, 1, 1);
+                ok &= s3c2400_state_load_io(s, &in, 1, 1, 1, 1, 1);
                 free(bytes);
             }
         }

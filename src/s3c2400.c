@@ -6,6 +6,7 @@
 #include "s3c2400.h"
 #include "gp32emu/gp32.h"
 #include "zip.h"
+#include "gp32_codec.h"
 #include <stdatomic.h>
 #include <assert.h>
 #if defined(__aarch64__) && defined(__ARM_NEON) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
@@ -128,6 +129,8 @@ struct s3c2400 {
     unsigned iis_fifo_index;
     uint64_t iis_accum; /* sample phase: CPU cycles * advertised sample rate */
     uint32_t iis_cached_run_hz; /* derived; not serialized */
+    gp32_codec_t codec;
+    uint32_t codec_gain_q16; /* derived from codec registers */
     int16_t *audio;
     uint64_t audio_frames;
     uint64_t audio_cap_frames;
@@ -302,6 +305,8 @@ void s3c2400_reset(s3c2400_t *s) {
     s->iic_address = 0;
     memset(s->iis, 0, sizeof(s->iis));
     memset(s->iis_fifo, 0, sizeof(s->iis_fifo));
+    gp32_codec_reset(&s->codec);
+    s->codec_gain_q16 = gp32_codec_gain_q16(&s->codec);
     s->iis_fifo_index = 0;
     s->iis_accum = 0;
     s->audio_frames = s->audio_read_frames = 0;
@@ -559,6 +564,9 @@ static uint64_t iis_period_cpu_cycles(const s3c2400_t *s);
 static uint32_t iis_dma_transfers_per_frame(const s3c2400_t *s);
 
 static void audio_append_stereo(s3c2400_t *s, int16_t left, int16_t right, uint32_t rate);
+static int16_t codec_scale(int16_t sample, uint32_t gain) {
+    return (int16_t)(((int32_t)sample * (int32_t)gain) / 65536);
+}
 static void iis_refresh_clock_cache(s3c2400_t *s);
 
 /*
@@ -757,6 +765,12 @@ static uint32_t dma_iis_fast_trigger_count(s3c2400_t *s, uint32_t *r, uint32_t r
 #undef IIS_PCM_APPEND
     if (direct) {
         s->audio_frames = base_frames + frames;
+        /* Unity gain keeps the existing bulk copy path. Apply non-unity gain
+           only to this newly queued span, never to previously queued audio. */
+        if (s->codec_gain_q16 != 65536u) {
+            for (uint64_t i = base_frames * 2u; i < s->audio_frames * 2u; ++i)
+                s->audio[i] = codec_scale(s->audio[i], s->codec_gain_q16);
+        }
         if (frames) s->audio_sample_rate_hz = s->iis_cached_rate_hz;
     }
     s->iis_fifo[0] = pending;
@@ -993,17 +1007,39 @@ static void iic_start(s3c2400_t *s) {
     iic_step(s);
 }
 
+static void defer_io_write(s3c2400_t *s, uint32_t addr, uint32_t value, uint32_t mask) {
+    assert(s->cpu_io_write_count < GP32_ARRAY_COUNT(s->cpu_io_writes));
+    unsigned i = s->cpu_io_write_count++;
+    s->cpu_io_writes[i].addr = addr;
+    s->cpu_io_writes[i].value = value;
+    s->cpu_io_writes[i].mask = mask;
+    arm920t_stop_run(s->cpu_irq_sink);
+}
+
 static void io_write32(s3c2400_t *s, uint32_t addr, uint32_t value, uint32_t mask) {
     uint32_t off;
     /* GPIO dominates SmartMedia bit-banging; preserve every signal update
      * while avoiding the unrelated peripheral range checks on each edge. */
     if (addr >= 0x15600000u && addr <= 0x1560005bu) {
+        uint32_t old_gpe = s->gpio[0x30u >> 2];
+        /* Only codec pin transitions split execution; unchanged upper pins
+           on ordinary SmartMedia writes retain the GPIO fast path. */
+        int codec_output = (s->gpio[0x2cu >> 2] & 0xfc0000u) == 0x540000u;
+        if (s->cpu_run_active && codec_output && addr == 0x15600030u &&
+            ((old_gpe ^ value) & mask & 0xe00u)) {
+            defer_io_write(s, addr, value, mask);
+            return;
+        }
         off=addr-0x15600000u; reg_array_write(s->gpio,sizeof(s->gpio),off,value,mask);
         switch(off){
         case 0x08: s->smc_lines.read = ((s->gpio[off>>2] & 1u) == 0); gp32_smc_update(s); break;
         case 0x0c: s->smc_lines.datatx = (uint8_t)(s->gpio[off>>2] & 0xffu); break;
         case 0x24: s->smc_lines.do_read=((s->gpio[off>>2]&0x100u)==0); s->smc_lines.chip=((s->gpio[off>>2]&0x80u)==0); s->smc_lines.wp=((s->gpio[off>>2]&0x40u)==0); gp32_smc_update(s); break;
         case 0x30: s->smc_lines.cmd_latch=((s->gpio[off>>2]&0x20u)!=0); s->smc_lines.add_latch=((s->gpio[off>>2]&0x10u)!=0); s->smc_lines.do_write=((s->gpio[off>>2]&0x08u)==0); gp32_smc_update(s); break;
+        }
+        if (codec_output && off == 0x30u && ((old_gpe ^ s->gpio[off >> 2]) & 0xe00u)) {
+            gp32_codec_gpio(&s->codec, old_gpe, s->gpio[off >> 2]);
+            s->codec_gain_q16 = gp32_codec_gain_q16(&s->codec);
         }
         /* Every GPIO width/offset funnels here: register, NAND and latch
          * effects are already applied, so refresh both live words last. */
@@ -1017,12 +1053,7 @@ static void io_write32(s3c2400_t *s, uint32_t addr, uint32_t value, uint32_t mas
          * DMA source, sample rate or LCD timing of its already elapsed time.
          * Finish the current instruction, tick the old peripheral state, then
          * apply its stores. Reads in SWP/LDM precede any deferred store. */
-        assert(s->cpu_io_write_count < GP32_ARRAY_COUNT(s->cpu_io_writes));
-        unsigned i = s->cpu_io_write_count++;
-        s->cpu_io_writes[i].addr = addr;
-        s->cpu_io_writes[i].value = value;
-        s->cpu_io_writes[i].mask = mask;
-        arm920t_stop_run(s->cpu_irq_sink);
+        defer_io_write(s, addr, value, mask);
         return;
     }
     if (addr >= 0x14000000u && addr <= 0x1400003bu) { reg_array_write(s->memcon,sizeof(s->memcon),addr-0x14000000u,value,mask); return; }
@@ -1585,6 +1616,10 @@ static void audio_append_stereo(s3c2400_t *s, int16_t left, int16_t right, uint3
         if (!audio_reserve_frames(s, 1u)) return;
     }
     if (!audio_prepare_rate(s, rate)) return;
+    if (s->codec_gain_q16 != 65536u) {
+        left = codec_scale(left, s->codec_gain_q16);
+        right = codec_scale(right, s->codec_gain_q16);
+    }
     s->audio[s->audio_frames * 2u + 0u] = left;
     s->audio[s->audio_frames * 2u + 1u] = right;
     s->audio_frames++;
@@ -2151,12 +2186,15 @@ int s3c2400_state_save_io(const s3c2400_t *s, state_io_t *io) {
         if (!state_io_write(io, &span, sizeof(span))) return 0;
     }
     uint64_t lcd_phase[2] = {s->lcd_line_accum, s->lcd_hclk_remainder};
+    uint8_t codec[6] = {s->codec.address, s->codec.shift, s->codec.bits,
+                       s->codec.volume, s->codec.control, s->codec.status};
     return state_io_write(io, &s->iis_accum, sizeof(s->iis_accum)) &&
            state_io_write(io, lcd_phase, sizeof(lcd_phase)) &&
-           state_io_write(io, &s->audio_idle_phase, sizeof(s->audio_idle_phase));
+           state_io_write(io, &s->audio_idle_phase, sizeof(s->audio_idle_phase)) &&
+           state_io_write(io, codec, sizeof(codec));
 }
 
-int s3c2400_state_load_io(s3c2400_t *s, state_io_t *io, int has_audio_spans, int has_iis_phase, int has_lcd_phase, int has_idle_phase) {
+int s3c2400_state_load_io(s3c2400_t *s, state_io_t *io, int has_audio_spans, int has_iis_phase, int has_lcd_phase, int has_idle_phase, int has_codec) {
     if (!s || !io) return 0;
 #ifdef GP32EMU_WASM
     static s3c2400_state_image_t st_storage;
@@ -2225,6 +2263,8 @@ int s3c2400_state_load_io(s3c2400_t *s, state_io_t *io, int has_audio_spans, int
     }
     uint64_t idle_phase = 0;
     if (has_idle_phase && (!state_io_read(io, &idle_phase, sizeof(idle_phase)) || idle_phase >= runclk)) goto bad_audio;
+    uint8_t codec[6] = {0};
+    if (has_codec && (!state_io_read(io, codec, sizeof(codec)) || codec[2] > 8u || codec[3] > 63u)) goto bad_audio;
     smc_destroy(s->smc);
     s->smc = new_smc;
     free(s->ram);
@@ -2247,6 +2287,8 @@ int s3c2400_state_load_io(s3c2400_t *s, state_io_t *io, int has_audio_spans, int
     s->lcd_line_accum = lcd_phase[0];
     s->lcd_hclk_remainder = (uint32_t)lcd_phase[1];
     s->audio_idle_phase = idle_phase;
+    s->codec = (gp32_codec_t){codec[0], codec[1], codec[2], codec[3], codec[4], codec[5]};
+    s->codec_gain_q16 = gp32_codec_gain_q16(&s->codec);
     s->lcd_line_valid = 0;
     s->lcd_timing_valid = 0;
     memcpy(s->eeprom, st->eeprom, sizeof(s->eeprom));
@@ -2301,16 +2343,17 @@ bad_audio:
 
 int s3c2400_state_save(const s3c2400_t *s, FILE *f) {
     state_io_t io = state_io_file(f);
-    return state_io_write(&io, "GP32SOC8", 8u) && s3c2400_state_save_io(s, &io);
+    return state_io_write(&io, "GP32SOC9", 8u) && s3c2400_state_save_io(s, &io);
 }
 
 int s3c2400_state_load(s3c2400_t *s, FILE *f) {
     uint8_t magic[8];
     if (!f || fread(magic, 1, sizeof(magic), f) != sizeof(magic)) return 0;
-    int has_idle = !memcmp(magic, "GP32SOC8", sizeof(magic));
+    int has_codec = !memcmp(magic, "GP32SOC9", sizeof(magic));
+    int has_idle = has_codec || !memcmp(magic, "GP32SOC8", sizeof(magic));
     int has_lcd = has_idle || !memcmp(magic, "GP32SOC7", sizeof(magic));
     int has_phase = has_lcd || !memcmp(magic, "GP32SOC6", sizeof(magic));
     if (!has_phase && fseek(f, -(long)sizeof(magic), SEEK_CUR)) return 0;
     state_io_t io = state_io_file(f);
-    return s3c2400_state_load_io(s, &io, 1, has_phase, has_lcd, has_idle);
+    return s3c2400_state_load_io(s, &io, 1, has_phase, has_lcd, has_idle, has_codec);
 }
