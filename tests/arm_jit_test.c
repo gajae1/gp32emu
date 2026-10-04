@@ -46,6 +46,8 @@ typedef struct {
     unsigned io_return_at;
     unsigned block_io, block_effect, block_at, block_count;
     uint32_t block_addr[3], block_pc[3], block_base[3], block_value[3];
+    unsigned mem_probe, mem_effect, mem_calls;
+    uint32_t mem_addr, mem_pc, mem_base, mem_value;
 } test_bus_t;
 
 static test_bus_t bus_jit, bus_ref;
@@ -121,19 +123,52 @@ static uint32_t tb_block_io(test_bus_t *b, uint32_t a, uint32_t value) {
     }
     return value;
 }
+/* One access observes committed PC but the original base, then changes CPU
+ * control state. Stores must capture their source before these changes. */
+static uint32_t tb_mem_io(test_bus_t *b, uint32_t a, uint32_t value) {
+    arm920t_t *c = b->observe_cpu;
+    ++b->mem_calls;
+    b->mem_addr = a;
+    b->mem_pc = arm920t_get_pc(c);
+    b->mem_base = arm920t_get_reg(c, 4u);
+    b->mem_value = value;
+    arm920t_set_reg(c, 2u, 0xabcdef01u);
+    arm920t_set_reg(c, 4u, 0x12345678u);
+    switch (b->mem_effect) {
+    case 1: arm920t_stop_run(c); break;
+    case 2: arm920t_set_reg(c, 15u, CODE_ADDR + 8u); break;
+    case 3: arm920t_set_cpsr(c, arm920t_get_cpsr(c) ^ 0x40000000u); break;
+    case 4: arm920t_set_cpsr(c, 0x33u); break; /* Thumb SVC */
+    case 5:
+        gp32_st32le(b->bios + CODE_ADDR + 4u, 0xe3a06077u);
+        arm920t_flush_jit(c);
+        break;
+    case 6:
+        gp32_st32le(b->bios + CODE_ADDR + 4u, 0xe3a06077u);
+        arm920t_set_jit(c, 0);
+        break;
+    case 7: arm920t_set_trace(c, 1, tb_trace, b); break;
+    case 8: arm920t_set_cpsr(c, 0x1fu); break; /* SYS mode */
+    case 9: arm920t_set_fiq(c, 1); break;
+    }
+    return 0x8877ff80u;
+}
 static uint8_t tb_read8(void *u, uint32_t a) {
     test_bus_t *b = (test_bus_t *)u;
     uint8_t *p = bus_ptr(b, a, 1u);
+    if (!p && b->mem_probe) return (uint8_t)tb_mem_io(b, a, 0u);
     return p ? p[0] : (uint8_t)tb_io_value(b, a);
 }
 static uint16_t tb_read16(void *u, uint32_t a) {
     test_bus_t *b = (test_bus_t *)u;
     uint8_t *p = bus_ptr(b, a, 2u);
+    if (!p && b->mem_probe) return (uint16_t)tb_mem_io(b, a, 0u);
     return p ? gp32_ld16le(p) : (uint16_t)tb_io_value(b, a);
 }
 static uint32_t tb_read32(void *u, uint32_t a) {
     test_bus_t *b = (test_bus_t *)u;
     uint8_t *p = bus_ptr(b, a, 4u);
+    if (!p && b->mem_probe) return tb_mem_io(b, a, 0u);
     if (b->block_io && a >= IO_ADDR && a < IO_ADDR + 12u)
         return tb_block_io(b, a, 0x11110000u + (a - IO_ADDR) / 4u);
     return p ? gp32_ld32le(p) : tb_io_value(b, a);
@@ -142,18 +177,21 @@ static void tb_write8(void *u, uint32_t a, uint8_t v) {
     test_bus_t *b = (test_bus_t *)u;
     uint8_t *p = bus_ptr(b, a, 1u);
     if (p) p[0] = v;
+    else if (b->mem_probe) (void)tb_mem_io(b, a, v);
     else (void)tb_io_value(b, a);
 }
 static void tb_write16(void *u, uint32_t a, uint16_t v) {
     test_bus_t *b = (test_bus_t *)u;
     uint8_t *p = bus_ptr(b, a, 2u);
     if (p) gp32_st16le(p, v);
+    else if (b->mem_probe) (void)tb_mem_io(b, a, v);
     else (void)tb_io_value(b, a);
 }
 static void tb_write32(void *u, uint32_t a, uint32_t v) {
     test_bus_t *b = (test_bus_t *)u;
     uint8_t *p = bus_ptr(b, a, 4u);
     if (p) gp32_st32le(p, v);
+    else if (b->mem_probe) (void)tb_mem_io(b, a, v);
     else if (b->block_io && a >= IO_ADDR && a < IO_ADDR + 12u)
         (void)tb_block_io(b, a, v);
     else if (b->observe_cpu && a == IO_ADDR + (b->block_io ? 0x40u : 4u)) {
@@ -2305,6 +2343,116 @@ static void case_cache_maintenance_native(void) {
     teardown_pair();
 }
 
+/* Focused checked-access regression: no polling, one callback per fixture,
+ * ragged budgets elsewhere, and an instruction-at-a-time reference here.
+ * On A64 the profile must also prove that whole-op dispatch was removed. */
+static void case_checked_access(void) {
+    const struct { uint32_t insn; unsigned effect; uint32_t base; } cases[] = {
+        {0xe4942004u, 1u, IO_ADDR},       /* LDR post / SoC yield */
+        {0xe4d42004u, 2u, IO_ADDR},       /* LDRB post / redirected PC */
+        {0xe0d420f4u, 3u, IO_ADDR},       /* LDRSH post / NZCV change */
+        {0xe5d42000u, 4u, IO_ADDR},       /* LDRB / Thumb change */
+        {0xe7a42081u, 5u, IO_ADDR},       /* STR shifted offset! / flush */
+        {0xe5642001u, 6u, IO_ADDR + 1u},  /* STRB negative offset! / disable */
+        {0xe0c420b4u, 7u, IO_ADDR},       /* STRH post / trace */
+        {0xe13440b1u, 8u, IO_ADDR + 2u},  /* LDRH r4,[r4,-r1]! / Rd==Rn */
+        {0xe1d420d0u, 9u, IO_ADDR},       /* LDRSB / FIQ */
+        {0xe5942000u, 0u, IO_ADDR + 1u},  /* unaligned word / rotate */
+        {0xe0d420b4u, 1u, IO_ADDR},       /* LDRH post / yield */
+        {0xe4842004u, 1u, IO_ADDR},       /* STR post / yield */
+    };
+    for (unsigned i = 0; i < GP32_ARRAY_COUNT(cases); ++i) {
+        current_case = "checked-access";
+        setup_pair();
+        arm920t_set_trace(cpu_ref, 1, NULL, NULL);
+        const uint32_t program[] = {cases[i].insn, 0xe3a06001u, 0xeafffffeu};
+        load_both(program, GP32_ARRAY_COUNT(program));
+        if (cases[i].effect == 3u) set_mem_both(CODE_ADDR + 4u, 0x03a06001u); /* MOVEQ */
+        if (cases[i].effect == 4u) set_mem_both(CODE_ADDR + 4u, 0xe7fe2601u); /* Thumb MOV; B . */
+        set_mem_both(0x1cu, 0xe5806000u); /* FIQ captures r6 before next MOV */
+        set_mem_both(0x20u, 0xe3a06077u);
+        set_mem_both(0x24u, 0xeafffffeu);
+        set_reg_both(0u, DATA_ADDR); set_reg_both(1u, 2u);
+        set_reg_both(2u, 0x1234ff80u); set_reg_both(4u, cases[i].base);
+        arm920t_set_cpsr(cpu_jit, 0x13u); arm920t_set_cpsr(cpu_ref, 0x13u);
+        bus_jit.observe_cpu = cpu_jit; bus_ref.observe_cpu = cpu_ref;
+        bus_jit.mem_probe = bus_ref.mem_probe = 1u;
+        bus_jit.mem_effect = bus_ref.mem_effect = cases[i].effect;
+        uint32_t dj = arm920t_run(cpu_jit, 32u), dr = arm920t_run(cpu_ref, 32u);
+        CHECK(dj == dr, "checked-access budget");
+        compare_state();
+        CHECK(bus_jit.mem_calls == 1u && bus_ref.mem_calls == 1u, "one bus access");
+        CHECK(bus_jit.mem_addr == bus_ref.mem_addr && bus_jit.mem_value == bus_ref.mem_value,
+              "callback address/store source");
+        CHECK(bus_jit.mem_pc == CODE_ADDR + 4u && bus_ref.mem_pc == CODE_ADDR + 4u &&
+              bus_jit.mem_base == cases[i].base && bus_ref.mem_base == cases[i].base,
+              "callback PC and pre-writeback base");
+        if (cases[i].effect == 1u) {
+            CHECK(dj == 1u && ref_reg(6u) == 0u && ref_reg(4u) == IO_ADDR + 4u,
+                  "yield completes transfer and WB before next instruction");
+            CHECK(arm920t_run(cpu_jit, 1u) == arm920t_run(cpu_ref, 1u), "yield resumes");
+            compare_state();
+            CHECK(bus_jit.mem_calls == 1u && ref_reg(6u) == 1u, "yield never replays access");
+        }
+        if (i == 2u) CHECK(ref_reg(2u) == 0xffffff80u && ref_reg(6u) == 1u, "signed half/NZCV");
+        if (i == 7u) CHECK(ref_reg(4u) == IO_ADDR, "Rd==Rn WB follows loaded value");
+        if (i == 8u) CHECK(gp32_ld32le(bus_ref.ram + 0x1000u) == 0u, "FIQ before next MOV");
+        if (i == 9u) CHECK(ref_reg(2u) == 0x808877ffu && ref_reg(4u) == 0x12345678u,
+                           "unaligned rotation and callback base mutation");
+        gp32_cpu_profile_t profile;
+        arm920t_get_cpu_profile(cpu_jit, &profile);
+        if (profile.supported && profile.native_backend == 2u) {
+            CHECK(profile.native_block_calls != 0u, "checked-access native coverage");
+            CHECK(profile.helper_ld_word + profile.helper_ld_byte + profile.helper_ld_half +
+                  profile.helper_ld_sbyte + profile.helper_ld_shalf + profile.helper_st_word +
+                  profile.helper_st_byte + profile.helper_st_half == 1u,
+                  "checked-access fixture must reach one access helper");
+            CHECK(profile.helper_op_kinds[5u] == 0u && profile.helper_op_kinds[6u] == 0u,
+                  "checked access avoids whole-op HALF/SINGLE_DT dispatch");
+        }
+        printf("checked-access %u insn=%08" PRIx32 " effect=%u cycles=%u\n",
+               i, cases[i].insn, cases[i].effect, dj);
+        teardown_pair();
+    }
+}
+
+/* One mapped non-RAM miss, BIOS literal, and fault-tolerant identity access.
+ * No callbacks mutate the page tables or CPU here; this isolates VA retention
+ * from the RAM guard and checks the existing CP15 fault-address semantics. */
+static void case_checked_access_translation(void) {
+    const uint32_t ttb = DATA_ADDR + 0x3000u, va = 0x10000000u;
+    const uint32_t program[] = {
+        0xee02af10u, 0xee01bf10u, /* MCR TTB/control */
+        0xe5902001u,             /* unaligned mapped MMIO LDR */
+        0xe1d030b1u,             /* odd mapped MMIO LDRH */
+        0xe51f516cu,             /* BIOS literal 0x2ac (pc=0x410) */
+        0xe5986000u,             /* unmapped LDR -> tolerant identity */
+        0xeafffffeu,
+    };
+    current_case = "checked-access-translation";
+    setup_pair();
+    arm920t_set_trace(cpu_ref, 1, NULL, NULL);
+    load_both(program, GP32_ARRAY_COUNT(program));
+    set_reg_both(0u, va); set_reg_both(8u, 0x13000000u);
+    set_reg_both(10u, ttb); set_reg_both(11u, 1u);
+    set_mem_both(ttb, 2u); /* BIOS identity */
+    set_mem_both(ttb + 0x400u, IO_ADDR | 2u);
+    set_mem_both(0x2acu, 0x76543210u);
+    bus_jit.observe_cpu = cpu_jit; bus_ref.observe_cpu = cpu_ref;
+    CHECK(arm920t_run(cpu_jit, 2u) == arm920t_run(cpu_ref, 2u), "MMU setup budget");
+    compare_state();
+    CHECK(arm920t_run(cpu_jit, 32u) == arm920t_run(cpu_ref, 32u), "MMU access budget");
+    compare_state();
+    CHECK(ref_reg(2u) == 0x0c000004u && ref_reg(3u) == 0xffffu &&
+          ref_reg(5u) == 0x76543210u && ref_reg(6u) == UINT32_MAX,
+          "mapped rotation, odd halfword, BIOS literal and identity fallback");
+    CHECK(arm920t_get_cp15(cpu_jit, 5u) == arm920t_get_cp15(cpu_ref, 5u) &&
+          arm920t_get_cp15(cpu_jit, 6u) == arm920t_get_cp15(cpu_ref, 6u) &&
+          arm920t_get_cp15(cpu_ref, 6u) == 0x13000000u,
+          "MMU fault status/address preserve existing tolerant behavior");
+    teardown_pair();
+}
+
 int main(int argc, char **argv) {
     /* Native gate triage can isolate this mapped physical-boundary case
      * without rerunning unrelated differential workloads. */
@@ -2320,7 +2468,13 @@ int main(int argc, char **argv) {
     int block_only = argc == 2 && !strcmp(argv[1], "--block-callback");
     int portable_only = argc == 2 && !strcmp(argv[1], "--portable-callback");
     int pairs_only = argc == 2 && !strcmp(argv[1], "--block-pairs");
-    if (pairs_only) {
+    int access_only = argc == 2 && !strcmp(argv[1], "--checked-access");
+    if (access_only) {
+        case_checked_access();
+        case_checked_access_translation();
+        case_callback_irq_commit();
+        case_native_mapped_ram_end();
+    } else if (pairs_only) {
         case_block_pairs();
         case_native_mapped_block();
         case_ldm_pc();
@@ -2386,6 +2540,8 @@ int main(int argc, char **argv) {
     case_callback_irq_commit();
     case_block_callback_exit();
     case_block_callback_yield();
+    case_checked_access();
+    case_checked_access_translation();
     portable_callbacks = 1;
     case_callback_irq_commit();
     case_block_callback_exit();
@@ -2421,7 +2577,7 @@ int main(int argc, char **argv) {
         return 1;
     }
     printf("PASS: arm jit differential (%s), jit events=%" PRIu64 " fallbacks=%" PRIu64 "\n",
-           pairs_only ? "block-pairs/fences" : portable_only ? "portable-callback" : block_only ? "block-callback" : irq_only ? "callback-IRQ" : chain_only ? "branch-chain" : forward_only ? "forward-loop" : callback_only ? "callback-PC" : (leaf_only ? "unframed-leaf" : (ram_end_only ? "mapped-page-RAM-end" : (loops_only ? "loop-fences" : "flags/shift/branch/mem/half/block/mul/seeded/budget/loop-fences"))),
+           access_only ? "checked-access" : pairs_only ? "block-pairs/fences" : portable_only ? "portable-callback" : block_only ? "block-callback" : irq_only ? "callback-IRQ" : chain_only ? "branch-chain" : forward_only ? "forward-loop" : callback_only ? "callback-PC" : (leaf_only ? "unframed-leaf" : (ram_end_only ? "mapped-page-RAM-end" : (loops_only ? "loop-fences" : "flags/shift/branch/mem/half/block/mul/seeded/budget/loop-fences"))),
            jit_events, jit_fallbacks);
     return 0;
 }

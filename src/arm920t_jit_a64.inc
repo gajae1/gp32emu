@@ -29,13 +29,10 @@ typedef struct a64_emit {
     size_t loop_head;
 } a64_emit_t;
 
-static int arm_a64_exec_checked(arm920t_t *c, const arm_jit_op_t *op,
-                                uint32_t expected_next, uint32_t generation) {
-    int stop = op->stop;
-    uint32_t status = c->cpsr & 0xffu;
-    uint32_t epoch = c->jit_cache_epoch;
-    uint8_t *ram_base = c->jit_ram_base;
-    arm_jit_exec_classified(c, op);
+ARM_FORCE_INLINE int arm_a64_can_continue(const arm920t_t *c, int stop,
+                                         uint32_t expected_next, uint32_t generation,
+                                         uint32_t status, uint32_t epoch,
+                                         const uint8_t *ram_base) {
     return !stop && !c->halted && !thumb(c) && !c->trace && c->jit_enabled &&
            c->jit_generation == generation && c->jit_cache_epoch == epoch &&
            c->jit_ram_base == ram_base &&
@@ -43,6 +40,26 @@ static int arm_a64_exec_checked(arm920t_t *c, const arm_jit_op_t *op,
            (c->r[15] & ~3u) == expected_next &&
            !(c->irq_line && !(c->cpsr & I_FLAG)) &&
            !(c->fiq_line && !(c->cpsr & F_FLAG));
+}
+
+static int arm_a64_exec_checked(arm920t_t *c, const arm_jit_op_t *op,
+                                uint32_t expected_next, uint32_t generation) {
+    int stop = op->stop;
+    uint32_t status = c->cpsr & 0xffu, epoch = c->jit_cache_epoch;
+    uint8_t *ram_base = c->jit_ram_base;
+    arm_jit_exec_classified(c, op);
+    return arm_a64_can_continue(c, stop, expected_next, generation, status, epoch, ram_base);
+}
+
+static int arm_a64_mem_checked(arm920t_t *c, const arm_jit_op_t *op,
+                               uint32_t addr, uint32_t writeback, uint32_t value,
+                               uint32_t expected_next, uint32_t generation) {
+    int stop = op->stop;
+    uint32_t status = c->cpsr & 0xffu, epoch = c->jit_cache_epoch;
+    uint8_t *ram_base = c->jit_ram_base;
+    c->r[15] = op->pc + 4u; /* callback-visible PC, exactly as classified */
+    arm_jit_mem_access(c, op, addr, writeback, value);
+    return arm_a64_can_continue(c, stop, expected_next, generation, status, epoch, ram_base);
 }
 
 static void a64_u32(a64_emit_t *e, uint32_t v) {
@@ -294,6 +311,29 @@ static void a64_slow(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
     a64_patch(e, next, e->pos);
 }
 
+/* w12 retains the original VA before alignment/TLB/range guards; w2 retains
+ * writeback. Neither is clobbered by a64_ram_offset. The access helper owns
+ * the load/store and commits; no guest state is changed before this call. */
+static void a64_mem_slow(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done,
+                          int load, int wb) {
+    if (e->leaf) { e->fail = 1; return; }
+    if (wb) a64_mov(e, 3, 2);
+    else a64_imm(e, 3, 0u);
+    a64_mov(e, 2, 12);
+    if (load) a64_imm(e, 4, 0u);
+    else a64_guest(e, 4, op->b, op->pc);
+    a64_rr(e, 0xaa000000u, 0, 31, 19);
+    a64_ptr(e, 1, (uintptr_t)op);
+    a64_imm(e, 5, e->expected_next);
+    a64_imm(e, 6, e->generation);
+    a64_ptr(e, 16, (uintptr_t)arm_a64_mem_checked);
+    a64_u32(e, 0xd63f0200u);
+    a64_cmp_imm(e, 0, 0);
+    size_t next = a64_jump(e, 1);
+    a64_return(e, done);
+    a64_patch(e, next, e->pos);
+}
+
 /* Immediate ARM shifter: w1 is the value, w3 the old CPSR, w4 the
  * resulting carry at bit 29 when requested. Register shifts use the separate
  * a64_regshift_op2 path to retain ARMv4's amount >=32 semantics. */
@@ -460,6 +500,7 @@ static int a64_single_dt(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
     int load = !!(d & ARM_BC_SD_L), byte = !!(d & ARM_BC_SD_B);
     int wb = !(d & ARM_BC_SD_P) || (d & ARM_BC_SD_W);
     if (!(load ? e->ram_read : e->ram_write) || (wb && op->a == 15u)) return 0;
+    int access = op->b != 15u; /* PC load/store stays on whole-op fallback */
     size_t slow[4];
     unsigned nslow = 0;
     /* PC-relative immediate addresses are fixed by the decoded instruction.
@@ -468,6 +509,7 @@ static int a64_single_dt(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
     uint32_t literal_addr = op->pc + 8u + ((d & ARM_BC_SD_U) ? op->imm : 0u - op->imm);
     if (literal) {
         a64_imm(e, 0, byte ? literal_addr : literal_addr & ~3u);
+        if (access) a64_imm(e, 12, literal_addr);
     } else {
         if (d & ARM_BC_SD_REGOFF) {
             a64_guest(e, 1, op->c, op->pc);
@@ -490,6 +532,7 @@ static int a64_single_dt(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
         else if (!folded)
             a64_mov(e, 2, 0); /* retain the original base for writeback */
         if ((d & ARM_BC_SD_P) && !folded) a64_mov(e, 0, 2);
+        if (access) a64_mov(e, 12, 0);
         if (!byte) {
             /* Retain the ARM unaligned word rotation. Only a load consumes it, and
              * UBFIZ w11, w0, #3, #2 builds ((addr & 3) << 3) in one instruction. */
@@ -527,7 +570,8 @@ static int a64_single_dt(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
     }
     size_t next = a64_jump(e, 14);
     for (unsigned i = 0; i < nslow; ++i) a64_patch(e, slow[i], e->pos);
-    a64_slow(e, op, done);
+    if (access) a64_mem_slow(e, op, done, load, wb);
+    else a64_slow(e, op, done);
     a64_patch(e, next, e->pos);
     return 1;
 }
@@ -541,8 +585,8 @@ static int a64_single_dt(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
  * helpers run with r15 = pc+4 - unlike the base register, which follows
  * read_r's pc+8.  Writeback (base +/- off) is computed before the access
  * and committed after it, matching op_halfword_bc even when Rd==Rn.  Every
- * slow jump lands before the first guest-visible store, so the helper
- * re-executes the whole instruction on unmodified state. */
+ * slow jump lands before the first guest-visible store. The access helper
+ * consumes the computed VA/writeback and performs the same checked commit. */
 static int a64_half(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
     unsigned d = op->d, sh = op->e;
     int load = !!(d & ARM_BC_HALF_L), p = !!(d & ARM_BC_HALF_P);
@@ -560,6 +604,7 @@ static int a64_half(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
     int folded_half = p && !wb;
     a64_rr(e, (d & ARM_BC_HALF_U) ? 0x0b000000u : 0x4b000000u, folded_half ? 0u : 2u, 0, 1);
     if (p && !folded_half) a64_mov(e, 0, 2); /* pre-indexed accesses target the offset address */
+    a64_mov(e, 12, 0);
     a64_ram_offset(e, slow, &nslow, (load && sh == 2u) ? 1u : 2u);
     if (load) {
         /* ldrh/ldrsb/ldrsh w1, [x21, x0]: A64 already yields the exact
@@ -574,7 +619,7 @@ static int a64_half(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
     if (wb) a64_put_guest(e, op->a, 2);
     size_t next = a64_jump(e, 14);
     for (unsigned i = 0; i < nslow; ++i) a64_patch(e, slow[i], e->pos);
-    a64_slow(e, op, done);
+    a64_mem_slow(e, op, done, load, wb);
     a64_patch(e, next, e->pos);
     return 1;
 }
