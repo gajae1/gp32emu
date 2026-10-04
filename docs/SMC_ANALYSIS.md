@@ -46,9 +46,14 @@ name. Candidate scoring and scatter-header validation remain unchanged.
 The local catalog now yields 31/31 payloads. The previous 30 outputs retain
 their exact payload hashes. This still does not mean all programs are fully
 unpacked or playable through direct HLE: Super Plusha remains a small loader,
-and Story of Bug Eyed Monster's direct-load API succeeds but a 1200-frame
-no-input sample remains dark. Its existing BIOS-based capture reaches a
-visible game scene; the two execution paths are not interchangeable evidence.
+and the initial Story of Bug Eyed Monster direct-load sample remained dark
+despite successful loading and CPU execution. Its SDK has separate create/open
+file entries; the existing-file entry's alternate prologue was not recognized
+by the direct-HLE scanner. Recognizing its register/stack and device-validation
+sequence restores asset reads without depending on a title or link address.
+A 1200-frame no-input sample now reaches a visible dialogue scene. Color/display
+differences from the existing BIOS capture remain, so this is not full direct-HLE
+compatibility. The two execution paths are not interchangeable evidence.
 
 Candidate decryption now checks a 32-byte decrypted scatter header before
 allocating and decrypting the full body. Header bounds are checked against
@@ -68,3 +73,8 @@ These are Windows direct-loader/inspection times, not gameplay frame rates or
 BIOS/SmartMedia access timing. The normal BIOS path and H700 installation are
 unchanged. Private provenance, corpus hashes, timing samples and captures:
 `results/resume122-loader/`.
+
+The SDK open follow-up is recorded in `results/resume123-hle/`. A ROM-free
+regression exercises relocated entry detection, a near-match rejection, asset
+reading and EOF. It fails on the previous scanner and passes on Windows and
+H700; the H700 check runs from RAM and does not install a core or change volume.

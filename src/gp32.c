@@ -2201,6 +2201,18 @@ static void direct_scan_file_hle(gp32_t *g) {
             g->direct_hle_file_open_addr = a;
             s3c2400_write32(g->soc, a, 0xef070001u);
         }
+        /* The SDK also has a separate existing-file open entry, with a smaller
+           stack frame and swapped saved mode/output registers. Both entries
+           use (path, mode, handle_out); recognize the device-validation prefix
+           without depending on their link address or a title's wrapper. */
+        if (w0 == 0xe92d4ff0u && w1 == 0xe24dd04cu && w2 == 0xe1a06001u && w3 == 0xe1a05002u && w4 == 0xe1a07000u &&
+            direct_arm_is_bl(s3c2400_debug_read32(g->soc, a + 0x14u)) &&
+            s3c2400_debug_read32(g->soc, a + 0x18u) == 0xe1a04000u &&
+            s3c2400_debug_read32(g->soc, a + 0x1cu) == 0xe3500001u &&
+            s3c2400_debug_read32(g->soc, a + 0x20u) == 0x23a0000bu) {
+            g->direct_hle_file_open_addr = a;
+            s3c2400_write32(g->soc, a, 0xef070001u);
+        }
         if (w0 == 0xe92d4fffu && w1 == 0xe24dd00cu && w2 == 0xe1a05001u && w3 == 0xe3a0107fu && w4 == 0xe0016c40u) {
             if (!g->direct_hle_file_read_addr[0]) {
                 g->direct_hle_file_read_addr[0] = a;
