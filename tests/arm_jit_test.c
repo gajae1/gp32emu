@@ -1583,6 +1583,293 @@ static void case_native_longmul_psr(void) {
     teardown_pair();
 }
 
+/* Banked SPSR coverage.  No byte pattern repeats between the seeds, so a
+ * read or write that lands on the wrong bank cannot match the expectation.
+ * arm920t_set_register_context seeds every bank at once without switching
+ * modes, keeping the full-CPSR set that follows independent of the seed. */
+#define SPSR_FIQ_SEED 0xf1a2b3c4u
+#define SPSR_IRQ_SEED 0x91d2e3f4u
+#define SPSR_SVC_SEED 0x13243546u
+#define SPSR_ABT_SEED 0xabcdef01u
+#define SPSR_UND_SEED 0x2468ace0u
+
+#define SPSR_MODE_USR 0x10u
+#define SPSR_MODE_FIQ 0x11u
+#define SPSR_MODE_IRQ 0x12u
+#define SPSR_MODE_SVC 0x13u
+#define SPSR_MODE_ABT 0x17u
+#define SPSR_MODE_UND 0x1bu
+#define SPSR_MODE_SYS 0x1fu
+#define SPSR_MODE_UNUSED 0x1cu /* unused encoding, owns no SPSR bank */
+
+static uint32_t spsr_seed(unsigned m) {
+    switch (m) {
+    case SPSR_MODE_FIQ: return SPSR_FIQ_SEED;
+    case SPSR_MODE_IRQ: return SPSR_IRQ_SEED;
+    case SPSR_MODE_SVC: return SPSR_SVC_SEED;
+    case SPSR_MODE_ABT: return SPSR_ABT_SEED;
+    case SPSR_MODE_UND: return SPSR_UND_SEED;
+    default: return 0u;
+    }
+}
+static uint32_t spsr_bank(const arm920t_t *cpu, unsigned m) {
+    arm920t_register_context_t c;
+    arm920t_get_register_context(cpu, &c);
+    switch (m) {
+    case SPSR_MODE_FIQ: return c.spsr_fiq;
+    case SPSR_MODE_IRQ: return c.spsr_irq;
+    case SPSR_MODE_SVC: return c.spsr_svc;
+    case SPSR_MODE_ABT: return c.spsr_abt;
+    case SPSR_MODE_UND: return c.spsr_und;
+    default: return 0u;
+    }
+}
+static void seed_spsr_banks(void) {
+    arm920t_t *pair[2] = {cpu_jit, cpu_ref};
+    for (unsigned i = 0; i < 2u; ++i) {
+        arm920t_register_context_t c;
+        arm920t_get_register_context(pair[i], &c);
+        c.spsr_fiq = SPSR_FIQ_SEED; c.spsr_irq = SPSR_IRQ_SEED; c.spsr_svc = SPSR_SVC_SEED;
+        c.spsr_abt = SPSR_ABT_SEED; c.spsr_und = SPSR_UND_SEED;
+        arm920t_set_register_context(pair[i], &c);
+    }
+}
+static void set_cpsr_both(uint32_t v) { arm920t_set_cpsr(cpu_jit, v); arm920t_set_cpsr(cpu_ref, v); }
+static void set_pc_both(uint32_t v) { arm920t_set_reg(cpu_jit, 15u, v); arm920t_set_reg(cpu_ref, 15u, v); }
+/* Every bank except keep_mode must still hold its seed.  Pass a value that is
+ * not a banked mode to require all five. */
+static void check_bank_seeds(unsigned keep_mode) {
+    static const unsigned modes[5] = {SPSR_MODE_FIQ, SPSR_MODE_IRQ, SPSR_MODE_SVC, SPSR_MODE_ABT, SPSR_MODE_UND};
+    for (unsigned i = 0; i < 5u; ++i)
+        if (modes[i] != keep_mode)
+            CHECK(spsr_bank(cpu_ref, modes[i]) == spsr_seed(modes[i]), "untouched SPSR bank changed");
+}
+static void compare_spsr_banks(void) {
+    static const unsigned modes[5] = {SPSR_MODE_FIQ, SPSR_MODE_IRQ, SPSR_MODE_SVC, SPSR_MODE_ABT, SPSR_MODE_UND};
+    for (unsigned i = 0; i < 5u; ++i) {
+        uint32_t j = spsr_bank(cpu_jit, modes[i]), r = spsr_bank(cpu_ref, modes[i]);
+        if (j != r) { char nm[16]; snprintf(nm, sizeof(nm), "spsr_%02x", modes[i]); report(nm, j, r); }
+    }
+}
+
+/* MSR SPSR_f writes only the live mode's bank, MRS SPSR reads it back and
+ * CPSR keeps running normally.  Iterating the five banked modes proves the
+ * bank follows the current cpsr rather than a translation-time mode. */
+static void case_native_spsr_mode_banks(void) {
+    static const unsigned modes[5] = {SPSR_MODE_FIQ, SPSR_MODE_SVC, SPSR_MODE_ABT, SPSR_MODE_IRQ, SPSR_MODE_UND};
+    const uint32_t program[] = {
+        0xe168f001u, /* MSR SPSR_f,r1 */
+        0xe14f2000u, /* MRS r2,SPSR */
+        0xe10f3000u, /* MRS r3,CPSR */
+        0xeafffffeu
+    };
+    for (unsigned i = 0; i < 5u; ++i) {
+        uint32_t cpsr = 0x600000c0u | modes[i];
+        uint32_t expect = (spsr_seed(modes[i]) & 0x00ffffffu) | 0x5a000000u;
+        current_case = "native-spsr-bank";
+        setup_pair();
+        seed_spsr_banks();
+        set_cpsr_both(cpsr);
+        set_reg_both(1, 0x5a000000u);
+        load_both(program, GP32_ARRAY_COUNT(program));
+        run_native_case();
+        CHECK(ref_reg(2) == expect, "MRS SPSR read the current mode bank");
+        CHECK(ref_reg(3) == cpsr, "SPSR write left CPSR alone");
+        CHECK(spsr_bank(cpu_ref, modes[i]) == expect, "MSR SPSR_f wrote the current mode bank");
+        CHECK(ref_reg(1) == 0x5a000000u, "MSR source register unchanged");
+        check_bank_seeds(modes[i]);
+        compare_spsr_banks();
+        teardown_pair();
+    }
+}
+
+/* USR/SYS and an unused encoding own no SPSR bank: MRS SPSR falls back to
+ * CPSR and MSR SPSR is ignored, with every bank left at its seed. */
+static void case_native_spsr_no_bank(void) {
+    static const unsigned modes[3] = {SPSR_MODE_USR, SPSR_MODE_SYS, SPSR_MODE_UNUSED};
+    const uint32_t program[] = {
+        0xe168f001u, /* MSR SPSR_f,r1: ignored without a bank */
+        0xe14f2000u, /* MRS r2,SPSR: CPSR fallback */
+        0xe10f3000u, /* MRS r3,CPSR */
+        0xeafffffeu
+    };
+    for (unsigned i = 0; i < 3u; ++i) {
+        uint32_t cpsr = 0x600000c0u | modes[i];
+        current_case = "native-spsr-nobank";
+        setup_pair();
+        seed_spsr_banks();
+        set_cpsr_both(cpsr);
+        set_reg_both(1, 0x5a000000u);
+        load_both(program, GP32_ARRAY_COUNT(program));
+        run_native_case();
+        CHECK(ref_reg(2) == ref_reg(3), "MRS SPSR without a bank reads CPSR");
+        CHECK(ref_reg(3) == cpsr, "CPSR fallback value");
+        CHECK(arm920t_get_cpsr(cpu_ref) == cpsr, "ignored SPSR write changed no CPSR bit");
+        check_bank_seeds(0u);
+        compare_spsr_banks();
+        teardown_pair();
+    }
+}
+
+/* MSR SPSR field masks: each nibble bit selects one byte, in register and
+ * immediate form, with the existing zero-field NZCV-nibble (0xf0000000)
+ * fallback.  The last row reads the pipeline PC (address + 8) as its source. */
+static void case_native_spsr_fields(void) {
+    static const struct {
+        const char *name;
+        uint32_t msr;
+        unsigned rm;      /* 16 = no source register (immediate / PC) */
+        uint32_t rm_value;
+        uint32_t expect;  /* SPSR_SVC after the write */
+    } rows[] = {
+        {"native-spsr-c",      0xe161f001u, 1u,  0x000000a5u, 0x132435a5u},
+        {"native-spsr-x",      0xe162f002u, 2u,  0x0000b700u, 0x1324b746u},
+        {"native-spsr-s",      0xe164f003u, 3u,  0x00c90000u, 0x13c93546u},
+        {"native-spsr-f",      0xe168f004u, 4u,  0xdb000000u, 0xdb243546u},
+        {"native-spsr-cx",     0xe163f005u, 5u,  0x0000e11fu, 0x1324e11fu},
+        {"native-spsr-zero",   0xe160f006u, 6u,  0xf2abcdefu, 0xf3243546u},
+        {"native-spsr-imm-f",  0xe368f4f0u, 16u, 0u,          0xf0243546u},
+        {"native-spsr-imm-c",  0xe361f0ffu, 16u, 0u,          0x132435ffu},
+        {"native-spsr-imm-zero", 0xe360f0aau, 16u, 0u,        0x03243546u},
+        {"native-spsr-pc",     0xe16ff00fu, 16u, 0u,          CODE_ADDR + 8u},
+    };
+    for (unsigned i = 0; i < GP32_ARRAY_COUNT(rows); ++i) {
+        const uint32_t program[] = {
+            rows[i].msr,
+            0xe14f9000u, /* MRS r9,SPSR: read the bank back */
+            0xeafffffeu
+        };
+        current_case = rows[i].name;
+        setup_pair();
+        seed_spsr_banks();
+        set_cpsr_both(0x600000c0u | SPSR_MODE_SVC);
+        if (rows[i].rm < 16u) set_reg_both(rows[i].rm, rows[i].rm_value);
+        load_both(program, GP32_ARRAY_COUNT(program));
+        run_native_case();
+        CHECK(spsr_bank(cpu_ref, SPSR_MODE_SVC) == rows[i].expect, "MSR SPSR field mask");
+        CHECK(ref_reg(9) == rows[i].expect, "MRS SPSR round trip");
+        if (rows[i].rm < 16u) CHECK(ref_reg(rows[i].rm) == rows[i].rm_value, "MSR source register unchanged");
+        check_bank_seeds(SPSR_MODE_SVC);
+        compare_spsr_banks();
+        teardown_pair();
+    }
+}
+
+/* Conditional MRS/MSR SPSR: a skipped execution leaves the bank untouched,
+ * a taken one applies the read or write. */
+static void case_native_spsr_conditions(void) {
+    static const struct {
+        const char *name;
+        uint32_t flags;        /* source of MSR CPSR_f,r7 */
+        uint32_t expect_bank;
+        uint32_t expect_r5;
+    } rows[] = {
+        {"native-spsr-cond-skip", 0x00000000u, 0x13243546u, 0x13243546u},
+        {"native-spsr-cond-take", 0x40000000u, 0x77243546u, 0xfeedf00du},
+    };
+    const uint32_t program[] = {
+        0xe128f007u, /* MSR CPSR_f,r7 */
+        0x0168f006u, /* MSREQ SPSR_f,r6 */
+        0xc14f5000u, /* MRSGT r5,SPSR */
+        0xe10f8000u, /* MRS r8,CPSR */
+        0xeafffffeu
+    };
+    for (unsigned i = 0; i < GP32_ARRAY_COUNT(rows); ++i) {
+        current_case = rows[i].name;
+        setup_pair();
+        seed_spsr_banks();
+        set_cpsr_both(0x600000c0u | SPSR_MODE_SVC);
+        set_reg_both(5, 0xfeedf00du);
+        set_reg_both(6, 0x77000000u);
+        set_reg_both(7, rows[i].flags);
+        load_both(program, GP32_ARRAY_COUNT(program));
+        run_native_case();
+        CHECK(spsr_bank(cpu_ref, SPSR_MODE_SVC) == rows[i].expect_bank, "conditional MSR SPSR");
+        CHECK(ref_reg(5) == rows[i].expect_r5, "conditional MRS SPSR");
+        CHECK(ref_reg(8) == arm920t_get_cpsr(cpu_ref), "conditional case MRS CPSR");
+        check_bank_seeds(SPSR_MODE_SVC);
+        compare_spsr_banks();
+        teardown_pair();
+    }
+}
+
+/* A translated block must resolve the SPSR bank from the live cpsr on every
+ * execution: run it in SVC, switch to FIQ through arm920t_set_cpsr (which
+ * does not flush the cache), rewind PC and run the same block again. */
+static void case_native_spsr_bank_reuse(void) {
+    const uint32_t program[] = {
+        0xe168f001u, /* MSR SPSR_f,r1 */
+        0xe14f2000u, /* MRS r2,SPSR */
+        0xe1a03002u, /* MOV r3,r2 */
+        0xeafffffeu
+    };
+    current_case = "native-spsr-reuse";
+    setup_pair();
+    seed_spsr_banks();
+    set_cpsr_both(0x600000c0u | SPSR_MODE_SVC);
+    set_reg_both(1, 0x5a000000u);
+    load_both(program, GP32_ARRAY_COUNT(program));
+    uint64_t misses_before = arm920t_get_jit_misses(cpu_jit);
+    uint64_t hits_before = arm920t_get_jit_hits(cpu_jit);
+    run_native_case();
+    uint32_t svc_after = spsr_bank(cpu_ref, SPSR_MODE_SVC);
+    CHECK(svc_after == ((SPSR_SVC_SEED & 0x00ffffffu) | 0x5a000000u), "SVC bank write");
+    CHECK(ref_reg(2) == svc_after && ref_reg(3) == svc_after, "SVC bank read");
+    uint64_t misses_mid = arm920t_get_jit_misses(cpu_jit);
+    CHECK(misses_mid > misses_before && arm920t_get_jit_hits(cpu_jit) > hits_before,
+          "first run translated and executed the block");
+
+    set_cpsr_both(0x600000c0u | SPSR_MODE_FIQ);
+    set_pc_both(CODE_ADDR);
+    set_reg_both(1, 0x3c000000u);
+    hits_before = arm920t_get_jit_hits(cpu_jit);
+    CHECK(arm920t_run(cpu_jit, 64u) == arm920t_run(cpu_ref, 64u), "reuse run budget");
+    compare_state();
+    CHECK(arm920t_get_jit_misses(cpu_jit) == misses_mid, "mode change kept the translated block");
+    CHECK(arm920t_get_jit_hits(cpu_jit) > hits_before, "second run reused the translated block");
+    CHECK(spsr_bank(cpu_ref, SPSR_MODE_FIQ) == ((SPSR_FIQ_SEED & 0x00ffffffu) | 0x3c000000u),
+          "reused block wrote the FIQ bank");
+    CHECK(spsr_bank(cpu_ref, SPSR_MODE_SVC) == svc_after, "SVC bank kept its first-run write");
+    CHECK(ref_reg(2) == spsr_bank(cpu_ref, SPSR_MODE_FIQ), "reused block read the FIQ bank");
+    CHECK(arm920t_get_pc(cpu_ref) == CODE_ADDR + 12u, "reuse run executed the whole block");
+    compare_spsr_banks();
+    teardown_pair();
+}
+
+/* The native SPSR write must be visible to the MOVS PC,LR exception return,
+ * which restores CPSR and switches mode from the current bank. */
+static void case_native_spsr_exception_return(void) {
+    uint32_t program[20];
+    const uint32_t target = CODE_ADDR + 0x40u;
+    for (unsigned i = 0; i < GP32_ARRAY_COUNT(program); ++i) program[i] = 0xeafffffeu;
+    program[0] = 0xe16ff001u;  /* MSR SPSR_cxsf,r1: full CPSR image */
+    program[1] = 0xe1b0f00eu;  /* MOVS PC,LR */
+    program[16] = 0xe10f4000u; /* MRS r4,CPSR after the return */
+    current_case = "native-spsr-return";
+    setup_pair();
+    seed_spsr_banks();
+    set_cpsr_both(0x600000c0u | SPSR_MODE_SVC);
+    set_reg_both(1, 0x00000010u); /* return to USR mode, IRQ/FIQ enabled */
+    set_reg_both(14, target);
+    load_both(program, GP32_ARRAY_COUNT(program));
+    run_native_case();
+    CHECK(arm920t_get_cpsr(cpu_ref) == 0x00000010u, "SPSR image became the new CPSR");
+    CHECK(ref_reg(4) == 0x00000010u, "returned code runs in the restored mode");
+    CHECK(arm920t_get_pc(cpu_ref) == target + 4u, "returned to LR and parked on B self");
+    compare_spsr_banks();
+    teardown_pair();
+}
+
+/* Focused SPSR bundle; --psr runs this plus case_native_longmul_psr. */
+static void case_native_spsr(void) {
+    case_native_spsr_mode_banks();
+    case_native_spsr_no_bank();
+    case_native_spsr_fields();
+    case_native_spsr_conditions();
+    case_native_spsr_bank_reuse();
+    case_native_spsr_exception_return();
+}
+
 static void case_native_mapped_block(void) {
     const uint32_t va = 0x10000ffcu;
     const uint32_t ttb = RAM_BASE + 0x4000u, l2 = RAM_BASE + 0x8000u;
@@ -2557,7 +2844,11 @@ int main(int argc, char **argv) {
     int pairs_only = argc == 2 && !strcmp(argv[1], "--block-pairs");
     int access_only = argc == 2 && !strcmp(argv[1], "--checked-access");
     int poll_only = argc == 2 && !strcmp(argv[1], "--poll-progress");
-    if (poll_only) {
+    int psr_only = argc == 2 && !strcmp(argv[1], "--psr");
+    if (psr_only) {
+        case_native_spsr();
+        case_native_longmul_psr();
+    } else if (poll_only) {
         case_poll_progress();
     } else if (access_only) {
         case_checked_access();
@@ -2624,6 +2915,7 @@ int main(int argc, char **argv) {
     case_native_condition_flags();
     case_native_regshift();
     case_native_longmul_psr();
+    case_native_spsr();
     case_cache_maintenance_native();
     case_native_mapped_block();
     case_unframed_leaf();
@@ -2668,7 +2960,7 @@ int main(int argc, char **argv) {
         return 1;
     }
     printf("PASS: arm jit differential (%s), jit events=%" PRIu64 " fallbacks=%" PRIu64 "\n",
-           poll_only ? "poll-progress" : access_only ? "checked-access" : pairs_only ? "block-pairs/fences" : portable_only ? "portable-callback" : block_only ? "block-callback" : irq_only ? "callback-IRQ" : chain_only ? "branch-chain" : forward_only ? "forward-loop" : callback_only ? "callback-PC" : (leaf_only ? "unframed-leaf" : (ram_end_only ? "mapped-page-RAM-end" : (loops_only ? "loop-fences" : "flags/shift/branch/mem/half/block/mul/seeded/budget/loop-fences"))),
+           psr_only ? "spsr" : poll_only ? "poll-progress" : access_only ? "checked-access" : pairs_only ? "block-pairs/fences" : portable_only ? "portable-callback" : block_only ? "block-callback" : irq_only ? "callback-IRQ" : chain_only ? "branch-chain" : forward_only ? "forward-loop" : callback_only ? "callback-PC" : (leaf_only ? "unframed-leaf" : (ram_end_only ? "mapped-page-RAM-end" : (loops_only ? "loop-fences" : "flags/shift/branch/mem/half/block/mul/seeded/budget/loop-fences"))),
            jit_events, jit_fallbacks);
     return 0;
 }

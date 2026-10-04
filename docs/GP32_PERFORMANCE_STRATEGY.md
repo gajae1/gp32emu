@@ -2009,3 +2009,49 @@ The follow-up core from `e153e45` is installed with SHA-256
 The previous core is backed up as `gp32-dev/resume90-dispatch-installed-core-before.so`;
 stock frontend/launcher/configuration hashes remain unchanged. See that
 directory's `installed.json` for readback. No playback or volume command ran.
+
+### AArch64 saved-status register access (2026-10-04)
+
+The Princess cutscene profile still attributed 1,322,769 native slow-helper
+calls to PSR instructions. The AArch64 emitter now handles MRS SPSR and MSR
+SPSR directly. A read-only offset table selects the bank from the live CPSR
+mode, so a translated block can be reused across exception modes. Modes
+without SPSR retain the interpreter's CPSR read fallback and ignored writes.
+Partial byte masks, the existing zero-field NZCV mask and the source-PC value
+are preserved. CPSR control writes and exception returns retain their checked
+paths; no game identity, guest address or firmware version selects this code.
+
+An H700 ABBA comparison against the installed `e153e45` release produced:
+
+| Saved scene | Before core fps | After core fps | Change |
+| --- | ---: | ---: | ---: |
+| Princess Maker 2 cutscene | 68.831 | 71.826 | +4.35% |
+| Astonishia Story R title | 175.052 | 174.199 | -0.49% |
+| Blue Angelo dialogue approach | 72.177 | 71.991 | -0.26% |
+
+Princess has one valid baseline and two candidate samples; one baseline with
+changing clock endpoints was excluded. The other scenes have two samples per
+variant. Retained endpoints were 1512 MHz, which does not establish constant
+frequency throughout each sample. The small negative results are reported
+rather than claimed as improvements. These are short headless core-throughput
+measurements, not frontend frame pacing or all-game acceptance.
+
+All seven CPU/clock/audio-count/video-hash/PCM-hash fields match the previous
+Windows reference and both H700 variants exactly. A separate diagnostic build
+reports 663,633 remaining PSR slow-helper calls, 659,136 fewer than the earlier
+profile. Other dispatch counters differ because the older profile predates
+final counted-poll routing; its throughput is not a release comparison.
+Evidence: `resume92-spsr/{manifest,device,summary,profile}.json` and the two-frame
+PC opcode census in `resume92-psr-census/`. No audio playback or mixer/volume
+command was used.
+
+The focused `arm_jit_test --psr` differential passes on Windows and native
+H700, covering every SPSR bank, bankless modes, partial/immediate/PC-source
+writes, conditions, cached-block reuse across modes, and exception return.
+The H700 release and Android arm64 builds pass; Android runtime is untested.
+The H700 core is installed with SHA-256
+`b34adc801c5e69aedf8060255d9b302741a1df29e956bd8bc8fe5ddebaf31838`;
+the prior core is backed up as `gp32-dev/resume92-spsr-installed-core-before.so`.
+Stock RetroArch, launcher and protected settings match their pre-installation
+hashes. See `resume92-spsr/installed.json`. Interactive frontend acceptance of
+this build remains untested.
