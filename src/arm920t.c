@@ -227,6 +227,7 @@ struct arm920t {
     int irq_line, fiq_line;
     int halted;
     int running; /* Runtime only; not part of the v0002 CPU wire image. */
+    uint32_t run_limit; /* Absolute cycle budget within the current run only. */
     int trace;
     arm_log_fn log;
     void *log_user;
@@ -611,6 +612,10 @@ uint32_t arm920t_get_pc(const arm920t_t *c) { return c ? c->r[15] : 0; }
 uint64_t arm920t_get_cycles(const arm920t_t *c) { return c ? c->cycles_total : 0; }
 void arm920t_add_idle_cycles(arm920t_t *c, uint32_t cycles) { if (c) c->cycles_total += cycles; }
 void arm920t_stop_run(arm920t_t *c) { if (c) c->halted |= HALT_END_RUN; }
+void arm920t_limit_run(arm920t_t *c, uint32_t max_cycles_from_run_start) {
+    if (c && c->running && max_cycles_from_run_start < c->run_limit)
+        c->run_limit = max_cycles_from_run_start;
+}
 int arm920t_is_running(const arm920t_t *c) { return c && c->running; }
 uint32_t arm920t_get_reg(const arm920t_t *c, unsigned r) { return c && r < 16 ? c->r[r] : 0; }
 uint32_t arm920t_get_cpsr(const arm920t_t *c) { return c ? c->cpsr : 0; }
@@ -2280,10 +2285,10 @@ static int arm_x64_exec_checked(arm920t_t *c, const arm_jit_op_t *op,
                                 uint32_t expected_next, uint32_t generation) {
     int stop = op->stop;
     uint32_t status = c->cpsr & 0xffu;
-    uint32_t epoch = c->jit_cache_epoch;
+    uint32_t epoch = c->jit_cache_epoch, run_limit = c->run_limit;
     uint8_t *ram_base = c->jit_ram_base, *bios_base = c->jit_bios_base;
     arm_jit_exec_classified(c, op);
-    return !stop && !c->halted && !thumb(c) && !c->trace && c->jit_enabled &&
+    return !stop && c->run_limit == run_limit && !c->halted && !thumb(c) && !c->trace && c->jit_enabled &&
            c->jit_generation == generation && c->jit_cache_epoch == epoch &&
            c->jit_ram_base == ram_base &&
            c->jit_bios_base == bios_base && (c->cpsr & 0xffu) == status &&
@@ -3153,11 +3158,12 @@ static int arm_poll_read_stable(arm920t_t *c, const arm_jit_op_t *op) {
 static ARM_NOINLINE uint32_t arm_jit_run_portable(arm920t_t *c,
                                                  arm_jit_block_t *b,
                                                  uint32_t budget,
+                                                 uint32_t run_done,
                                                  int *stable_reads) {
     uint32_t done = 0;
     const uint32_t generation = c->jit_generation;
     const uint32_t epoch = c->jit_cache_epoch;
-    for (uint8_t i = 0; i < b->count && done < budget; ++i) {
+    for (uint8_t i = 0; i < b->count && done < budget && run_done + done < c->run_limit; ++i) {
         const arm_jit_op_t *op = &arm_jit_ops(c, b)[i];
         if ((c->r[15] & ~3u) != op->pc || thumb(c)) break;
         uint32_t expected_next = (i + 1u < b->count) ? (arm_jit_ops(c, b)[i + 1u].pc & ~3u) : (op->pc + 4u);
@@ -3179,17 +3185,17 @@ static ARM_NOINLINE uint32_t arm_jit_run_portable(arm920t_t *c,
     return done;
 }
 
-static uint32_t arm_jit_run(arm920t_t *c, uint32_t cycles) {
-    if (!c || !cycles || thumb(c) || c->trace) return 0;
+static uint32_t arm_jit_run(arm920t_t *c, uint32_t run_done) {
+    if (!c || run_done >= c->run_limit || thumb(c) || c->trace) return 0;
     if (!c->jit_ram_base) c->jit_ram_base = fastmem(c, ARM_JIT_RAM_BASE_ADDR, 1u, 0);
     if (!c->jit_bios_base) c->jit_bios_base = fastmem(c, 0x00000000u, 1u, 0);
-    uint32_t total = 0;
+    uint32_t total = run_done;
     uint32_t poll_pc = UINT32_MAX, poll_count = 0, poll_cpsr = 0;
     uint32_t poll_regs[16];
     /* A checked native helper can enable tracing during a bus callback.
      * Return to arm920t_run so the next instruction uses exec_arm's logger. */
-    while (total < cycles && !c->halted && !thumb(c) && !c->trace) {
-        if (total && (c->irq_line || c->fiq_line)) {
+    while (total < c->run_limit && !c->halted && !thumb(c) && !c->trace) {
+        if (total != run_done && (c->irq_line || c->fiq_line)) {
             maybe_irq(c);
             if (c->halted || thumb(c) || c->trace) break;
         }
@@ -3227,12 +3233,14 @@ static uint32_t arm_jit_run(arm920t_t *c, uint32_t cycles) {
 
         uint32_t done = 0;
         int stable_reads = 0;
+        /* Fetch/translation callbacks may also shorten the current run. */
+        if (total >= c->run_limit) break;
         /* Translation only publishes native for eligible blocks. In
          * particular, a bus with stable reads leaves polling backedges on
          * the portable path unless register progress is proven. The bus
          * callbacks are fixed at CPU creation. */
-        if (b->native && (cycles - total) >= b->count) {
-            done = b->native(c, cycles - total);
+        if (b->native && (c->run_limit - total) >= b->count) {
+            done = b->native(c, c->run_limit - total);
 #if ARM920T_PROFILING
             c->prof.native_block_calls++;
             c->prof.native_arm_insns += done;
@@ -3242,7 +3250,7 @@ static uint32_t arm_jit_run(arm920t_t *c, uint32_t cycles) {
 
         if (!done) {
             stable_reads = c->bus.is_stable_read32 && b->poll_prefix;
-            done = arm_jit_run_portable(c, b, cycles - total, &stable_reads);
+            done = arm_jit_run_portable(c, b, c->run_limit - total, total, &stable_reads);
         }
         if (!done) break;
         total += done;
@@ -3250,7 +3258,10 @@ static uint32_t arm_jit_run(arm920t_t *c, uint32_t cycles) {
             !(c->irq_line && !(c->cpsr & I_FLAG)) && !(c->fiq_line && !(c->cpsr & F_FLAG))) {
             if (poll_pc == pc && poll_count == done && poll_cpsr == c->cpsr &&
                 memcmp(poll_regs, c->r, sizeof(poll_regs)) == 0) {
-                uint32_t repeats = (cycles - total) / done;
+                /* A callback can move the deadline behind this instruction.
+                 * Saturate before subtracting, and never skip past the live
+                 * deadline using the budget captured on entry. */
+                uint32_t repeats = total < c->run_limit ? (c->run_limit - total) / done : 0;
                 total += repeats * done;
                 c->jit_hits += repeats;
 #if ARM920T_PROFILING
@@ -3267,24 +3278,27 @@ static uint32_t arm_jit_run(arm920t_t *c, uint32_t cycles) {
             poll_pc = UINT32_MAX;
         }
     }
-    return total;
+    return total - run_done;
 }
 
 uint32_t arm920t_run(arm920t_t *c, uint32_t cycles) {
     if (!c) return 0;
     c->running = 1;
+    c->run_limit = cycles;
     uint32_t done = 0;
-    while (done < cycles && !c->halted) {
+    while (done < c->run_limit && !c->halted) {
         maybe_irq(c);
         uint32_t batch = 0;
-        if (!thumb(c)) batch = arm_jit_run(c, cycles - done);
+        if (!thumb(c)) batch = arm_jit_run(c, done);
         if (batch) done += batch;
+        else if (done >= c->run_limit) break;
         else if (thumb(c)) { ARM_PROF_INC(c, interp_thumb_insns); exec_thumb(c); done += 1; }
         else { ARM_PROF_INC(c, interp_arm_insns); exec_arm(c); done += 1; }
     }
     c->halted &= ~HALT_END_RUN;
     c->cycles_total += done;
     c->running = 0;
+    c->run_limit = 0;
     return done;
 }
 

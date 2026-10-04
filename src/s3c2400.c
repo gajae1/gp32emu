@@ -108,7 +108,7 @@ struct s3c2400 {
     uint32_t clkpow[0x18/4];
     /* Transient CPU-run transaction; never part of the saved peripheral image. */
     uint32_t clkpow_before_run[0x18/4];
-    uint8_t cpu_run_active, cpu_run_clock_written;
+    uint8_t cpu_run_active, cpu_run_clock_written, cpu_lcd_deadline_set;
     /* STM issues at most 16 stores; the bus can split an unaligned word into
      * four byte lanes. Commit after ticking the elapsed prefix, in order. */
     struct { uint32_t addr, value, mask; } cpu_io_writes[16 * 4];
@@ -232,6 +232,7 @@ void s3c2400_reset(s3c2400_t *s) {
     memset(s->dma, 0, sizeof(s->dma));
     memset(s->clkpow, 0, sizeof(s->clkpow));
     s->cpu_run_active = s->cpu_run_clock_written = 0;
+    s->cpu_lcd_deadline_set = 0;
     s->cpu_io_write_count = 0;
     memset(s->uart0, 0, sizeof(s->uart0));
     memset(s->uart1, 0, sizeof(s->uart1));
@@ -920,9 +921,10 @@ static void io_write32(s3c2400_t *s, uint32_t addr, uint32_t value, uint32_t mas
         return;
     }
     if (s->cpu_run_active && ((addr >= 0x14600000u && addr <= 0x1460007bu) ||
+                              (addr >= 0x14a00000u && addr <= 0x14a00007u) ||
                               (addr >= 0x15508000u && addr <= 0x15508013u))) {
         /* A register change near the end of a CPU batch must not replace the
-         * DMA source, sample rate or enable state of its already elapsed time.
+         * DMA source, sample rate or LCD timing of its already elapsed time.
          * Finish the current instruction, tick the old peripheral state, then
          * apply its stores. Reads in SWP/LDM precede any deferred store. */
         assert(s->cpu_io_write_count < GP32_ARRAY_COUNT(s->cpu_io_writes));
@@ -1520,6 +1522,22 @@ static uint64_t lcd_panel_frame_cycles(s3c2400_t *s) {
 
 static uint32_t lcd_current_line_count(s3c2400_t *s) {
     if (!s) return 0u;
+    if (s->cpu_run_active && !s->cpu_lcd_deadline_set) {
+        /* Only a guest observing LINECNT needs this deadline. Keep the value
+         * stable inside this run, then tick before it changes. The flag lives
+         * for one CPU call, so scheduling has no extra saved-state history. */
+        s->cpu_lcd_deadline_set = 1;
+        lcd_refresh_timing_cache(s);
+        uint64_t frame = s->lcd_cached_frame_cycles;
+        uint64_t line = s->lcd_cached_line_cycles;
+        uint64_t phase = s->lcd_line_accum % frame;
+        uint64_t zero_start = (uint64_t)(s->lcd_cached_visible - 1u) * line;
+        uint64_t next = phase < zero_start ? (phase / line + 1u) * line : frame;
+        if (next > frame) next = frame;
+        uint64_t remaining = next - phase;
+        if (remaining < UINT32_MAX)
+            arm920t_limit_run(s->cpu_irq_sink, (uint32_t)remaining);
+    }
     /* Peripheral time is constant throughout an ARM execution slice. BIOS and
      * games poll LCDCON1 heavily; reuse the exact result until time/registers
      * change instead of repeating several integer divisions for every load. */
@@ -1761,6 +1779,7 @@ uint32_t s3c2400_run_cpu(s3c2400_t *s, uint32_t cpu_cycles) {
     if (!s || !s->cpu_irq_sink || !cpu_cycles) return 0;
     s->cpu_run_active = 1;
     s->cpu_run_clock_written = 0;
+    s->cpu_lcd_deadline_set = 0;
     s->cpu_io_write_count = 0;
     uint32_t done = arm920t_run(s->cpu_irq_sink, cpu_cycles);
     s->cpu_run_active = 0;

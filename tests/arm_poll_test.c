@@ -722,6 +722,125 @@ static void case_pending_irq(void) {
     teardown_pair();
 }
 
+/* A peripheral read may shorten a live run. Native chains and stable-poll
+ * skipping must use the new deadline; later runs start with a fresh budget. */
+static unsigned deadline_reads, deadline_trigger;
+static uint32_t deadline_limit;
+static int deadline_action;
+static int deadline_swi(void *u, arm920t_t *cpu, uint32_t imm, uint32_t pc, int is_thumb) {
+    (void)u; (void)imm; (void)pc; (void)is_thumb;
+    arm920t_limit_run(cpu, deadline_limit);
+    return 1;
+}
+static uint32_t deadline_read(void *u, uint32_t a) {
+    if (a == MMIO_BASE && deadline_action == 2 && deadline_reads == 0) arm920t_limit_run(cpu_fast, 100);
+    if (a == MMIO_BASE && ++deadline_reads == deadline_trigger) {
+        arm920t_limit_run(cpu_fast, deadline_limit);
+        arm920t_limit_run(cpu_fast, UINT32_MAX); /* never extend */
+        if (deadline_action == 1) arm920t_stop_run(cpu_fast);
+    }
+    return tb_read32(u, a);
+}
+static void deadline_setup(unsigned mode, const uint32_t *prog, size_t n) {
+    setup_pair(1);
+    arm920t_destroy(cpu_fast);
+    bus_fast.bus.read32 = deadline_read;
+    bus_fast.bus.read32_io = deadline_read;
+    cpu_fast = arm920t_create(&bus_fast.bus);
+    load_words(&bus_fast, CODE_ADDR, prog, n);
+    arm920t_reset(cpu_fast, CODE_ADDR);
+    arm920t_set_reg(cpu_fast, 1, MMIO_BASE);
+    arm920t_set_jit(cpu_fast, mode != 0);
+    if (mode == 2) arm920t_set_trace(cpu_fast, 1, NULL, NULL);
+    deadline_reads = 0; deadline_trigger = 1; deadline_limit = 17; deadline_action = 0;
+}
+static void deadline_expect(uint32_t budget, uint32_t want) {
+    uint64_t before = arm920t_get_cycles(cpu_fast);
+    uint32_t got = arm920t_run(cpu_fast, budget);
+    if (got != want) { fprintf(stderr, "%s got=%u want=%u\n", current_case, got, want); ++failures; }
+    CHECK(arm920t_get_cycles(cpu_fast) == before + got, "cycle accounting");
+}
+static void case_run_deadlines(void) {
+    static const uint32_t progress[] = {0xe2822001,0xe5910000,0xe35200ff,0x1afffffb,0xeafffffe};
+    for (unsigned mode=0; mode<3; ++mode) {
+        current_case = "deadline-stable-poll";
+        deadline_setup(mode, PROG_POLL, 4);
+        add_stable(&bus_fast, MMIO_BASE);
+        deadline_expect(32768,17);
+        gp32_cpu_profile_t poll_profile;
+        arm920t_get_cpu_profile(cpu_fast,&poll_profile);
+        if (mode != 2 && poll_profile.supported) CHECK(poll_profile.poll_skipped_insns>0,"stable skip exercised");
+        arm920t_limit_run(cpu_fast,0); /* outside run is ignored */
+        deadline_trigger=0;
+        deadline_expect(23,23); /* no stale per-run deadline */
+        teardown_pair();
+
+        current_case = "deadline-native-late-callback";
+        deadline_setup(mode, progress, 5);
+        deadline_trigger=8; deadline_limit=31; /* eighth LDR retires at cycle 30 */
+        deadline_expect(32768,31);
+        CHECK(arm920t_get_reg(cpu_fast,2)==8, "no stale native chain");
+        gp32_cpu_profile_t p;
+        arm920t_get_cpu_profile(cpu_fast,&p);
+        if(mode==1 && p.supported && p.native_backend) CHECK(p.native_block_calls>0,"native path exercised");
+        teardown_pair();
+
+        current_case = "deadline-already-past";
+        deadline_setup(mode, progress, 5);
+        deadline_trigger=8; deadline_limit=0;
+        deadline_expect(32768,30); /* finish current instruction, no rollback */
+        teardown_pair();
+
+        current_case = "deadline-stop-run";
+        deadline_setup(mode, progress, 5);
+        deadline_limit=100; deadline_action=1;
+        deadline_expect(32768,2);
+        deadline_trigger=0; deadline_action=0;
+        deadline_expect(9,9);
+        teardown_pair();
+
+        current_case = "deadline-repeated-shrink";
+        deadline_setup(mode, progress, 5);
+        deadline_action=2; deadline_trigger=3; deadline_limit=17;
+        deadline_expect(32768,17);
+        teardown_pair();
+
+        current_case = "deadline-swi";
+        static const uint32_t swi_prog[] = {0xe2822001,0xef000000,0xe2822001,0xeafffffe};
+        deadline_setup(mode, swi_prog, 4);
+        arm920t_set_swi_handler(cpu_fast,deadline_swi,NULL);
+        deadline_limit=2;
+        deadline_expect(32768,2);
+        CHECK(arm920t_get_reg(cpu_fast,2)==1,"SWI exits before following ADD");
+        teardown_pair();
+
+        current_case = "deadline-thumb";
+        deadline_setup(mode, progress, 5);
+        st16le(bus_fast.bios+CODE_ADDR,0x6808); /* LDR r0,[r1] */
+        st16le(bus_fast.bios+CODE_ADDR+2,0x2800); /* CMP r0,#0 */
+        st16le(bus_fast.bios+CODE_ADDR+4,0xd0fc); /* BEQ back */
+        arm920t_set_cpsr(cpu_fast,arm920t_get_cpsr(cpu_fast)|0x20);
+        deadline_expect(32768,17);
+        teardown_pair();
+
+        current_case = "deadline-thumb-to-arm-absolute-origin";
+        deadline_setup(mode, progress, 5);
+        st16le(bus_fast.bios+CODE_ADDR,0x4718); /* BX r3 */
+        load_words(&bus_fast,CODE_ADDR+0x40,progress,5);
+        arm920t_set_reg(cpu_fast,3,CODE_ADDR+0x40);
+        arm920t_set_cpsr(cpu_fast,arm920t_get_cpsr(cpu_fast)|0x20);
+        deadline_limit=9;
+        deadline_expect(32768,9);
+        teardown_pair();
+
+        current_case = "deadline-does-not-extend";
+        deadline_setup(mode, progress, 5);
+        deadline_limit=100;
+        deadline_expect(7,7);
+        teardown_pair();
+    }
+}
+
 int main(void) {
     case_poll_stable(0);
     case_poll_stable(1);   /* identical contract when RAM loads ride fastmem */
@@ -741,6 +860,7 @@ int main(void) {
     case_add_loop();
     case_store_loop();
     case_pending_irq();
+    case_run_deadlines();
     if (failures) {
         fprintf(stderr, "arm poll: %d failures\n", failures);
         return 1;
