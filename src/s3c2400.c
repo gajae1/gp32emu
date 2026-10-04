@@ -1143,16 +1143,21 @@ static void lcd_render16(s3c2400_t *s, uint32_t w, uint32_t h) {
     }
 }
 
-/* Indexed (1/2/4/8-bpp) scanout, same pixel order as the original loop. */
+/* Indexed (1/2/4/8-bpp) scanout. Expand only the reachable palette entries
+ * once per call; synchronous rendering cannot observe mid-frame writes.
+ * Keep the empty-run return before constructing the temporary table. */
 static void lcd_render_indexed(s3c2400_t *s, uint32_t w, uint32_t h, int pixels, int bits) {
     uint32_t x = 0, y = 0;
     uint32_t *row = s->fb;
     const unsigned shift = 32u - (unsigned)bits;
     const uint32_t mask = (1u << (unsigned)bits) - 1u;
+    if (h == 0u || s->lcd.vramaddr_cur >= s->lcd.vramaddr_max) return;
+    uint32_t pal_lut[256];
+    for (uint32_t k = 0; k <= mask; ++k) pal_lut[k] = pal(s, k);
     while (s->lcd.vramaddr_cur < s->lcd.vramaddr_max && y < h) {
         uint32_t d = lcd_dma_read(s);
         for (int i = 0; i < pixels && y < h; i++) {
-            uint32_t color = pal(s, (d >> shift) & mask);
+            uint32_t color = pal_lut[(d >> shift) & mask];
             d <<= bits;
             if (x < w) row[x] = color;
             if (++x >= w) { x = 0; y++; if (y < h) row += 240u; }
