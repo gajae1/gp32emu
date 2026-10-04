@@ -1973,3 +1973,11 @@ generation wrap. Earlier unchanged full-suite results are reused. Windows GUI
 and libretro, Android ARM64/ARMv7, and H700 builds pass. Existing build warnings
 remain. Evidence: `resume85-counted-poll/final-lazy/` and
 `resume89-counted-lazy/{source-manifest,device,summary,pc-parity,build-artifacts}.json`.
+
+The release core from source commit `3c5fe05` is installed on H700 with SHA-256
+`94cad4c9ddede79a52da1946a4b612e1acfe26531d5146c9fd1660500acb7e7e`.
+The previous core is retained as `gp32-dev/resume89-counted-installed-core-before.so`.
+Stock RetroArch, launcher and protected configuration hashes are unchanged.
+No frontend was launched and no volume or mixer command was issued. Installation
+readback and preserved-setting hashes are in `resume89-counted-lazy/installed.json`;
+interactive menu/audio acceptance of this particular build remains untested.
