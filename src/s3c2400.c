@@ -92,6 +92,9 @@ struct s3c2400 {
     uint32_t irq[0x18/4];
     uint32_t dma[0x7c/4];
     uint32_t clkpow[0x18/4];
+    /* Transient CPU-run transaction; never part of the saved peripheral image. */
+    uint32_t clkpow_before_run[0x18/4];
+    uint8_t cpu_run_active, cpu_run_clock_written;
     uint32_t uart0[0x2c/4];
     uint32_t uart1[0x2c/4];
     uint32_t pwm[0x44/4];
@@ -186,6 +189,7 @@ void s3c2400_reset(s3c2400_t *s) {
     memset(s->irq, 0, sizeof(s->irq));
     memset(s->dma, 0, sizeof(s->dma));
     memset(s->clkpow, 0, sizeof(s->clkpow));
+    s->cpu_run_active = s->cpu_run_clock_written = 0;
     memset(s->uart0, 0, sizeof(s->uart0));
     memset(s->uart1, 0, sizeof(s->uart1));
     memset(s->pwm, 0, sizeof(s->pwm));
@@ -1481,25 +1485,47 @@ static uint64_t rescale_period_progress(uint64_t progress, uint64_t old_period, 
            ((progress % old_period) * new_period) / old_period;
 }
 
-static void clock_write(s3c2400_t *s, uint32_t addr, uint32_t value, uint32_t mask) {
-    uint32_t old_run_clock = clk_run(s, MPLLCON);
-    uint64_t old_iis_period = iis_period_cpu_cycles(s);
-    uint64_t old_pwm_period[5];
-    pwm_refresh_clock_cache(s);
-    memcpy(old_pwm_period, s->pwm_period_cycles, sizeof(old_pwm_period));
-    reg_array_write(s->clkpow, sizeof(s->clkpow), addr - 0x14800000u, value, mask);
+static void clock_invalidate(s3c2400_t *s) {
     s->iis_clock_dirty = 1;
     s->pwm_clock_dirty = 1;
     s->lcd_line_valid = 0;
     s->lcd_timing_valid = 0;
+}
+
+static void clock_apply(s3c2400_t *s, const uint32_t *registers) {
+    uint64_t old_iis_period = iis_period_cpu_cycles(s);
+    uint64_t old_pwm_period[5];
+    pwm_refresh_clock_cache(s);
+    memcpy(old_pwm_period, s->pwm_period_cycles, sizeof(old_pwm_period));
+    memcpy(s->clkpow, registers, sizeof(s->clkpow));
+    clock_invalidate(s);
     pwm_refresh_clock_cache(s);
     for (unsigned t = 0; t < 5u; ++t)
         s->pwm_accum[t] = rescale_period_progress(s->pwm_accum[t], old_pwm_period[t], s->pwm_period_cycles[t]);
     s->iis_accum = rescale_period_progress(s->iis_accum, old_iis_period, iis_period_cpu_cycles(s));
-    /* Finish this instruction at the old rate. Host setup writes must not
-     * halt the following CPU run. Peripheral elapsed-slice ordering remains
-     * separate from preserving the already accumulated counter phase. */
-    if (old_run_clock != clk_run(s, MPLLCON) && arm920t_is_running(s->cpu_irq_sink))
+}
+
+static void clock_write(s3c2400_t *s, uint32_t addr, uint32_t value, uint32_t mask) {
+    uint32_t old_run_clock = clk_run(s, MPLLCON);
+    uint32_t old_pclk = clk_pclk(s, MPLLCON);
+    uint32_t registers[GP32_ARRAY_COUNT(s->clkpow)];
+    memcpy(registers, s->clkpow, sizeof(registers));
+    reg_array_write(registers, sizeof(registers), addr - 0x14800000u, value, mask);
+    if (s->cpu_run_active) {
+        if (!s->cpu_run_clock_written) {
+            memcpy(s->clkpow_before_run, s->clkpow, sizeof(s->clkpow));
+            s->cpu_run_clock_written = 1;
+        }
+        /* Reads in this instruction see the write. Phase conversion waits
+         * until its elapsed cycles have been processed at the previous rate. */
+        memcpy(s->clkpow, registers, sizeof(s->clkpow));
+        clock_invalidate(s);
+    } else {
+        clock_apply(s, registers);
+    }
+    /* A PCLK-only change also ends the slice, even if the CPU rate is stable. */
+    if ((old_run_clock != clk_run(s, MPLLCON) || old_pclk != clk_pclk(s, MPLLCON)) &&
+        arm920t_is_running(s->cpu_irq_sink))
         arm920t_stop_run(s->cpu_irq_sink);
 }
 
@@ -1601,6 +1627,26 @@ void s3c2400_tick(s3c2400_t *s, uint32_t cpu_cycles) {
             if (!(s->pwm[2] & auto_mask[t])) { s->pwm[2] &= ~start_mask[t]; s->pwm_accum[t] = 0; break; }
         }
     }
+}
+
+uint32_t s3c2400_run_cpu(s3c2400_t *s, uint32_t cpu_cycles) {
+    if (!s || !s->cpu_irq_sink || !cpu_cycles) return 0;
+    s->cpu_run_active = 1;
+    s->cpu_run_clock_written = 0;
+    uint32_t done = arm920t_run(s->cpu_irq_sink, cpu_cycles);
+    s->cpu_run_active = 0;
+    if (s->cpu_run_clock_written) {
+        uint32_t registers[GP32_ARRAY_COUNT(s->clkpow)];
+        memcpy(registers, s->clkpow, sizeof(registers));
+        memcpy(s->clkpow, s->clkpow_before_run, sizeof(s->clkpow));
+        s->cpu_run_clock_written = 0;
+        clock_invalidate(s);
+        s3c2400_tick(s, done);
+        clock_apply(s, registers);
+    } else {
+        s3c2400_tick(s, done);
+    }
+    return done;
 }
 
 uint32_t s3c2400_debug_read32(s3c2400_t *s, uint32_t addr) {

@@ -33,6 +33,8 @@ void s3c2400_audio_append_s16_stereo(s3c2400_t *soc, int16_t left, int16_t right
 void s3c2400_audio_clear(s3c2400_t *soc);
 void s3c2400_render_lcd(s3c2400_t *soc);
 void s3c2400_tick(s3c2400_t *soc, uint32_t cpu_cycles);
+/* Execute the attached CPU and settle hardware time at clock-write boundaries. */
+uint32_t s3c2400_run_cpu(s3c2400_t *soc, uint32_t cpu_cycles);
 uint32_t s3c2400_debug_read32(s3c2400_t *soc, uint32_t addr);
 uint32_t s3c2400_fclk_hz(const s3c2400_t *soc);
 uint32_t s3c2400_hclk_hz(const s3c2400_t *soc);

@@ -348,9 +348,63 @@ static void check_elapsed_clock_change(int jit) {
     gp32_destroy(restored);
 }
 
+static void check_peripheral_clock_boundary(int jit) {
+    const uint32_t code = GP32_RAM_BASE + 0x4000u;
+    for (unsigned audio = 0; audio < 2u; ++audio) {
+        gp32_t *g = gp32_create(NULL);
+        CHECK(g != NULL, "create peripheral clock core");
+        if (!g) return;
+        gp32_set_jit(g, jit);
+        s3c2400_write32(g->soc, 0x14800004u, 0u); /* 48 MHz. */
+        s3c2400_write32(g->soc, 0x14800014u, 0u);
+        unsigned old_cycles = audio ? 250u : 100u;
+        for (unsigned i = 0; i < old_cycles - 1u; ++i)
+            s3c2400_write32(g->soc, code + i * 4u, 0xe1a00000u); /* NOP */
+        s3c2400_write32(g->soc, code + (old_cycles - 1u) * 4u, 0xe5801000u);
+        s3c2400_write32(g->soc, code + old_cycles * 4u, 0xeafffffeu);
+        arm920t_set_reg(g->cpu, 0, 0x14800014u);
+        arm920t_set_reg(g->cpu, 1, 1u); /* PCLK halves, CPU clock stays 48 MHz. */
+        arm920t_set_reg(g->cpu, 15, code);
+        if (audio) {
+            s3c2400_write32(g->soc, 0x14600040u, GP32_RAM_BASE);
+            s3c2400_write32(g->soc, 0x14600044u, 0x35508010u);
+            s3c2400_write32(g->soc, 0x14600048u, 0x10800008u);
+            s3c2400_write32(g->soc, 0x14600058u, 2u);
+            s3c2400_write32(g->soc, 0x15508000u, 1u);
+            CHECK(gp32_run_cycles(g, 505u) == GP32_OK, "run to just before IIS boundary");
+            uint64_t frames;
+            uint32_t rate;
+            s3c2400_audio_samples(g->soc, &frames, &rate);
+            CHECK(frames == 0u, "no IIS frame before old/new clock boundary");
+            gp32_run_cycles(g, 1u);
+            s3c2400_audio_samples(g->soc, &frames, &rate);
+            CHECK(frames == 1u && rate == 93750u, "IIS credits pre-write cycles at old PCLK");
+        } else {
+            s3c2400_write32(g->soc, 0x1510000cu, 99u); /* 200 cycles before, 400 after. */
+            s3c2400_write32(g->soc, 0x15100008u, 9u);
+            CHECK(gp32_run_cycles(g, 299u) == GP32_OK, "run to just before PWM boundary");
+            CHECK(!(s3c2400_read32(g->soc, 0x14400000u) & (1u << 10)), "no premature PWM IRQ");
+            CHECK(s3c2400_read32(g->soc, 0x15100014u) == 0u, "PWM counter includes pre-write progress");
+            gp32_run_cycles(g, 1u);
+            CHECK(s3c2400_read32(g->soc, 0x14400000u) & (1u << 10), "PWM expires at old/new clock boundary");
+            s3c2400_write32(g->soc, 0x14400000u, 1u << 10);
+            g->direct_fxe_mode = 1;
+            direct_install_stubs(g);
+            for (unsigned i = 0; i < 400u; ++i)
+                s3c2400_write32(g->soc, code + i * 4u, 0xe1a00000u);
+            s3c2400_write32(g->soc, code + 1600u, 0xe12fff1eu); /* BX lr */
+            arm920t_flush_jit(g->cpu);
+            CHECK(direct_call_guest_callback(g, code), "guest callback returns after hardware tick");
+            CHECK(s3c2400_read32(g->soc, 0x14400000u) & (1u << 10), "callback execution advances hardware timer");
+        }
+        gp32_destroy(g);
+    }
+}
+
 int main(void) {
     check_scheduler_catchup();
     for (int jit = 0; jit <= 1; ++jit) {
+        check_peripheral_clock_boundary(jit);
         check_elapsed_clock_change(jit);
         check_timer(jit, 0, 0);
         check_timer(jit, 0x12u, 0); /* IRQ banks SP/LR. */

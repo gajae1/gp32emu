@@ -292,7 +292,7 @@ static void direct_account_elapsed(gp32_t *g, uint32_t cycles, uint32_t clock) {
 }
 
 static uint32_t direct_run_cpu(gp32_t *g, uint32_t cycles, uint32_t clock) {
-    uint32_t done = arm920t_run(g->cpu, cycles);
+    uint32_t done = s3c2400_run_cpu(g->soc, cycles);
     direct_account_elapsed(g, done, clock);
     return done;
 }
@@ -3757,7 +3757,6 @@ gp32_status_t gp32_run_cycles(gp32_t *g, uint32_t cycles) {
         direct_update_fw_tick(g);
         uint32_t clock = direct_run_clock_hz(g);
         uint32_t done = direct_run_cpu(g, slice, clock);
-        s3c2400_tick(g->soc, done);
         direct_hle_tick(g, done, clock);
         direct_update_fw_tick(g);
         direct_process_asset_autoload(g);

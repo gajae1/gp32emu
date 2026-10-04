@@ -1186,3 +1186,38 @@ Installed core SHA-256 is
 `89062eb4582d845e93566cf261f5cb5e5ec9d91749ffbcd751078ff0a62f49ee`;
 backup is `gp32-dev/resume65-installed-core-before.so`. Protected settings
 remain unchanged; deployment did not rewrite user saves.
+
+## resume66: settle hardware time before applying a guest clock change
+
+The SoC now owns each CPU-run boundary. A guest clock write remains visible
+to reads within that instruction, but peripheral phase conversion waits until
+the completed CPU slice has advanced hardware at its original clock. Changes
+to PCLK alone also yield, even when the effective CPU rate is unchanged.
+Host setup writes still apply immediately. The runtime transaction is cleared
+before returning and adds no saved-state fields.
+
+Both main execution and synchronous guest callbacks use this boundary. Thus
+callback instructions now advance hardware timers, DMA/IIS and LCD time, and
+the main loop no longer ticks those cycles a second time. HLE timer/audio
+event settlement and charging callback time against the outer host budget
+remain unfinished; this change does not claim to resolve that larger design.
+
+Real guest instruction regressions reproduce wrong PWM counters/expiry and
+IIS delivery against the previous core. With PCLK halved while CPU speed stays
+48 MHz, the corrected PWM IRQ lands at cycle 300 and IIS output at cycle 506,
+with neither event one cycle early. A callback spanning a timer period now
+raises its hardware IRQ. Interpreter and JIT paths pass on Windows and H700.
+
+Windows PWM, timing, PCM, timer and state checks pass. Native H700 additionally
+passes libretro audio and persistence checks (seven checks total). Android
+ARM64/ARMv7 builds pass. Her Knights/Tomak preserve all seven CPU/video/PCM
+replay fields. The unchanged LCD trace is `47779e5037cd7b27`; this does not
+resolve LCD phase rescaling, prescaler transitions or queued IIS rate changes.
+No whole-game FPS or physical audio acceptance claim is made.
+
+Evidence: `F:/GP32/results/resume66-soc-boundary/`, including the old-code
+failure, focused native checks, platform builds and exact game comparisons.
+Installed core SHA-256 is
+`37909b5a3946c5d696493771acef54767994840b5dff83223e9b7ada92d609f5`;
+backup is `gp32-dev/resume66-installed-core-before.so`. Protected settings
+remain unchanged; deployment did not rewrite user saves.

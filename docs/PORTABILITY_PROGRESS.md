@@ -3284,3 +3284,23 @@ Evidence: `F:/GP32/results/resume65-soc-phase/`; deployment details are in the
 performance section. CPU-slice/MMIO ordering, LCD phase, prescaler transitions
 and nested-callback settlement remain open. No whole-game or audible-quality
 claim follows from these checks.
+
+### Guest clock-write execution boundaries (resume66)
+
+Main execution and guest callbacks now advance hardware through a single SoC
+CPU-run boundary. Clock-write instructions yield on PCLK changes as well as
+CPU-rate changes; elapsed cycles tick hardware at the old rate before the new
+periods are applied. Callback instructions also advance hardware time. Host
+setup writes remain immediate, and the saved-state layout is unchanged.
+
+New guest-code PWM/IIS regressions fail on the previous core and pass with
+interpreter/JIT execution on Windows and H700, including a callback hardware
+IRQ. Existing Windows peripheral/PCM/timer/state checks and seven native H700
+checks pass; Android ARM64/ARMv7 builds pass. Her Knights/Tomak replay fields
+remain exact. Evidence is in `F:/GP32/results/resume66-soc-boundary/`.
+
+HLE events during callbacks, outer-budget charging, LCD phase, prescaler
+changes and mixed-rate IIS queues still need work. This is not a complete
+timing model or speaker-quality acceptance claim.
+The verified core is installed with a backup and unchanged protected settings;
+the performance section records its hash and backup path.
