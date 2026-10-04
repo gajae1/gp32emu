@@ -189,6 +189,8 @@ patch to a staging copy of the SD-card tree:
 
 ```sh
 git apply --check /path/to/gp32-h700-frontend-selection.patch
+git apply --check /path/to/gp32-h700-system-controls.patch
+git apply /path/to/gp32-h700-system-controls.patch
 git apply /path/to/gp32-h700-frontend-selection.patch
 sh -n spruce/scripts/emu/lib/ra_functions.sh
 ```
@@ -199,6 +201,15 @@ Deploy the patched script only after checking the candidate's dependencies and
 native `--version`. To revert selection, move the separate frontend out of that
 filename while RetroArch is stopped, or restore the saved script. An OS update
 may replace the script and require reapplying the small patch.
+
+The system-controls patch is required with the separate executable name.
+It registers `ra64.gp32.h700` in the Anbernic menu-button gate and Spruce's
+game-exit, poweroff and HDMI process lists. Without it, a network menu command
+can work while the physical menu button and hold-to-exit silently do nothing.
+Keep the normal process entries and existing button assignments. Back up the
+four affected scripts and syntax-check them before deployment. Restart the
+affected home/button/HDMI watchdogs using Spruce's scoped watchdog helper, or
+reboot, so already-running shells load the updated functions.
 
 The tested device has this selector and the localized corrected binary
 `e4a4ea8feebe9776b867a23f61380c7fb2b78605a4bcf6d8e31b6144d70e4b50` installed.

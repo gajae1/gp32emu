@@ -3344,3 +3344,31 @@ changes and callback event/budget settlement remain open. No physical audio
 acceptance or performance improvement is implied by these checks.
 The verified core is installed with a backup and unchanged protected settings;
 the performance section records its hash and backup path.
+
+
+### Restore Spruce menu and exit routing (resume70, 2026-10-04)
+
+The user reported that GP32's physical menu tap and hold-to-exit both failed,
+including after reboot. The GP32-specific frontend name was missing from
+Anbernic's menu process gate and Spruce's standard-emulator termination list.
+The previous network-command menu check bypassed that gate and did not prove
+physical-button integration. Poweroff and HDMI process lists had the same
+omission.
+
+`gp32-h700-system-controls.patch` adds the exact GP32 frontend name to those
+four locations while retaining existing names, button settings and signal
+behavior. On-device checks of the extracted real functions reproduced the
+missing menu dispatch and exit target before the fix, then passed afterward;
+UDP output and termination signals were stubbed, so these checks did not
+interact with a user's game. The four installed scripts passed shell syntax
+and byte readback checks. Originals are backed up under
+`/mnt/SDCARD/gp32-dev/resume70-menu/`. Home/button/HDMI watchdogs were restarted
+using Spruce's existing scoped helper and confirmed running without reported
+startup errors. Core/frontend binaries and RetroArch settings were not edited.
+Physical tap/hold acceptance is pending the user's check; no game benchmark
+was run for this OS integration fix. Evidence: `F:/GP32/results/resume70-menu/`.
+
+Cleanup removed 42 obsolete standalone object/debug files (32,700,379 bytes)
+from the results root, preserving build directories, executables, ROMs, saves
+and evidence. The manifest is in `resume69-audio-spans/cleanup-manifest.json`.
+Mixed-rate audio development is deferred while the menu incident is resolved.

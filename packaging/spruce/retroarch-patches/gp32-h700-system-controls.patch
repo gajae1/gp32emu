@@ -1,0 +1,45 @@
+--- a/spruce/scripts/platform/device_functions/AnbernicXXCommon.sh
++++ b/spruce/scripts/platform/device_functions/AnbernicXXCommon.sh
+@@ -659,7 +659,8 @@
+     # Every RetroArch binary this device can launch has to be listed here or the
+     # home button silently does nothing in-game. ra64.h700 is the BaseOS default.
+     if pgrep "ra64.universal" >/dev/null || pgrep "ra32.universal" >/dev/null \
+-       || pgrep "ra64.h700" >/dev/null || pgrep "ra32.h700" >/dev/null; then
++       || pgrep "ra64.h700" >/dev/null || pgrep "ra32.h700" >/dev/null \
++       || pgrep -x "ra64[.]gp32[.]h700" >/dev/null; then
+         echo "MENU_TOGGLE" |  /lib/ld-linux-aarch64.so.1 /mnt/SDCARD/spruce/bin64/netcat -u -w0.1 127.0.0.1 55355
+     fi
+ }
+--- a/spruce/scripts/button_actions.sh
++++ b/spruce/scripts/button_actions.sh
+@@ -122,7 +122,7 @@
+ 
+ kill_ra_and_standard_emulators() {
+ 	log_message "button_actions.sh: Killing miscelaneous emus!"
+-    killall -q -15 ra32.a30 ra32.mini ra32.universal ra64.universal ra64.pixel2 ra64.h700 ra32.h700 retroarch pico8_dyn pico8_64 flycast flycast2024 yabasanshiro yabasanshiro.trimui
++    killall -q -15 ra32.a30 ra32.mini ra32.universal ra64.universal ra64.pixel2 ra64.h700 ra64.gp32.h700 ra32.h700 retroarch pico8_dyn pico8_64 flycast flycast2024 yabasanshiro yabasanshiro.trimui
+ }
+ 
+ kill_dsperate() {
+--- a/spruce/scripts/save_poweroff.sh
++++ b/spruce/scripts/save_poweroff.sh
+@@ -10,7 +10,7 @@
+ SAVE_IMG="/mnt/SDCARD/spruce/imgs/save.png"
+ 
+ EMU_PROCESSES="ra32.a30 ra32.mini ra32.universal ra64.universal ra64.pixel2 \
+-ra64.h700 ra32.h700 \
++ra64.h700 ra64.gp32.h700 ra32.h700 \
+ retroarch drastic drastic32 drastic64 pico8_dyn pico8_64 \
+ flycast flycast2024 yabasanshiro yabasanshiro.trimui dsperate dsperate.a30 \
+ mupen64plus PPSSPPSDL PPSSPPSDL_TrimUI PPSSPPSDL_$PLATFORM"
+--- a/spruce/scripts/hdmi_watchdog.sh
++++ b/spruce/scripts/hdmi_watchdog.sh
+@@ -207,7 +207,7 @@
+ # "기타 표준 에뮬레이터"는 rev-19 가 지목한 화면 깨짐 원인(RA 전용 — video_driver=gl,
+ # 시작 시 지오메트리 고정)의 범위 밖이라 포함하지 않았다. SIGKILL(-9)은 쓰지 않는다 —
+ # RA가 세이브를 쓸 기회를 뺏기 때문이다.
+-RA_PROCS="ra32.a30 ra32.mini ra32.universal ra64.universal ra64.pixel2 ra64.h700 ra32.h700 retroarch"
++RA_PROCS="ra32.a30 ra32.mini ra32.universal ra64.universal ra64.pixel2 ra64.h700 ra64.gp32.h700 ra32.h700 retroarch"
+ RA_QUIT_TIMEOUT_SEC=5
+ RA_QUIT_POLL_SEC=0.2
+ RA_QUIT_MAX_POLLS=25   # 5초 ÷ 0.2초
