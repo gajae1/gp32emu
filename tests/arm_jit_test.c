@@ -687,6 +687,71 @@ static uint32_t block_insn(unsigned p, unsigned u, unsigned s, unsigned w,
  * oracle and JIT must stay in lockstep either way.  SP-based pops cover the
  * common function-return shape; the BL-inlined leaf wrapper must keep its
  * helper semantics and land exactly on the BL fallthrough. */
+static void case_native_ldm_pc(void) {
+    /* A one-instruction budget proves the return itself is native, rather
+     * than counting native execution in a later target loop. */
+    for (unsigned mmu = 0; mmu < 2u; ++mmu) {
+        for (unsigned variant = 0; variant < 5u; ++variant) {
+            current_case = "native-ldm-pc";
+            setup_pair();
+            const uint32_t ttb = RAM_BASE + 0x4000u;
+            const uint32_t base = mmu ? 0x10001000u : DATA_ADDR;
+            const uint32_t target = CODE_ADDR + 0x80u;
+            const uint32_t low_bits = variant == 1u ? 2u : variant == 2u ? 1u : 0u;
+            const uint32_t program[] = {
+                0xee02af10u, /* MCR p15,0,r10,c2,c0,0 */
+                0xee01bf10u, /* MCR p15,0,r11,c1,c0,0 */
+                0xe591c000u, /* LDR r12,[r1]: prime the data mapping */
+                block_insn(0, 1, 0, 1, 1, 1, variant == 4u ? 0x8022u : 0x8030u) &
+                    (variant == 3u ? 0x0fffffffu : UINT32_MAX), /* EQ fails with Z=0 */
+                0xe3a090eeu, /* must not execute in this budget */
+                0xe1a0f00eu
+            };
+            load_both(program, GP32_ARRAY_COUNT(program));
+            arm920t_set_cpsr(cpu_jit, 0x200000d3u);
+            arm920t_set_cpsr(cpu_ref, 0x200000d3u);
+            set_reg_both(1u, base);
+            set_reg_both(10u, ttb);
+            set_reg_both(11u, mmu);
+            set_mem_both(ttb, 2u); /* identity BIOS section */
+            set_mem_both(ttb + 0x400u, RAM_BASE | 2u);
+            set_mem_both(DATA_ADDR, 0x11223344u);
+            set_mem_both(DATA_ADDR + 4u, 0x55667788u);
+            set_mem_both(DATA_ADDR + 8u, target | low_bits);
+            CHECK(arm920t_run(cpu_jit, 3u) == arm920t_run(cpu_ref, 3u), "LDM setup budget");
+            compare_state();
+            arm920t_reset_cpu_profile(cpu_jit);
+            CHECK(arm920t_run(cpu_jit, 1u) == arm920t_run(cpu_ref, 1u), "LDM return budget");
+            compare_state();
+            CHECK(ref_reg(9u) == 0u, "return cannot execute fallthrough");
+            CHECK(arm920t_get_cpsr(cpu_ref) == 0x200000d3u, "LDM preserves ARM state and flags");
+            if (variant == 3u) {
+                CHECK(ref_reg(1u) == base && ref_reg(4u) == 0u && ref_reg(5u) == 0u &&
+                      arm920t_get_pc(cpu_ref) == CODE_ADDR + 16u, "failed condition has no transfer");
+            } else if (variant == 4u) {
+                CHECK(ref_reg(1u) == 0x11223344u && ref_reg(4u) == 0u &&
+                      ref_reg(5u) == 0x55667788u && arm920t_get_pc(cpu_ref) == target,
+                      "loaded base register suppresses final writeback");
+            } else {
+                CHECK(ref_reg(1u) == base + 12u && ref_reg(4u) == 0x11223344u &&
+                      ref_reg(5u) == 0x55667788u && arm920t_get_pc(cpu_ref) == target,
+                      "LDM loads, final writeback and aligned PC");
+            }
+            gp32_cpu_profile_t profile;
+            arm920t_get_cpu_profile(cpu_jit, &profile);
+            if (profile.supported && profile.native_backend) {
+                CHECK(profile.native_block_calls == 1u && profile.native_arm_insns == 1u,
+                      "return instruction must execute natively");
+                CHECK(profile.helper_op_kinds[7u] ==
+                          ((profile.native_backend == 2u && variant == 2u) ||
+                           (profile.native_backend == 1u && !mmu && variant == 4u) ? 1u : 0u),
+                      "only backend-specific odd-target or base-in-list guards need helpers");
+            }
+            teardown_pair();
+        }
+    }
+}
+
 static void case_ldm_pc(void) {
     /* ldmia r1!, {r4-r6, pc} with an even target: loads, writeback, branch. */
     const uint32_t even[] = {
@@ -2979,7 +3044,11 @@ int main(int argc, char **argv) {
     int access_only = argc == 2 && !strcmp(argv[1], "--checked-access");
     int poll_only = argc == 2 && !strcmp(argv[1], "--poll-progress");
     int psr_only = argc == 2 && !strcmp(argv[1], "--psr");
-    if (argc == 2 && !strcmp(argv[1], "--psr-blocks")) {
+    if (argc == 2 && !strcmp(argv[1], "--ldm-pc-native")) {
+        case_native_ldm_pc();
+        case_ldm_pc();
+        case_native_mapped_block();
+    } else if (argc == 2 && !strcmp(argv[1], "--psr-blocks")) {
         case_native_psr_continuation();
     } else if (argc == 2 && !strcmp(argv[1], "--cpsr")) {
         case_native_cpsr();
@@ -3037,6 +3106,7 @@ int main(int argc, char **argv) {
     } else if (ram_end_only) {
         case_native_mapped_ram_end();
     } else {
+    case_native_ldm_pc();
     case_poll_progress();
     case_native_mapped_pages();
     case_native_literal_addresses();
@@ -3100,6 +3170,7 @@ int main(int argc, char **argv) {
         return 1;
     }
     printf("PASS: arm jit differential (%s), jit events=%" PRIu64 " fallbacks=%" PRIu64 "\n",
+           (argc == 2 && !strcmp(argv[1], "--ldm-pc-native")) ? "ldm-pc-native" :
            (argc == 2 && !strcmp(argv[1], "--psr-blocks")) ? "psr-blocks" :
            (argc == 2 && !strcmp(argv[1], "--cpsr")) ? "cpsr" : psr_only ? "spsr" : poll_only ? "poll-progress" : access_only ? "checked-access" : pairs_only ? "block-pairs/fences" : portable_only ? "portable-callback" : block_only ? "block-callback" : irq_only ? "callback-IRQ" : chain_only ? "branch-chain" : forward_only ? "forward-loop" : callback_only ? "callback-PC" : (leaf_only ? "unframed-leaf" : (ram_end_only ? "mapped-page-RAM-end" : (loops_only ? "loop-fences" : "flags/shift/branch/mem/half/block/mul/seeded/budget/loop-fences"))),
            jit_events, jit_fallbacks);

@@ -2763,8 +2763,8 @@ static int x64_emit_ram_block_dt(x64_emit_t *e, const arm_jit_op_t *op, uint32_t
     unsigned rn = op->a, count = op->g;
     int l = !!(op->d & 1u), w = !!(op->d & 2u);
     int u = !!(op->d & 8u), p = !!(op->d & 16u);
+    int block_pc = l && (list & 0x8000u);
     if (op->reserved || (op->d & 4u) || !list || !count || rn == 15u ||
-        (l && (list & 0x8000u)) ||
         !(l ? e->ram_read : e->ram_write)) return 0;
     size_t slow[8];
     unsigned nslow = 0;
@@ -2790,8 +2790,15 @@ static int x64_emit_ram_block_dt(x64_emit_t *e, const arm_jit_op_t *op, uint32_t
     for (unsigned r = 0; r < 16u; ++r) {
         if (!(list & (1u << r))) continue;
         if (l) {
-            x64_mov_r32_membase_index(e, X64_EAX, X64_R14D, X64_EDX);
-            x64_emit_store_arm_reg(e, r, X64_EAX);
+            /* ARMv4T LDM uses write_r, not BX semantics: all target low
+             * bits are discarded in ARM state. No target-dependent bailout
+             * remains after the complete RAM span has been checked. Save PC
+             * until writeback commits; no callback can observe this path. */
+            if (r == 15u) x64_mov_r32_membase_index(e, X64_R11D, X64_R14D, X64_EDX);
+            else {
+                x64_mov_r32_membase_index(e, X64_EAX, X64_R14D, X64_EDX);
+                x64_emit_store_arm_reg(e, r, X64_EAX);
+            }
         } else {
             x64_emit_load_arm_reg(e, X64_ECX, r, op->pc);
             x64_mov_membase_index_r32(e, X64_R14D, X64_EDX, X64_ECX);
@@ -2799,8 +2806,14 @@ static int x64_emit_ram_block_dt(x64_emit_t *e, const arm_jit_op_t *op, uint32_t
         x64_alu_r32_imm(e, 0, X64_EDX, 4u);
     }
     if (w && (!l || !(list & (1u << rn)))) x64_emit_store_arm_reg(e, rn, X64_R9D);
-    x64_emit_memory_slow(e, op, slow, nslow);
-    GP32_UNUSED(done);
+    if (block_pc) {
+        x64_emit_return_pc_reg(e, X64_R11D, done);
+        /* Only failed prechecks reach the whole-op helper. Neither exit can
+         * fall through and overwrite the loaded PC with a sequential PC. */
+        for (unsigned i = 0; i < nslow; ++i) x64_patch32(e, slow[i], e->pos);
+        x64_emit_call_helper_op(e, op);
+        x64_emit_return_imm(e, done);
+    } else x64_emit_memory_slow(e, op, slow, nslow);
     return 1;
 }
 
@@ -2830,8 +2843,8 @@ static int x64_emit_block_dt(x64_emit_t *e, const arm_jit_op_t *op, uint32_t don
         if (op->reserved != 4u) x64_emit_return_imm(e, done);
         return 1;
     }
-    /* Retain the conservative non-MMU base-in-list gates. PC loads and
-     * unusual forms also stay on the whole-op semantic helper. */
+    /* Retain the conservative non-MMU base-in-list gates. Unusual forms
+     * also stay on the whole-op semantic helper. */
     if ((op->imm & (1u << op->a)) && (op->d & 3u)) return 0;
     return x64_emit_ram_block_dt(e, op, done);
 }

@@ -2190,3 +2190,51 @@ Windows and H700. Windows GUI/libretro, H700, Android arm64 and ARMv7 builds
 pass; Android runtime remains untested. Evidence is under
 `results/resume95-jit-hash/` (outside this repository). All audio checks were
 silent digital PCM comparisons; no mixer, volume or frontend settings changed.
+
+
+### x64 direct RAM LDM returns (2026-10-04)
+
+The x64 emitter now handles ordinary S=0 LDM instructions containing PC in
+the existing aligned direct-RAM block-transfer path. MMU-on transfers retain
+the whole-span, one-page permission/mapping guards; unusual and reserved
+inlined-leaf forms keep the checked helper. Writeback remains last and a
+loaded base register suppresses it. The complete instruction returns to
+dispatch with its actual PC and retired count.
+
+ARMv4T LDM uses the existing `write_r` semantics: mask both target low bits in
+ARM state and retain CPSR. Unlike BX, an odd address does not exchange state.
+An initial conservative odd-target precheck was therefore removed from the
+x64 implementation; all RAM guards precede transfers and no callback can
+observe the direct path. A64 retains its existing conservative odd-target
+helper, but its misleading Thumb-exchange comments are corrected.
+
+A new one-operation-budget fixture proves native execution of the return
+itself, not just a later loop. It checks even/bit1/odd targets, condition
+failure, loaded-base writeback suppression and warmed MMU mappings. The
+frozen baseline fails four initial even-target helper assertions with matching
+architectural state. The final focused Windows fixture passes, as do existing
+LDM/cross-page cases and 48 block-callback exit cases. The corresponding H700
+fixture checks shared-test compatibility; this step does not change A64
+production code or replace the installed H700 core.
+
+On the unchanged 3000-frame Blue Angelo profile, block-transfer helper calls
+fall from 8,331,704 to 210,014 (97.48% fewer). Native calls/instructions and
+all seven CPU/clock/audio-count/video/PCM fields match. Generated code grows
+from 56,542,555 to 59,054,664 bytes; neither run recycles the arena. This is
+an explicit code-size tradeoff, not a claim that fewer helpers always means
+higher whole-game throughput.
+
+PC timing remains bounded and mixed. The initial conservative version had
+Princess +22.84%, title -16.68%, Blue -1.94% wall-rate medians in a short
+ABBA, with substantial spread. After simplifying target handling, a 3000-frame
+warmup plus 3000 measured frames on one process-affinity CPU gave title
+1821.411 -> 1930.427 fps (+5.99%) and Blue 534.702 -> 506.947 (-5.19%).
+Total process CPU time (including warmup/loading) fell by about 6% for each,
+but that is not the same timing interval as measured wall fps. These results
+must not be presented as a general PC speedup or erase the prior unresolved
+PC throughput evidence. All before/after replay CPU/video/PCM fields match.
+
+Windows GUI/libretro builds are staged privately. No speaker playback or
+volume/mixer/frontend setting was changed. Evidence: private
+`results/resume96-x64-ldmpc/` (manifest, focused logs, profile and both raw
+timing rounds). Android runtime and broad long-session pacing remain open.
