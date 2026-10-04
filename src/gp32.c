@@ -18,6 +18,24 @@ typedef struct direct_timer_due {
     uint32_t callback, tps, fires, epoch;
 } direct_timer_due_t;
 
+enum { DIRECT_CB_NONE, DIRECT_CB_REFILL, DIRECT_CB_TIMER, DIRECT_CB_FAULT };
+enum { DIRECT_TICK_IDLE, DIRECT_TICK_AFTER_REFILL, DIRECT_TICK_TIMER_CALLS };
+enum { DIRECT_CB_TIMEOUT = 1, DIRECT_CB_STALLED, DIRECT_CB_TASK_SWITCH, DIRECT_CB_HOST_DISPLAY_WAIT };
+
+typedef struct direct_callback_tail {
+    uint32_t owner, fault_owner, fault_reason, fn;
+    uint32_t ack_addr, ack_value;
+    uint64_t deadline_ns;
+    arm920t_register_context_t foreground;
+} direct_callback_tail_t;
+
+typedef struct direct_hle_tick_tail {
+    uint32_t phase, clock, volume;
+    uint32_t sdk_frames_left, sdk_rate;
+    uint32_t timer_slot, calls_left;
+    direct_timer_due_t due[GP32_DIRECT_GPOS_TIMER_COUNT];
+} direct_hle_tick_tail_t;
+
 typedef struct gp32_elapsed_time {
     uint64_t nanoseconds;
     uint32_t remainder;
@@ -128,7 +146,7 @@ struct gp32 {
         uint32_t max_exec_tick;
         uint64_t accum;
     } direct_hle_gpos_timer[GP32_DIRECT_GPOS_TIMER_COUNT];
-    /* Dispatch-only identities; no pending callbacks survive a state load. */
+    /* Lifetimes also belong to a suspended tick and the v10 continuation. */
     uint32_t direct_hle_gpos_timer_epoch[GP32_DIRECT_GPOS_TIMER_COUNT];
     uint32_t direct_hle_gpos_timers_enabled;
     uint32_t direct_hle_gpos_task_first;
@@ -136,6 +154,8 @@ struct gp32 {
     uint32_t direct_hle_gpos_scheduler_callback;
     uint32_t direct_hle_callback_returned;
     uint32_t direct_hle_callback_running;
+    direct_callback_tail_t direct_callback;
+    direct_hle_tick_tail_t direct_tick;
     uint32_t direct_hle_audio_rate_override;
     uint32_t direct_hle_audio_last_auto_rate;
     const fpk_asset_t *direct_hle_audio_asset;
@@ -148,14 +168,34 @@ struct gp32 {
         uint32_t copied;
         uint32_t tries;
     } direct_hle_asset_autoload[16];
-    uint64_t direct_vblank_next_cycle;
-    uint64_t direct_vblank_wait_cycles;
-    int direct_vblank_wait_requested;
+    gp32_frame_time_t direct_vblank_time; /* next unreserved 60 Hz deadline */
+    int direct_vblank_wait_requested; /* dispatch only: valid/invalid surface */
 };
 
 static void seterr(gp32_t *g, const char *fmt, ...) {
     if (!g) return;
     va_list ap; va_start(ap, fmt); vsnprintf(g->error, sizeof(g->error), fmt, ap); va_end(ap);
+}
+static void direct_callback_error(gp32_t *g) {
+    const direct_callback_tail_t *cb = &g->direct_callback;
+    const char *reason = cb->fault_reason == DIRECT_CB_TIMEOUT ? "emulated-time watchdog" :
+        cb->fault_reason == DIRECT_CB_STALLED ? "halted or zero-progress CPU" :
+        cb->fault_reason == DIRECT_CB_TASK_SWITCH ? "unsupported SDK task switch" :
+        "display-wait fault retained from older continuation state";
+    seterr(g, "HLE callback fault: %s; owner=%u fn=%08x pc=%08x sp=%08x ns=%" PRIu64,
+           reason, cb->fault_owner, cb->fn, arm920t_get_pc(g->cpu),
+           arm920t_get_reg(g->cpu, 13), g->elapsed.nanoseconds);
+}
+static void direct_callback_fault(gp32_t *g, uint32_t reason) {
+    if (!g || (g->direct_callback.owner != DIRECT_CB_REFILL &&
+               g->direct_callback.owner != DIRECT_CB_TIMER)) return;
+    g->direct_callback.fault_owner = g->direct_callback.owner;
+    g->direct_callback.fault_reason = reason;
+    g->direct_callback.owner = DIRECT_CB_FAULT;
+    g->direct_hle_callback_returned = 0u;
+    g->direct_hle_callback_running = 0u;
+    arm920t_stop_run(g->cpu);
+    direct_callback_error(g);
 }
 static void bridge_log(void *user, const char *line) {
     gp32_t *g = (gp32_t *)user;
@@ -192,19 +232,21 @@ static uint32_t direct_stub_addr(const gp32_t *g) {
 }
 static uint32_t direct_ret_stub_addr(const gp32_t *g) { return direct_stub_addr(g) + 16u; }
 static uint32_t direct_callback_return_stub_addr(const gp32_t *g) { return direct_stub_addr(g) + 24u; }
+static uint32_t direct_wait_swi_addr(const gp32_t *g) { return direct_stub_addr(g) + 0x2cu; }
+static uint32_t direct_time_mirror_addr(const gp32_t *g) { return direct_stub_addr(g) + 0x74u; }
 static uint32_t direct_app_arg_addr(const gp32_t *g) { return direct_stub_addr(g) + 0x900u; }
 static uint32_t direct_smc_cb_base_addr(const gp32_t *g) { return direct_stub_addr(g) + 0xb00u; }
 
 static void direct_install_stubs(gp32_t *g) {
     uint32_t a = direct_stub_addr(g);
-    if (!direct_ram_range(g, a, 32u)) return;
+    if (!direct_ram_range(g, a, 0xacu)) return;
     /* GPSDK init stores the firmware display callback returned by SWI #0x0b
        selector 0 into both GpSurfaceSet and GpSurfaceFlip.  The callback is
        passed a GPDRAWSURFACE and makes that surface visible; it must not rewrite
        the application-owned descriptor.  Keep the descriptor intact and bounce
        through a private direct-mode SWI so the C-side HLE can install the LCD
        base address from ptgpds->ptbuffer. */
-    s3c2400_write32(g->soc, a + 0u, 0xef000011u); /* svc #0x11 */
+    s3c2400_write32(g->soc, a + 0u, 0xea000006u); /* b wait body */
     s3c2400_write32(g->soc, a + 4u, 0xe12fff1eu); /* bx lr */
     s3c2400_write32(g->soc, a + 8u, 0xe12fff1eu);
     s3c2400_write32(g->soc, a + 12u, 0xe12fff1eu);
@@ -213,6 +255,47 @@ static void direct_install_stubs(gp32_t *g) {
     s3c2400_write32(g->soc, a + 20u, 0xe12fff1eu); /* bx lr */
     s3c2400_write32(g->soc, a + 24u, 0xef070020u); /* private callback-return trap */
     s3c2400_write32(g->soc, a + 28u, 0xeafffffeu); /* b . */
+    /* Each invocation owns r1:r2 and its stack frame. A normal IRQ/FIQ or a
+     * suspended HLE callback preserves that deadline just like other guest
+     * registers. Never borrow a shared deadline from RAM in the polling loop.
+     * SUBS/SBCS tests the sign of the modular 64-bit time difference, including
+     * both the low-word carry and the full uint64 wrap. Waits are < 2^63 ns. */
+    const uint32_t wait[] = {
+        0xe92d400eu, /* push {r1-r3,lr} */
+        0xe10f3000u, /* mrs r3,cpsr */
+        0xe92d1008u, /* push {r3,r12}: flags and scratch */
+        0xef000011u, /* display and arm this call after settling SWI time */
+        0xe59f3038u, /* ldr r3,mirror pointer @ +0x70 */
+        0xe593c004u, /* +34: ldr r12,[r3,#4], high */
+        0xe5930000u, /* ldr r0,[r3], low */
+        0xe593e004u, /* ldr lr,[r3,#4], high again */
+        0xe15c000eu, /* cmp r12,lr: reject a torn pair */
+        0x1afffffau, /* bne +34 */
+        0xe0500001u, /* subs r0,r0,r1 */
+        0xe0dcc002u, /* sbcs r12,r12,r2 */
+        0x4afffff7u, /* bmi +34 */
+        0xe3a00001u, /* mov r0,#1 */
+        0xe8bd1008u, /* pop {r3,r12} */
+        0xe128f003u, /* msr cpsr_f,r3 */
+        0xe8bd400eu, /* pop {r1-r3,lr} */
+        0xe12fff1eu, /* bx lr (also returns to Thumb) */
+    };
+    for (unsigned i = 0; i < GP32_ARRAY_COUNT(wait); ++i)
+        s3c2400_write32(g->soc, a + 0x20u + i * 4u, wait[i]);
+    s3c2400_write32(g->soc, a + 0x70u, direct_time_mirror_addr(g));
+    /* v2-v10 host-idle migration only. The loader builds a guest stack frame
+     * with the interrupted scratch registers/PC/CPSR. It executes the same
+     * ordinary polling instructions, then restores that frame via an origin-
+     * checked service. There is no host idle-cycle advancement. */
+    const uint32_t legacy_wait[] = {
+        0xe51f3018u, /* ldr r3,mirror pointer @ +0x70 */
+        0xe593c004u, 0xe5930000u, 0xe593e004u, 0xe15c000eu, 0x1afffffau,
+        0xe0500001u, 0xe0dcc002u, 0x4afffff7u,
+        0xef070021u, /* +a4: restore migrated guest frame */
+        0xeafffffeu,
+    };
+    for (unsigned i = 0; i < GP32_ARRAY_COUNT(legacy_wait); ++i)
+        s3c2400_write32(g->soc, a + 0x80u + i * 4u, legacy_wait[i]);
 }
 static void direct_init_smc_gpio(gp32_t *g) {
     if (!g || !g->soc) return;
@@ -269,11 +352,17 @@ static uint32_t direct_pcm_cursor_addr(const gp32_t *g) {
 }
 
 static void direct_update_fw_tick(gp32_t *g);
+static void direct_schedule_vblank_wait(gp32_t *g);
+/* Modular deadlines stay meaningful within half the uint64 time range. */
+static int direct_time_pending(uint64_t deadline, uint64_t now) {
+    uint64_t delta = deadline - now;
+    return delta && delta < (UINT64_C(1) << 63);
+}
 static void direct_hle_audio_tick(gp32_t *g, uint32_t cycles, uint32_t clock);
 static void direct_hle_gpos_timer_prepare(gp32_t *g, uint32_t cycles, uint32_t clock,
                                         direct_timer_due_t pending[GP32_DIRECT_GPOS_TIMER_COUNT]);
-static void direct_hle_gpos_timer_dispatch(gp32_t *g,
-                                         const direct_timer_due_t pending[GP32_DIRECT_GPOS_TIMER_COUNT]);
+static void direct_hle_gpos_timer_dispatch(gp32_t *g);
+static void direct_hle_tick_pump(gp32_t *g);
 static gp32_status_t gp32_load_fxe_image_internal(gp32_t *g, fxe_image_t *img, int update_reset_image, int scan_file_hle, int init_smc_gpio, int preserve_hle_options);
 static int direct_handle_swi_gpos_timer(gp32_t *g, arm920t_t *cpu, uint32_t pc);
 static void direct_tick_sdk_task_sleepers(gp32_t *g, uint32_t first_task, uint32_t last_task, uint32_t ticks);
@@ -314,6 +403,7 @@ static uint32_t direct_run_cpu(gp32_t *g, uint32_t cycles, uint32_t clock) {
     uint32_t done = s3c2400_run_cpu(g->soc, cycles);
     g->direct_cpu_running = was_running;
     direct_account_elapsed(g, done, clock);
+    direct_schedule_vblank_wait(g);
     /* A refill/timer callback is already outside the foreground audio prefix.
        Commit its command after hardware time, before its next instruction. */
     if (g->direct_hle_callback_running && g->direct_hle_pending_volume) {
@@ -330,31 +420,16 @@ static void direct_hle_tick(gp32_t *g, uint32_t cycles, uint32_t clock) {
     /* Mix the elapsed prefix before either the foreground command or a timer
        callback can change its gain. SDK refills remain at sample boundaries
        inside audio_tick; their commands precede this foreground command. */
-    uint32_t volume = g->direct_hle_pending_volume;
+    if (!g || !cycles || g->direct_tick.clock || g->direct_callback.owner) return;
+    direct_hle_tick_tail_t *tail = &g->direct_tick;
+    tail->clock = clock;
+    tail->volume = g->direct_hle_pending_volume;
     g->direct_hle_pending_volume = 0;
-    direct_timer_due_t pending[GP32_DIRECT_GPOS_TIMER_COUNT] = {0};
     /* A refill may start or replace a timer. Capture the old lifetimes before
        it runs so new timers cannot inherit this already elapsed interval. */
-    direct_hle_gpos_timer_prepare(g, cycles, clock, pending);
+    direct_hle_gpos_timer_prepare(g, cycles, clock, tail->due);
     direct_hle_audio_tick(g, cycles, clock);
-    if (volume) s3c2400_audio_set_volume(g->soc, volume);
-    direct_hle_gpos_timer_dispatch(g, pending);
-    uint32_t next_clock = direct_run_clock_hz(g);
-    if (next_clock == clock) return;
-    /* Remainders are fractions with the old clock as denominator. Normalize
-     * them at the slice boundary, including disabled sources, so public
-     * save/load boundaries continue to use the current SoC clock. Source
-     * resampling phases and the SDK's 64-sample poll phase use other units. */
-    g->direct_hle_pcm_accum = g->direct_hle_pcm_accum * next_clock / clock;
-    g->direct_hle_sdk_accum = g->direct_hle_sdk_accum * next_clock / clock;
-    for (unsigned i = 0; i < GP32_DIRECT_GPOS_TIMER_COUNT; ++i)
-        g->direct_hle_gpos_timer[i].accum = g->direct_hle_gpos_timer[i].accum * next_clock / clock;
-}
-
-static uint32_t direct_lcd_frame_cycles(const gp32_t *g) {
-    uint32_t hz = direct_run_clock_hz(g);
-    uint32_t frame = hz / 60u;
-    return frame ? frame : 1u;
+    if (!g->direct_callback.owner) direct_hle_tick_pump(g);
 }
 
 static uint32_t direct_key_port_value(gp32_t *g, uint32_t value) {
@@ -363,52 +438,69 @@ static uint32_t direct_key_port_value(gp32_t *g, uint32_t value) {
     return value;
 }
 
-static void direct_request_vblank_wait(gp32_t *g) {
-    if (g && g->direct_fxe_mode) g->direct_vblank_wait_requested = 1;
+static void direct_request_vblank_wait(gp32_t *g, int valid_surface) {
+    g->direct_vblank_wait_requested = valid_surface ? 1 : 2;
+    arm920t_stop_run(g->cpu);
 }
 
 static void direct_schedule_vblank_wait(gp32_t *g) {
     if (!g || !g->cpu || !g->direct_vblank_wait_requested) return;
+    uint64_t deadline = g->elapsed.nanoseconds;
+    if (g->direct_vblank_wait_requested == 1) {
+        gp32_frame_time_t *v = &g->direct_vblank_time;
+        /* A missed reservation rebases to a full interval from emulated now.
+         * Host suspension advances no time. Clock writes do not rescale it. */
+        if (!v->valid || !direct_time_pending(v->deadline_ns, deadline)) {
+            v->deadline_ns = deadline;
+            v->remainder = 0u;
+            v->valid = 1u;
+            uint32_t ns = 1000000000u + v->remainder;
+            v->deadline_ns += ns / 60u;
+            v->remainder = ns % 60u;
+        }
+        deadline = v->deadline_ns;
+        uint32_t ns = 1000000000u + v->remainder;
+        v->deadline_ns += ns / 60u;
+        v->remainder = ns % 60u;
+    }
+    arm920t_set_reg(g->cpu, 1u, (uint32_t)deadline);
+    arm920t_set_reg(g->cpu, 2u, (uint32_t)(deadline >> 32));
     g->direct_vblank_wait_requested = 0;
-
-    /*
-     * Direct-loaded GPSDK titles call the firmware's surface callback from
-     * GpSurfaceFlip/GpSurfaceSet. Real firmware does not let a title spin
-     * through unlimited display flips: normal game loops are paced by the LCD
-     * frame/vblank cadence. Without this emulated wait, light games such as OMG
-     * can execute many logic iterations per host frame when the JIT is enabled.
-     */
-    uint32_t frame_cycles = direct_lcd_frame_cycles(g);
-    uint64_t now = arm920t_get_cycles(g->cpu);
-    if (!g->direct_vblank_next_cycle || g->direct_vblank_next_cycle <= now) {
-        g->direct_vblank_next_cycle = now + (uint64_t)frame_cycles;
-    }
-    if (g->direct_vblank_next_cycle > now) {
-        uint64_t wait = g->direct_vblank_next_cycle - now;
-        uint64_t max_add = UINT64_MAX - g->direct_vblank_wait_cycles;
-        g->direct_vblank_wait_cycles += wait < max_add ? wait : max_add;
-    }
-    g->direct_vblank_next_cycle += (uint64_t)frame_cycles;
-}
-
-static uint32_t direct_consume_idle_wait(gp32_t *g, uint32_t budget) {
-    if (!g || !g->cpu || !g->soc || !g->direct_vblank_wait_cycles || !budget) return 0u;
-    uint32_t n = budget;
-    if (g->direct_vblank_wait_cycles < (uint64_t)n) n = (uint32_t)g->direct_vblank_wait_cycles;
-    if (n > 32768u) n = 32768u;
-    uint32_t clock = direct_run_clock_hz(g);
-    arm920t_add_idle_cycles(g->cpu, n);
-    direct_account_elapsed(g, n, clock);
-    s3c2400_tick(g->soc, n);
-    direct_hle_tick(g, n, clock);
-    g->direct_vblank_wait_cycles -= (uint64_t)n;
-    direct_update_fw_tick(g);
-    return n;
 }
 
 static void direct_update_fw_tick(gp32_t *g) {
     if (!g || !g->direct_fxe_mode) return;
     direct_write32_if_ram(g, direct_fw_tick_addr(g), direct_elapsed_ms(g));
+    /* CPU/hardware settlement is synchronous: no guest runs between these
+     * writes. A high/low/high guest read can span run boundaries, so it retries
+     * if the high word changed. Each bounded slice advances < 2^32 ns. */
+    uint32_t mirror = direct_time_mirror_addr(g);
+    direct_write32_if_ram(g, mirror, (uint32_t)g->elapsed.nanoseconds);
+    direct_write32_if_ram(g, mirror + 4u, (uint32_t)(g->elapsed.nanoseconds >> 32));
+}
+
+static void direct_migrate_vblank_wait(gp32_t *g, uint64_t cycles) {
+    uint32_t clock = direct_run_clock_hz(g);
+    uint64_t phase = g->elapsed.remainder;
+    if (g->elapsed.clock_hz && g->elapsed.clock_hz != clock)
+        phase = phase * clock / g->elapsed.clock_hz;
+    /* Legacy cycle waits have no historical deadline clock. Convert the
+     * outstanding cycles once at the restored run clock (legacy policy). */
+    uint64_t ns = (cycles / clock) * 1000000000u +
+        ((cycles % clock) * 1000000000u + phase) / clock;
+    uint64_t deadline = g->elapsed.nanoseconds + ns;
+    uint32_t sp = arm920t_get_reg(g->cpu, 13u) - 32u;
+    const unsigned regs[] = {0u, 1u, 2u, 3u, 12u, 14u, 15u};
+    for (unsigned i = 0; i < GP32_ARRAY_COUNT(regs); ++i)
+        direct_write32_if_ram(g, sp + i * 4u, arm920t_get_reg(g->cpu, regs[i]));
+    uint32_t cpsr = arm920t_get_cpsr(g->cpu);
+    direct_write32_if_ram(g, sp + 28u, cpsr);
+    arm920t_set_cpsr(g->cpu, cpsr & ~ARM_T_FLAG);
+    arm920t_set_reg(g->cpu, 13u, sp);
+    arm920t_set_reg(g->cpu, 1u, (uint32_t)deadline);
+    arm920t_set_reg(g->cpu, 2u, (uint32_t)(deadline >> 32));
+    arm920t_set_reg(g->cpu, 15u, direct_stub_addr(g) + 0x80u);
+    g->direct_vblank_time = (gp32_frame_time_t){deadline + 16666666u, 40u, 1u};
 }
 
 static void direct_sync_fwinfo(gp32_t *g) {
@@ -808,6 +900,11 @@ static void direct_set_lcd_8bpp(gp32_t *g, uint32_t fb_addr, uint32_t pal_addr) 
 
 static void direct_reset_hle_runtime(gp32_t *g, int preserve_hle_options) {
     if (!g) return;
+    memset(&g->direct_callback, 0, sizeof(g->direct_callback));
+    memset(&g->direct_tick, 0, sizeof(g->direct_tick));
+    memset(&g->direct_vblank_time, 0, sizeof(g->direct_vblank_time));
+    g->direct_vblank_wait_requested = 0;
+    memset(g->direct_hle_gpos_timer_epoch, 0, sizeof(g->direct_hle_gpos_timer_epoch));
     g->direct_hle_pending_volume = 0;
     g->direct_cpu_running = 0;
     uint32_t saved_rate_override = preserve_hle_options ? g->direct_hle_audio_rate_override : 0u;
@@ -1696,12 +1793,20 @@ static int direct_sdk_sound_mix_one(gp32_t *g, const uint8_t *mixer, int16_t *ou
 }
 
 
-static int direct_call_guest_function3(gp32_t *g, uint32_t fn, uint32_t r0, uint32_t r1, uint32_t r2) {
-    if (!g || !g->cpu || g->direct_hle_callback_running || !direct_ram_range(g, fn & ~1u, 4u)) return 0;
-    arm920t_register_context_t saved;
-    arm920t_get_register_context(g->cpu, &saved);
+/* Install the guest context only. gp32_run pays for all callback execution
+ * from its caller's budget; exhaustion is suspension, never completion. */
+static int direct_begin_guest_function3(gp32_t *g, uint32_t owner, uint32_t fn,
+                                        uint32_t r0, uint32_t r1, uint32_t r2) {
+    if (!g || !g->cpu || g->direct_callback.owner ||
+        (owner != DIRECT_CB_REFILL && owner != DIRECT_CB_TIMER) ||
+        (!(fn & 1u) && (fn & 3u)) || !direct_ram_range(g, fn & ~1u, 4u)) return 0;
     uint32_t cb_stack = direct_stub_addr(g) + 0x1f00u;
     if (!direct_ram_range(g, cb_stack - 0x300u, 0x300u)) return 0;
+    direct_callback_tail_t *cb = &g->direct_callback;
+    arm920t_get_register_context(g->cpu, &cb->foreground);
+    cb->owner = owner;
+    cb->fn = fn;
+    cb->deadline_ns = g->elapsed.nanoseconds + 1000000000u;
     g->direct_hle_callback_running = 1u;
     g->direct_hle_callback_returned = 0u;
     arm920t_set_cpsr(g->cpu, ARM_MODE_SVC | ARM_I_FLAG | ARM_F_FLAG |
@@ -1713,21 +1818,7 @@ static int direct_call_guest_function3(gp32_t *g, uint32_t fn, uint32_t r0, uint
     arm920t_set_reg(g->cpu, 13, cb_stack);
     arm920t_set_reg(g->cpu, 14, direct_callback_return_stub_addr(g));
     arm920t_set_reg(g->cpu, 15, fn & ~1u);
-    uint32_t remaining = 256u * 4096u;
-    while (remaining && !g->direct_hle_callback_returned) {
-        uint32_t slice = remaining < 4096u ? remaining : 4096u;
-        uint32_t done = direct_run_cpu(g, slice, direct_run_clock_hz(g));
-        if (!done) break;
-        /* Clock-write yields consume cycles, not whole 4096-cycle attempts. */
-        remaining -= done;
-    }
-    arm920t_set_register_context(g->cpu, &saved);
-    g->direct_hle_callback_running = 0u;
-    return g->direct_hle_callback_returned ? 1 : 0;
-}
-
-static int direct_call_guest_callback(gp32_t *g, uint32_t callback) {
-    return direct_call_guest_function3(g, callback, 0u, 0u, 0u);
+    return 1;
 }
 
 static void direct_gpos_timer_reset(gp32_t *g) {
@@ -1840,33 +1931,45 @@ static void direct_hle_gpos_timer_prepare(gp32_t *g, uint32_t cycles, uint32_t c
     }
 }
 
-static void direct_hle_gpos_timer_dispatch(gp32_t *g,
-                                         const direct_timer_due_t pending[GP32_DIRECT_GPOS_TIMER_COUNT]) {
-    for (uint32_t i = 0; i < GP32_DIRECT_GPOS_TIMER_COUNT; ++i) {
-        uint32_t cb = pending[i].callback;
-        uint32_t tps = pending[i].tps;
-        uint32_t fires = pending[i].fires;
-        if (!fires || !g->direct_hle_gpos_timers_enabled ||
-            !g->direct_hle_gpos_timer[i].configured || !g->direct_hle_gpos_timer[i].enabled ||
-            g->direct_hle_gpos_timer_epoch[i] != pending[i].epoch ||
-            g->direct_hle_gpos_timer[i].callback != cb || g->direct_hle_gpos_timer[i].tps != tps) continue;
-        if (direct_gpos_callback_is_scheduler(g, cb)) {
-            direct_gpos_neutralize_internal_timer_tasks(g);
-            direct_tick_sdk_task_sleepers(g, g->direct_hle_gpos_task_first,
-                                          g->direct_hle_gpos_task_last, fires);
-            continue;
-        }
-        if (direct_try_emulate_gpos_counter_callback(g, cb, fires)) continue;
-        if (tps <= 1000u && direct_ram_range(g, cb & ~1u, 4u)) {
-            uint32_t calls = fires > 8u ? 8u : fires;
-            for (uint32_t n = 0; n < calls; ++n) {
-                if (!g->direct_hle_gpos_timers_enabled || !g->direct_hle_gpos_timer[i].enabled ||
-                    g->direct_hle_gpos_timer_epoch[i] != pending[i].epoch) break;
-                direct_call_guest_callback(g, cb);
+static int direct_timer_due_current(const gp32_t *g, uint32_t i) {
+    const direct_timer_due_t *due = &g->direct_tick.due[i];
+    return due->fires && g->direct_hle_gpos_timers_enabled &&
+        g->direct_hle_gpos_timer[i].configured && g->direct_hle_gpos_timer[i].enabled &&
+        g->direct_hle_gpos_timer_epoch[i] == due->epoch &&
+        g->direct_hle_gpos_timer[i].callback == due->callback &&
+        g->direct_hle_gpos_timer[i].tps == due->tps;
+}
+
+static void direct_hle_gpos_timer_dispatch(gp32_t *g) {
+    direct_hle_tick_tail_t *tail = &g->direct_tick;
+    int continuing = tail->phase == DIRECT_TICK_TIMER_CALLS;
+    for (uint32_t i = tail->timer_slot; i < GP32_DIRECT_GPOS_TIMER_COUNT; ++i) {
+        const direct_timer_due_t *due = &tail->due[i];
+        uint32_t cb = due->callback, tps = due->tps, fires = due->fires;
+        if (!continuing) {
+            tail->calls_left = 0u;
+            if (!direct_timer_due_current(g, i)) continue;
+            if (direct_gpos_callback_is_scheduler(g, cb)) {
+                direct_gpos_neutralize_internal_timer_tasks(g);
+                direct_tick_sdk_task_sleepers(g, g->direct_hle_gpos_task_first,
+                                              g->direct_hle_gpos_task_last, fires);
+                continue;
             }
+            if (direct_try_emulate_gpos_counter_callback(g, cb, fires)) continue;
+            if (tps > 1000u || !direct_ram_range(g, cb & ~1u, 4u)) continue;
+            tail->calls_left = fires > 8u ? 8u : fires;
+        }
+        continuing = 0;
+        while (tail->calls_left) {
+            if (!direct_timer_due_current(g, i)) break;
+            --tail->calls_left;
+            tail->timer_slot = i;
+            tail->phase = DIRECT_TICK_TIMER_CALLS;
+            if (direct_begin_guest_function3(g, DIRECT_CB_TIMER, cb, 0u, 0u, 0u)) return;
         }
     }
 }
+
 
 static int direct_handle_swi_gpos_timer(gp32_t *g, arm920t_t *cpu, uint32_t pc) {
     if (!g || !cpu) return 0;
@@ -2019,32 +2122,27 @@ static uint32_t direct_sdk_pcm_refill_tick(gp32_t *g, int allow_refill) {
     if (!allow_refill) return 64u;
     uint32_t dst = base + (previous_half ? half_bytes : 0u);
     if (!direct_ram_range(g, dst, half_bytes)) return 64u;
-    if (!direct_call_guest_function3(g, fill, obj, dst, half_bytes)) return 64u;
-    direct_write32_if_ram(g, last_half_addr, current_half);
-    /* A guest refill may mutate mixer metadata; inspect it again after the
-     * next sample instead of retaining addresses across the callback. */
-    return 1u;
+    uint32_t old_phase = g->direct_tick.phase;
+    g->direct_tick.phase = DIRECT_TICK_AFTER_REFILL;
+    if (!direct_begin_guest_function3(g, DIRECT_CB_REFILL, fill, obj, dst, half_bytes)) {
+        g->direct_tick.phase = old_phase;
+        return 64u;
+    }
+    g->direct_callback.ack_addr = last_half_addr;
+    g->direct_callback.ack_value = current_half;
+    return 0u; /* PENDING: do not acknowledge or mix until the real return. */
 }
 
-static void direct_sdk_sound_tick(gp32_t *g, uint32_t cycles, uint32_t clock) {
-    if (!g || !g->soc || !cycles || !g->direct_hle_sdk_sndmixer_addr) return;
-    uint32_t rate = g->direct_hle_sdk_rate ? g->direct_hle_sdk_rate : 44100u;
-    if (g->direct_hle_sdk_last_submit_cycle && g->cpu) {
-        uint64_t now = arm920t_get_cycles(g->cpu);
-        if (now >= g->direct_hle_sdk_last_submit_cycle && now - g->direct_hle_sdk_last_submit_cycle < (uint64_t)clock / 30u) return;
-    }
-    uint64_t scaled = g->direct_hle_sdk_accum + (uint64_t)cycles * (uint64_t)rate;
-    uint32_t frames = (uint32_t)(scaled / (uint64_t)clock);
-    g->direct_hle_sdk_accum = scaled % (uint64_t)clock;
-    if (!frames) return;
-    g->direct_hle_sdk_timer_accum %= 64u;
-    uint32_t span = direct_sdk_pcm_refill_tick(g, g->direct_hle_sdk_timer_accum == 0u);
+static void direct_sdk_sound_mix(gp32_t *g, uint32_t span) {
+    direct_hle_tick_tail_t *tail = &g->direct_tick;
+    uint32_t rate = tail->sdk_rate;
+    /* Reacquire every host pointer after guest execution or a state load. */
     arm_bus_t bus = s3c2400_get_bus(g->soc);
-    while (frames) {
+    while (tail->sdk_frames_left) {
         uint32_t until_poll = 64u - (uint32_t)g->direct_hle_sdk_timer_accum;
         if (span > until_poll) span = until_poll;
         uint32_t until_event = span;
-        if (span > frames) span = frames;
+        if (span > tail->sdk_frames_left) span = tail->sdk_frames_left;
         /* Only the address is reused within this callback-free span. Read
          * live channel words each sample, retaining alias/write ordering and
          * the guarded fallback for a table crossing the RAM boundary. */
@@ -2056,7 +2154,7 @@ static void direct_sdk_sound_tick(gp32_t *g, uint32_t cycles, uint32_t clock) {
             if (!direct_sdk_sound_mix_one(g, mixer, &sample)) break;
             s3c2400_audio_append_s16_stereo(g->soc, sample, sample, rate);
         }
-        frames -= span;
+        tail->sdk_frames_left -= span;
         g->direct_hle_sdk_timer_accum += span;
         if (g->direct_hle_sdk_timer_accum == 64u) {
             g->direct_hle_sdk_timer_accum = 0u;
@@ -2067,7 +2165,25 @@ static void direct_sdk_sound_tick(gp32_t *g, uint32_t cycles, uint32_t clock) {
         /* A short host slice must not retry a failed guest refill more often
          * than the next cursor/poll boundary. */
         span = direct_sdk_pcm_refill_tick(g, span == until_event);
+        if (!span) return;
     }
+}
+
+static void direct_sdk_sound_tick(gp32_t *g, uint32_t cycles, uint32_t clock) {
+    if (!g || !g->soc || !cycles || !g->direct_hle_sdk_sndmixer_addr) return;
+    uint32_t rate = g->direct_hle_sdk_rate ? g->direct_hle_sdk_rate : 44100u;
+    if (g->direct_hle_sdk_last_submit_cycle && g->cpu) {
+        uint64_t now = arm920t_get_cycles(g->cpu);
+        if (now >= g->direct_hle_sdk_last_submit_cycle && now - g->direct_hle_sdk_last_submit_cycle < (uint64_t)clock / 30u) return;
+    }
+    uint64_t scaled = g->direct_hle_sdk_accum + (uint64_t)cycles * (uint64_t)rate;
+    g->direct_tick.sdk_frames_left = (uint32_t)(scaled / (uint64_t)clock);
+    g->direct_tick.sdk_rate = rate;
+    g->direct_hle_sdk_accum = scaled % (uint64_t)clock;
+    if (!g->direct_tick.sdk_frames_left) return;
+    g->direct_hle_sdk_timer_accum %= 64u;
+    uint32_t span = direct_sdk_pcm_refill_tick(g, g->direct_hle_sdk_timer_accum == 0u);
+    if (span) direct_sdk_sound_mix(g, span);
 }
 
 static int direct_handle_swi_set_sndbuffer(gp32_t *g, arm920t_t *cpu) {
@@ -2115,6 +2231,32 @@ static void direct_hle_audio_tick(gp32_t *g, uint32_t cycles, uint32_t clock) {
     if (!g || !cycles) return;
     direct_hle_pcm_tick(g, cycles, clock);
     direct_sdk_sound_tick(g, cycles, clock);
+}
+
+/* Only the actual refill and timer consumer tails can be pending. Preparation
+ * and prefix PCM mixing happen once, before the first callback is installed. */
+static void direct_hle_tick_pump(gp32_t *g) {
+    direct_hle_tick_tail_t *tail = &g->direct_tick;
+    if (!tail->clock || g->direct_callback.owner) return;
+    if (tail->phase == DIRECT_TICK_AFTER_REFILL) {
+        direct_sdk_sound_mix(g, 1u);
+        if (g->direct_callback.owner) return;
+        tail->phase = DIRECT_TICK_IDLE;
+    }
+    if (tail->volume) {
+        s3c2400_audio_set_volume(g->soc, tail->volume);
+        tail->volume = 0u;
+    }
+    direct_hle_gpos_timer_dispatch(g);
+    if (g->direct_callback.owner) return;
+    uint32_t clock = tail->clock, next_clock = direct_run_clock_hz(g);
+    if (next_clock != clock) {
+        g->direct_hle_pcm_accum = g->direct_hle_pcm_accum * next_clock / clock;
+        g->direct_hle_sdk_accum = g->direct_hle_sdk_accum * next_clock / clock;
+        for (unsigned i = 0; i < GP32_DIRECT_GPOS_TIMER_COUNT; ++i)
+            g->direct_hle_gpos_timer[i].accum = g->direct_hle_gpos_timer[i].accum * next_clock / clock;
+    }
+    memset(tail, 0, sizeof(*tail));
 }
 
 static uint32_t direct_alloc_fpk_handle(gp32_t *g, const fpk_asset_t *asset) {
@@ -2721,10 +2863,27 @@ static int direct_retail_smc_init_hle(gp32_t *g, uint32_t init_pc) {
 static int direct_file_hle_swi(gp32_t *g, arm920t_t *cpu, uint32_t id, uint32_t pc) {
     if (!g || !cpu) return 0;
     uint32_t lr = arm920t_get_reg(cpu, 14);
+    if (id == 0x21u) {
+        if (pc != direct_stub_addr(g) + 0xa4u) return 0;
+        uint32_t sp = arm920t_get_reg(cpu, 13u), frame[8];
+        if (!direct_ram_range(g, sp, sizeof(frame))) return 0;
+        for (unsigned i = 0; i < GP32_ARRAY_COUNT(frame); ++i)
+            frame[i] = s3c2400_debug_read32(g->soc, sp + i * 4u);
+        if ((frame[7] & 31u) != (arm920t_get_cpsr(cpu) & 31u) ||
+            (frame[6] & ((frame[7] & ARM_T_FLAG) ? 1u : 3u))) return 0;
+        const unsigned regs[] = {0u, 1u, 2u, 3u, 12u, 14u, 15u};
+        arm920t_set_cpsr(cpu, frame[7]);
+        for (unsigned i = 0; i < GP32_ARRAY_COUNT(regs); ++i)
+            arm920t_set_reg(cpu, regs[i], frame[i]);
+        arm920t_set_reg(cpu, 13u, sp + 32u);
+        arm920t_stop_run(cpu);
+        return 1;
+    }
     if (id == 0x20u) {
         /* Only our active callback's return stub may end the host call. A
          * matching guest SWI elsewhere must follow normal exception dispatch. */
-        if (!g->direct_hle_callback_running || pc != direct_callback_return_stub_addr(g)) return 0;
+        if ((g->direct_callback.owner != DIRECT_CB_REFILL && g->direct_callback.owner != DIRECT_CB_TIMER) ||
+            !g->direct_hle_callback_running || pc != direct_callback_return_stub_addr(g)) return 0;
         g->direct_hle_callback_returned = 1u;
         arm920t_set_reg(cpu, 15, lr);
         arm920t_stop_run(cpu);
@@ -3090,7 +3249,7 @@ static int direct_fxe_swi(void *user, arm920t_t *cpu, uint32_t imm, uint32_t pc,
     case 0x11: { /* Direct-mode display callback for GpSurfaceSet/GpSurfaceFlip. */
         /* The real SDK service is a card-detect query; r0 may contain an
            unrelated pointer. Only our installed trampoline is a display call. */
-        if (pc != direct_stub_addr(g)) {
+        if (pc != direct_wait_swi_addr(g)) {
             uint32_t present = g->direct_fpk_asset_count != 0u ||
                 (s3c2400_read32(g->soc, 0x15600030u) & 4u) == 0u;
             arm920t_set_reg(cpu, 0, present);
@@ -3103,8 +3262,8 @@ static int direct_fxe_swi(void *user, arm920t_t *cpu, uint32_t imm, uint32_t pc,
             if (bpp == 16u) direct_set_lcd_16bpp(g, fb);
             else direct_set_lcd_8bpp(g, fb, 0u);
             g->direct_fxe_lcd_explicit = 1u;
-            direct_request_vblank_wait(g);
         }
+        direct_request_vblank_wait(g, fb != 0u);
         arm920t_set_reg(cpu, 0, 1u);
         return 1;
     }
@@ -3113,6 +3272,10 @@ static int direct_fxe_swi(void *user, arm920t_t *cpu, uint32_t imm, uint32_t pc,
         uint32_t cmd = direct_read32_if_ram(g, cmdp);
         if (direct_ram_range(g, cmdp, 4u) &&
             (cmd == 0x20u || cmd == 0x80u || cmd == 0x1000u || cmd == 0x2000u || cmd == 0x4010u)) {
+            if (g->direct_hle_callback_running) {
+                direct_callback_fault(g, DIRECT_CB_TASK_SWITCH);
+                return 1;
+            }
             direct_tick_sdk_task_sleepers(g, arm920t_get_reg(cpu, 2), arm920t_get_reg(cpu, 3), 1u);
             if (direct_resume_ready_sdk_task(g, pc, arm920t_get_reg(cpu, 2), arm920t_get_reg(cpu, 3))) return 1;
         }
@@ -3496,8 +3659,6 @@ static gp32_status_t gp32_load_fxe_image_internal(gp32_t *g, fxe_image_t *img, i
     g->direct_fxe_palette_initialized = 0u;
     g->direct_fxe_lcd_explicit = 0u;
     g->direct_fxe_lcd_enabled = 1u;
-    g->direct_vblank_next_cycle = 0u;
-    g->direct_vblank_wait_cycles = 0u;
     g->direct_vblank_wait_requested = 0;
     direct_apply_gxb_scatterload(g, img);
     for (unsigned i = 0; i < 4u; ++i) {
@@ -3640,8 +3801,6 @@ gp32_status_t gp32_reset(gp32_t *g) {
     g->direct_fxe_palette_initialized = 0;
     g->direct_fxe_lcd_explicit = 0;
     g->direct_fxe_lcd_enabled = 0;
-    g->direct_vblank_next_cycle = 0u;
-    g->direct_vblank_wait_cycles = 0u;
     g->direct_vblank_wait_requested = 0;
     for (unsigned i = 0; i < 4u; ++i) {
         g->direct_fxe_lcd_surface[i] = 0;
@@ -3790,6 +3949,7 @@ static int direct_restore_saved_context(gp32_t *g, uint32_t task_addr) {
 static int direct_try_resume_sdk_task(gp32_t *g) {
     if (!g || !g->direct_fxe_mode || !g->cpu) return 0;
     uint32_t pc = arm920t_get_pc(g->cpu);
+    if (pc >= direct_stub_addr(g) && pc < direct_stub_addr(g) + 0xacu) return 0;
     if (!direct_ram_range(g, pc, 4u) || s3c2400_debug_read32(g->soc, pc) != 0xeafffffeu) return 0;
 
     /* Several devkitPro/official-GPSDK CRTs fall back into a resident SDK idle
@@ -3875,9 +4035,9 @@ static int direct_try_resume_sdk_task(gp32_t *g) {
 }
 
 /* Recalculate after every CPU yield: a guest clock-register write ends the
- * current slice, and synchronous HLE callbacks also advance elapsed time. */
+ * current slice, and resumable HLE callbacks also advance elapsed time. */
 static uint32_t direct_frame_budget(const gp32_t *g, uint64_t deadline) {
-    if (g->elapsed.nanoseconds >= deadline) return 0u;
+    if (!direct_time_pending(deadline, g->elapsed.nanoseconds)) return 0u;
     uint32_t clock = direct_run_clock_hz(g);
     uint64_t ns = deadline - g->elapsed.nanoseconds;
     if (ns > (uint64_t)32768u * 1000000000u / clock + 1u) return 32768u;
@@ -3889,23 +4049,59 @@ static uint32_t direct_frame_budget(const gp32_t *g, uint64_t deadline) {
 }
 
 static gp32_status_t gp32_run(gp32_t *g, uint32_t cycles, int timed) {
-    direct_fix_gp32_additive_blend_shadow_endpoint(g);
+    if (!g->direct_callback.owner) direct_fix_gp32_additive_blend_shadow_endpoint(g);
     uint32_t remaining = cycles;
+    gp32_status_t status = GP32_OK;
     for (;;) {
+        if (g->direct_callback.owner == DIRECT_CB_FAULT) {
+            direct_callback_error(g);
+            status = GP32_ERR_CPU_FAULT;
+            break;
+        }
+        if (!g->direct_callback.owner && g->direct_tick.clock) {
+            direct_hle_tick_pump(g);
+            if (!g->direct_callback.owner) {
+                direct_schedule_vblank_wait(g);
+                direct_try_file_hle(g);
+                direct_try_resume_sdk_task(g);
+            }
+        }
         if (timed) remaining = direct_frame_budget(g, g->frame_time.deadline_ns);
         if (!remaining) break;
-        uint32_t idle = direct_consume_idle_wait(g, remaining);
-        if (idle) {
-            remaining -= idle;
+        if (g->direct_callback.owner) {
+            uint32_t slice = remaining > 4096u ? 4096u : remaining;
+            direct_update_fw_tick(g);
+            uint32_t clock = direct_run_clock_hz(g);
+            uint32_t done = direct_run_cpu(g, slice, clock);
+            remaining = done >= remaining ? 0u : remaining - done;
+            direct_update_fw_tick(g);
+            /* A valid trap wins over timeout in the same completed slice. */
+            if (g->direct_hle_callback_returned) {
+                direct_callback_tail_t *cb = &g->direct_callback;
+                arm920t_set_register_context(g->cpu, &cb->foreground);
+                if (cb->owner == DIRECT_CB_REFILL)
+                    direct_write32_if_ram(g, cb->ack_addr, cb->ack_value);
+                memset(cb, 0, sizeof(*cb));
+                g->direct_hle_callback_returned = 0u;
+                g->direct_hle_callback_running = 0u;
+            } else if (g->direct_callback.owner != DIRECT_CB_FAULT) {
+                if (!done) direct_callback_fault(g, DIRECT_CB_STALLED);
+                else if (!direct_time_pending(g->direct_callback.deadline_ns, g->elapsed.nanoseconds))
+                    direct_callback_fault(g, DIRECT_CB_TIMEOUT);
+            }
+            /* No HLE mixing, timer preparation, idle wait or foreground task
+             * recovery while the callback owns the normal CPU/hardware. */
             continue;
         }
         uint32_t slice = remaining > 32768u ? 32768u : remaining;
         direct_update_fw_tick(g);
         uint32_t clock = direct_run_clock_hz(g);
         uint32_t done = direct_run_cpu(g, slice, clock);
+        remaining = done >= remaining ? 0u : remaining - done;
         direct_hle_tick(g, done, clock);
         direct_update_fw_tick(g);
         direct_process_asset_autoload(g);
+        if (g->direct_callback.owner) continue;
         direct_schedule_vblank_wait(g);
         if (done == 0) {
             if (direct_try_file_hle(g)) continue;
@@ -3913,20 +4109,17 @@ static gp32_status_t gp32_run(gp32_t *g, uint32_t cycles, int timed) {
             break;
         }
         if (direct_try_file_hle(g)) {
-            remaining -= done;
             continue;
         }
         if (direct_try_resume_sdk_task(g)) {
-            remaining -= done;
             continue;
         }
-        remaining -= done;
     }
     direct_update_fw_tick(g);
     direct_process_asset_autoload(g);
-    direct_fix_gp32_additive_blend_shadow_endpoint(g);
+    if (!g->direct_callback.owner) direct_fix_gp32_additive_blend_shadow_endpoint(g);
     direct_select_visible_surface(g);
-    return GP32_OK;
+    return status;
 }
 
 gp32_status_t gp32_run_cycles(gp32_t *g, uint32_t cycles) {
@@ -3949,7 +4142,7 @@ gp32_status_t gp32_run_frame(gp32_t *g) {
     g->frame_time.deadline_ns += ns / 60u;
     g->frame_time.remainder = ns % 60u;
     gp32_status_t st = gp32_run(g, 0u, 1);
-    if (g->elapsed.nanoseconds < g->frame_time.deadline_ns)
+    if (direct_time_pending(g->frame_time.deadline_ns, g->elapsed.nanoseconds))
         memset(&g->frame_time, 0, sizeof(g->frame_time)); /* CPU stopped */
     return st;
 }
@@ -4226,9 +4419,10 @@ static void gp32_direct_state_capture(const gp32_t *g, gp32_state_image_t *st) {
     st->direct_hle_audio_size = g->direct_hle_audio_size;
     st->direct_hle_audio_rate = g->direct_hle_audio_rate;
     st->direct_hle_audio_accum = g->direct_hle_audio_accum;
-    st->direct_vblank_next_cycle = g->direct_vblank_next_cycle;
-    st->direct_vblank_wait_cycles = g->direct_vblank_wait_cycles;
-    st->direct_vblank_wait_requested = g->direct_vblank_wait_requested;
+    /* Legacy fields remain on the wire; new waits live in CPU/RAM. */
+    st->direct_vblank_next_cycle = 0u;
+    st->direct_vblank_wait_cycles = 0u;
+    st->direct_vblank_wait_requested = 0;
 }
 
 static void gp32_direct_state_apply(gp32_t *g, const gp32_state_image_t *st) {
@@ -4324,9 +4518,7 @@ static void gp32_direct_state_apply(gp32_t *g, const gp32_state_image_t *st) {
     g->direct_hle_audio_size = st->direct_hle_audio_size;
     g->direct_hle_audio_rate = st->direct_hle_audio_rate;
     g->direct_hle_audio_accum = st->direct_hle_audio_accum;
-    g->direct_vblank_next_cycle = st->direct_vblank_next_cycle;
-    g->direct_vblank_wait_cycles = st->direct_vblank_wait_cycles;
-    g->direct_vblank_wait_requested = st->direct_vblank_wait_requested;
+    g->direct_vblank_wait_requested = 0;
 }
 
 static const uint8_t gp32_state_magic_v2[16] = { 'G','P','3','2','S','T','A','T','E','v','0','0','0','2',0,0 };
@@ -4336,9 +4528,170 @@ static const uint8_t gp32_state_magic_v5[16] = { 'G','P','3','2','S','T','A','T'
 static const uint8_t gp32_state_magic_v6[16] = { 'G','P','3','2','S','T','A','T','E','v','0','0','0','6',0,0 };
 static const uint8_t gp32_state_magic_v7[16] = { 'G','P','3','2','S','T','A','T','E','v','0','0','0','7',0,0 };
 static const uint8_t gp32_state_magic_v8[16] = { 'G','P','3','2','S','T','A','T','E','v','0','0','0','8',0,0 };
-static const uint8_t gp32_state_magic[16] = { 'G','P','3','2','S','T','A','T','E','v','0','0','0','9',0,0 };
+static const uint8_t gp32_state_magic_v9[16] = { 'G','P','3','2','S','T','A','T','E','v','0','0','0','9',0,0 };
+static const uint8_t gp32_state_magic_v10[16] = { 'G','P','3','2','S','T','A','T','E','v','0','0','1','0',0,0 };
+static const uint8_t gp32_state_magic[16] = { 'G','P','3','2','S','T','A','T','E','v','0','0','1','1',0,0 };
 static_assert(sizeof(gp32_frame_time_t) == 16u, "fixed frame-time wire extension");
 static_assert(sizeof(gp32_elapsed_time_t) == 16u, "fixed elapsed-time wire extension");
+
+/* v10 has 81 LE words; v11 appends four display-cadence words.
+ * No host pointers, padding or raw register-context layout.
+ * RAM size/current clock bind these validations to the staged SoC body.
+ * The suspended tick may still have a different fractional denominator. */
+#define GP32_CONTINUATION_V10_WORDS 81u
+#define GP32_CONTINUATION_WORDS 85u
+#define GP32_CONTINUATION_BYTES (GP32_CONTINUATION_WORDS * 4u)
+typedef struct gp32_resume_image {
+    uint32_t ram_size, run_clock;
+    direct_callback_tail_t callback;
+    direct_hle_tick_tail_t tick;
+    uint32_t epoch[GP32_DIRECT_GPOS_TIMER_COUNT];
+    gp32_frame_time_t vblank;
+    uint64_t legacy_wait_cycles; /* load migration only, not wire */
+    uint32_t legacy_wait_requested;
+} gp32_resume_image_t;
+
+static int gp32_resume_write(const gp32_t *g, state_io_t *io) {
+    const direct_callback_tail_t *cb = &g->direct_callback;
+    const direct_hle_tick_tail_t *tick = &g->direct_tick;
+    const arm920t_register_context_t *fg = &cb->foreground;
+    uint32_t w[GP32_CONTINUATION_WORDS];
+    uint8_t bytes[GP32_CONTINUATION_BYTES];
+    size_t n = 0;
+#define PUT(v) w[n++] = (v)
+    PUT((uint32_t)s3c2400_ram_size(g->soc)); PUT(direct_run_clock_hz(g));
+    PUT(cb->owner); PUT(cb->fault_owner); PUT(cb->fault_reason); PUT(cb->fn);
+    PUT(cb->ack_addr); PUT(cb->ack_value);
+    PUT((uint32_t)cb->deadline_ns); PUT((uint32_t)(cb->deadline_ns >> 32));
+    for (unsigned i = 0; i < 16u; ++i) PUT(fg->r[i]);
+    PUT(fg->cpsr);
+    for (unsigned i = 0; i < 7u; ++i) PUT(fg->bank_usr[i]);
+    for (unsigned i = 0; i < 7u; ++i) PUT(fg->bank_fiq[i]);
+    for (unsigned i = 0; i < 2u; ++i) PUT(fg->bank_svc[i]);
+    for (unsigned i = 0; i < 2u; ++i) PUT(fg->bank_abt[i]);
+    for (unsigned i = 0; i < 2u; ++i) PUT(fg->bank_irq[i]);
+    for (unsigned i = 0; i < 2u; ++i) PUT(fg->bank_und[i]);
+    PUT(fg->spsr_fiq); PUT(fg->spsr_svc); PUT(fg->spsr_abt); PUT(fg->spsr_irq); PUT(fg->spsr_und);
+    PUT(tick->phase); PUT(tick->clock); PUT(tick->volume);
+    PUT(tick->sdk_frames_left); PUT(tick->sdk_rate); PUT(tick->timer_slot); PUT(tick->calls_left);
+    for (unsigned i = 0; i < GP32_DIRECT_GPOS_TIMER_COUNT; ++i) {
+        PUT(tick->due[i].callback); PUT(tick->due[i].tps); PUT(tick->due[i].fires); PUT(tick->due[i].epoch);
+    }
+    for (unsigned i = 0; i < GP32_DIRECT_GPOS_TIMER_COUNT; ++i) PUT(g->direct_hle_gpos_timer_epoch[i]);
+    PUT((uint32_t)g->direct_vblank_time.deadline_ns); PUT((uint32_t)(g->direct_vblank_time.deadline_ns >> 32));
+    PUT(g->direct_vblank_time.remainder); PUT(g->direct_vblank_time.valid);
+#undef PUT
+    assert(n == GP32_CONTINUATION_WORDS);
+    for (size_t i = 0; i < n; ++i) gp32_st32le(bytes + i * 4u, w[i]);
+    return state_io_write(io, bytes, sizeof(bytes));
+}
+
+static int gp32_resume_read(state_io_t *io, gp32_resume_image_t *resume, int has_wait) {
+    direct_callback_tail_t *cb = &resume->callback;
+    direct_hle_tick_tail_t *tick = &resume->tick;
+    arm920t_register_context_t *fg = &cb->foreground;
+    uint8_t bytes[GP32_CONTINUATION_BYTES];
+    size_t words = has_wait ? GP32_CONTINUATION_WORDS : GP32_CONTINUATION_V10_WORDS;
+    if (!state_io_read(io, bytes, words * 4u)) return 0;
+    size_t n = 0;
+#define GET() gp32_ld32le(bytes + 4u * n++)
+    resume->ram_size = GET(); resume->run_clock = GET();
+    cb->owner = GET(); cb->fault_owner = GET(); cb->fault_reason = GET(); cb->fn = GET();
+    cb->ack_addr = GET(); cb->ack_value = GET();
+    uint32_t lo = GET(), hi = GET();
+    cb->deadline_ns = ((uint64_t)hi << 32) | lo;
+    for (unsigned i = 0; i < 16u; ++i) fg->r[i] = GET();
+    fg->cpsr = GET();
+    for (unsigned i = 0; i < 7u; ++i) fg->bank_usr[i] = GET();
+    for (unsigned i = 0; i < 7u; ++i) fg->bank_fiq[i] = GET();
+    for (unsigned i = 0; i < 2u; ++i) fg->bank_svc[i] = GET();
+    for (unsigned i = 0; i < 2u; ++i) fg->bank_abt[i] = GET();
+    for (unsigned i = 0; i < 2u; ++i) fg->bank_irq[i] = GET();
+    for (unsigned i = 0; i < 2u; ++i) fg->bank_und[i] = GET();
+    fg->spsr_fiq = GET(); fg->spsr_svc = GET(); fg->spsr_abt = GET(); fg->spsr_irq = GET(); fg->spsr_und = GET();
+    tick->phase = GET(); tick->clock = GET(); tick->volume = GET();
+    tick->sdk_frames_left = GET(); tick->sdk_rate = GET(); tick->timer_slot = GET(); tick->calls_left = GET();
+    for (unsigned i = 0; i < GP32_DIRECT_GPOS_TIMER_COUNT; ++i) {
+        tick->due[i].callback = GET(); tick->due[i].tps = GET(); tick->due[i].fires = GET(); tick->due[i].epoch = GET();
+    }
+    for (unsigned i = 0; i < GP32_DIRECT_GPOS_TIMER_COUNT; ++i) resume->epoch[i] = GET();
+    if (has_wait) {
+        lo = GET(); hi = GET();
+        resume->vblank.deadline_ns = ((uint64_t)hi << 32) | lo;
+        resume->vblank.remainder = GET(); resume->vblank.valid = GET();
+    }
+#undef GET
+    assert(n == words);
+    return 1;
+}
+
+static int gp32_resume_ram_range(uint32_t ram_size, uint32_t addr, uint32_t bytes) {
+    return addr >= GP32_RAM_BASE && addr - GP32_RAM_BASE <= ram_size && bytes <= ram_size - (addr - GP32_RAM_BASE);
+}
+static int gp32_resume_mode(uint32_t cpsr) {
+    switch (cpsr & 0x1fu) {
+    case 0x10u: case 0x11u: case 0x12u: case 0x13u: case 0x17u: case 0x1bu: case 0x1fu: return 1;
+    default: return 0;
+    }
+}
+static int gp32_resume_validate(const gp32_resume_image_t *r, const gp32_state_image_t *direct,
+                                const arm920t_state_image_t *cpu, const gp32_elapsed_time_t *elapsed) {
+    const direct_callback_tail_t *cb = &r->callback;
+    const direct_hle_tick_tail_t *tick = &r->tick;
+    if (!r->ram_size || r->ram_size > 64u * 1024u * 1024u || !r->run_clock ||
+        cb->owner > DIRECT_CB_FAULT || tick->phase > DIRECT_TICK_TIMER_CALLS) return 0;
+    if (r->vblank.valid > 1u || r->vblank.remainder >= 60u ||
+        (!r->vblank.valid && (r->vblank.deadline_ns || r->vblank.remainder))) return 0;
+    uint32_t clock = tick->clock ? tick->clock : r->run_clock;
+    if (direct->direct_hle_pcm_accum >= clock || direct->direct_hle_sdk_accum >= clock) return 0;
+    for (unsigned i = 0; i < GP32_DIRECT_GPOS_TIMER_COUNT; ++i)
+        if (direct->direct_hle_gpos_timer[i].accum >= clock) return 0;
+    if (cb->owner == DIRECT_CB_NONE) {
+        static const direct_callback_tail_t no_callback = {0};
+        static const direct_hle_tick_tail_t no_tick = {0};
+        return !memcmp(cb, &no_callback, sizeof(*cb)) && !memcmp(tick, &no_tick, sizeof(*tick)) &&
+            !direct->direct_hle_callback_running && !direct->direct_hle_callback_returned;
+    }
+    uint32_t owner = cb->owner == DIRECT_CB_FAULT ? cb->fault_owner : cb->owner;
+    uint32_t mode = cpu->cpsr & 0x1fu;
+    /* A normal mode switch can select an unused exception stack bank. */
+    int empty_exception_stack = !cpu->r[13] &&
+        (mode == 0x11u || mode == 0x12u || mode == 0x17u || mode == 0x1bu);
+    if (!direct->direct_fxe_mode || !tick->clock || tick->timer_slot >= GP32_DIRECT_GPOS_TIMER_COUNT ||
+        tick->calls_left > 8u || (tick->volume && ((tick->volume & ~0x13fu) || !(tick->volume & 0x100u))) ||
+        !gp32_resume_ram_range(r->ram_size, cb->fn & ~1u, 4u) ||
+        (!(cb->fn & 1u) && (cb->fn & 3u)) ||
+        !gp32_resume_mode(cb->foreground.cpsr) || !gp32_resume_mode(cpu->cpsr) ||
+        (cb->foreground.r[15] & ((cb->foreground.cpsr & ARM_T_FLAG) ? 1u : 3u)) ||
+        (cpu->r[15] & ((cpu->cpsr & ARM_T_FLAG) ? 1u : 3u)) ||
+        (!gp32_resume_ram_range(r->ram_size, cpu->r[13], 0u) && !empty_exception_stack) ||
+        (!gp32_resume_ram_range(r->ram_size, cb->foreground.r[15], 4u) && cb->foreground.r[15] >= 0x80000u) ||
+        direct->direct_hle_sdk_timer_accum >= 64u || direct->direct_hle_callback_returned) return 0;
+    /* Bounds of the existing S3C2400 MPLL/divider calculation. A forged tiny
+     * denominator must not admit billions of pending samples in the host tail. */
+    if (tick->clock < 92307u || tick->clock > 1578000000u) return 0;
+    uint32_t work = r->ram_size >= 0x800000u ? GP32_RAM_BASE + 0x7d0000u :
+        r->ram_size >= 0x400000u ? GP32_RAM_BASE + r->ram_size - 0x30000u : GP32_RAM_BASE + 0x100u;
+    if (!gp32_resume_ram_range(r->ram_size, work + 0x1c00u, 0x300u)) return 0;
+    if (owner == DIRECT_CB_REFILL) {
+        if (tick->phase != DIRECT_TICK_AFTER_REFILL || cb->ack_value > 1u ||
+            !gp32_resume_ram_range(r->ram_size, cb->ack_addr, 4u)) return 0;
+    } else if (owner == DIRECT_CB_TIMER) {
+        const direct_timer_due_t *due = &tick->due[tick->timer_slot];
+        if (tick->phase != DIRECT_TICK_TIMER_CALLS || cb->ack_addr || cb->ack_value ||
+            tick->sdk_frames_left || due->callback != cb->fn || !due->fires || !due->tps || due->tps > 1000u) return 0;
+    } else return 0;
+    if (tick->sdk_rate && (tick->sdk_rate < 4000u || tick->sdk_rate > 192000u)) return 0;
+    if (tick->sdk_frames_left && (!tick->sdk_rate ||
+        tick->sdk_frames_left > (uint64_t)32768u * tick->sdk_rate / tick->clock + 1u)) return 0;
+    if (cb->owner == DIRECT_CB_FAULT) {
+        if (cb->fault_reason < DIRECT_CB_TIMEOUT || cb->fault_reason > DIRECT_CB_HOST_DISPLAY_WAIT ||
+            direct->direct_hle_callback_running) return 0;
+    } else if (cb->fault_owner || cb->fault_reason || !direct->direct_hle_callback_running ||
+               !direct_time_pending(cb->deadline_ns, elapsed->nanoseconds) ||
+               cb->deadline_ns - elapsed->nanoseconds > 1000000000u || cpu->halted) return 0;
+    return 1;
+}
 
 static int gp32_state_write(const gp32_t *g, state_io_t *io) {
     gp32_state_image_t direct;
@@ -4347,15 +4700,18 @@ static int gp32_state_write(const gp32_t *g, state_io_t *io) {
            state_io_write(io, &direct, sizeof(direct)) &&
            state_io_write(io, &g->elapsed, sizeof(g->elapsed)) &&
            state_io_write(io, &g->frame_time, sizeof(g->frame_time)) &&
+           gp32_resume_write(g, io) &&
            arm920t_state_save_io(g->cpu, io) &&
            s3c2400_state_save_io(g->soc, io);
 }
 
-static int gp32_state_read(gp32_t *g, state_io_t *io, gp32_state_image_t *direct) {
+static int gp32_state_read(gp32_t *g, state_io_t *io, gp32_state_image_t *direct, gp32_resume_image_t *resume) {
     uint8_t got[sizeof(gp32_state_magic)];
     if (!state_io_read(io, got, sizeof(got))) return 0;
     int legacy = memcmp(got, gp32_state_magic_v2, sizeof(got)) == 0;
-    int has_codec = memcmp(got, gp32_state_magic, sizeof(got)) == 0;
+    int has_wait = memcmp(got, gp32_state_magic, sizeof(got)) == 0;
+    int has_resume = has_wait || memcmp(got, gp32_state_magic_v10, sizeof(got)) == 0;
+    int has_codec = has_resume || memcmp(got, gp32_state_magic_v9, sizeof(got)) == 0;
     int has_idle_phase = has_codec || memcmp(got, gp32_state_magic_v8, sizeof(got)) == 0;
     int has_lcd_phase = has_idle_phase || memcmp(got, gp32_state_magic_v7, sizeof(got)) == 0;
     int has_iis_phase = has_lcd_phase || memcmp(got, gp32_state_magic_v6, sizeof(got)) == 0;
@@ -4363,6 +4719,8 @@ static int gp32_state_read(gp32_t *g, state_io_t *io, gp32_state_image_t *direct
     int has_spans = has_frame_time || memcmp(got, gp32_state_magic_v4, sizeof(got)) == 0;
     if ((!legacy && !has_spans && memcmp(got, gp32_state_magic_v3, sizeof(got)) != 0) ||
         !state_io_read(io, direct, sizeof(*direct))) return 0;
+    memset(resume, 0, sizeof(*resume));
+    if (!has_resume && direct->direct_hle_callback_running) return 0;
     gp32_elapsed_time_t elapsed = {0};
     if (!legacy) {
         if (!state_io_read(io, &elapsed, sizeof(elapsed))) return 0;
@@ -4374,7 +4732,7 @@ static int gp32_state_read(gp32_t *g, state_io_t *io, gp32_state_image_t *direct
         if (!state_io_read(io, &frame_time, sizeof(frame_time))) return 0;
         if (frame_time.valid > 1u || frame_time.remainder >= 60u ||
             (!frame_time.valid && (frame_time.deadline_ns || frame_time.remainder)) ||
-            (frame_time.deadline_ns > elapsed.nanoseconds &&
+            (direct_time_pending(frame_time.deadline_ns, elapsed.nanoseconds) &&
              frame_time.deadline_ns - elapsed.nanoseconds > 16666667u)) return 0;
     }
     /* Keep CPU state pending until the SoC has read every section. Its large
@@ -4382,7 +4740,31 @@ static int gp32_state_read(gp32_t *g, state_io_t *io, gp32_state_image_t *direct
      * the CPU image must not remain on that stack during the SoC call. */
     arm920t_state_image_t *cpu = malloc(sizeof(*cpu));
     if (!cpu) return 0;
-    int ok = state_io_read(io, cpu, sizeof(*cpu)) && s3c2400_state_load_io(g->soc, io, has_spans, has_iis_phase, has_lcd_phase, has_idle_phase, has_codec);
+    int ok = (!has_resume || gp32_resume_read(io, resume, has_wait)) && state_io_read(io, cpu, sizeof(*cpu)) &&
+        (!has_resume || gp32_resume_validate(resume, direct, cpu, &elapsed));
+    uint32_t required_ram_size = 0u;
+    if (ok && has_wait && (direct->direct_vblank_next_cycle || direct->direct_vblank_wait_cycles ||
+                           direct->direct_vblank_wait_requested)) ok = 0;
+    if (ok && !has_wait && direct->direct_fxe_mode) {
+        resume->legacy_wait_cycles = direct->direct_vblank_wait_cycles;
+        if (direct->direct_vblank_wait_requested && !resume->legacy_wait_cycles) {
+            if (direct->direct_vblank_next_cycle > cpu->cycles_total)
+                resume->legacy_wait_cycles = direct->direct_vblank_next_cycle - cpu->cycles_total;
+            else resume->legacy_wait_requested = 1u; /* one restored-clock frame */
+        }
+        if (resume->legacy_wait_cycles || resume->legacy_wait_requested) {
+            /* Incoming RAM must contain the full migration stack before
+             * SoC commit. Do not validate it against this instance. */
+            uint32_t sp = cpu->r[13];
+            ok = !resume->callback.owner && gp32_resume_mode(cpu->cpsr) && !(sp & 3u) &&
+                sp >= GP32_RAM_BASE + 32u && sp <= GP32_RAM_BASE + 64u * 1024u * 1024u &&
+                resume->legacy_wait_cycles <= UINT64_MAX / 1000000000u;
+            required_ram_size = sp - GP32_RAM_BASE;
+            if (required_ram_size < 0x2000u) required_ram_size = 0x2000u;
+        }
+    }
+    if (ok) ok = s3c2400_state_load_io_checked(g->soc, io, has_spans, has_iis_phase, has_lcd_phase, has_idle_phase, has_codec,
+                                               resume->ram_size, resume->run_clock, required_ram_size);
     if (ok) {
         if (legacy) {
             /* v2 has no clock history. Continue from its former observable
@@ -4401,11 +4783,32 @@ static int gp32_state_read(gp32_t *g, state_io_t *io, gp32_state_image_t *direct
     return ok;
 }
 
-static void gp32_state_loaded(gp32_t *g, const gp32_state_image_t *direct) {
+static void gp32_state_loaded(gp32_t *g, const gp32_state_image_t *direct, const gp32_resume_image_t *resume) {
     gp32_direct_state_apply(g, direct);
+    g->direct_callback = resume->callback;
+    g->direct_tick = resume->tick;
+    g->direct_vblank_time = resume->vblank;
+    memcpy(g->direct_hle_gpos_timer_epoch, resume->epoch, sizeof(resume->epoch));
+    g->direct_hle_callback_running = g->direct_callback.owner == DIRECT_CB_REFILL || g->direct_callback.owner == DIRECT_CB_TIMER;
+    g->direct_hle_callback_returned = 0u;
+    g->direct_cpu_running = 0;
+    g->direct_hle_pending_volume = 0u;
+    g->error[0] = '\0';
+    if (g->direct_callback.owner == DIRECT_CB_FAULT) direct_callback_error(g);
     s3c2400_set_irq_sink(g->soc, g->cpu);
+    if (g->direct_fxe_mode) {
+        /* Also upgrade legacy stub bytes retained in saved RAM. */
+        direct_install_stubs(g);
+        uint64_t cycles = resume->legacy_wait_cycles;
+        if (resume->legacy_wait_requested) {
+            cycles = direct_run_clock_hz(g) / 60u;
+            if (!cycles) cycles = 1u;
+        }
+        if (cycles) direct_migrate_vblank_wait(g, cycles);
+        direct_update_fw_tick(g);
+    }
     gp32_clear_audio(g);
-    direct_fix_gp32_additive_blend_shadow_endpoint(g);
+    if (!g->direct_callback.owner) direct_fix_gp32_additive_blend_shadow_endpoint(g);
 }
 
 size_t gp32_state_size(const gp32_t *g) {
@@ -4432,11 +4835,12 @@ gp32_status_t gp32_load_state_data(gp32_t *g, const void *data, size_t size) {
     if (!g || !data || !size) return GP32_ERR_INVALID_ARGUMENT;
     state_io_t io = state_io_reader(data, size);
     gp32_state_image_t direct;
-    if (!gp32_state_read(g, &io, &direct)) {
+    gp32_resume_image_t resume;
+    if (!gp32_state_read(g, &io, &direct, &resume)) {
         seterr(g, "load savestate buffer failed or unsupported version");
         return GP32_ERR_IO;
     }
-    gp32_state_loaded(g, &direct);
+    gp32_state_loaded(g, &direct, &resume);
     return GP32_OK;
 }
 
@@ -4457,11 +4861,12 @@ gp32_status_t gp32_load_state(gp32_t *g, const char *path) {
     if (!f) { seterr(g, "open savestate %s: %s", path, strerror(errno)); return GP32_ERR_IO; }
     state_io_t io = state_io_file(f);
     gp32_state_image_t direct;
-    int ok = gp32_state_read(g, &io, &direct);
+    gp32_resume_image_t resume;
+    int ok = gp32_state_read(g, &io, &direct, &resume);
     /* Read-only stream: the complete payload is already committed on success.
      * A close error must not report rejection of an applied state. */
     (void)fclose(f);
     if (!ok) { seterr(g, "load savestate %s failed or unsupported version", path); return GP32_ERR_IO; }
-    gp32_state_loaded(g, &direct);
+    gp32_state_loaded(g, &direct, &resume);
     return GP32_OK;
 }

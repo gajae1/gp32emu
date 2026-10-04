@@ -1,16 +1,28 @@
-/* Exercise real guest callbacks while a direct-mode title waits for vblank. */
+/* Exercise real guest callbacks and foreground HLE consumer intervals. */
 #ifndef GP32_SOURCE
 #define GP32_SOURCE "../src/gp32.c"
 #endif
 #include GP32_SOURCE
+#include "gp32_callback_test_support.h"
 
 static int failures;
 #define CHECK(c, msg) do { if (!(c)) { fprintf(stderr, "FAIL: %s (%d)\n", msg, __LINE__); ++failures; } } while (0)
 
-static void run_wait(gp32_t *g, uint32_t budget) {
-    g->direct_vblank_wait_cycles = budget;
-    CHECK(gp32_run_cycles(g, budget) == GP32_OK, "run idle budget");
-    CHECK(g->direct_vblank_wait_cycles == 0u, "consume wait exactly once");
+/* Existing consumer arithmetic fixtures supply foreground intervals with
+ * deliberately arbitrary/nonexecutable register values. Real guest display
+ * waits and normal IRQ/FIQ execution are covered by gp32_wait_test. */
+static void run_tick_interval(gp32_t *g, uint32_t budget) {
+    while (budget) {
+        uint32_t slice = budget > 32768u ? 32768u : budget;
+        uint32_t clock = direct_run_clock_hz(g);
+        arm920t_add_idle_cycles(g->cpu, slice);
+        direct_account_elapsed(g, slice, clock);
+        s3c2400_tick(g->soc, slice);
+        direct_hle_tick(g, slice, clock);
+        CHECK(test_finish_callbacks(g), "finish short timer consumer");
+        direct_update_fw_tick(g);
+        budget -= slice;
+    }
 }
 
 static void check_timer(int jit, uint32_t callback_mode, int thumb) {
@@ -69,19 +81,19 @@ static void check_timer(int jit, uint32_t callback_mode, int thumb) {
     g->direct_hle_gpos_timer[0].tps = 1000u;
     const uint32_t clock = direct_run_clock_hz(g);
     CHECK(clock >= 1000u && clock % 1000u == 0u, "integral millisecond fixture clock");
-    run_wait(g, clock / 100u); /* Ten milliseconds, split by the real run loop. */
-    CHECK(s3c2400_debug_read32(g->soc, counter) == 10u, "timer fires during vblank wait");
+    run_tick_interval(g, clock / 100u); /* Ten milliseconds, split by the real run loop. */
+    CHECK(s3c2400_debug_read32(g->soc, counter) == 10u, "timer fires for a foreground interval");
     for (unsigned i = 0; i < 16u; ++i)
-        CHECK(arm920t_get_reg(g->cpu, i) == regs[i], "callback restores waiting CPU registers");
-    CHECK(arm920t_get_cpsr(g->cpu) == cpsr, "callback restores waiting CPU mode/flags");
+        CHECK(arm920t_get_reg(g->cpu, i) == regs[i], "callback restores interrupted foreground CPU registers");
+    CHECK(arm920t_get_cpsr(g->cpu) == cpsr, "callback restores interrupted foreground CPU mode/flags");
 
     g->direct_hle_gpos_timer[0].enabled = 0u;
-    run_wait(g, clock / 100u);
+    run_tick_interval(g, clock / 100u);
     CHECK(s3c2400_debug_read32(g->soc, counter) == 10u, "disabled timer remains stopped");
     g->direct_hle_gpos_timer[0].enabled = 1u;
-    run_wait(g, clock / 1000u - 1u);
+    run_tick_interval(g, clock / 1000u - 1u);
     CHECK(s3c2400_debug_read32(g->soc, counter) == 10u, "no early timer firing");
-    run_wait(g, 1u);
+    run_tick_interval(g, 1u);
     CHECK(s3c2400_debug_read32(g->soc, counter) == 11u, "timer remainder survives separate waits");
     gp32_destroy(g);
 }
@@ -133,14 +145,14 @@ static void check_callback_starts_timer(int jit, unsigned starter, int reconfigu
         s3c2400_write32(g->soc, command + 20u, 4u);
         s3c2400_write32(g->soc, command + 24u, target);
     }
-    run_wait(g, 66000u); /* Last 464-cycle slice invokes the starter. */
+    run_tick_interval(g, 66000u); /* Last 464-cycle slice invokes the starter. */
     g->direct_hle_gpos_timer[starter].enabled = 0u;
     CHECK(g->direct_hle_gpos_timer[target].enabled, "guest SWI starts target timer");
     CHECK(s3c2400_debug_read32(g->soc, counter) == 0u, "new timer does not inherit pending expiry");
     CHECK(g->direct_hle_gpos_timer[target].accum == 0u, "new timer gets no pre-start time");
-    run_wait(g, 65536u);
+    run_tick_interval(g, 65536u);
     CHECK(s3c2400_debug_read32(g->soc, counter) == 0u, "started timer does not expire early");
-    run_wait(g, 464u);
+    run_tick_interval(g, 464u);
     CHECK(s3c2400_debug_read32(g->soc, counter) == 1u, "started timer expires after full period");
     gp32_destroy(g);
 }
@@ -167,7 +179,7 @@ static void check_halfword_thumb_callback(int jit) {
     CHECK(arm920t_get_pc(g->cpu) == caller_pc, "fixture reaches halfword caller PC");
     uint32_t cpsr = arm920t_get_cpsr(g->cpu);
     uint64_t before = arm920t_get_cycles(g->cpu);
-    CHECK(direct_call_guest_function3(g, callback | 1u, 0u, counter, 0u), "Thumb callback returns");
+    CHECK(test_call_guest_function3(g, callback | 1u, 0u, counter, 0u), "Thumb callback returns");
     CHECK(arm920t_get_cycles(g->cpu) - before == 4u, "callback stops after three Thumb instructions and return trap");
     CHECK(s3c2400_debug_read32(g->soc, counter) == 77u, "callback starts at exact Thumb halfword");
     CHECK(arm920t_get_pc(g->cpu) == caller_pc, "callback restores exact Thumb caller PC");
@@ -206,7 +218,7 @@ static void check_callback_return_origin(int jit) {
     gp32_set_jit(g, jit);
     for (size_t i = 0; i < GP32_ARRAY_COUNT(code); ++i)
         s3c2400_write32(g->soc, callback + (uint32_t)i * 4u, code[i]);
-    CHECK(direct_call_guest_function3(g, callback, marker, 0x12345678u, 0u),
+    CHECK(test_call_guest_function3(g, callback, marker, 0x12345678u, 0u),
           "callback returns through its private stub");
     CHECK(s3c2400_debug_read32(g->soc, marker) == 0x12345678u,
           "unrelated SWI does not discard callback tail");
@@ -251,7 +263,7 @@ static void check_callback_register_banks(int jit, uint32_t caller_mode) {
     arm920t_state_image_t before, after;
     state_io_t out = state_io_writer(&before, sizeof(before));
     CHECK(arm920t_state_save_io(g->cpu, &out), "capture complete caller register state");
-    CHECK(direct_call_guest_function3(g, callback, counter, 0xa0000030u, 0u),
+    CHECK(test_call_guest_function3(g, callback, counter, 0xa0000030u, 0u),
           "mode-changing callback returns");
     uint32_t returned_cpsr = arm920t_get_cpsr(g->cpu);
     arm920t_set_cpsr(g->cpu, (returned_cpsr & ~0x1fu) | 0x1fu);
@@ -333,7 +345,7 @@ static void check_elapsed_clock_change(int jit) {
     gp32_set_jit(g, jit);
     s3c2400_write32(g->soc, 0x14800004u, 0x3000u);
     s3c2400_write32(g->soc, divider, 0u);
-    run_wait(g, 6600000u);
+    run_tick_interval(g, 6600000u);
     CHECK(direct_elapsed_ms(g) == 100u, "initial 100 ms at 66 MHz");
     s3c2400_write32(g->soc, code, 0xe5801000u); /* STR r1,[r0]: change clock */
     s3c2400_write32(g->soc, code + 4u, 0xeafffffeu); /* B . */
@@ -349,7 +361,7 @@ static void check_elapsed_clock_change(int jit) {
     if (state) {
         CHECK(gp32_load_state_data(restored, state, size) == GP32_OK, "restore elapsed time");
         CHECK(direct_elapsed_ms(restored) == 110u, "restored time retains prior clock history");
-        run_wait(restored, 330000u);
+        run_tick_interval(restored, 330000u);
         CHECK(direct_elapsed_ms(restored) == 120u, "restored time advances at loaded clock");
         free(state);
     }
@@ -363,18 +375,18 @@ static void check_elapsed_clock_change(int jit) {
     direct_install_stubs(g);
     s3c2400_write32(g->soc, 0x14800004u, 0x3000u);
     s3c2400_write32(g->soc, divider, 0u);
-    run_wait(g, 6600000u);
+    run_tick_interval(g, 6600000u);
     const uint32_t callback[] = {0xe5801000u, 0xe2522001u, 0x1afffffdu, 0xe12fff1eu};
     for (unsigned i = 0; i < GP32_ARRAY_COUNT(callback); ++i)
         s3c2400_write32(g->soc, code + i * 4u, callback[i]);
     arm920t_flush_jit(g->cpu);
-    CHECK(direct_call_guest_function3(g, code, divider, 2u, 33000u), "callback changes clock and returns");
+    CHECK(test_call_guest_function3(g, code, divider, 2u, 33000u), "callback changes clock and returns");
     CHECK(direct_elapsed_ms(g) == 102u, "callback time uses both clock domains");
     const uint32_t toggles[] = {0xe5801000u, 0xe2211002u, 0xe2522001u, 0x1afffffbu, 0xe12fff1eu};
     for (unsigned i = 0; i < GP32_ARRAY_COUNT(toggles); ++i)
         s3c2400_write32(g->soc, code + i * 4u, toggles[i]);
     arm920t_flush_jit(g->cpu);
-    CHECK(direct_call_guest_function3(g, code, divider, 0u, 300u),
+    CHECK(test_call_guest_function3(g, code, divider, 0u, 300u),
           "frequent clock yields do not prematurely exhaust callback budget");
     gp32_destroy(g);
     gp32_destroy(restored);
@@ -426,7 +438,7 @@ static void check_peripheral_clock_boundary(int jit) {
                 s3c2400_write32(g->soc, code + i * 4u, 0xe1a00000u);
             s3c2400_write32(g->soc, code + 1600u, 0xe12fff1eu); /* BX lr */
             arm920t_flush_jit(g->cpu);
-            CHECK(direct_call_guest_callback(g, code), "guest callback returns after hardware tick");
+            CHECK(test_call_guest_callback(g, code), "guest callback returns after hardware tick");
             CHECK(s3c2400_read32(g->soc, 0x14400000u) & (1u << 10), "callback execution advances hardware timer");
         }
         gp32_destroy(g);
@@ -482,7 +494,7 @@ static void check_frame_clock_change(int jit) {
     }
 }
 
-static void check_frame_callback_debt(int jit) {
+static void check_frame_callback_budget(int jit) {
     gp32_t *g = gp32_create(NULL), *clone = gp32_create(NULL);
     CHECK(g && clone, "create callback frame cores");
     if (!g || !clone) { gp32_destroy(g); gp32_destroy(clone); return; }
@@ -500,18 +512,20 @@ static void check_frame_callback_debt(int jit) {
     g->direct_hle_gpos_timer[0].enabled = 1u;
     g->direct_hle_gpos_timer[0].callback = callback;
     g->direct_hle_gpos_timer[0].tps = 60u;
-    g->direct_vblank_wait_cycles = 6600000u;
+    s3c2400_write32(g->soc, GP32_RAM_BASE, 0xeafffffeu);
+    arm920t_set_reg(g->cpu, 15u, GP32_RAM_BASE);
     CHECK(gp32_run_frame(g) == GP32_OK, "run callback at frame deadline");
-    CHECK(g->elapsed.nanoseconds > 18000000u && g->elapsed.nanoseconds < 24000000u,
-          "real guest callback crosses frame deadline");
+    CHECK(g->elapsed.nanoseconds >= 16666666u && g->elapsed.nanoseconds < 16666700u && g->direct_hle_callback_running,
+          "frame budget suspends the real callback at its deadline");
+    printf("frame-callback jit=%d ns=%" PRIu64 " pending=%u\n", jit, g->elapsed.nanoseconds, g->direct_hle_callback_running);
     g->direct_hle_gpos_timer[0].enabled = 0u;
     size_t size = gp32_state_size(g);
     uint8_t *state = malloc(size);
-    CHECK(state && gp32_save_state_data(g, state, size) == GP32_OK, "save callback overshoot");
+    CHECK(state && gp32_save_state_data(g, state, size) == GP32_OK, "save callback at frame deadline");
     if (state) {
-        CHECK(gp32_load_state_data(clone, state, size) == GP32_OK, "load callback overshoot");
+        CHECK(gp32_load_state_data(clone, state, size) == GP32_OK, "load pending frame callback");
         CHECK(gp32_run_frame(g) == GP32_OK && gp32_run_frame(clone) == GP32_OK,
-              "repay callback time in next frame");
+              "resume callback inside next frame budget");
         CHECK(g->elapsed.nanoseconds >= 33333333u && g->elapsed.nanoseconds < 33333400u &&
               g->elapsed.nanoseconds == clone->elapsed.nanoseconds &&
               gp32_get_cycles(g) == gp32_get_cycles(clone),
@@ -598,7 +612,7 @@ int main(void) {
         check_audio_write_boundary(jit);
         check_dma_store_lanes(jit);
         check_frame_clock_change(jit);
-        check_frame_callback_debt(jit);
+        check_frame_callback_budget(jit);
         check_peripheral_clock_boundary(jit);
         check_elapsed_clock_change(jit);
         check_timer(jit, 0, 0);
@@ -614,6 +628,6 @@ int main(void) {
         check_callback_register_banks(jit, 0x11u);
     }
     if (failures) return 1;
-    puts("PASS: direct GPOS callbacks during vblank wait, disabled timer, split budget and CPU context");
+    puts("PASS: direct GPOS consumer intervals, disabled timer, split budget and CPU context");
     return 0;
 }

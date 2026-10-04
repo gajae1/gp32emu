@@ -2264,7 +2264,8 @@ int s3c2400_state_save_io(const s3c2400_t *s, state_io_t *io) {
            state_io_write(io, codec, sizeof(codec));
 }
 
-int s3c2400_state_load_io(s3c2400_t *s, state_io_t *io, int has_audio_spans, int has_iis_phase, int has_lcd_phase, int has_idle_phase, int has_codec) {
+int s3c2400_state_load_io_checked(s3c2400_t *s, state_io_t *io, int has_audio_spans, int has_iis_phase, int has_lcd_phase, int has_idle_phase, int has_codec,
+                                uint32_t expected_ram_size, uint32_t expected_run_clock, uint32_t required_ram_size) {
     if (!s || !io) return 0;
 #ifdef GP32EMU_WASM
     static s3c2400_state_image_t st_storage;
@@ -2275,6 +2276,7 @@ int s3c2400_state_load_io(s3c2400_t *s, state_io_t *io, int has_audio_spans, int
 #endif
     if (!state_io_read(io, st, sizeof(*st))) return 0;
     if (st->ram_size == 0u || st->ram_size > (size_t)64u * 1024u * 1024u || st->audio_frames > (uint64_t)10u * 60u * 44100u) return 0;
+    if ((expected_ram_size && st->ram_size != expected_ram_size) || st->ram_size < required_ram_size) return 0;
     /* Restored indices address fixed arrays on later IIC/IIS register writes.
      * An out-of-range value turns the next guest write into an out-of-bounds
      * store inside this heap object, so the image must be rejected here. */
@@ -2324,6 +2326,7 @@ int s3c2400_state_load_io(s3c2400_t *s, state_io_t *io, int has_audio_spans, int
     uint32_t fclk = pll_frequency(st->clkpow[MPLLCON]);
     uint32_t hclk = (st->clkpow[5] & 2u) ? fclk / 2u : fclk;
     uint32_t runclk = run_clock_values(fclk, hclk);
+    if (expected_run_clock && runclk != expected_run_clock) goto bad_audio;
     uint64_t legacy_period = ((uint64_t)runclk + 30u) / 60u;
     if (!legacy_period) legacy_period = 1u;
     uint64_t lcd_period = lcd_is_tft(st->lcd_regs) ?
@@ -2416,6 +2419,10 @@ bad_audio:
     smc_destroy(new_smc);
     free(new_ram);
     return 0;
+}
+
+int s3c2400_state_load_io(s3c2400_t *s, state_io_t *io, int has_audio_spans, int has_iis_phase, int has_lcd_phase, int has_idle_phase, int has_codec) {
+    return s3c2400_state_load_io_checked(s, io, has_audio_spans, has_iis_phase, has_lcd_phase, has_idle_phase, has_codec, 0u, 0u, 0u);
 }
 
 int s3c2400_state_save(const s3c2400_t *s, FILE *f) {

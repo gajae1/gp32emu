@@ -77,6 +77,14 @@ static uint8_t *capture_state(gp32_t *g, size_t *size) {
         *size = 0;
         return NULL;
     }
+#ifdef GP32_CONTINUATION_BYTES
+    /* These fixtures deliberately exercise the frozen v2-v9 layouts. Remove
+     * the combined extension; callback/wait tests cover active v10/v11 tails. */
+    const size_t off = 16u + sizeof(gp32_state_image_t) + 32u;
+    memmove(buf + off, buf + off + GP32_CONTINUATION_BYTES, *size - off - GP32_CONTINUATION_BYTES);
+    *size -= GP32_CONTINUATION_BYTES;
+    memcpy(buf, gp32_state_magic_v9, 16u);
+#endif
     return buf;
 }
 
@@ -112,7 +120,7 @@ static void expect_rejected_load(gp32_t *g, const uint8_t *live, size_t live_siz
 
 static void check_swi_route(gp32_t *g, uint32_t pc, int direct) {
     /* SWI 0x11 is a card query outside our private display trampoline. */
-    if (direct) pc = direct_stub_addr(g);
+    if (direct) pc = direct_wait_swi_addr(g);
     s3c2400_write32(g->soc, pc, 0xef000011u); /* direct surface service: r0=1 */
     arm920t_set_cpsr(g->cpu, 0xd3u);
     arm920t_set_reg(g->cpu, 0u, 0u);
