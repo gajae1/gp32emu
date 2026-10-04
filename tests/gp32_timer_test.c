@@ -181,6 +181,38 @@ static void check_halfword_thumb_callback(int jit) {
     gp32_destroy(g);
 }
 
+/* A matching SWI immediate outside the private return stub is still a guest
+ * exception, not proof that the callback returned. */
+static void check_callback_return_origin(int jit) {
+    gp32_t *g = gp32_create(NULL);
+    CHECK(g != NULL, "create callback return-origin core");
+    if (!g) return;
+    uint8_t bios[16] = {0};
+    char error[128];
+    gp32_st32le(bios + 8u, 0xe1b0f00eu); /* MOVS pc,lr: ordinary SWI return. */
+    CHECK(s3c2400_load_bios_buffer(g->soc, bios, sizeof(bios), error, sizeof(error)),
+          "install synthetic SWI handler");
+    const uint32_t callback = GP32_RAM_BASE + 0x2000u;
+    const uint32_t marker = GP32_RAM_BASE + 0x3000u;
+    const uint32_t code[] = {
+        0xe92d4000u, /* PUSH {lr}: nested SVC replaces the callback LR. */
+        0xef070020u, /* Same immediate as private return, different address. */
+        0xe8bd4000u, /* POP {lr} */
+        0xe5801000u, /* STR r1,[r0]: callback must reach its own tail. */
+        0xe12fff1eu, /* BX lr: now reach the real private return stub. */
+    };
+    direct_set_fxe_mode(g, 1u);
+    direct_install_stubs(g);
+    gp32_set_jit(g, jit);
+    for (size_t i = 0; i < GP32_ARRAY_COUNT(code); ++i)
+        s3c2400_write32(g->soc, callback + (uint32_t)i * 4u, code[i]);
+    CHECK(direct_call_guest_function3(g, callback, marker, 0x12345678u, 0u),
+          "callback returns through its private stub");
+    CHECK(s3c2400_debug_read32(g->soc, marker) == 0x12345678u,
+          "unrelated SWI does not discard callback tail");
+    gp32_destroy(g);
+}
+
 static void check_callback_register_banks(int jit, uint32_t caller_mode) {
     gp32_t *g = gp32_create(NULL);
     CHECK(g != NULL, "create callback register-bank core");
@@ -577,6 +609,7 @@ int main(void) {
         check_callback_starts_timer(jit, 1u, 0);
         check_callback_starts_timer(jit, 0u, 1);
         check_halfword_thumb_callback(jit);
+        check_callback_return_origin(jit);
         check_callback_register_banks(jit, 0x13u);
         check_callback_register_banks(jit, 0x11u);
     }

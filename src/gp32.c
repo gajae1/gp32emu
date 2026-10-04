@@ -2722,9 +2722,12 @@ static int direct_file_hle_swi(gp32_t *g, arm920t_t *cpu, uint32_t id, uint32_t 
     if (!g || !cpu) return 0;
     uint32_t lr = arm920t_get_reg(cpu, 14);
     if (id == 0x20u) {
+        /* Only our active callback's return stub may end the host call. A
+         * matching guest SWI elsewhere must follow normal exception dispatch. */
+        if (!g->direct_hle_callback_running || pc != direct_callback_return_stub_addr(g)) return 0;
         g->direct_hle_callback_returned = 1u;
         arm920t_set_reg(cpu, 15, lr);
-        if (g->direct_hle_callback_running) arm920t_stop_run(cpu);
+        arm920t_stop_run(cpu);
         return 1;
     }
     if (!g->direct_fpk_asset_count) return 0;
