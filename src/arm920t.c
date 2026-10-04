@@ -1778,12 +1778,6 @@ ARM_FORCE_INLINE int arm_jit_addr_in_identity_io(uint32_t addr, size_t bytes) {
     return addr >= 0x14000000u && bytes <= 0x02000000u &&
            (uint64_t)(addr - 0x14000000u) + bytes <= 0x02000000u;
 }
-static uint32_t arm_jit_ld_word_helper(arm920t_t *c, uint32_t addr);
-static uint32_t arm_jit_ld_byte_helper(arm920t_t *c, uint32_t addr);
-static uint32_t arm_jit_ld_half_helper(arm920t_t *c, uint32_t addr);
-static void arm_jit_st_word_helper(arm920t_t *c, uint32_t addr, uint32_t v);
-static void arm_jit_st_byte_helper(arm920t_t *c, uint32_t addr, uint32_t v);
-static void arm_jit_st_half_helper(arm920t_t *c, uint32_t addr, uint32_t v);
 
 ARM_FORCE_INLINE uint32_t arm_bc_phys_word_addr(arm920t_t *c, uint32_t addr) {
     return (mmu_translate(c, addr & ~3u) & ~3u) | (addr & 3u);
@@ -2253,65 +2247,6 @@ ARM_FORCE_INLINE void arm_jit_exec_classified(arm920t_t *c, const arm_jit_op_t *
 
 
 
-static uint32_t arm_jit_ld_word_helper(arm920t_t *c, uint32_t addr) {
-    ARM_PROF_INC(c, helper_ld_word);
-    uint32_t a = addr & ~3u;
-    uint32_t v;
-    if (c->jit_ram_base && arm_jit_addr_in_ram(a, 4u)) v = gp32_ld32le(c->jit_ram_base + (a - ARM_JIT_RAM_BASE_ADDR));
-    else if (c->jit_bios_base && arm_jit_addr_in_bios(a, 4u)) v = gp32_ld32le(c->jit_bios_base + a);
-    else if (arm_jit_addr_in_identity_io(a, 4u)) v = (c->bus.read32_io ? c->bus.read32_io : c->bus.read32)(c->bus.user, a);
-    else v = rb32(c, a);
-    return (addr & 3u) ? gp32_ror32(v, (addr & 3u) * 8u) : v;
-}
-/* Shared bodies stay uncounted so the sign-extending helpers can reuse them
- * without charging a second kind for one guest access. */
-ARM_FORCE_INLINE uint32_t arm_jit_ld_byte_impl(arm920t_t *c, uint32_t addr) {
-    if (c->jit_ram_base && arm_jit_addr_in_ram(addr, 1u)) return c->jit_ram_base[addr - ARM_JIT_RAM_BASE_ADDR];
-    if (c->jit_bios_base && arm_jit_addr_in_bios(addr, 1u)) return c->jit_bios_base[addr];
-    if (arm_jit_addr_in_identity_io(addr, 1u)) return c->bus.read8(c->bus.user, addr);
-    return rb8(c, addr);
-}
-static uint32_t arm_jit_ld_byte_helper(arm920t_t *c, uint32_t addr) {
-    ARM_PROF_INC(c, helper_ld_byte);
-    return arm_jit_ld_byte_impl(c, addr);
-}
-static uint32_t arm_jit_ld_sbyte_helper(arm920t_t *c, uint32_t addr) {
-    ARM_PROF_INC(c, helper_ld_sbyte);
-    return (uint32_t)(int32_t)(int8_t)arm_jit_ld_byte_impl(c, addr);
-}
-ARM_FORCE_INLINE uint32_t arm_jit_ld_half_impl(arm920t_t *c, uint32_t addr) {
-    if (c->jit_ram_base && arm_jit_addr_in_ram(addr, 2u)) return gp32_ld16le(c->jit_ram_base + (addr - ARM_JIT_RAM_BASE_ADDR));
-    if (c->jit_bios_base && arm_jit_addr_in_bios(addr, 2u)) return gp32_ld16le(c->jit_bios_base + addr);
-    if (arm_jit_addr_in_identity_io(addr, 2u)) return c->bus.read16(c->bus.user, addr);
-    return rb16(c, addr);
-}
-static uint32_t arm_jit_ld_half_helper(arm920t_t *c, uint32_t addr) {
-    ARM_PROF_INC(c, helper_ld_half);
-    return arm_jit_ld_half_impl(c, addr);
-}
-static uint32_t arm_jit_ld_shalf_helper(arm920t_t *c, uint32_t addr) {
-    ARM_PROF_INC(c, helper_ld_shalf);
-    return (uint32_t)(int32_t)(int16_t)arm_jit_ld_half_impl(c, addr);
-}
-static void arm_jit_st_word_helper(arm920t_t *c, uint32_t addr, uint32_t v) {
-    ARM_PROF_INC(c, helper_st_word);
-    uint32_t a = addr & ~3u;
-    if (c->jit_ram_base && arm_jit_addr_in_ram(a, 4u)) { gp32_st32le(c->jit_ram_base + (a - ARM_JIT_RAM_BASE_ADDR), v); return; }
-    if (arm_jit_addr_in_identity_io(a, 4u)) { c->bus.write32(c->bus.user, a, v); return; }
-    wb32(c, a, v);
-}
-static void arm_jit_st_byte_helper(arm920t_t *c, uint32_t addr, uint32_t v) {
-    ARM_PROF_INC(c, helper_st_byte);
-    if (c->jit_ram_base && arm_jit_addr_in_ram(addr, 1u)) { c->jit_ram_base[addr - ARM_JIT_RAM_BASE_ADDR] = (uint8_t)v; return; }
-    if (arm_jit_addr_in_identity_io(addr, 1u)) { c->bus.write8(c->bus.user, addr, (uint8_t)v); return; }
-    wb8(c, addr, (uint8_t)v);
-}
-static void arm_jit_st_half_helper(arm920t_t *c, uint32_t addr, uint32_t v) {
-    ARM_PROF_INC(c, helper_st_half);
-    if (c->jit_ram_base && arm_jit_addr_in_ram(addr, 2u)) { gp32_st16le(c->jit_ram_base + (addr - ARM_JIT_RAM_BASE_ADDR), (uint16_t)v); return; }
-    if (arm_jit_addr_in_identity_io(addr, 2u)) { c->bus.write16(c->bus.user, addr, (uint16_t)v); return; }
-    wb16(c, addr, (uint16_t)v);
-}
 static void arm_jit_write_pc_x_helper(arm920t_t *c, uint32_t v) { ARM_PROF_INC(c, helper_write_pc); write_pc_x(c, v); }
 
 #if defined(__x86_64__) || defined(_M_X64)
@@ -2422,8 +2357,6 @@ static void x64_call_abs(x64_emit_t *e, uintptr_t fn) {
 #endif
 
 static void x64_emit_arg0_cpu(x64_emit_t *e) { x64_mov_r64_r64(e, X64_HOST_ARG0, X64_EBX); }
-static void x64_emit_arg1_u32_from(x64_emit_t *e, int src) { x64_mov_r32_r32(e, X64_HOST_ARG1, src); }
-static void x64_emit_arg2_u32_from(x64_emit_t *e, int src) { x64_mov_r32_r32(e, X64_HOST_ARG2, src); }
 static void x64_emit_arg1_ptr_imm(x64_emit_t *e, uintptr_t ptr) { x64_mov_r64_imm(e, X64_HOST_ARG1, (uint64_t)ptr); }
 static size_t x64_jcc32(x64_emit_t *e, uint8_t cc) { x64_u8(e, 0x0f); x64_u8(e, (uint8_t)(0x80u | (cc & 15u))); size_t at = e->pos; x64_u32(e, 0); return at; }
 static size_t x64_jmp32(x64_emit_t *e) { x64_u8(e, 0xe9); size_t at = e->pos; x64_u32(e, 0); return at; }
@@ -3378,7 +3311,7 @@ static uint32_t arm_jit_run(arm920t_t *c, uint32_t run_done) {
          * Native self-chains still execute every instruction and load. */
         int native_allowed = !counted || !c->bus.is_stable_read32 ||
             (rejected_pc == pc && rejected_generation == generation && rejected_epoch == epoch);
-        if (counted && ARM920T_NATIVE_BACKEND && c->jit_enabled && native_allowed &&
+        if (ARM920T_NATIVE_BACKEND && counted && c->jit_enabled && native_allowed &&
             (c->run_limit - total) >= b->count && !b->native_ok) {
             if (arm_counted_poll_compile(c, b)) {
                 poll_pc = rejected_pc = UINT32_MAX;
