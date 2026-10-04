@@ -1,6 +1,7 @@
 /* SDK existing-file open must reach the asset-backed file service after
  * relocation. The fixture is a short SDK prefix, not a commercial ROM. */
 #include "../src/gp32.c"
+#include "zip.h"
 
 static int check_open(uint32_t code) {
     gp32_t *g = gp32_create(NULL);
@@ -83,7 +84,51 @@ static int check_card_query(void) {
     return ok;
 }
 
-int main(void) {
+static int check_raw_image_labels(void) {
+    uint8_t image[32] = {0};
+    gp32_st32le(image, 0xea000000u);
+    gp32_st32le(image + 4u, GP32_RAM_BASE);
+    for (unsigned off = 8u; off <= 16u; off += 4u)
+        gp32_st32le(image + off, GP32_RAM_BASE + sizeof(image));
+    char long_label[201];
+    memset(long_label, 'x', sizeof(long_label) - 1u);
+    long_label[sizeof(long_label) - 1u] = '\0';
+    const char *labels[] = {long_label, "game.gxb", "", NULL};
+    const char *titles[] = {"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", "game.gxb", "raw GXB", "raw GXB"};
+    int ok = 1;
+    for (unsigned i = 0; i < GP32_ARRAY_COUNT(labels); ++i) {
+        struct { fxe_image_t image; uint8_t guard[256]; } out;
+        memset(&out, 0xa5, sizeof(out));
+        char error[128];
+        int loaded = fxe_load_buffer(image, sizeof(image), labels[i], &out.image, error, sizeof(error));
+        ok &= loaded && strcmp(out.image.title, titles[i]) == 0 &&
+              !out.image.author[0] && !out.image.was_fxe && !out.image.was_b2fxec &&
+              !out.image.was_host_decrunched;
+        for (unsigned j = 0; j < sizeof(out.guard); ++j) ok &= out.guard[j] == 0xa5u;
+        fxe_image_free(&out.image);
+    }
+    if (!ok) fputs("FAIL: raw image label overwrites loader metadata\n", stderr);
+    return ok;
+}
+
+static int check_zip_entry_name(const char *path) {
+    const uint8_t payload[] = {0x12, 0x34, 0x56, 0x78};
+    const char *name = "a.../game.gxb";
+    uint8_t *data = NULL;
+    size_t size = 0;
+    char selected[64], error[128];
+    const char *extensions[] = {".gxb"};
+    int ok = gp32_zip_read_first_matching(path, extensions, 1u, &data, &size,
+                                             selected, sizeof(selected), error, sizeof(error));
+    ok = ok && size == sizeof(payload) && memcmp(data, payload, size) == 0 && strcmp(selected, name) == 0;
+    free(data);
+    if (!ok) fputs("FAIL: ZIP skips a supported game in a dotted directory\n", stderr);
+    return ok;
+}
+
+int main(int argc, char **argv) {
+    if (!check_raw_image_labels()) return 1;
+    if (argc > 1 && !check_zip_entry_name(argv[1])) return 1;
     if (!check_card_query()) return 1;
     if (!check_open(GP32_RAM_BASE + 0x200u) || !check_open(GP32_RAM_BASE + 0x2400u)) {
         fprintf(stderr, "FAIL: relocated SDK file open/read\n");
