@@ -102,11 +102,12 @@ static int smc_set_geometry_from_size(smc_t *s, size_t size, char *err, size_t e
         s->num_pages = (uint32_t)(size / 528u);
         s->col_address_cycles = 1;
         s->row_address_cycles = (s->num_pages > 0x10000u) ? 3u : 2u;
-        s->log2_pages_per_block = log2_u32(32);
+        s->log2_pages_per_block = (s->num_pages <= 16384u) ? 4u : 5u;
         s->sequential_row_read = 1;
         s->id_len = 2;
         s->id[0] = 0xec;
-        if (s->num_pages <= 8192u) s->id[1] = 0xe6;
+        if (s->num_pages <= 8192u) s->id[1] = 0xe3;
+        else if (s->num_pages <= 16384u) s->id[1] = 0xe6;
         else if (s->num_pages <= 32768u) s->id[1] = 0x73;
         else if (s->num_pages <= 65536u) s->id[1] = 0x75;
         else if (s->num_pages <= 131072u) s->id[1] = 0x76;

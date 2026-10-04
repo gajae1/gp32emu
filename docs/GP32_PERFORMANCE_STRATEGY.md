@@ -2648,3 +2648,22 @@ not a speedup. Initial raw telemetry has blank lines from CRCRLF; the narrow
 post-fix telemetry check confirms the correction without repeating gameplay.
 Evidence: `results/resume108-adb/`. No Android runtime was tested: the local
 SDK has no configured AVD/system image and this USB device is Linux.
+
+### Small raw SmartMedia geometry correction (2026-10-04)
+
+A bounded SWE audit identified oversized READID capacity codes for raw 4/8 MiB
+cards. Parent inspection also found that their erase block size was 32 pages
+instead of 16, so erasing the second block erased the preceding block too.
+The raw loader now uses E3/E6 respectively and 16-page erase blocks, matching
+the existing format-2 loader and
+[MAME's geometry table](https://github.com/mamedev/mame/blob/master/src/devices/machine/smartmed.cpp).
+Larger-card mappings and the state format are unchanged.
+
+A synthetic public-interface test reads IDs and erases the second block while
+checking both neighbors for raw and format-2 4/8/16 MiB cards. Before the fix,
+two ID checks and two preceding-block checks failed; all now pass. The existing
+transactional whole-machine state test also passes on Windows. This is a card
+correctness fix, not an FPS improvement. The installed H700 core remains the
+previously verified 1665ee4 build; this new small-card fix is source-only pending
+the next device build. The parallel input audit found no demonstrated default
+input-path defect; no speculative input change was made.
