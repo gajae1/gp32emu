@@ -3075,3 +3075,39 @@ DMA/IIS, reads SMC data and later restarts audio across approximately65 virtual
 frames. Faster host execution alone cannot erase that interval. Whether its
 length matches original hardware is still unverified; it is distinct from the
 partial-frame delivery deficit above. No mixer/frontend/governor was changed.
+
+## Stopped-IIS audio duration (2026-10-05)
+
+BIOS-mode execution now queues timed silence while IISCON[0] is clear. Its
+44100-Hz fractional accumulator advances with emulated RUN cycles and is
+rescaled on clock changes. Silence occupies the same ordered rate-span queue
+as hardware PCM; active PCM is neither stretched nor padded to a video-frame
+quota. Direct-FXE HLE keeps its existing software mixers and disables this
+policy. Standalone SoC diagnostics opt in explicitly.
+
+The idle accumulator is independent of the hardware IIS accumulator, so
+stopping/restarting IIS retains its existing hardware timing semantics. State
+v8 appends eight bytes for the idle fraction; v2-v7 remain readable with an
+initial zero idle fraction. Clearing consumed host PCM does not clear this
+fraction. libretro's empty-queue fallback remains for other empty-source cases.
+
+Matched 300-run libretro replays against `9d5a350` (no frontend backpressure):
+
+| Saved scene | Prior stereo frames | New stereo frames | Active output evidence |
+| --- | ---: | ---: | --- |
+| Blue Angelo slot0, left held 180 runs | 219343 | 220497 | Missing duration falls from 26.24 ms to 0.068 ms |
+| Astonishia Story R title | 220499 | 220499 | Complete output hash unchanged |
+| Princess Maker 2 slot0 | 220497 | 220497 | Complete output hash unchanged |
+
+The nominal 5-second output is 220500 stereo frames. Residual sample-scale
+differences include resampling and IIS restart phase; these figures are not
+game-frame rates or a guarantee of click-free physical output. The guest's
+Blue dialogue loading wait remains separate. Other frontends receive the
+same core silence but their sink recovery/fade behavior still needs listening
+validation. IIS-enabled DMA starvation and 8-bit serial sample interpretation
+are separate open issues.
+
+Focused Windows PCM, timing, timer, transactional-state and libretro-audio
+checks pass. The PCM/state/libretro-audio tests also pass on H700, using only
+RAM temporary storage; Windows/H700/Android arm64 and armv7 cores build.
+Private evidence: `resume120-audio/{baseline,candidate,checks,protected}.json`.
