@@ -51,9 +51,14 @@ despite successful loading and CPU execution. Its SDK has separate create/open
 file entries; the existing-file entry's alternate prologue was not recognized
 by the direct-HLE scanner. Recognizing its register/stack and device-validation
 sequence restores asset reads without depending on a title or link address.
-A 1200-frame no-input sample now reaches a visible dialogue scene. Color/display
-differences from the existing BIOS capture remain, so this is not full direct-HLE
-compatibility. The two execution paths are not interchangeable evidence.
+A 1200-frame no-input sample now reaches a visible dialogue scene. The subsequent
+color corruption was traced to HLE mixer buffers placed beside a caller-owned
+pointer table, overwriting the game's RGB arrays. Mixer storage now occupies a
+separate high-RAM region below the direct LCD pages, with the BIOS's 256-byte
+buffer alignment. Known loaded-image/scatter ranges are checked before using
+that region. The sample's 256 palette words and RGB arrays now match the BIOS
+reference. This is not full direct-HLE compatibility; the two execution paths
+are not interchangeable evidence of full playability.
 
 Candidate decryption now checks a 32-byte decrypted scatter header before
 allocating and decrypting the full body. Header bounds are checked against
@@ -78,3 +83,10 @@ The SDK open follow-up is recorded in `results/resume123-hle/`. A ROM-free
 regression exercises relocated entry detection, a near-match rejection, asset
 reading and EOF. It fails on the previous scanner and passes on Windows and
 H700; the H700 check runs from RAM and does not install a core or change volume.
+
+The follow-up in `results/resume124-display/` also separates real SDK card-detect
+SWI 0x11 from the private display trampoline. Card queries ignore incidental
+surface-like pointers and report either an extracted virtual card or mounted
+SmartMedia. The private trampoline retains its display/flip behavior. New buffer
+placement takes effect when initialized; already-corrupted old states are not
+reconstructed. BIOS-based execution and its memory allocation are unchanged.

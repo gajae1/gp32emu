@@ -1547,26 +1547,37 @@ static void direct_sdk_update_srcexist(gp32_t *g) {
     direct_write32_if_ram(g, g->direct_hle_sdk_sndsrcexist_addr, active);
 }
 
-static uint32_t direct_sdk_sound_buffer_base(gp32_t *g, uint32_t table_addr, uint32_t bytes) {
-    if (!g || !g->soc || !bytes) return 0u;
-    uint32_t need = (bytes + 15u) * 2u + 32u;
-    uint32_t base = (table_addr + 0x400u + 15u) & ~15u;
-    if (direct_ram_range(g, base, need)) return base;
-    base = (g->direct_fxe_image_end + 0xfffu) & ~0xfffu;
-    if (direct_ram_range(g, base, need) && base + need < g->direct_fxe_stack - 0x4000u) return base;
-    base = GP32_RAM_BASE + 0x00770000u;
-    if (direct_ram_range(g, base, need)) return base;
-    return 0u;
+static uint32_t direct_sdk_sound_buffer_base(gp32_t *g, uint32_t bytes) {
+    if (!g || !g->soc || !bytes || bytes > 0x10000u) return 0u;
+    /* Like the BIOS, keep mixer storage in firmware-owned high RAM. The
+       caller only supplies a two-pointer output table: memory beside that
+       table (or beyond the packed image) can be live BSS/heap. Reserve two
+       maximum-size buffers immediately below the direct-mode LCD pages. */
+    uint32_t base = direct_default_surface_addr(0) - 0x20000u;
+    if (!direct_ram_range(g, base, 0x20000u) || g->direct_fxe_image_end > base) return 0u;
+    const fxe_image_t *img = &g->direct_reset_image;
+    if (img->payload && img->payload_size >= 0x20u) {
+        uint32_t first = gp32_ld32le(img->payload);
+        uint32_t ro_start = gp32_ld32le(img->payload + 4u);
+        uint32_t ro_end = gp32_ld32le(img->payload + 8u);
+        uint32_t rw_start = gp32_ld32le(img->payload + 12u);
+        uint32_t zi_end = gp32_ld32le(img->payload + 16u);
+        uint32_t rw_end = gp32_ld32le(img->payload + 20u);
+        if ((first & 0x0f000000u) == 0x0a000000u && ro_start == img->load_addr &&
+            ro_end >= ro_start && rw_start >= GP32_RAM_BASE && rw_end >= rw_start &&
+            zi_end >= rw_end && zi_end > base) return 0u;
+    }
+    return base;
 }
 
 static void direct_sdk_sound_alloc_buffers(gp32_t *g, uint32_t table_addr, uint32_t bytes, uint32_t state_addr) {
     if (!g || !table_addr) return;
     if (bytes < 16u) bytes = 0x180u;
     if (bytes > 0x10000u) bytes = 0x10000u;
-    uint32_t base = direct_sdk_sound_buffer_base(g, table_addr, bytes);
+    uint32_t base = direct_sdk_sound_buffer_base(g, bytes);
     if (!base) return;
     uint32_t buf0 = base;
-    uint32_t buf1 = (base + bytes + 15u) & ~15u;
+    uint32_t buf1 = (base + bytes + 255u) & ~255u;
     direct_zero_if_ram(g, buf0, bytes);
     direct_zero_if_ram(g, buf1, bytes);
     direct_write32_if_ram(g, table_addr + 0u, buf0);
@@ -2997,6 +3008,14 @@ static int direct_fxe_swi(void *user, arm920t_t *cpu, uint32_t imm, uint32_t pc,
     case 0x13: /* GPSDK/GPOS timer and scheduler command-block service. */
         return direct_handle_swi_gpos_timer(g, cpu, pc);
     case 0x11: { /* Direct-mode display callback for GpSurfaceSet/GpSurfaceFlip. */
+        /* The real SDK service is a card-detect query; r0 may contain an
+           unrelated pointer. Only our installed trampoline is a display call. */
+        if (pc != direct_stub_addr(g)) {
+            uint32_t present = g->direct_fpk_asset_count != 0u ||
+                (s3c2400_read32(g->soc, 0x15600030u) & 4u) == 0u;
+            arm920t_set_reg(cpu, 0, present);
+            return 1;
+        }
         uint32_t a0 = arm920t_get_reg(cpu, 0);
         uint32_t fb = direct_read_surface_buffer(g, a0);
         if (fb) {
