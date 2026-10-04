@@ -83,7 +83,7 @@ could miss indefinitely. The development core limits a run at the next visible
 line transition only after an actual LCD status read. The captured Pinball state
 now reaches a background/copyright screen after 120 frames. This establishes
 progress past that wait, not gameplay compatibility. The correction is now
-installed on H700 together with counted-poll acceleration (current source
+installed on H700 together with counted-poll acceleration (starting with source
 `e153e45`); its scheduling cost and bounded performance results are documented
 in `GP32_PERFORMANCE_STRATEGY.md`.
 Private evidence: `resume84-lcd/demand-120frames/`, `device-demand.json`, and
@@ -130,3 +130,15 @@ ECC was calculated in a private diagnostic using the GPL-licensed
 retaining its attribution; no reference implementation was added to the emulator.
 Private evidence: `resume85-bios-origin/FINDINGS.md` and
 `resume86-bios-counterfactual/{result,ecc-result}.json`, with `comparison.png`.
+
+A bounded Tears follow-up supports the same original-BIOS failure path: its
+unchanged card also has GPMM but no GAME, and a single 120-frame continuation
+from the existing stuck state reaches the same printf/byte-reader pair with
+`r7=0x0bf80001`, `r3=0x00080001`, PC `0x0c02671c`, and LR `0x0c027f68`.
+The resulting screen is byte-identical to the saved loading screen. Three
+previous alternate-firmware runs reached Korean story dialogue. This is strong
+evidence of a shared firmware error path, not proof that every loading failure
+has this cause: Tears' earlier uninitialized count slot and real-hardware
+behavior were not observed. No card or firmware was modified. Evidence:
+`resume92-tears-origin/FINDINGS.md`, `tears-fat.json`, and
+`run-120/{stdout.txt,provenance.json}`.

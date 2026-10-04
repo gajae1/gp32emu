@@ -1338,24 +1338,68 @@ static int a64_local_p15(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
     return 1;
 }
 
-/* ARM_JIT_OP_PSR subset.  op_psr covers MRS/MSR for CPSR and SPSR; only a read
- * of CPSR and a flag-field-only (field mask 0x8) write to CPSR are inlined.
- * The write mask is 0xff000000, which cannot change the mode, so
- * set_cpsr_full reduces to a plain assignment; SPSR, non-f fields and any
- * other PSR encoding keep the helper. */
+/* A zero offset denotes a mode without SPSR. Resolve the bank at execution
+ * time: decoded blocks can be reused in different exception modes. */
+static const uint32_t a64_spsr_offsets[32] = {
+    [MODE_FIQ] = offsetof(arm920t_t, spsr_fiq),
+    [MODE_SVC] = offsetof(arm920t_t, spsr_svc),
+    [MODE_ABT] = offsetof(arm920t_t, spsr_abt),
+    [MODE_IRQ] = offsetof(arm920t_t, spsr_irq),
+    [MODE_UND] = offsetof(arm920t_t, spsr_und),
+};
+
+/* Return the bank offset in w3, preserving w1/w2 for the value and mask. */
+static void a64_spsr_offset(a64_emit_t *e) {
+    a64_load(e, 3, offsetof(arm920t_t, cpsr));
+    a64_mask(e, 3, 3, 31u);
+    a64_lsl(e, 3, 3, 2u);
+    a64_ptr(e, 4, (uintptr_t)a64_spsr_offsets);
+    a64_u32(e, 0xb8636883u); /* ldr w3, [x4, x3] */
+}
+
+/* SPSR access cannot change the active mode or interrupt masks. CPSR writes
+ * still use the checked helper unless only the flags byte can change. */
 static int a64_psr_mov(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
     const uint32_t insn = op->insn;
     unsigned rd = (insn >> 12) & 0xfu;
-    if ((insn & 0x0fbf0fffu) == 0x010f0000u) {             /* MRS Rd, CPSR */
-        if ((insn & (1u << 22)) || rd == 15u) return 0;    /* SPSR keeps the helper */
+    if ((insn & 0x0fbf0fffu) == 0x010f0000u) {             /* MRS */
+        if (rd == 15u) return 0;
         a64_load(e, 1, offsetof(arm920t_t, cpsr));
+        if (insn & (1u << 22)) {
+            a64_spsr_offset(e);
+            a64_cmp_imm(e, 3, 0u);
+            size_t no_spsr = a64_jump(e, 0u);
+            a64_u32(e, 0xb8636a61u); /* ldr w1, [x19, x3] */
+            a64_patch(e, no_spsr, e->pos); /* op_psr returns CPSR without a bank */
+        }
         a64_put_guest(e, rd, 1);
         GP32_UNUSED(done);
         return 1;
     }
     if ((insn & 0x0db0f000u) == 0x0120f000u) {             /* MSR fields, ... */
         unsigned field = (insn >> 16) & 0xfu;
-        if ((insn & (1u << 22)) || field != 0x8u) return 0; /* SPSR / non-f */
+        if (insn & (1u << 22)) {
+            uint32_t mask = 0u;
+            for (unsigned byte = 0; byte < 4u; ++byte)
+                if (field & (1u << byte)) mask |= 0xffu << (byte * 8u);
+            if (!mask) mask = 0xf0000000u; /* existing op_psr zero-field behavior */
+            if (insn & (1u << 25))
+                a64_imm(e, 1, gp32_ror32(insn & 0xffu, ((insn >> 8) & 0xfu) * 2u));
+            else a64_guest(e, 1, insn & 0xfu, op->pc);
+            a64_mask(e, 1, 1, mask);
+            a64_spsr_offset(e);
+            a64_cmp_imm(e, 3, 0u);
+            size_t no_spsr = a64_jump(e, 0u); /* absent bank: no write */
+            if (mask != UINT32_MAX) {
+                a64_u32(e, 0xb8636a62u); /* ldr w2, [x19, x3] */
+                a64_mask(e, 2, 2, ~mask);
+                a64_rr(e, 0x2a000000u, 1, 1, 2);
+            }
+            a64_u32(e, 0xb8236a61u); /* str w1, [x19, x3] */
+            a64_patch(e, no_spsr, e->pos);
+            return 1;
+        }
+        if (field != 0x8u) return 0;
         if (insn & (1u << 25)) {                           /* immediate form */
             uint32_t v = gp32_ror32(insn & 0xffu, ((insn >> 8) & 0xfu) * 2u);
             a64_load(e, 1, offsetof(arm920t_t, cpsr));
