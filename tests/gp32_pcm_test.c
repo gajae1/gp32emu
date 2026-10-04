@@ -228,7 +228,72 @@ static int check_callback_clock_audio(int sdk) {
     return ok;
 }
 
+static int check_iis_queued_rate(void) {
+    gp32_t *g = gp32_create(NULL);
+    if (!g) return 0;
+    s3c2400_t *s = g->soc;
+    s3c2400_audio_append_s16_stereo(s, 1234, -5678, 11025u);
+    s3c2400_write32(s, 0x15508004u, 0u);
+    s3c2400_write32(s, 0x15508008u, 3u << 5); /* Configure 46,875 Hz. */
+    s3c2400_write32(s, 0x15508000u, 1u);
+    s3c2400_tick(s, 4096u); /* No DMA source: no new PCM. */
+    uint64_t frames;
+    uint32_t rate;
+    const int16_t *pcm = s3c2400_audio_samples(s, &frames, &rate);
+    int ok = frames == 1u && rate == 11025u && pcm[0] == 1234 && pcm[1] == -5678;
+    if (!ok) fprintf(stderr, "FAIL: IIS setup retags queued PCM: frames=%llu rate=%u\n", (unsigned long long)frames, rate);
+    s3c2400_audio_clear(s);
+    s3c2400_write16(s, 0x15508010u, 1234u);
+    s3c2400_audio_samples(s, &frames, &rate);
+    if (frames != 0u) ok = 0; /* A halfword alone is not a stereo frame. */
+    s3c2400_write16(s, 0x15508010u, (uint16_t)-5678);
+    pcm = s3c2400_audio_samples(s, &frames, &rate);
+    if (frames != 1u || rate != 46875u || pcm[0] != 1234 || pcm[1] != -5678) {
+        fputs("FAIL: completed IIS FIFO frame must carry the configured rate\n", stderr);
+        ok = 0;
+    }
+    gp32_destroy(g);
+    return ok;
+}
+
+static int check_iis_dma_word_order(void) {
+    gp32_t *g = gp32_create(NULL);
+    if (!g) return 0;
+    s3c2400_t *s = g->soc;
+    int16_t reference[6];
+    int ok = 1;
+    for (unsigned pending = 0; pending < 2u; ++pending) {
+        for (unsigned fast = 0; fast < 2u; ++fast) {
+            s3c2400_reset(s);
+            s3c2400_write32(s, 0x15508008u, 3u << 5);
+            s3c2400_write32(s, GP32_RAM_BASE, 0xabcd1234u);
+            s3c2400_write32(s, GP32_RAM_BASE + 4u, 0xef015678u);
+            if (pending) s3c2400_write16(s, 0x15508010u, 0x1122u);
+            uint32_t dma = 0x14600000u + (fast ? 0x40u : 0u);
+            s3c2400_write32(s, dma, GP32_RAM_BASE);
+            s3c2400_write32(s, dma + 4u, 0x35508010u);
+            s3c2400_write32(s, dma + 8u, 0x04600002u); /* Whole-service, stop, 32-bit, tc=2. */
+            s3c2400_write32(s, dma + 24u, 3u); /* Software request. */
+            if (pending) s3c2400_write16(s, 0x15508010u, 0x3344u);
+            uint64_t frames;
+            uint32_t rate;
+            const int16_t *pcm = s3c2400_audio_samples(s, &frames, &rate);
+            if (frames != 2u + pending || rate != 46875u) { ok = 0; break; }
+            if (!fast) memcpy(reference, pcm, (size_t)frames * 2u * sizeof(*pcm));
+            else if (memcmp(reference, pcm, (size_t)frames * 2u * sizeof(*pcm))) {
+                fprintf(stderr, "FAIL: IIS fast DMA word order differs from bus writes, pending=%u\n", pending);
+                ok = 0;
+            }
+        }
+    }
+    gp32_destroy(g);
+    return ok;
+}
+
 int main(void) {
+    int queued_rate_ok = check_iis_queued_rate();
+    int dma_order_ok = check_iis_dma_word_order();
+    if (!queued_rate_ok || !dma_order_ok) return 1;
     if (!check_callback_clock_audio(0) || !check_callback_clock_audio(1)) return 1;
     if (!check_sdk_channel_mix()) return 1;
     if (!check_hle_pcm_clock_domains()) return 1;

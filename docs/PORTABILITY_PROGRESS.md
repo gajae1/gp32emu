@@ -3325,3 +3325,22 @@ The verified core is installed with a backup and unchanged protected settings.
 The Her Knights comparison at observed 1,512 MHz is effectively unchanged
 (candidate/baseline throughput ratio 0.9997); deployment details and bounded
 measurement scope are in the performance section.
+
+### IIS queued-rate and DMA sample-order corrections (resume68)
+
+IIS setup/cache refreshes no longer retag previously queued PCM. FIFO and
+fast DMA appends record the configured rate only when complete samples are
+actually stored. The 32-bit fast DMA path now matches generic bus writes in
+sample order, including an already pending halfword.
+
+Old-code regressions demonstrate both defects. Windows/H700 PCM, SoC timing,
+state and libretro audio checks pass; Android ARM64/ARMv7 builds pass. Her
+Knights/Tomak replay fields remain exact. These shared core changes apply to
+PC as well as RetroArch, without a state-format change. Evidence:
+`F:/GP32/results/resume68-iis-pcm/`.
+
+Queues containing newly appended blocks of different rates, prescaler phase
+changes and callback event/budget settlement remain open. No physical audio
+acceptance or performance improvement is implied by these checks.
+The verified core is installed with a backup and unchanged protected settings;
+the performance section records its hash and backup path.

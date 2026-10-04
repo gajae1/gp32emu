@@ -1268,3 +1268,35 @@ Installed core SHA-256 is
 `de1f9a1a42358766800249cba535c1350d05db1980b9bfe5da3e0918697734a4`;
 backup is `gp32-dev/resume67-installed-core-before.so`. Protected settings
 remain unchanged; deployment did not rewrite user saves.
+
+## resume68: preserve queued PCM rate and match IIS DMA word ordering
+
+IIS configuration writes and timing-cache refreshes no longer overwrite the
+host PCM queue's rate without producing a sample. The rate is recorded only
+when a complete stereo frame is appended, including the bulk DMA path.
+Software-triggered DMA and direct FIFO writes refresh their IIS clock cache
+before appending. This prevents an existing 11,025 Hz block being retagged
+46,875 Hz solely because IIS was configured or ticked with no DMA source.
+
+The 32-bit IIS DMA fast path also now pushes the upper halfword first, matching
+the generic bus-write path. Previously the fast path reversed the word's
+two samples, including when an earlier halfword awaited its partner. A
+differential regression compares ordinary DMA channel 0 with fast channel 2,
+both with and without that pending halfword, including the next FIFO write.
+This establishes agreement with the existing MMIO model, not new hardware
+measurement evidence.
+
+Both defects reproduce against the previous core. Windows and H700 PCM,
+SoC timing, state and libretro audio checks pass. Android ARM64/ARMv7 builds
+pass. Her Knights/Tomak retain all seven CPU/video/PCM replay fields. The
+changes are shared by desktop and libretro frontends; no state-format change
+is needed. No speed gain or physical speaker improvement is claimed.
+
+Evidence: `F:/GP32/results/resume68-iis-pcm/`. Actually appending blocks at
+different rates before draining the queue still requires a segmented-rate
+design; this change fixes metadata changes without new samples. Callback
+event/budget settlement and prescaler phase changes also remain open.
+Installed core SHA-256 is
+`7c4efb6f92702f603f35568676ae3356a37c4d3a4d6bd925ad0ae2ca9c25a5da`;
+backup is `gp32-dev/resume68-installed-core-before.so`. Protected settings
+remain unchanged; deployment did not rewrite user saves.
