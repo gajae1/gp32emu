@@ -2972,6 +2972,28 @@ static int direct_fxe_swi(void *user, arm920t_t *cpu, uint32_t imm, uint32_t pc,
                 imm, pc, arm920t_get_reg(cpu, 14), arm920t_get_reg(cpu, 0), arm920t_get_reg(cpu, 1), arm920t_get_reg(cpu, 2), arm920t_get_reg(cpu, 3));
     }
     switch (imm) {
+    case 0x105: { /* GPSDK _gp_e2prom_read / _gp_e2prom_write. */
+        uint32_t offset = arm920t_get_reg(cpu, 0);
+        uint32_t count = arm920t_get_reg(cpu, 1);
+        uint32_t buffer = arm920t_get_reg(cpu, 2);
+        int write = arm920t_get_reg(cpu, 3) != 0u;
+        /* Retail firmware clamps signed-negative offsets to zero and exposes
+         * only the first 4 KiB of the chip. Use subtraction to reject invalid
+         * ranges without reproducing its signed addition overflow loophole. */
+        if (offset & 0x80000000u) offset = 0u;
+        if (!count || offset >= 0x1000u || count > 0x1000u - offset) {
+            arm920t_set_reg(cpu, 0, 0x21u);
+            return 1;
+        }
+        for (uint32_t i = 0; i < count; ++i) {
+            if (write)
+                s3c2400_eeprom_write8(g->soc, offset + i, s3c2400_read8(g->soc, buffer + i));
+            else
+                s3c2400_write8(g->soc, buffer + i, s3c2400_eeprom_read8(g->soc, offset + i));
+        }
+        arm920t_set_reg(cpu, 0, 0u);
+        return 1;
+    }
     case 0x08: { /* GPSDK LCD/surface service. */
         uint32_t a0 = arm920t_get_reg(cpu, 0);
         uint32_t a1 = arm920t_get_reg(cpu, 1);

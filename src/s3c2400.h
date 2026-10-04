@@ -30,6 +30,10 @@ size_t s3c2400_ram_size(const s3c2400_t *soc);
 void s3c2400_set_buttons(s3c2400_t *soc, uint32_t button_mask);
 void s3c2400_set_irq_sink(s3c2400_t *soc, arm920t_t *cpu);
 void s3c2400_set_log(s3c2400_t *soc, s3c2400_log_fn fn, void *user);
+/* Direct firmware services share the IIC EEPROM, including its saved state.
+ * Raw chip addresses wrap at 8 KiB; firmware API bounds belong to the caller. */
+uint8_t s3c2400_eeprom_read8(const s3c2400_t *soc, uint32_t addr);
+void s3c2400_eeprom_write8(s3c2400_t *soc, uint32_t addr, uint8_t value);
 
 const uint32_t *s3c2400_framebuffer(s3c2400_t *soc, uint32_t *w, uint32_t *h, uint32_t *stride, uint64_t *frames);
 const int16_t *s3c2400_audio_samples(s3c2400_t *soc, uint64_t *frames, uint32_t *sample_rate_hz);
