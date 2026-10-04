@@ -591,6 +591,56 @@ static void test_sustained_backpressure(void) {
           "draining and appending in one run must retain the bounded queue");
 }
 
+static void test_resampled_queue_boundary(void) {
+    /* A real rate change leaves a fractional phase at 1:1. The blocked
+     * stream must match an immediately accepted stream while it still fits. */
+    start_case();
+    feed(2u, 32000u, 1000);
+    for (unsigned i = 0; i < 3u; ++i) feed(3400u, 44100u, 2000 + (int)i * 4000);
+    feed(800u, 44100u, 16000);
+    size_t count = captured_frames;
+    memcpy(expected, captured, count * 2u * sizeof(int16_t));
+    start_case();
+    feed(2u, 32000u, 1000);
+    allowance = 0;
+    for (unsigned i = 0; i < 3u; ++i) feed(3400u, 44100u, 2000 + (int)i * 4000);
+    feed(800u, 44100u, 16000);
+    CHECK(audio_pending_frames == 11000u && !audio_gap_left,
+          "resampler capacity slack must not evict PCM that fits the queue");
+    allowance = SIZE_MAX;
+    flush_audio();
+    CHECK(captured_frames == count && !memcmp(captured, expected, count * 2u * sizeof(int16_t)),
+          "near-limit resampled backpressure preserves every PCM sample");
+
+    /* This complete upsampled span fits, even though the conservative
+     * allocation estimate exceeds the queue limit. Use the actual converter
+     * as the independent source of the expected stream. */
+    start_case();
+    for (size_t i = 0; i < 1995u; ++i) {
+        input_pcm[i * 2u] = (int16_t)(1000 + i);
+        input_pcm[i * 2u + 1u] = (int16_t)(-1000 - (int)i);
+    }
+    gp32_audio_resampler_t reference;
+    gp32_audio_resampler_init(&reference);
+    count = gp32_audio_resampler_process(&reference, input_pcm, 1995u, 8000u,
+                                          44100u, 0, expected, CAPTURE_FRAMES);
+    CHECK(count > 10000u && count <= GP32_AUDIO_QUEUE_LIMIT, "upsampled boundary fixture fits");
+    feed(1995u, 8000u, 1000);
+    CHECK(captured_frames == count && !memcmp(captured, expected, count * 2u * sizeof(int16_t)),
+          "a fitting upsampled span must not be discarded as oversized");
+
+    /* Changing from 44.1 to 96 kHz can consume a source frame before another
+     * output is due. A full queue must not lose data to reserve unused room. */
+    start_case();
+    allowance = 0;
+    for (unsigned i = 0; i < 15u; ++i) feed(735u, 44100u, 1000);
+    memcpy(expected, audio_resample_buf, GP32_AUDIO_QUEUE_LIMIT * 2u * sizeof(int16_t));
+    feed(1u, 96000u, 2000);
+    CHECK(audio_pending_frames == GP32_AUDIO_QUEUE_LIMIT && !audio_gap_left &&
+          !memcmp(audio_resample_buf, expected, GP32_AUDIO_QUEUE_LIMIT * 2u * sizeof(int16_t)),
+          "a zero-output rate transition must preserve the full queue");
+}
+
 static void test_oversized_block_recovery(void) {
     static const int16_t oversized[12000u * 2u] = {0};
     start_case();
@@ -712,6 +762,7 @@ int main(int argc, char **argv) {
     test_idle_rate_counts();
     test_sustained_backpressure();
     test_partial_overflow_recovery();
+    test_resampled_queue_boundary();
     test_oversized_block_recovery();
     test_discard_gap_recovery();
     test_video_dupe();
