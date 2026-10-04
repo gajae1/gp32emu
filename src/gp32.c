@@ -2972,6 +2972,17 @@ static int direct_fxe_swi(void *user, arm920t_t *cpu, uint32_t imm, uint32_t pc,
                 imm, pc, arm920t_get_reg(cpu, 14), arm920t_get_reg(cpu, 0), arm920t_get_reg(cpu, 1), arm920t_get_reg(cpu, 2), arm920t_get_reg(cpu, 3));
     }
     switch (imm) {
+    case 0x104: { /* GPSDK _gp_dev_id_get: 16-byte device ID at [r0]. */
+        static const uint8_t key[8] = {'S', 'A', 'N', 'G', 'H', 'Y', 'U', 'K'};
+        uint32_t buffer = arm920t_get_reg(cpu, 0);
+        /* Retail firmware 0x51f4 reads EEPROM offset 0x10 for 16 bytes and
+         * XORs each byte with its repeating 8-byte key. r1 is not read. */
+        for (uint32_t i = 0; i < 16u; ++i)
+            s3c2400_write8(g->soc, buffer + i,
+                           (uint8_t)(s3c2400_eeprom_read8(g->soc, 0x10u + i) ^ key[i & 7u]));
+        arm920t_set_reg(cpu, 0, 0u);
+        return 1;
+    }
     case 0x105: { /* GPSDK _gp_e2prom_read / _gp_e2prom_write. */
         uint32_t offset = arm920t_get_reg(cpu, 0);
         uint32_t count = arm920t_get_reg(cpu, 1);
