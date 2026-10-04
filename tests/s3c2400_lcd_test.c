@@ -363,6 +363,20 @@ static int check_cpu_status_poll(s3c2400_t *s) {
     return ok;
 }
 
+static int check_long_slice(s3c2400_t *s) {
+    lcd_geometry_t g = geometry(5u);
+    for (unsigned divided = 0; divided < 2u; ++divided) {
+        if (!configure(s, g.cv, divided)) return 0;
+        s3c2400_tick(s, UINT32_MAX);
+        uint64_t hclk = divided ? (uint64_t)UINT32_MAX * 11u / 8u : UINT32_MAX;
+        if (!expect_phase(s, &g, hclk, "multi-frame maximum cycle slice")) return 0;
+        s3c2400_tick(s, 1u);
+        hclk = divided ? ((uint64_t)UINT32_MAX + 1u) * 11u / 8u : (uint64_t)UINT32_MAX + 1u;
+        if (!expect_phase(s, &g, hclk, "fraction after maximum cycle slice")) return 0;
+    }
+    return 1;
+}
+
 int main(void) {
     s3c2400_t *a = s3c2400_create(8u * 1024u * 1024u);
     s3c2400_t *b = s3c2400_create(8u * 1024u * 1024u);
@@ -378,6 +392,7 @@ int main(void) {
     ok = check_fractional_state(a, b, c) && ok;
     ok = check_clock_phase(a) && ok;
     ok = check_cpu_status_poll(a) && ok;
+    ok = check_long_slice(a) && ok;
     s3c2400_destroy(a); s3c2400_destroy(b); s3c2400_destroy(c);
     return ok ? 0 : 1;
 }

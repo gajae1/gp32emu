@@ -156,6 +156,7 @@ struct s3c2400 {
     uint32_t lcd_hclk_remainder; /* fractional HCLK, denominator RUN clock */
     uint64_t audio_idle_phase; /* 44100-Hz silence fraction, denominator RUN */
     int audio_idle_enabled; /* host policy; direct HLE has its own PCM source */
+    uint32_t cached_fclk_hz, cached_hclk_hz, cached_run_hz;
 };
 
 static uint8_t *s3c2400_fastmem(void *user, uint32_t addr, size_t bytes, int write);
@@ -168,6 +169,7 @@ static uint32_t clk_fclk(const s3c2400_t *s, int reg);
 static uint32_t clk_hclk(const s3c2400_t *s, int reg);
 static uint32_t clk_run(const s3c2400_t *s, int reg);
 static uint32_t clk_pclk(const s3c2400_t *s, int reg);
+static void clock_refresh_values(s3c2400_t *s);
 static void clock_write(s3c2400_t *s, uint32_t addr, uint32_t value, uint32_t mask);
 static void color16_lut_build(void);
 
@@ -284,6 +286,7 @@ void s3c2400_reset(s3c2400_t *s) {
     memset(s->irq, 0, sizeof(s->irq));
     memset(s->dma, 0, sizeof(s->dma));
     memset(s->clkpow, 0, sizeof(s->clkpow));
+    clock_refresh_values(s);
     s->cpu_run_active = s->cpu_run_clock_written = 0;
     s->cpu_lcd_deadline_set = 0;
     s->cpu_io_write_count = 0;
@@ -1553,18 +1556,26 @@ static uint32_t clk_pclk(const s3c2400_t *s, int reg) {
     }
 }
 
+/* Derived host data, rebuilt on every register replacement (including the
+ * temporary old-clock view used to settle a CPU slice). Never serialized. */
+static void clock_refresh_values(s3c2400_t *s) {
+    s->cached_fclk_hz = clk_fclk(s, MPLLCON);
+    s->cached_hclk_hz = clk_hclk(s, MPLLCON);
+    s->cached_run_hz = run_clock_values(s->cached_fclk_hz, s->cached_hclk_hz);
+}
+
 uint32_t s3c2400_fclk_hz(const s3c2400_t *s) {
-    uint32_t f = s ? clk_fclk(s, MPLLCON) : 0u;
+    uint32_t f = s ? s->cached_fclk_hz : 0u;
     return f ? f : 66000000u;
 }
 
 uint32_t s3c2400_hclk_hz(const s3c2400_t *s) {
-    uint32_t h = s ? clk_hclk(s, MPLLCON) : 0u;
+    uint32_t h = s ? s->cached_hclk_hz : 0u;
     return h ? h : 66000000u;
 }
 
 uint32_t s3c2400_run_clock_hz(const s3c2400_t *s) {
-    uint32_t h = s ? clk_run(s, MPLLCON) : 0u;
+    uint32_t h = s ? s->cached_run_hz : 0u;
     return h ? h : 66000000u;
 }
 
@@ -1759,6 +1770,7 @@ static uint64_t rescale_period_progress(uint64_t progress, uint64_t old_period, 
 }
 
 static void clock_invalidate(s3c2400_t *s) {
+    clock_refresh_values(s);
     s->iis_clock_dirty = 1;
     s->pwm_clock_dirty = 1;
     s->lcd_line_valid = 0;
@@ -1858,19 +1870,33 @@ static void dma_request_pwm(s3c2400_t *s) {
 
 void s3c2400_tick(s3c2400_t *s, uint32_t cpu_cycles) {
     if (!s || !cpu_cycles) return;
-    uint64_t old_lcd_accum = s->lcd_line_accum;
     uint64_t lcd_frame_cycles = lcd_panel_frame_cycles(s);
+    int lcd_frame_ready = 0;
     if (lcd_is_tft(s->lcd_regs)) {
         if (s->lcd_regs[0] & 1u) {
             uint32_t runclk = s3c2400_run_clock_hz(s);
-            uint64_t scaled = (uint64_t)cpu_cycles * s3c2400_hclk_hz(s) + s->lcd_hclk_remainder;
-            s->lcd_line_accum += scaled / runclk;
-            s->lcd_hclk_remainder = (uint32_t)(scaled % runclk);
+            uint32_t hclk = s3c2400_hclk_hz(s);
+            if (hclk == runclk) {
+                /* The retained fraction is already below RUN. Equal clocks
+                 * advance by whole cycles without changing that fraction. */
+                s->lcd_line_accum += cpu_cycles;
+            } else {
+                uint64_t scaled = (uint64_t)cpu_cycles * hclk + s->lcd_hclk_remainder;
+                s->lcd_line_accum += scaled / runclk;
+                s->lcd_hclk_remainder = (uint32_t)(scaled % runclk);
+            }
         }
-    } else s->lcd_line_accum += (uint64_t)cpu_cycles;
+        /* TFT phase is normalized by reset, timing writes and state load.
+         * Most CPU slices stay within this frame: no division is needed to
+         * discover that. Large slices can still cross several frames. */
+        lcd_frame_ready = s->lcd_line_accum >= lcd_frame_cycles;
+    } else {
+        uint64_t old_lcd_accum = s->lcd_line_accum;
+        s->lcd_line_accum += cpu_cycles;
+        lcd_frame_ready = old_lcd_accum / lcd_frame_cycles != s->lcd_line_accum / lcd_frame_cycles;
+    }
     s->lcd_line_valid = 0;
-    if ((s->lcd_regs[0] & 1u) && lcd_frame_cycles &&
-        (old_lcd_accum / lcd_frame_cycles) != (s->lcd_line_accum / lcd_frame_cycles)) {
+    if ((s->lcd_regs[0] & 1u) && lcd_frame_ready) {
         /*
          * The LCD output should be a completed scanout, not a fresh full-frame
          * decode of VRAM/palette at whatever cycle the host frontend asks for
@@ -1881,7 +1907,7 @@ void s3c2400_tick(s3c2400_t *s, uint32_t cpu_cycles) {
          */
         s3c2400_render_lcd(s);
     }
-    if (lcd_is_tft(s->lcd_regs)) s->lcd_line_accum %= lcd_frame_cycles;
+    if (lcd_is_tft(s->lcd_regs) && lcd_frame_ready) s->lcd_line_accum %= lcd_frame_cycles;
     if (s->iis[0] & 1u) {
         iis_refresh_clock_cache(s);
         /* Carry fractional CPU periods instead of rounding each sample's
@@ -2234,6 +2260,7 @@ int s3c2400_state_load_io(s3c2400_t *s, state_io_t *io, int has_audio_spans, int
     memcpy(s->irq, st->irq, sizeof(s->irq));
     memcpy(s->dma, st->dma, sizeof(s->dma));
     memcpy(s->clkpow, st->clkpow, sizeof(s->clkpow));
+    clock_refresh_values(s);
     memcpy(s->uart0, st->uart0, sizeof(s->uart0));
     memcpy(s->uart1, st->uart1, sizeof(s->uart1));
     memcpy(s->pwm, st->pwm, sizeof(s->pwm));
