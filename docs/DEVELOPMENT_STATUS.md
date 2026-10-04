@@ -109,8 +109,12 @@ Eight further max-effort performance workers were dispatched under
 `F:/GP32/results/round134-performance/`; four ended with provider 429, while
 A64 codegen completed and its CPU-field address change passed native H700
 checks. LCD's unchanged-row candidate was rejected and removed after actual
-H700 16-bit scanout regressed about 2.67x despite PC improvements. That worker
-is refining it privately using `round136-lcd` evidence. IIS completed with no justified change:
+H700 16-bit scanout regressed about 2.67x despite PC improvements. A NEON
+equality refinement repaired the isolated scanout cost, but Princess full-core
+throughput still regressed at unchanged frequency; moving the cache to the
+SoC tail did not fix that. Both refinements were removed and this worker is
+closed. Evidence: `round136-lcd`, `round137-lcd-neon` and
+`A64_ADDRESS_MATERIALIZATION.md`. IIS completed with no justified change:
 its measured PC cost was below 0.17% in four scenes. The memory worker is
 refining its candidate to preserve MMIO read side effects. Sol completed a
 resumable callback candidate, but it faults on callback display waits and must

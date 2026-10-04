@@ -29,7 +29,32 @@ All per-frame hashes matched across nine synthetic patterns, but the H700
 (420 us to 600 us). Modest indexed-color gains did not justify that regression.
 PC-only scanout speedups are insufficient to promote this candidate on H700.
 
-Its worker is refining it privately; raw native evidence is retained under
-`F:/GP32/results/round136-lcd/`. No LCD-row cache is included in the accepted
-source. Device volume, governor, menu integration and installed core remain
-unchanged.
+Raw native evidence is retained under `F:/GP32/results/round136-lcd/`. No
+LCD-row cache is included in the accepted source. Device volume, governor,
+menu integration and installed core remain unchanged.
+
+### NEON row-comparison follow-up: also not promoted
+
+The worker traced the original slowdown to executable-local Zig compiler-rt
+`bcmp`, which compared equal spans byte by byte. Replacing that comparison
+with bounded NEON loads/XOR/reduction restored isolated static-row gains:
+16-bit scanout 639.7 to 366.6 us at 480 MHz, 8-bit 683.6 to 140.4 us at
+720 MHz. Nine 240-step synthetic framebuffer hash streams still matched.
+Full redraw/palette churn retained snapshot-copy overhead; 16-bit full redraw
+was 423.8 to 608.3 us at 720 MHz.
+
+Actual Princess Maker 2 slot0 ABBA replays did not justify promotion. After
+excluding governor ramp-up samples, unchanged-frequency 1.512-GHz runs were
+99.768 baseline versus 96.378 candidate frames/s. Moving the cache after all
+existing SoC fields preserved their offsets, but did not resolve the
+regression: 99.820 baseline versus 95.518 candidate. These bounded results
+do not establish a universal regression magnitude; they reject this candidate
+for the target workload. No further speculative variants were tried.
+
+The before/after executables shared every core object except the SoC. Each
+run used 600 warmup plus 300 measured virtual frames. Guest cycles, PC, CPSR,
+clock, PCM count and video/PCM hashes matched. Protected device files matched.
+Both refinements were removed from production; previous accepted test results
+remain applicable. Private source/patches, native binaries and raw measurements:
+`F:/GP32/results/round137-lcd-neon/`. The full-core slowdown's precise cause is
+not established by this experiment; it must not be attributed to field layout.
