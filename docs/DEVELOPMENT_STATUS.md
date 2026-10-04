@@ -115,8 +115,10 @@ throughput still regressed at unchanged frequency; moving the cache to the
 SoC tail did not fix that. Both refinements were removed and this worker is
 closed. Evidence: `round136-lcd`, `round137-lcd-neon` and
 `A64_ADDRESS_MATERIALIZATION.md`. IIS completed with no justified change:
-its measured PC cost was below 0.17% in four scenes. The memory worker is
-refining its candidate to preserve MMIO read side effects. Sol completed a
+its measured PC cost was below 0.17% in four scenes. The memory-bus candidate
+was audited, then rejected after a 2.6% H700 Princess regression (see
+A64_ADDRESS_MATERIALIZATION.md). Round 138 workers (Blue load, audio pops,
+BIOS stalls, ASR opening, Princess profile) report under results/round138/. Sol completed a
 resumable callback candidate, but it faults on callback display waits and must
 not ship alone; that worker is now integrating the wide guest wait and state
 compatibility. Their IDs are in the private dispatch JSON files. Record final

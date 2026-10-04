@@ -58,3 +58,19 @@ Both refinements were removed from production; previous accepted test results
 remain applicable. Private source/patches, native binaries and raw measurements:
 `F:/GP32/results/round137-lcd-neon/`. The full-core slowdown's precise cause is
 not established by this experiment; it must not be attributed to field layout.
+
+## Rejected SoC bus-dispatch candidate
+
+A worker candidate reordered fastmem to probe RAM before BIOS, routed MMIO
+read8/read16/read32 through the switch dispatcher with one word read per
+in-word halfword, and rewrote range checks in subtraction form. Its MMIO audit
+found every read path pure or idempotent within one cycle, and all 24 PC tests
+passed. PC microbenchmarks improved MMIO dispatch by 22-47%.
+
+On H700 at a stable 1.512 GHz (600 warmup, 600 measured frames, ABBA), guest
+output matched in all scenes, but Princess Maker 2 slot0 fell from 99.6/99.3
+to 97.1/96.4 frames/s (about 2.6%). Astonishia title (189.4 vs 189.2) and Blue
+Angelo (77.3 vs 77.0) were unchanged. A control build differing only by an
+empty asm statement measured 99.0/99.5 against 99.6/99.6, so code placement
+alone did not reproduce the loss. The candidate was not promoted.
+Evidence: `F:/GP32/results/round138/device-memory.json` and `layout/`.
