@@ -66,6 +66,24 @@ static int arm_a64_mem_checked(arm920t_t *c, const arm_jit_op_t *op,
     return arm_a64_can_continue(c, stop, expected_next, generation, status, epoch, run_limit, ram_base);
 }
 
+/* The emitter already knows this is a word load without writeback. Avoid
+ * decoding the transfer kind/size/writeback again on every MMIO access.
+ * Retain translation, unaligned rotation and the complete callback guard. */
+static int arm_a64_ldword_checked(arm920t_t *c, const arm_jit_op_t *op,
+                                  uint32_t addr, uint32_t expected_next,
+                                  uint32_t generation) {
+    int stop = op->stop;
+    unsigned rd = op->b; /* callbacks can invalidate decoded-op storage */
+    uint32_t status = c->cpsr & 0xffu, epoch = c->jit_cache_epoch, run_limit = c->run_limit;
+    uint8_t *ram_base = c->jit_ram_base;
+    c->r[15] = op->pc + 4u;
+    ARM_PROF_INC(c, helper_ld_word);
+    uint32_t value = arm_bc_ld_word(c, addr & ~3u);
+    if (addr & 3u) value = gp32_ror32(value, (addr & 3u) * 8u);
+    write_r(c, rd, value);
+    return arm_a64_can_continue(c, stop, expected_next, generation, status, epoch, run_limit, ram_base);
+}
+
 static void a64_u32(a64_emit_t *e, uint32_t v) {
     if (e->pos < e->cap) e->code[e->pos++] = v;
     else e->fail = 1;
@@ -321,16 +339,22 @@ static void a64_slow(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
 static void a64_mem_slow(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done,
                           int load, int wb) {
     if (e->leaf) { e->fail = 1; return; }
-    if (wb) a64_mov(e, 3, 2);
-    else a64_imm(e, 3, 0u);
+    int word_load = load && !wb && op->kind == ARM_JIT_OP_SINGLE_DT && !(op->d & ARM_BC_SD_B);
+    if (word_load) {
+        a64_imm(e, 3, e->expected_next);
+        a64_imm(e, 4, e->generation);
+    } else {
+        if (wb) a64_mov(e, 3, 2);
+        else a64_imm(e, 3, 0u);
+        if (load) a64_imm(e, 4, 0u);
+        else a64_guest(e, 4, op->b, op->pc);
+        a64_imm(e, 5, e->expected_next);
+        a64_imm(e, 6, e->generation);
+    }
     a64_mov(e, 2, 12);
-    if (load) a64_imm(e, 4, 0u);
-    else a64_guest(e, 4, op->b, op->pc);
     a64_rr(e, 0xaa000000u, 0, 31, 19);
     a64_ptr(e, 1, (uintptr_t)op);
-    a64_imm(e, 5, e->expected_next);
-    a64_imm(e, 6, e->generation);
-    a64_ptr(e, 16, (uintptr_t)arm_a64_mem_checked);
+    a64_ptr(e, 16, word_load ? (uintptr_t)arm_a64_ldword_checked : (uintptr_t)arm_a64_mem_checked);
     a64_u32(e, 0xd63f0200u);
     a64_cmp_imm(e, 0, 0);
     size_t next = a64_jump(e, 1);
