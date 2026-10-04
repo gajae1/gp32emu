@@ -1493,6 +1493,7 @@ static void clock_invalidate(s3c2400_t *s) {
 }
 
 static void clock_apply(s3c2400_t *s, const uint32_t *registers) {
+    uint64_t old_lcd_period = lcd_panel_frame_cycles(s);
     uint64_t old_iis_period = iis_period_cpu_cycles(s);
     uint64_t old_pwm_period[5];
     pwm_refresh_clock_cache(s);
@@ -1503,6 +1504,12 @@ static void clock_apply(s3c2400_t *s, const uint32_t *registers) {
     for (unsigned t = 0; t < 5u; ++t)
         s->pwm_accum[t] = rescale_period_progress(s->pwm_accum[t], old_pwm_period[t], s->pwm_period_cycles[t]);
     s->iis_accum = rescale_period_progress(s->iis_accum, old_iis_period, iis_period_cpu_cycles(s));
+    uint64_t new_lcd_period = lcd_panel_frame_cycles(s);
+    if (old_lcd_period != new_lcd_period) {
+        /* Completed scanouts are already counted separately. Only translate
+         * the current frame's phase, avoiding a product of the full history. */
+        s->lcd_line_accum = (s->lcd_line_accum % old_lcd_period) * new_lcd_period / old_lcd_period;
+    }
 }
 
 static void clock_write(s3c2400_t *s, uint32_t addr, uint32_t value, uint32_t mask) {

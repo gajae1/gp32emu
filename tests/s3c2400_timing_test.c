@@ -1,5 +1,5 @@
 /* Replay changing PLL/LCD timing, frame boundaries and state restore through
- * the public peripheral API. Compare the trace hash against the prior core. */
+ * the public peripheral API, including phase continuity across clock changes. */
 #include "s3c2400.h"
 #include <inttypes.h>
 
@@ -58,6 +58,44 @@ fail:
     return 0;
 }
 
+static uint64_t frame_count(s3c2400_t *s) {
+    uint64_t frames;
+    (void)s3c2400_framebuffer(s, NULL, NULL, NULL, &frames);
+    return frames;
+}
+
+static int check_lcd_clock_phase(s3c2400_t *s, FILE *state) {
+    s3c2400_reset(s);
+    s3c2400_write32(s, 0x14800004u, 0u); /* 48 MHz, 800,000 cycles per frame. */
+    s3c2400_write32(s, 0x14800014u, 0u);
+    s3c2400_write32(s, 0x14a00004u, 239u << 14);
+    s3c2400_write32(s, 0x14a00000u, (12u << 1) | 1u);
+    /* A long-running old state must preserve its current half-frame, without
+     * mistaking completed frames for pending display work after a change. */
+    s3c2400_tick(s, 4000400000u);
+    uint32_t line = s3c2400_read32(s, 0x14a00000u);
+    uint64_t frames = frame_count(s);
+    for (unsigned step = 0; step < 2u; ++step) {
+        s3c2400_write32(s, 0x14800014u, step ? 0u : 2u);
+        if (s3c2400_read32(s, 0x14a00000u) != line || frame_count(s) != frames) goto fail;
+        rewind(state);
+        if (!s3c2400_state_save(s, state)) return 0;
+        s3c2400_tick(s, 999999u);
+        rewind(state);
+        if (!s3c2400_state_load(s, state)) return 0;
+        uint32_t half_frame = step ? 400000u : 200000u;
+        s3c2400_tick(s, half_frame - 1u);
+        if (frame_count(s) != frames) goto fail;
+        s3c2400_tick(s, 1u);
+        if (frame_count(s) != ++frames) goto fail;
+        if (!step) s3c2400_tick(s, half_frame);
+    }
+    return 1;
+fail:
+    fputs("FAIL: LCD clock change jumps scan position or moves frame boundary\n", stderr);
+    return 0;
+}
+
 int main(void) {
     static const uint32_t clocks[] = {0x0005c080u, 0x0007d042u, 0x00048032u};
     static const uint32_t steps[] = {1u, 1023u, 32768u, 999999u, 7u, 800000u};
@@ -80,13 +118,14 @@ int main(void) {
         observe(s, 1u);
         if ((k % 3u) == 0u) { s3c2400_reset(s); observe(s, 31u); }
     }
-    int phase_ok = check_iis_clock_phase(s, state);
+    int phase_ok = check_lcd_clock_phase(s, state) && check_iis_clock_phase(s, state);
     fclose(state);
     if (!phase_ok) { s3c2400_destroy(s); return 1; }
     printf("lcd_timing_trace=%016" PRIx64 "\n", hash);
-    /* Recorded by running this replay against the previous core, before the
-     * derived timing cache was introduced. */
-    if (hash != UINT64_C(0x47779e5037cd7b27)) { s3c2400_destroy(s); return 1; }
+    /* The former 47779e5037cd7b27 trace reinterpreted elapsed history on clock
+     * changes. This phase-preserving trace was independently derived in the
+     * frame-fraction domain, including cycle quantization and state restore. */
+    if (hash != UINT64_C(0xdb468039216226ad)) { s3c2400_destroy(s); return 1; }
     /* IIS byte-DMA pacing. Each 8-bit DMA unit writes IISFIF once, and the
      * register write pushes one 16-bit FIFO entry, so a stereo frame consumes
      * two units. With an 8-unit auto-reloading block the terminal-count IRQ
