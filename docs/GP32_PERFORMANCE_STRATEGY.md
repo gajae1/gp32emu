@@ -1664,3 +1664,37 @@ Private evidence: `F:/GP32/results/resume80-source/README.md`,
 [MAME GP32 driver](https://github.com/mamedev/mame/blob/master/src/mame/gamepark/gp32.cpp)
 was consulted for its L3 pin handling and IIS output; it is not a verified
 analog-output reference. Hardware/output-stage investigation remains open.
+
+## resume81: Princess Maker cutscene workload and frontend follow-up
+
+The user-provided Princess Maker 2 slot 0 was copied read-only and verified
+against the remote SHA-256. Its 300-frame PC replay executes 101,079,269 ARM
+instructions through portable decoded blocks and 67,866,349 through native
+blocks. Of the portable work, 101,069,530 instructions belong to one eight-op
+loop that decrements a counter on every backedge. The current polling-candidate
+gate excludes it from native compilation even though its changing counter
+prevents a fixed-point skip. A generic proof of loop progress is being evaluated;
+no game address or instruction signature should enter production code.
+
+The same saved cutscene advances through text during a 600-frame PC replay,
+with PCM present in every frame and six image changes. These are static slide
+and text changes, not a requirement for 600 distinct images. PC profiling does
+not measure H700 presentation speed. Device benchmarks and core replacement
+are deferred while the user plays other games. Sound work remains active:
+the reported Dooly Soccer startup pop is being compared at source and frontend
+delivery boundaries; original waveform values alone do not prove hardware
+speaker behavior.
+
+Win64 now clears keyboard state on focus loss, preventing a key release sent
+to another window from leaving GP32 buttons pressed. A hidden-window probe of
+the actual window procedure passes press/focus-loss/fresh-press/release checks.
+The Win64 GUI and SDL3 DLL build successfully in Release C23; a full GUI/audio
+session has not been exercised. Indexed fallback LCD rendering now expands its
+reachable palette entries once per scanout, preserving all 18 synthetic
+fallback pixel hashes. Host timings are noisy and do not establish a real-game
+speedup; this path is not the identified Princess Maker CPU bottleneck.
+
+Private evidence: `F:/GP32/results/resume81-princess/`,
+`resume81-indexed/REPORT.md`, `resume80-integration/focus-result.log`,
+and `resume80-win-gui/README.md`. The prior A64 memory-helper candidate also
+still requires native A64 runtime and performance acceptance before deployment.
