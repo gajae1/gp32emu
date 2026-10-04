@@ -55,6 +55,18 @@ static int arm_a64_exec_checked(arm920t_t *c, const arm_jit_op_t *op,
     return arm_a64_can_continue(c, stop, expected_next, generation, status, epoch, run_limit, ram_base);
 }
 
+/* Only used for a terminating MSR. No callback can observe an intermediate
+ * state: the emitter commits PC and returns immediately after this call.
+ * Keep bank switching in the shared implementation, but the field mask and
+ * operand have already been decoded by the emitter. */
+static void arm_a64_msr_cpsr(arm920t_t *c, uint32_t value, uint32_t mask) {
+    ARM_PROF_INC(c, helper_interp_ops);
+    ARM_PROF_INC(c, helper_op_kinds[ARM_JIT_OP_PSR]);
+    ARM_PROF_INC(c, slow_bail_other);
+    if (mode(c) == MODE_USR) mask &= 0xff000000u;
+    set_cpsr_full(c, (c->cpsr & ~mask) | (value & mask));
+}
+
 static int arm_a64_mem_checked(arm920t_t *c, const arm_jit_op_t *op,
                                uint32_t addr, uint32_t writeback, uint32_t value,
                                uint32_t expected_next, uint32_t generation) {
@@ -1358,7 +1370,7 @@ static void a64_spsr_offset(a64_emit_t *e) {
 }
 
 /* SPSR access cannot change the active mode or interrupt masks. CPSR writes
- * still use the checked helper unless only the flags byte can change. */
+ * still use a helper unless only the flags byte can change. */
 static int a64_psr_mov(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
     const uint32_t insn = op->insn;
     unsigned rd = (insn >> 12) & 0xfu;
@@ -1399,7 +1411,24 @@ static int a64_psr_mov(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
             a64_patch(e, no_spsr, e->pos);
             return 1;
         }
-        if (field != 0x8u) return 0;
+        if (field != 0x8u) {
+            /* PSR operations terminate decoded blocks. Require that proof
+             * here even if a future decoder starts stitching across them:
+             * mode, Thumb and interrupt-mask changes must reach dispatch. */
+            if (!op->stop || e->leaf) return 0;
+            uint32_t mask = 0u;
+            for (unsigned byte = 0; byte < 4u; ++byte)
+                if (field & (1u << byte)) mask |= 0xffu << (byte * 8u);
+            if (!mask) mask = 0xf0000000u;
+            if (insn & (1u << 25))
+                a64_imm(e, 1, gp32_ror32(insn & 0xffu, ((insn >> 8) & 0xfu) * 2u));
+            else a64_guest(e, 1, insn & 0xfu, op->pc);
+            a64_imm(e, 2, mask);
+            a64_rr(e, 0xaa000000u, 0, 31, 19);
+            a64_ptr(e, 16, (uintptr_t)arm_a64_msr_cpsr);
+            a64_u32(e, 0xd63f0200u); /* blr x16; caller emits the stop epilogue */
+            return 1;
+        }
         if (insn & (1u << 25)) {                           /* immediate form */
             uint32_t v = gp32_ror32(insn & 0xffu, ((insn >> 8) & 0xfu) * 2u);
             a64_load(e, 1, offsetof(arm920t_t, cpsr));

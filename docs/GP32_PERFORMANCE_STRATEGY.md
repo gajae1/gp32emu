@@ -2055,3 +2055,38 @@ the prior core is backed up as `gp32-dev/resume92-spsr-installed-core-before.so`
 Stock RetroArch, launcher and protected settings match their pre-installation
 hashes. See `resume92-spsr/installed.json`. Interactive frontend acceptance of
 this build remains untested.
+
+### Terminating CPSR writes (2026-10-04)
+
+The remaining Princess PSR traffic is mostly full CPSR writes in exception
+wrappers. All decoded PSR instructions already terminate their block. The
+AArch64 emitter now passes a decoded operand and constant field mask to a
+small CPSR helper, retaining `set_cpsr_full` for register banking and the User
+mode flags-only restriction. It requires `op->stop`; otherwise the existing
+checked path remains. The normal stop epilogue commits PC and immediately
+returns to dispatch, so changes to Thumb state and IRQ/FIQ masks cannot run
+through a stale native successor. No callback occurs inside this helper.
+The existing PSR helper counters still include these calls.
+
+H700 ABBA replays against `ad43b77` measure Princess 71.604 -> 72.635 core fps
+(+1.44%), Astonishia title 174.267 -> 175.439 (+0.67%), and Blue Angelo
+72.178 -> 72.771 (+0.82%). Princess again has one baseline and two candidate
+samples at 1512-MHz endpoints after excluding a changing-frequency baseline;
+the other scenes have two per variant. These small throughput differences
+retain the prior frequency and short-scene limitations. All seven CPU,
+clock, audio-count, video-hash and PCM-hash fields match the prior Windows
+reference exactly. The existing native `arm_exception_test` passes, and
+the Android arm64 build passes. Evidence: `resume93-cpsr/{manifest,device,
+summary,native-exception}.json`. No volume, mixer or frontend settings changed.
+
+The focused `arm_jit_test --cpsr` passes on Windows and H700. It checks a
+banked-source SVC/FIQ round trip, immediate Thumb entry, pending IRQ/FIQ
+unmasking before the next instruction, and partial PC-source/zero-field writes.
+Only that selector ran, despite the old generic label in the captured output;
+the label was corrected afterward without repeating the successful checks.
+The installed core SHA-256 is
+`51996fbf51d18ba095bdbd2adc1443d1c9fe49254a438b3e219de94675ef38ff`.
+The previous SPSR core is preserved at
+`gp32-dev/resume93-cpsr-installed-core-before.so`. Installation readback and
+unchanged stock frontend/launcher/settings hashes are in
+`resume93-cpsr/installed.json`. Interactive frontend acceptance remains open.
