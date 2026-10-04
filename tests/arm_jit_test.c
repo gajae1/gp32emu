@@ -48,6 +48,8 @@ typedef struct {
     uint32_t block_addr[3], block_pc[3], block_base[3], block_value[3];
     unsigned mem_probe, mem_effect, mem_calls;
     uint32_t mem_addr, mem_pc, mem_base, mem_value;
+    uint32_t live_pa, live_value;
+    unsigned live_reads, live_writes, live_rebind_rejected;
 } test_bus_t;
 
 static test_bus_t bus_jit, bus_ref;
@@ -79,6 +81,10 @@ static void tb_trace(void *user, const char *line) {
 }
 
 static uint32_t tb_io_value(test_bus_t *b, uint32_t a) {
+    if (b->live_pa && a == b->live_pa) {
+        ++b->live_reads;
+        return b->live_value;
+    }
     if (b->observe_cpu && a == IO_ADDR) {
         uint32_t pc = arm920t_get_pc(b->observe_cpu);
         if (b->io_count < GP32_ARRAY_COUNT(b->io_pc)) b->io_pc[b->io_count] = pc;
@@ -191,6 +197,11 @@ static void tb_write32(void *u, uint32_t a, uint32_t v) {
     test_bus_t *b = (test_bus_t *)u;
     uint8_t *p = bus_ptr(b, a, 4u);
     if (p) gp32_st32le(p, v);
+    else if (b->live_pa && a == b->live_pa) {
+        b->live_value = v;
+        ++b->live_writes;
+        b->live_rebind_rejected += !arm920t_set_live_read32(b->observe_cpu, NULL, 0);
+    }
     else if (b->mem_probe) (void)tb_mem_io(b, a, v);
     else if (b->block_io && a >= IO_ADDR && a < IO_ADDR + 12u)
         (void)tb_block_io(b, a, v);
@@ -3363,6 +3374,74 @@ static void case_checked_access_translation(void) {
     teardown_pair();
 }
 
+/* Real execution, with callback counts proving the A64 path was exercised.
+ * The test-only read counter is not guest-visible; the certified value has
+ * no read effects. Writes remain callbacks and change the next live load. */
+static void case_live_read32(void) {
+    const uint32_t va = 0x10007700u;
+    const uint32_t masks[] = {0u, 0xfffu, 0x3ffu};
+    const uint32_t program[] = {
+        0xe5901000u, /* LDR r1,[r0] */
+        0xe5802000u, /* STR r2,[r0]: callback updates the live word */
+        0xe5903000u, /* LDR r3,[r0]: must read the updated word */
+        0xe5905001u, /* unaligned LDR retains the rotating helper */
+        0xe5d06000u, /* LDRB retains the ordinary bus */
+        0xe5907004u, /* unadvertised address retains the ordinary bus */
+        0xeafffffeu
+    };
+    for (unsigned k = 0; k < GP32_ARRAY_COUNT(masks); ++k) {
+        current_case = k == 0 ? "live-word-MMU-off" : k == 1 ? "live-word-mapped" : "live-word-tiny-page";
+        setup_pair();
+        load_both(program, GP32_ARRAY_COUNT(program));
+        uint32_t addr = k ? va : IO_ADDR;
+        uint32_t pa = IO_ADDR | (k ? va & masks[k] : 0u);
+        if (k) {
+            arm920t_state_image_t *state = calloc(1, sizeof(*state));
+            if (!state) exit(2);
+            state->r[15] = CODE_ADDR; state->cpsr = 0xd3u; state->cp15[1] = 1u;
+            state->tlb_valid[0] = 1; state->tlb_mask[0] = 0xfffu; /* BIOS code */
+            unsigned idx = (va >> 12) & 0xfffu;
+            state->tlb_valid[idx] = 1; state->tlb_mask[idx] = masks[k];
+            state->tlb_va_base[idx] = va & ~masks[k]; state->tlb_pa_base[idx] = IO_ADDR;
+            arm920t_state_apply(cpu_ref, state); arm920t_state_apply(cpu_jit, state);
+            free(state);
+            arm920t_set_jit(cpu_jit, 1);
+        }
+        set_reg_both(0, addr); set_reg_both(2, 0xa1b2c3d4u);
+        bus_ref.live_pa = bus_jit.live_pa = pa;
+        bus_ref.live_value = bus_jit.live_value = 0x12345678u;
+        bus_ref.observe_cpu = cpu_ref; bus_jit.observe_cpu = cpu_jit;
+        arm_live_read32_t reads[] = {{pa, &bus_jit.live_value}};
+        CHECK(arm920t_set_live_read32(cpu_jit, reads, 1), "register live word");
+        run_cache_pair(CODE_ADDR, 64u);
+        CHECK(ref_reg(1) == 0x12345678u && ref_reg(3) == 0xa1b2c3d4u &&
+              ref_reg(5) == 0xd4a1b2c3u && ref_reg(6) == 0xd4u && ref_reg(7) == UINT32_MAX,
+              "fresh word, write callback, rotation and unsupported accesses");
+        CHECK(bus_jit.live_writes == 1u && bus_ref.live_writes == 1u &&
+              bus_jit.live_rebind_rejected == 1u && bus_ref.live_rebind_rejected == 1u,
+              "writes remain callbacks; in-flight registration changes are rejected");
+        gp32_cpu_profile_t profile;
+        arm920t_get_cpu_profile(cpu_jit, &profile);
+        if (profile.supported && profile.native_backend == 2u) {
+            CHECK(profile.native_arm_insns >= 6u, "live word path uses native instructions");
+            CHECK(bus_jit.live_reads == 2u && bus_ref.live_reads == 4u,
+                  "only two aligned word reads bypass the bus callback");
+        }
+        /* Reuse compiled code with fresh external input, then revoke it. */
+        bus_ref.live_value = bus_jit.live_value = 0x88776655u;
+        run_cache_pair(CODE_ADDR, 64u);
+        CHECK(ref_reg(1) == 0x88776655u, "compiled code reloads current input");
+        CHECK(arm920t_set_live_read32(cpu_jit, NULL, 0), "disable live word");
+        unsigned before = bus_jit.live_reads;
+        run_cache_pair(CODE_ADDR, 64u);
+        CHECK(bus_jit.live_reads - before == 4u, "disabling invalidates compiled pointers");
+        arm_live_read32_t bad = {pa | 1u, &bus_jit.live_value};
+        CHECK(!arm920t_set_live_read32(cpu_jit, &bad, 1) &&
+              !arm920t_set_live_read32(cpu_jit, NULL, 1), "invalid registration rejected");
+        teardown_pair();
+    }
+}
+
 int main(int argc, char **argv) {
     /* Native gate triage can isolate this mapped physical-boundary case
      * without rerunning unrelated differential workloads. */
@@ -3381,7 +3460,9 @@ int main(int argc, char **argv) {
     int access_only = argc == 2 && !strcmp(argv[1], "--checked-access");
     int poll_only = argc == 2 && !strcmp(argv[1], "--poll-progress");
     int psr_only = argc == 2 && !strcmp(argv[1], "--psr");
-    if (argc == 2 && !strcmp(argv[1], "--ram-page-tags")) {
+    if (argc == 2 && !strcmp(argv[1], "--live-read32")) {
+        case_live_read32();
+    } else if (argc == 2 && !strcmp(argv[1], "--ram-page-tags")) {
         case_native_mapped_pages();
         case_native_mmu_mode_changes();
     } else if (argc == 2 && !strcmp(argv[1], "--exception-return")) {
@@ -3455,6 +3536,7 @@ int main(int argc, char **argv) {
     } else if (ram_end_only) {
         case_native_mapped_ram_end();
     } else {
+    case_live_read32();
     case_terminal_swi_yield();
     case_native_ldm_pc();
     case_poll_progress();
@@ -3522,6 +3604,7 @@ int main(int argc, char **argv) {
     }
     printf("PASS: arm jit differential (%s), jit events=%" PRIu64 " fallbacks=%" PRIu64 "\n",
            (argc == 2 && !strcmp(argv[1], "--ram-page-tags")) ? "ram-page-tags" :
+           (argc == 2 && !strcmp(argv[1], "--live-read32")) ? "live-read32" :
            (argc == 2 && !strcmp(argv[1], "--exception-return")) ? "exception-return" :
            (argc == 2 && !strcmp(argv[1], "--terminal-helper")) ? "terminal-helper" :
            (argc == 2 && !strcmp(argv[1], "--ldm-pc-native")) ? "ldm-pc-native" :
