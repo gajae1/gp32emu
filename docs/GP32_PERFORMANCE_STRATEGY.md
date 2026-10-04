@@ -1806,3 +1806,11 @@ SoC timing, PCM and state tests pass on Windows; the same timing/restart fixture
 passes natively on H700 without audio playback. Win64 and H700 cores build.
 Private evidence: `resume84-fifo/h700-test.txt`. Correlation with a particular
 game's audible pop remains unverified; this is a reproduced FIFO lifecycle bug.
+
+The FIFO fix is installed on H700 with SHA-256
+`f46d2a1a6ce2ef543780214d68ed698d548ba63e3d5bb4da5e77ad9b6b3023d2`;
+the preceding core is backed up as `gp32-dev/resume84-fifo-installed-core-before.so`.
+Stock frontend/launcher/configuration hashes are unchanged. This promotion and
+all subsequent device checks leave volume untouched and produce no audible
+playback. Win64 and Android ARM32/ARM64 builds pass. Evidence:
+`resume84-fifo/installed.json`; staged PC binaries: `resume84-fifo/pc/`.
