@@ -2859,3 +2859,35 @@ memcpy-to-memset special case was also deferred: saving roughly 172 KiB/s of
 zero-source reads does not justify another branch in normal delivery without
 measured benefit. Existing source-lifetime and per-run batch semantics remain
 intact. Private `video-audit.md` and `audio-audit.md` retain the bounded findings.
+
+### Restore native access-helper attribution (2026-10-05)
+
+A64 access-only helpers counted transferred words/bytes but bypassed the
+slow-reason and physical-address classifier used by whole-op helpers. This
+made recent native profiles report zero non-RAM single transfers despite
+millions of checked loads. Both access-only entry points now run the existing
+read-only classifier before the access, only when CPU profiling is enabled.
+They do not increment interpreted-op counts, walk page tables or duplicate
+bus reads. Cold TLB misses retain precedence over physical-address attribution.
+
+The existing checked-access fixture now relates profile records to actual
+callback addresses/directions and verifies cold-TLB precedence. Against the
+old library it reports 20 mismatches; the corrected H700 fixture passes with
+unchanged reference CPU state and bus-access counts. The profile-only change
+leaves release ELF code/data sections identical to the installed audio-fixed
+core; file hashes differ because debug information changed.
+
+Princess slot-0 replay (600 warmup / 1,200 measured) preserves all seven
+CPU/video/PCM outputs. Corrected counts: 6,839,170 non-RAM singles and 78,607
+TLB misses. GPIO reads at 0x1560000c and 0x15600030 account for 6,608,179
+accesses (96.6% of non-RAM attributions); BIOS reads total 15,748. These are
+GPIO/button/SmartMedia registers, not IIS audio registers.
+
+A separate release-based SIGPROF replay, also output-exact, collected 1,615
+samples: portable block execution 30.03%, generated JIT 19.69%, arm920t_run
+(including dispatcher) 18.08%, checked word-load helper 4.40% and read32_io
+3.78%. Benchmark main/hash work accounts for 9.97%. These are coarse CPU-time
+samples, not instruction latency or a speed comparison. Poll observation is
+therefore a larger current target than BIOS loads or leaf stack frames.
+Evidence: `results/resume113-helper-attribution/` profile diff, checked-access
+red/green logs, sample analysis and release-section comparison.

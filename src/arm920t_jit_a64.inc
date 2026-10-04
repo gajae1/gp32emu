@@ -74,6 +74,11 @@ static int arm_a64_mem_checked(arm920t_t *c, const arm_jit_op_t *op,
     uint32_t status = c->cpsr & 0xffu, epoch = c->jit_cache_epoch, run_limit = c->run_limit;
     uint8_t *ram_base = c->jit_ram_base;
     c->r[15] = op->pc + 4u; /* callback-visible PC, exactly as classified */
+#if ARM920T_PROFILING
+    /* Access-only helpers bypass arm_jit_exec_classified; retain the same
+     * read-only pre-access attribution without counting an interpreted op. */
+    arm_profile_helper_reason(c, op);
+#endif
     arm_jit_mem_access(c, op, addr, writeback, value);
     return arm_a64_can_continue(c, stop, expected_next, generation, status, epoch, run_limit, ram_base);
 }
@@ -89,6 +94,9 @@ static int arm_a64_ldword_checked(arm920t_t *c, const arm_jit_op_t *op,
     uint32_t status = c->cpsr & 0xffu, epoch = c->jit_cache_epoch, run_limit = c->run_limit;
     uint8_t *ram_base = c->jit_ram_base;
     c->r[15] = op->pc + 4u;
+#if ARM920T_PROFILING
+    arm_profile_helper_reason(c, op);
+#endif
     ARM_PROF_INC(c, helper_ld_word);
     uint32_t value = arm_bc_ld_word(c, addr & ~3u);
     if (addr & 3u) value = gp32_ror32(value, (addr & 3u) * 8u);
