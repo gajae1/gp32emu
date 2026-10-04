@@ -87,3 +87,30 @@ installed on H700 because its measured scheduling cost still needs optimization.
 Private evidence: `resume84-lcd/demand-120frames/`, `device-demand.json`, and
 `demand-parity.json` (matching PC/AArch64 CPU, video and PCM results in three
 existing replay scenes). The installed FIFO fix remains unchanged.
+
+Further original-BIOS analysis locates a two-directory list builder that tries
+both `gp:\\game\\` and `gp:\\gpmm\\`. GlooP's root contains GPMM but no GAME.
+The disassembled directory functions return on path-resolution failure without
+initializing their count output, while the caller proceeds when either path
+succeeds. The captured stack contains a pointer-sized stale count; a live trace
+also observes a NULL-buffer directory walk (`r10 == r9 * 16`). This supports a
+firmware error-path explanation for the huge string scan. The exact earlier
+writer of the stale stack slots and real-hardware behavior remain unverified.
+
+A scratch-only counterfactual added a GAME root entry aliasing GPMM's cluster.
+With the same core and 3600-frame input sequence, the original image remains at
+DATA LOADING. Initially the altered image reached "SMC is not inserted or no game
+exists": that diagnostic had left the changed NAND page's ECC stale. After
+recomputing its ECC, the same alias image reaches GlooP's **level-selection
+screen**. The original page's ECC matched the reference calculation (with the
+SmartMedia byte order), so this controls a confounding media-integrity error.
+This supports the missing-directory error path as the trigger. The alias image
+is a diagnostic, not a production filesystem repair or evidence of full play.
+It does not justify automatically modifying users' images or mirroring ROM.
+Original media and device firmware were unchanged.
+
+ECC was calculated in a private diagnostic using the GPL-licensed
+[Linux NAND ECC reference](https://raw.githubusercontent.com/torvalds/linux/v2.6.12/drivers/mtd/nand/nand_ecc.c),
+retaining its attribution; no reference implementation was added to the emulator.
+Private evidence: `resume85-bios-origin/FINDINGS.md` and
+`resume86-bios-counterfactual/{result,ecc-result}.json`, with `comparison.png`.
