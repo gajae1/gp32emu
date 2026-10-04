@@ -161,10 +161,16 @@ static void color16_lut_build(void);
 static int s3c2400_is_stable_read32(void *user, uint32_t addr) {
     const s3c2400_t *s = (const s3c2400_t *)user;
     /* DMA, LCD scan position and IRQs advance only after arm920t_run returns.
+     * Both GPIO read paths only compose gpio[], cached buttons and SMC line/
+     * presence/protection fields. NAND advances in gp32_smc_update on WRITES,
+     * never a GPIO read. Inputs/card/state change outside the synchronous run;
+     * DMA advances on tick. A write-free loop can therefore reuse all aligned
+     * GPIO words for this run. CPU poll proofs reject peripheral stores.
      * Other MMIO is deliberately excluded: reads can acknowledge hardware. */
     return addr <= BIOS_SIZE - 4u ||
            (addr >= RAM_BASE && (uint64_t)(addr - RAM_BASE) + 4u <= s->ram_size) ||
-           addr == 0x14a00000u;
+           addr == 0x14a00000u ||
+           (!(addr & 3u) && addr >= 0x15600000u && addr <= 0x15600058u);
 }
 
 static void slog(s3c2400_t *s, const char *fmt, ...) {

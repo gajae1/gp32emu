@@ -334,8 +334,13 @@ static void case_poll_progress(void) {
         gp32_cpu_profile_t p;
         arm920t_get_cpu_profile(cpu_jit, &p);
         if (p.supported) {
-            CHECK(p.poll_skipped_insns == 0u, "changing counter must never fast-forward");
-            if (p.native_backend) {
+            if (k == 0u) {
+                CHECK(p.poll_skipped_insns > 0u && p.native_arm_insns == 0u,
+                      "proven stable countdown must use portable proof and bounded skips");
+                CHECK(p.block_interp_arm_insns + p.poll_skipped_insns == 512u,
+                      "countdown must account every executed or skipped instruction");
+            } else CHECK(p.poll_skipped_insns == 0u, "unsupported progress must never fast-forward");
+            if (p.native_backend && k != 0u) {
                 /* A conditional backedge includes its exit in the translated
                  * block. Its final short budget can legitimately use portable
                  * execution; bound that tail by the complete trace length. */

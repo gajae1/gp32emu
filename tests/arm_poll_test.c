@@ -8,6 +8,7 @@
  */
 
 #include "arm920t.h"
+#include "s3c2400.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -841,6 +842,476 @@ static void case_run_deadlines(void) {
     }
 }
 
+/* Generic signed positive countdown, two fixed loads and AND accumulators.
+ * The reference has no stability contract and therefore executes every load.
+ * This catches a skip which freezes the counter, loses CMP flags, or crosses
+ * the exit/partial-iteration boundary. No GP32 MMIO or title addresses here. */
+static const uint32_t PROG_COUNTED[] = {
+    0xe3520000u, 0xda000005u, 0xe5905000u, 0xe0033005u,
+    0xe5915000u, 0xe0044005u, 0xe2422001u, 0xeafffff7u,
+    0xeafffffeu
+};
+
+static void counted_setup(unsigned jit, uint32_t counter) {
+    setup_pair(0);
+    load_prog(PROG_COUNTED, sizeof(PROG_COUNTED) / sizeof(PROG_COUNTED[0]));
+    add_stable(&bus_fast, DATA_ADDR);
+    add_stable(&bus_fast, DATA_ADDR + 4u);
+    store_both(DATA_ADDR, 0xf0f0aa55u);
+    store_both(DATA_ADDR + 4u, 0x55aa0ff0u);
+    set_reg_both(0, DATA_ADDR);
+    set_reg_both(1, DATA_ADDR + 4u);
+    set_reg_both(2, counter);
+    set_reg_both(3, 0xffffffffu);
+    set_reg_both(4, 0xffffffffu);
+    set_cpsr_both(0xf00000d3u);
+    arm920t_set_jit(cpu_fast, jit);
+    arm920t_set_jit(cpu_ref, jit);
+}
+
+static void case_counted_poll(void) {
+    for (unsigned jit = 0; jit < 2; ++jit) {
+        current_case = jit ? "counted-native-enabled" : "counted-portable";
+        counted_setup(jit, 10000u);
+        run_chunks(CHUNKS, NCHUNKS, 1, NULL, NULL);
+        CHECK(bus_fast.r32 * 8u < bus_ref.r32, "counted poll did not reduce loads");
+        gp32_cpu_profile_t p;
+        arm920t_get_cpu_profile(cpu_fast, &p);
+        if (p.supported) CHECK(p.poll_skipped_insns > 0, "counted skip not exercised");
+        printf("%s reads=%lu/%lu skipped=%lu\n", current_case,
+               (unsigned long)bus_fast.r32, (unsigned long)bus_ref.r32,
+               (unsigned long)p.poll_skipped_insns);
+        /* New run must read the changed input before applying a new proof. */
+        store_both(DATA_ADDR, 0x0000ff00u);
+        store_both(DATA_ADDR + 4u, 0xff000000u);
+        run_chunks(CHUNKS, NCHUNKS, 1, NULL, NULL);
+        teardown_pair();
+
+        static const uint32_t starts[] = {0u, 1u, 2u, 3u, 7u, 0x7fffffffu,
+                                         0x80000000u, 0xffffffffu};
+        for (unsigned s = 0; s < sizeof(starts) / sizeof(starts[0]); ++s) {
+            current_case = "counted-signed-boundaries";
+            counted_setup(jit, starts[s]);
+            const uint32_t chunks[] = {16u, 1u, 6u, 1u, 7u, 1u, 31u, 4097u};
+            run_chunks(chunks, sizeof(chunks) / sizeof(chunks[0]), 1, NULL, NULL);
+            teardown_pair();
+        }
+    }
+}
+
+/* Trace forces the independent instruction interpreter. Sweep every cycle
+ * boundary around the exit, including nonunit/rotated steps and signed
+ * underflow without signed overflow. Also rename every working register. */
+static void case_counted_boundaries(void) {
+    static const uint32_t steps[] = {0xe2422001u, 0xe2422007u, 0xe2422c01u,
+                                     0xe2422101u}; /* 1,7,256,0x40000000 */
+    static const uint32_t starts[] = {40u, 22u, 1000u, 0x7fffffffu};
+    for (unsigned s = 0; s < 4; ++s) {
+        current_case = "counted-every-exit-boundary";
+        counted_setup(s & 1u, starts[s]);
+        store_both(CODE_ADDR + 24u, steps[s]);
+        arm920t_set_trace(cpu_ref, 1, NULL, NULL);
+        for (uint32_t budget = 0; budget <= 337u; ++budget) {
+            arm920t_reset(cpu_fast, CODE_ADDR);
+            arm920t_reset(cpu_ref, CODE_ADDR);
+            set_reg_both(0, DATA_ADDR); set_reg_both(1, DATA_ADDR + 4u);
+            set_reg_both(2, starts[s]); set_reg_both(3, UINT32_MAX); set_reg_both(4, UINT32_MAX);
+            set_cpsr_both(0xf00000d3u);
+            CHECK(arm920t_run(cpu_fast, budget) == arm920t_run(cpu_ref, budget), "exit budget mismatch");
+            compare_state(0);
+        }
+        teardown_pair();
+    }
+    current_case = "counted-renamed-registers";
+    counted_setup(1, 0);
+    static const uint32_t renamed[] = {
+        0xe3580000u,0xda000005u,0xe599b00cu,0xe006600bu,
+        0xe51ab004u,0xe007700bu,0xe2488003u,0xeafffff7u,0xeafffffeu
+    }; /* counter r8, bases r9/r10, temporary r11, accumulators r6/r7 */
+    load_prog(renamed, sizeof(renamed) / sizeof(renamed[0]));
+    set_reg_both(8, 10000u); set_reg_both(9, DATA_ADDR - 12u); set_reg_both(10, DATA_ADDR + 8u);
+    set_reg_both(6, UINT32_MAX); set_reg_both(7, UINT32_MAX);
+    arm920t_set_trace(cpu_ref, 1, NULL, NULL);
+    run_chunks(CHUNKS, NCHUNKS, 1, NULL, NULL);
+    CHECK(bus_fast.r32 * 8u < bus_ref.r32, "renamed countdown did not accelerate");
+    teardown_pair();
+}
+
+static void case_counted_refusals(void) {
+    static const struct { unsigned index; uint32_t insn; } cases[] = {
+        {3,0xe0033002u}, /* counter-dependent AND */
+        {3,0xe0033085u}, /* shifted AND */
+        {3,0xe0133005u}, /* flag-setting AND */
+        {6,0xe2522001u}, /* flag-setting SUB */
+        {6,0x12422001u}, /* conditional step */
+        {6,0xe2822001u}, /* ADD: possible signed wrap */
+        {2,0xe4905004u}, /* post-indexed, moving load */
+        {2,0xe5d05000u}, /* byte load */
+        {4,0xe5815000u}  /* peripheral/RAM store */
+    };
+    for (unsigned s = 0; s < sizeof(cases) / sizeof(cases[0]); ++s) {
+        current_case = "counted-unsupported-shape";
+        counted_setup(0, 10000u);
+        store_both(CODE_ADDR + cases[s].index * 4u, cases[s].insn);
+        bus_fast.stable_all = 1;
+        arm920t_set_trace(cpu_ref, 1, NULL, NULL);
+        run_chunks(CHUNKS, NCHUNKS, 1, NULL, NULL);
+        CHECK(bus_fast.r32 == bus_ref.r32, "unsupported counted shape elided a load");
+        CHECK(bus_fast.w32 == bus_ref.w32, "unsupported counted shape elided a store");
+        teardown_pair();
+    }
+    for (unsigned missing = 0; missing < 3; ++missing) {
+        current_case = "counted-missing-stability-or-alignment";
+        counted_setup(1, 10000u);
+        if (missing == 0) bus_fast.nstable = 1; /* second load is volatile */
+        if (missing == 1) bus_fast.nstable = 0;
+        if (missing == 2) set_reg_both(0, DATA_ADDR + 1u);
+        run_chunks(CHUNKS, NCHUNKS, 1, NULL, NULL);
+        CHECK(bus_fast.r32 == bus_ref.r32, "unproven load was elided");
+        teardown_pair();
+    }
+}
+
+/* Rejected MMIO reads change on every access. A stable-load callback is
+ * installed, but rejection must preserve the old native progress route and
+ * every observable read. Reuse the same compiled entry after contract/base
+ * changes so a cached rejection cannot hide the supported path. */
+static int counted_volatile;
+static uint32_t counted_fallback_read(void *u, uint32_t a) {
+    test_bus_t *b = (test_bus_t *)u;
+    uint32_t value = tb_read32(u, a);
+    if (a == MMIO_BASE || a == MMIO_BASE + 4u) {
+        if (counted_volatile) ++b->mmio_word;
+        value = b->mmio_word;
+    }
+    return value;
+}
+
+static void case_counted_native_fallback(void) {
+    current_case = "counted-rejected-native-and-reselection";
+    counted_setup(1, 10000u);
+    arm920t_destroy(cpu_fast); arm920t_destroy(cpu_ref);
+    bus_fast.fastmem_ram = bus_ref.fastmem_ram = 1; /* Enable native backend. */
+    bus_fast.bus.read32 = bus_ref.bus.read32 = counted_fallback_read;
+    bus_fast.bus.read32_io = bus_ref.bus.read32_io = counted_fallback_read;
+    cpu_fast = arm920t_create(&bus_fast.bus); cpu_ref = arm920t_create(&bus_ref.bus);
+    if (!cpu_fast || !cpu_ref) exit(2);
+    arm920t_reset(cpu_fast, CODE_ADDR); arm920t_reset(cpu_ref, CODE_ADDR);
+    arm920t_set_jit(cpu_fast, 1);
+    arm920t_set_trace(cpu_ref, 1, NULL, NULL);
+    set_reg_both(0, MMIO_BASE); set_reg_both(1, MMIO_BASE + 4u);
+    set_reg_both(2, 10000u); set_reg_both(3, UINT32_MAX); set_reg_both(4, UINT32_MAX);
+    set_cpsr_both(0xf00000d3u);
+    /* A cold supported counted entry must allocate no native code at all. */
+    counted_volatile = 0;
+    bus_fast.nstable = 0;
+    add_stable(&bus_fast, MMIO_BASE); add_stable(&bus_fast, MMIO_BASE + 4u);
+    bus_fast.mmio_word = bus_ref.mmio_word = 0xa5a55a5au;
+    arm920t_reset_cpu_profile(cpu_fast);
+    CHECK(arm920t_run(cpu_fast, 512u) == arm920t_run(cpu_ref, 512u), "cold stable budget");
+    compare_state(1);
+    gp32_cpu_profile_t cold;
+    arm920t_get_cpu_profile(cpu_fast, &cold);
+    if (cold.supported) {
+        CHECK(cold.poll_skipped_insns > 0u && cold.native_arm_insns == 0u, "cold supported loop must skip");
+        CHECK(cold.jit_native_compiled == 0u && cold.jit_native_failed == 0u && cold.jit_code_used == 0u,
+              "supported counted loop must not attempt native compilation");
+    }
+    /* JIT-disabled rejected execution must not emit or run native code. */
+    arm920t_set_jit(cpu_fast, 0);
+    counted_volatile = 1;
+    bus_fast.nstable = 0;
+    arm920t_reset_cpu_profile(cpu_fast);
+    uint64_t disabled_fr = bus_fast.r32, disabled_rr = bus_ref.r32;
+    CHECK(arm920t_run(cpu_fast, 512u) == arm920t_run(cpu_ref, 512u), "disabled fallback budget");
+    compare_state(1);
+    CHECK(bus_fast.r32 - disabled_fr == bus_ref.r32 - disabled_rr, "disabled fallback read count");
+    arm920t_get_cpu_profile(cpu_fast, &cold);
+    if (cold.supported) CHECK(cold.native_arm_insns == 0u && cold.jit_native_compiled == 0u &&
+                              cold.jit_native_failed == 0u && cold.jit_code_used == 0u &&
+                              cold.poll_skipped_insns == 0u, "JIT disabled must not compile or skip rejection");
+    arm920t_set_jit(cpu_fast, 1);
+    for (unsigned phase = 0; phase < 4u; ++phase) {
+        counted_volatile = phase != 1u;
+        bus_fast.nstable = 0;
+        if (phase == 1u) {
+            add_stable(&bus_fast, MMIO_BASE); add_stable(&bus_fast, MMIO_BASE + 4u);
+            bus_fast.mmio_word = bus_ref.mmio_word = 0xa5a55a5au;
+        }
+        if (phase == 2u) { /* Contract still accepts MMIO, but bases moved. */
+            add_stable(&bus_fast, MMIO_BASE); add_stable(&bus_fast, MMIO_BASE + 4u);
+            set_reg_both(0, MMIO_BASE + 8u); set_reg_both(1, MMIO_BASE + 12u);
+        }
+        if (phase == 3u) {
+            set_reg_both(0, MMIO_BASE); set_reg_both(1, MMIO_BASE + 4u);
+        }
+        if (phase == 1u) {
+            /* A caller in another page must return through dispatcher before
+             * entering the counted block already compiled under rejection. */
+            const uint32_t caller = CODE_ADDR + 0x1000u;
+            uint32_t branch = 0xea000000u | (((CODE_ADDR - caller - 8u) >> 2) & 0x00ffffffu);
+            store_both(caller, branch);
+            set_reg_both(15, caller);
+        }
+        arm920t_reset_cpu_profile(cpu_fast);
+        uint64_t fr = bus_fast.r32, rr = bus_ref.r32;
+        uint32_t budget = phase == 1u ? 513u : 512u;
+        CHECK(arm920t_run(cpu_fast, budget) == arm920t_run(cpu_ref, budget), "fallback budget");
+        compare_state(1);
+        CHECK(bus_fast.mmio_word == bus_ref.mmio_word, "fallback read side effects");
+        gp32_cpu_profile_t p;
+        arm920t_get_cpu_profile(cpu_fast, &p);
+        if (phase == 1u) {
+            if (p.supported) CHECK(p.poll_skipped_insns > 0u && p.native_arm_insns <= 1u &&
+                                  p.block_interp_arm_insns + p.native_arm_insns + p.poll_skipped_insns == budget,
+                                  "caller entry must reselect stable proof for cached native counted block");
+        } else {
+            CHECK(bus_fast.r32 - fr == bus_ref.r32 - rr, "rejected proof elided a read");
+            if (p.supported) {
+                CHECK(p.poll_skipped_insns == 0u, "rejected proof skipped instructions");
+                if (p.native_backend) CHECK(p.native_arm_insns > 0u && p.block_interp_arm_insns <= 8u &&
+                                            p.native_arm_insns + p.block_interp_arm_insns == 512u,
+                                            "rejected counted loop needs native execution after one real observation");
+            }
+        }
+    }
+    counted_volatile = 0;
+    teardown_pair();
+}
+
+static unsigned counted_action;
+static uint32_t counted_limit;
+static uint32_t counted_callback_read(void *u, uint32_t a) {
+    test_bus_t *b = (test_bus_t *)u;
+    uint32_t value = counted_fallback_read(u, a);
+    arm920t_t *cpu = b == &bus_fast ? cpu_fast : cpu_ref;
+    if (b->r32 == 3u) { /* Second iteration: no skip proof exists yet. */
+        switch (counted_action) {
+        case 0: arm920t_limit_run(cpu, counted_limit); break;
+        case 1: arm920t_stop_run(cpu); break;
+        case 2: arm920t_set_irq(cpu, 1); break;
+        case 3: arm920t_set_fiq(cpu, 1); break;
+        case 4:
+            st32le(b->bios + CODE_ADDR + 24u, 0xe2422007u);
+            arm920t_flush_jit(cpu);
+            break;
+        case 5: {
+            FILE *f = tmpfile();
+            CHECK(f != NULL, "callback state temporary file");
+            if (f) {
+                CHECK(arm920t_state_save(cpu, f), "callback state save"); rewind(f);
+                CHECK(arm920t_state_load(cpu, f), "callback state load"); fclose(f);
+            }
+            break;
+        }
+        case 6: arm920t_set_trace(cpu, 1, NULL, NULL); break;
+        case 7: arm920t_set_jit(cpu, 0); break;
+        }
+    }
+    return value;
+}
+
+static void case_counted_callbacks(void) {
+    for (unsigned rejected = 0; rejected < 2u; ++rejected) {
+    for (unsigned action = 0; action < 8; ++action) {
+        for (unsigned deadline = 0; deadline < (action ? 1u : 4u); ++deadline) {
+            current_case = "counted-callback-invalidation-and-deadline";
+            counted_setup(1, 10000u);
+            arm920t_destroy(cpu_fast); arm920t_destroy(cpu_ref);
+            counted_volatile = rejected;
+            if (rejected) {
+                bus_fast.fastmem_ram = bus_ref.fastmem_ram = 1;
+                bus_fast.nstable = 0;
+            }
+            bus_fast.bus.read32 = bus_ref.bus.read32 = counted_callback_read;
+            bus_fast.bus.read32_io = bus_ref.bus.read32_io = counted_callback_read;
+            cpu_fast = arm920t_create(&bus_fast.bus); cpu_ref = arm920t_create(&bus_ref.bus);
+            arm920t_reset(cpu_fast, CODE_ADDR); arm920t_reset(cpu_ref, CODE_ADDR);
+            uint32_t data = rejected ? MMIO_BASE : DATA_ADDR;
+            set_reg_both(0, data); set_reg_both(1, data + 4u);
+            set_reg_both(2, 10000u); set_reg_both(3, UINT32_MAX); set_reg_both(4, UINT32_MAX);
+            set_cpsr_both(0x13u); /* IRQ and FIQ unmasked */
+            arm920t_set_jit(cpu_fast, 1);
+            arm920t_set_trace(cpu_ref, 1, NULL, NULL);
+            counted_action = action;
+            static const uint32_t limits[] = {0u, 13u, 65u, UINT32_MAX};
+            counted_limit = limits[deadline];
+            /* Permit a full native entry after the first real observation,
+             * then end inside a straight handler prefix. Its default B-self
+             * would otherwise legitimately skip unrelated instructions. */
+            if (rejected && (action == 2u || action == 3u))
+                for (uint32_t vector = 0x18u; vector <= 0x2cu; vector += 4u)
+                    store_both(vector, 0xe1acc00cu); /* MOV r12,r12 */
+            uint32_t budget = rejected && (action == 2u || action == 3u) ? 16u : 513u;
+            uint32_t got = arm920t_run(cpu_fast, budget);
+            CHECK(got == arm920t_run(cpu_ref, budget), "callback budget mismatch");
+            if (action == 0) CHECK(got == (deadline == 0 ? 11u : deadline == 3 ? 513u : counted_limit),
+                                   "deadline was not enforced after the read");
+            if (action == 1) CHECK(got == 11u, "stop-run did not finish the in-flight LDR");
+            if (action == 2) CHECK((arm920t_get_cpsr(cpu_fast) & CPSR_MODE_MASK) == MODE_IRQ_VALUE,
+                                   "read callback IRQ was not taken");
+            if (action == 3) CHECK((arm920t_get_cpsr(cpu_fast) & CPSR_MODE_MASK) == 0x11u,
+                                   "read callback FIQ was not taken");
+            compare_state(1);
+            if (rejected) {
+                gp32_cpu_profile_t p;
+                arm920t_get_cpu_profile(cpu_fast, &p);
+                CHECK(bus_fast.r32 == bus_ref.r32 && bus_fast.mmio_word == bus_ref.mmio_word,
+                      "native callback changed observable reads");
+                if (p.supported) {
+                    CHECK(p.poll_skipped_insns == 0u, "rejected callback proof skipped instructions");
+                    if (p.native_backend) CHECK(p.native_arm_insns > 0u, "callback must exercise native fallback");
+                }
+            }
+            run_chunks(CHUNKS, NCHUNKS, 1, NULL, NULL);
+            teardown_pair();
+        }
+    }
+    }
+    counted_volatile = 0;
+}
+
+/* Serialized images include banked registers, CP15 and authoritative TLB
+ * payloads: compare them too, beyond the visible-register oracle. */
+static void compare_cpu_images(void) {
+    FILE *fast = tmpfile(), *ref = tmpfile();
+    CHECK(fast && ref, "CPU image temporary files");
+    if (fast && ref) {
+        CHECK(arm920t_state_save(cpu_fast, fast) && arm920t_state_save(cpu_ref, ref), "CPU image save");
+        rewind(fast); rewind(ref);
+        int a, b;
+        do { a = fgetc(fast); b = fgetc(ref); } while (a == b && a != EOF);
+        CHECK(a == b, "banked/CP15/TLB state image mismatch");
+    }
+    if (fast) fclose(fast);
+    if (ref) fclose(ref);
+}
+
+static void case_counted_restore(void) {
+    current_case = "counted-state-load-after-skip";
+    counted_setup(1, 10000u);
+    arm920t_set_trace(cpu_ref, 1, NULL, NULL);
+    const uint32_t first[] = {513u};
+    run_chunks(first, 1, 1, NULL, NULL);
+    gp32_cpu_profile_t p;
+    arm920t_get_cpu_profile(cpu_fast, &p);
+    if (p.supported) CHECK(p.poll_skipped_insns > 0, "state-save fixture did not accelerate");
+    compare_cpu_images();
+    FILE *fast = tmpfile(), *ref = tmpfile();
+    CHECK(fast && ref, "CPU restore temporary files");
+    if (fast && ref) {
+        CHECK(arm920t_state_save(cpu_fast, fast) && arm920t_state_save(cpu_ref, ref), "CPU restore save");
+        store_both(CODE_ADDR + 24u, 0xe2422007u); /* a new affine step */
+        store_both(DATA_ADDR, 0x00000ff0u);
+        store_both(DATA_ADDR + 4u, 0xff000000u);
+        rewind(fast); rewind(ref);
+        CHECK(arm920t_state_load(cpu_fast, fast) && arm920t_state_load(cpu_ref, ref), "CPU restore load");
+        run_chunks(CHUNKS, NCHUNKS, 1, NULL, NULL);
+        compare_cpu_images();
+    }
+    if (fast) fclose(fast);
+    if (ref) fclose(ref);
+    teardown_pair();
+}
+
+/* Section translations include a deliberately colliding direct TLB slot.
+ * GPIO-like stable endpoints do not make page-table reads safe to omit. */
+static void case_counted_mmu(void) {
+    for (unsigned jit = 0; jit < 2u; ++jit) {
+    for (unsigned variant = 0; variant < 4; ++variant) {
+        current_case = "counted-mmu-mapping-proof";
+        counted_setup(0, 10000u);
+        if (jit) {
+            bus_fast.fastmem_ram = bus_ref.fastmem_ram = 1;
+            /* Leave page-table reads observable, while providing the native
+             * entry RAM pointer. No full direct RAM window is advertised. */
+            bus_fast.no_fast_lo = bus_ref.no_fast_lo = RAM_BASE + 0x10000u;
+            bus_fast.no_fast_hi = bus_ref.no_fast_hi = RAM_BASE + 0x14000u;
+        }
+        set_reg_both(0, 0x10000000u);
+        set_reg_both(1, variant == 1 ? 0x11000000u : 0x10001000u);
+        bus_fast.mmio_word = bus_ref.mmio_word = 0xa5a55a5au;
+        add_stable(&bus_fast, MMIO_BASE);
+        add_stable(&bus_fast, MMIO_BASE + 0x1000u);
+        add_stable(&bus_fast, RAM_BASE);
+        add_stable(&bus_fast, DATA_ADDR);
+        const uint32_t table = RAM_BASE + 0x10000u;
+        store_both(table, 2u); /* code VA 0 -> BIOS */
+        /* A native CPU has a direct RAM anchor, so use a non-RAM/non-I/O PA
+         * to retain the secondary-translation refusal in that variant. */
+        uint32_t mapped = variant == 3 ? (jit ? 0x13000000u : RAM_BASE) : MMIO_BASE;
+        if (jit && variant == 3) add_stable(&bus_fast, mapped);
+        store_both(table + 0x400u, variant == 2 ? 0u : mapped | 2u);
+        store_both(table + 0x440u, MMIO_BASE | 2u);
+        /* Public state_apply installs a fixed image without guest MCRs. */
+        arm920t_state_image_t *image = calloc(1, sizeof(*image));
+        CHECK(image != NULL, "MMU image allocation");
+        if (image) {
+            for (unsigned r = 0; r < 16; ++r) image->r[r] = arm920t_get_reg(cpu_fast, r);
+            image->cpsr = arm920t_get_cpsr(cpu_fast);
+            image->cp15[1] = 0x71u; image->cp15[2] = table;
+            arm920t_state_apply(cpu_fast, image); arm920t_state_apply(cpu_ref, image);
+            free(image);
+        }
+        arm920t_set_jit(cpu_fast, jit);
+        uint64_t fr, rr;
+        run_chunks(CHUNKS, NCHUNKS, 1, &fr, &rr);
+        printf("counted-mmu jit=%u variant=%u reads=%lu/%lu\n", jit, variant, (unsigned long)fr, (unsigned long)rr);
+        if (variant == 0) CHECK(fr * 4u < rr, "cached nonconflicting MMU poll did not accelerate");
+        else CHECK(fr == rr, "missing/conflicting/secondary mappings changed page-table reads");
+        CHECK(arm920t_get_cp15(cpu_fast,5) == arm920t_get_cp15(cpu_ref,5) &&
+              arm920t_get_cp15(cpu_fast,6) == arm920t_get_cp15(cpu_ref,6), "MMU fault registers mismatch");
+        compare_cpu_images();
+        if (jit && variant) {
+            gp32_cpu_profile_t p;
+            arm920t_get_cpu_profile(cpu_fast, &p);
+            if (p.supported) {
+                CHECK(p.poll_skipped_insns == 0u, "rejected MMU mapping skipped instructions");
+                if (p.native_backend) CHECK(p.native_arm_insns > 0u, "rejected MMU mapping must retain native execution");
+            }
+        }
+        teardown_pair();
+    }
+    }
+}
+
+static void case_counted_gpio(void) {
+    current_case = "counted-real-gpio";
+    s3c2400_t *soc_fast = s3c2400_create(0), *soc_ref = s3c2400_create(0);
+    if (!soc_fast || !soc_ref) exit(2);
+    arm_bus_t fast_bus = s3c2400_get_bus(soc_fast), ref_bus = s3c2400_get_bus(soc_ref);
+    ref_bus.is_stable_read32 = NULL;
+    cpu_fast = arm920t_create(&fast_bus); cpu_ref = arm920t_create(&ref_bus);
+    if (!cpu_fast || !cpu_ref) exit(2);
+    s3c2400_set_irq_sink(soc_fast, cpu_fast); s3c2400_set_irq_sink(soc_ref, cpu_ref);
+    for (unsigned i = 0; i < sizeof(PROG_COUNTED)/sizeof(PROG_COUNTED[0]); ++i) {
+        fast_bus.write32(fast_bus.user, RAM_BASE + 0x400u + 4u*i, PROG_COUNTED[i]);
+        ref_bus.write32(ref_bus.user, RAM_BASE + 0x400u + 4u*i, PROG_COUNTED[i]);
+    }
+    arm920t_reset(cpu_fast, RAM_BASE + 0x400u); arm920t_reset(cpu_ref, RAM_BASE + 0x400u);
+    set_reg_both(0, 0x1560000cu); set_reg_both(1, 0x15600030u);
+    set_reg_both(2, 10000u); set_reg_both(3, UINT32_MAX); set_reg_both(4, UINT32_MAX);
+    arm920t_set_jit(cpu_fast, 1);
+    arm920t_set_trace(cpu_ref, 1, NULL, NULL);
+    static const uint32_t masks[] = {0u, GP32_BUTTON_A | GP32_BUTTON_START,
+                                    GP32_BUTTON_UP | GP32_BUTTON_SELECT};
+    for (unsigned m = 0; m < 3; ++m) {
+        s3c2400_set_buttons(soc_fast, masks[m]); s3c2400_set_buttons(soc_ref, masks[m]);
+        fast_bus.write32(fast_bus.user, 0x15600030u, m << 8);
+        ref_bus.write32(ref_bus.user, 0x15600030u, m << 8);
+        for (size_t i = 0; i < NCHUNKS; ++i) {
+            CHECK(s3c2400_run_cpu(soc_fast, CHUNKS[i]) == s3c2400_run_cpu(soc_ref, CHUNKS[i]),
+                  "GPIO run/tick budget mismatch");
+            compare_state(0);
+        }
+    }
+    gp32_cpu_profile_t p;
+    arm920t_get_cpu_profile(cpu_fast, &p);
+    if (p.supported) CHECK(p.poll_skipped_insns > 0, "real GPIO countdown did not accelerate");
+    teardown_pair();
+    s3c2400_destroy(soc_fast); s3c2400_destroy(soc_ref);
+}
+
 int main(void) {
     case_poll_stable(0);
     case_poll_stable(1);   /* identical contract when RAM loads ride fastmem */
@@ -861,10 +1332,18 @@ int main(void) {
     case_store_loop();
     case_pending_irq();
     case_run_deadlines();
+    case_counted_poll();
+    case_counted_boundaries();
+    case_counted_refusals();
+    case_counted_native_fallback();
+    case_counted_callbacks();
+    case_counted_restore();
+    case_counted_mmu();
+    case_counted_gpio();
     if (failures) {
         fprintf(stderr, "arm poll: %d failures\n", failures);
         return 1;
     }
-    puts("PASS: stable-poll equivalence, reduced reads, literal/BL/chain/timer-store-leaf, off/walk/basetmp/mmio/add/store/IRQ");
+    puts("PASS: stable/countdown poll equivalence, reads, exit boundaries, refusal, callbacks, state, MMU, GPIO");
     return 0;
 }

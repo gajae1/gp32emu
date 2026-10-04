@@ -1931,3 +1931,45 @@ every earlier peak, or replace original-hardware listening. It used the
 portable CPU path; native-JIT writer attribution remains untested. No guest
 patch, saturation rule or output filter was added. Evidence is retained in
 `resume87-pcm-writer/FINDINGS.md` and its private store/read traces.
+
+### Generic counted polling with observed native fallback (2026-10-04)
+
+The CPU recognizes a bounded signed countdown with fixed word loads and
+idempotent AND operations. Two real iterations must establish stable reads,
+registers and flags before skipping complete repetitions. Counter updates,
+partial iterations, exit comparisons, IRQs and live run deadlines remain
+observable. This has no game-name or game-address matching. GPIO words are
+eligible only under the SoC's within-run stability contract; peripheral stores
+and uncached/conflicting MMU translations cannot establish a skip proof.
+
+Stable counted loops allocate no native code. A rejected real observation
+enables ordinary native execution for the current PC/generation/epoch within
+that CPU run. Compilation is lazy, failures are not retried until retranslation,
+and cache recycling restarts dispatch. This avoids both forced-portable volatile
+polling and the redundant entry preflight in the intermediate candidate.
+The machine-state format is unchanged.
+
+H700 Release/profile-OFF replays against `d16a8b0`, retaining only samples whose
+endpoint frequency readings are both 1512 MHz:
+
+| Scene | Before core fps | After core fps | Valid samples per variant |
+| --- | ---: | ---: | ---: |
+| Princess Maker slot-0 cutscene, 300 frames | 57.430 | 67.760 | 2 / 2 |
+| Astonishia R title, 180 frames | 181.283 | 171.621 | 1 / 1 |
+| Blue Angelo NPC approach, 180 frames | 73.739 | 71.411 | 2 / 2 |
+
+Princess improves 18.0%. The other scenes have lower measured throughput
+(-5.3% and -3.2%); this is not a universal speedup claim. Two Astonishia samples
+had changing/lower endpoint clocks and were excluded. Endpoint readings do not
+prove a constant frequency throughout each run. All replay variants match the
+final Windows build exactly in cycles, PC, CPSR, emulated clock, PCM frame
+count, video hash and PCM hash. These short scenes do not prove all-game or
+long-session 60 fps, input latency, or speaker quality.
+
+Affected Windows and native H700 poll/progress fixtures pass, including native
+rejection, reselection, callbacks, MMU, state, signed exit and partial budgets.
+A scoped private PC fixture checks failed lazy allocation, recycling and
+generation wrap. Earlier unchanged full-suite results are reused. Windows GUI
+and libretro, Android ARM64/ARMv7, and H700 builds pass. Existing build warnings
+remain. Evidence: `resume85-counted-poll/final-lazy/` and
+`resume89-counted-lazy/{source-manifest,device,summary,pc-parity,build-artifacts}.json`.
