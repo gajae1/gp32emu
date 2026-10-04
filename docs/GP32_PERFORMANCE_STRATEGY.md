@@ -2719,3 +2719,11 @@ that new contiguous 1-bpp case. Evidence: `results/resume110-palette/`.
 Windows standalone/libretro, H700 and Android ARM64/ARMv7 builds pass. These
 short harness runs establish output parity, not a game FPS improvement;
 uncontrolled per-render timings are not used for performance claims.
+
+The verified `721b477` core is installed on H700 with SHA-256
+`1b2a9c10a5772068cb8be6e48713dffea3c07b4d935c1e947ee6e1d84f67fcaa`.
+Its predecessor is preserved at
+`gp32-dev/resume110-palette-installed-core-before.so`; protected frontend,
+launcher and settings hashes remain unchanged. Stock playback was not rerun
+for this bounded scanout change. The installation record is
+`results/resume110-palette/installed.json`.
