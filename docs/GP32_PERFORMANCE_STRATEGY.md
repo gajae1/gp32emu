@@ -1914,3 +1914,20 @@ model, rather than attributing these samples to a host delivery gap.
 Evidence: `resume86-audio/{manifest,analysis,dma-trace-parity}.json`,
 `dma-source.txt`, and `run.txt` under the private results directory. Capture uses
 silent callbacks on PC; no device volume or frontend settings were changed.
+
+The subsequent two-frame producer trace identifies stores at `0x0c000748`
+and `0x0c00074c` in the guest mixer entered at `0x0c000574`. These are the only
+writers observed for `0x0c7b3800..0x0c7b3a00` in that trace. One observed pair
+of unsigned voice samples is `0xbb6c` and `0xffff`: subtracting two unsigned
+biases and scaling by 11/16 gives +32,985. The guest `STRH` stores its low
+16 bits (`0x80d9`), interpreted by IIS as -32,551. This directly reproduces
+a large sign change through guest mixing arithmetic without a host underrun.
+
+The frozen core, separately rebuilt reference and instrumented build produce
+identical 1,468-byte PCM captures (SHA-256
+`e388c8e1b77e09339fbf4a91649f324a6cf6213a120d1f9b279358bc87e4c952`).
+This bounded trace does not establish upstream sample correctness, reproduce
+every earlier peak, or replace original-hardware listening. It used the
+portable CPU path; native-JIT writer attribution remains untested. No guest
+patch, saturation rule or output filter was added. Evidence is retained in
+`resume87-pcm-writer/FINDINGS.md` and its private store/read traces.
