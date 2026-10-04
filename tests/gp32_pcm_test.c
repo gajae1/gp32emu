@@ -407,7 +407,7 @@ static int check_mixed_rate_queue(void) {
     ok &= s3c2400_state_save_io(mixed->soc, &writer);
     gp32_clear_audio(mixed);
     state_io_t reader = state_io_reader(data, count.pos);
-    ok &= s3c2400_state_load_io(mixed->soc, &reader, 1, 1, 1);
+    ok &= s3c2400_state_load_io(mixed->soc, &reader, 1, 1, 1, 1);
     free(data);
     ok &= gp32_get_audio(mixed, &span) == GP32_OK && span.frame_count == 1u &&
           span.sample_rate_hz == 11025u && span.samples_s16_interleaved[0] == 2;
@@ -435,7 +435,75 @@ static int check_mixed_rate_queue(void) {
     return ok;
 }
 
+static int check_timed_idle_audio(void) {
+    /* 48 MHz / 1024 = 46875 stereo frames/s. Two stopped 5 ms
+     * intervals must contribute 441 silent frames in chronological order,
+     * even across split ticks and a component-state roundtrip. */
+    int ok = 1;
+    for (unsigned split = 0; split < 2u; ++split) {
+        s3c2400_t *s = s3c2400_create(0x800000u);
+        if (!s) return 0;
+        s3c2400_set_audio_idle(s, 1);
+        s3c2400_write32(s, 0x14800004u, 0u);
+        s3c2400_write32(s, 0x14800014u, 0u);
+        s3c2400_write32(s, 0x15508008u, 3u << 5);
+        s3c2400_write16(s, GP32_RAM_BASE, 0x1234u);
+        s3c2400_write16(s, GP32_RAM_BASE + 2u, 0x5678u);
+        s3c2400_write32(s, 0x14600040u, GP32_RAM_BASE);
+        s3c2400_write32(s, 0x14600044u, 0x35508010u);
+        s3c2400_write32(s, 0x14600048u, 0x00900002u);
+        s3c2400_write32(s, 0x14600058u, 2u);
+        for (unsigned interval = 0; interval < 2u; ++interval) {
+            s3c2400_write32(s, 0x15508000u, 1u);
+            s3c2400_tick(s, 4096u);
+            s3c2400_write32(s, 0x15508000u, 0u);
+            if (split) {
+                for (unsigned i = 0; i < 240u; ++i) s3c2400_tick(s, 1000u);
+            } else s3c2400_tick(s, 240000u);
+            if (split && !interval) {
+                state_io_t counter = state_io_counter();
+                ok &= s3c2400_state_save_io(s, &counter);
+                uint8_t *bytes = malloc(counter.pos);
+                if (!bytes) { s3c2400_destroy(s); return 0; }
+                state_io_t out = state_io_writer(bytes, counter.pos);
+                ok &= s3c2400_state_save_io(s, &out);
+                state_io_t in = state_io_reader(bytes, counter.pos);
+                ok &= s3c2400_state_load_io(s, &in, 1, 1, 1, 1);
+                free(bytes);
+            }
+        }
+        const uint64_t counts[] = {4u, 220u, 4u, 221u};
+        for (unsigned span = 0; span < GP32_ARRAY_COUNT(counts); ++span) {
+            uint64_t frames = 0; uint32_t rate = 0;
+            const int16_t *pcm = s3c2400_audio_samples(s, &frames, &rate);
+            ok &= pcm && frames == counts[span] && rate == ((span & 1u) ? 44100u : 46875u);
+            for (uint64_t i = 0; pcm && i < frames; ++i)
+                ok &= pcm[i * 2u] == ((span & 1u) ? 0 : 0x1234) &&
+                      pcm[i * 2u + 1u] == ((span & 1u) ? 0 : 0x5678);
+            s3c2400_audio_consume(s, frames);
+        }
+        /* A clock change preserves a half-sample fraction. Clearing the
+         * host queue must not discard it; disabling policy emits no padding. */
+        s3c2400_tick(s, 240000u);
+        s3c2400_audio_clear(s);
+        s3c2400_write32(s, 0x14800014u, 2u);
+        s3c2400_tick(s, 120000u);
+        uint64_t frames = 0; uint32_t rate = 0;
+        s3c2400_audio_samples(s, &frames, &rate);
+        ok &= frames == 221u && rate == 44100u;
+        s3c2400_audio_clear(s);
+        s3c2400_set_audio_idle(s, 0);
+        s3c2400_tick(s, 120000u);
+        s3c2400_audio_samples(s, &frames, &rate);
+        ok &= frames == 0;
+        s3c2400_destroy(s);
+    }
+    if (!ok) fputs("FAIL: stopped IIS audio duration/order, state, clock or policy\n", stderr);
+    return ok;
+}
+
 int main(void) {
+    if (!check_timed_idle_audio()) return 1;
     if (!check_mixed_rate_queue()) return 1;
     int queued_rate_ok = check_iis_queued_rate();
     int dma_order_ok = check_iis_dma_word_order();

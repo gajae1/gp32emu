@@ -154,6 +154,8 @@ struct s3c2400 {
     volatile uint32_t live_gpbdat, live_gpedat;
     arm_live_read32_t live_read32[2];
     uint32_t lcd_hclk_remainder; /* fractional HCLK, denominator RUN clock */
+    uint64_t audio_idle_phase; /* 44100-Hz silence fraction, denominator RUN */
+    int audio_idle_enabled; /* host policy; direct HLE has its own PCM source */
 };
 
 static uint8_t *s3c2400_fastmem(void *user, uint32_t addr, size_t bytes, int write);
@@ -318,6 +320,7 @@ void s3c2400_reset(s3c2400_t *s) {
     s->lcd_vpos = 0;
     s->lcd_line_accum = 0;
     s->lcd_hclk_remainder = 0;
+    s->audio_idle_phase = 0;
     s->lcd_line_valid = 0;
     s->lcd_timing_valid = 0;
     /* buttons survives reset as host-owned input; keep the derived port
@@ -624,6 +627,24 @@ static int audio_prepare_rate(s3c2400_t *s, uint32_t rate) {
     }
     s->audio_sample_rate_hz = rate;
     return 1;
+}
+
+void s3c2400_set_audio_idle(s3c2400_t *s, int enabled) {
+    if (s) s->audio_idle_enabled = enabled != 0;
+}
+
+/* Preserve the time of stopped hardware audio within, rather than only
+ * between, frontend frames. A separate phase leaves the IIS restart timing
+ * untouched. Silence uses a fixed source rate; active PCM keeps its own rate. */
+static void audio_tick_idle(s3c2400_t *s, uint32_t cycles) {
+    if (!s->audio_idle_enabled) return;
+    uint32_t clock = s3c2400_run_clock_hz(s);
+    uint64_t scaled = s->audio_idle_phase + (uint64_t)cycles * 44100u;
+    uint64_t frames = scaled / clock;
+    s->audio_idle_phase = scaled % clock;
+    if (!frames || !audio_reserve_frames(s, frames) || !audio_prepare_rate(s, 44100u)) return;
+    memset(s->audio + (size_t)s->audio_frames * 2u, 0, (size_t)frames * 2u * sizeof(*s->audio));
+    s->audio_frames += frames;
 }
 
 static void dma_reload(s3c2400_t *s, int ch) {
@@ -1756,6 +1777,7 @@ static void clock_apply(s3c2400_t *s, const uint32_t *registers) {
     for (unsigned t = 0; t < 5u; ++t)
         s->pwm_accum[t] = rescale_period_progress(s->pwm_accum[t], old_pwm_period[t], s->pwm_period_cycles[t]);
     s->iis_accum = rescale_period_progress(s->iis_accum, old_iis_clock, s3c2400_run_clock_hz(s));
+    s->audio_idle_phase = rescale_period_progress(s->audio_idle_phase, old_iis_clock, s3c2400_run_clock_hz(s));
     uint64_t new_lcd_period = lcd_panel_frame_cycles(s);
     if (lcd_is_tft(s->lcd_regs)) {
         s->lcd_hclk_remainder = (uint32_t)((uint64_t)s->lcd_hclk_remainder * s3c2400_run_clock_hz(s) / old_iis_clock);
@@ -1891,6 +1913,7 @@ void s3c2400_tick(s3c2400_t *s, uint32_t cpu_cycles) {
         }
     } else {
         s->iis_accum = 0;
+        audio_tick_idle(s, cpu_cycles);
     }
     static const unsigned start_mask[5] = { 0x000001u, 0x000100u, 0x001000u, 0x010000u, 0x100000u };
     static const unsigned auto_mask[5]  = { 0x000008u, 0x000800u, 0x008000u, 0x080000u, 0x400000u };
@@ -2103,10 +2126,11 @@ int s3c2400_state_save_io(const s3c2400_t *s, state_io_t *io) {
     }
     uint64_t lcd_phase[2] = {s->lcd_line_accum, s->lcd_hclk_remainder};
     return state_io_write(io, &s->iis_accum, sizeof(s->iis_accum)) &&
-           state_io_write(io, lcd_phase, sizeof(lcd_phase));
+           state_io_write(io, lcd_phase, sizeof(lcd_phase)) &&
+           state_io_write(io, &s->audio_idle_phase, sizeof(s->audio_idle_phase));
 }
 
-int s3c2400_state_load_io(s3c2400_t *s, state_io_t *io, int has_audio_spans, int has_iis_phase, int has_lcd_phase) {
+int s3c2400_state_load_io(s3c2400_t *s, state_io_t *io, int has_audio_spans, int has_iis_phase, int has_lcd_phase, int has_idle_phase) {
     if (!s || !io) return 0;
 #ifdef GP32EMU_WASM
     static s3c2400_state_image_t st_storage;
@@ -2173,6 +2197,8 @@ int s3c2400_state_load_io(s3c2400_t *s, state_io_t *io, int has_audio_spans, int
          * their normalized scan position as an explicit approximate migration. */
         lcd_phase[0] = (st->lcd_line_accum % legacy_period) * lcd_period / legacy_period;
     }
+    uint64_t idle_phase = 0;
+    if (has_idle_phase && (!state_io_read(io, &idle_phase, sizeof(idle_phase)) || idle_phase >= runclk)) goto bad_audio;
     smc_destroy(s->smc);
     s->smc = new_smc;
     free(s->ram);
@@ -2194,6 +2220,7 @@ int s3c2400_state_load_io(s3c2400_t *s, state_io_t *io, int has_audio_spans, int
     s->lcd_vpos = st->lcd_vpos;
     s->lcd_line_accum = lcd_phase[0];
     s->lcd_hclk_remainder = (uint32_t)lcd_phase[1];
+    s->audio_idle_phase = idle_phase;
     s->lcd_line_valid = 0;
     s->lcd_timing_valid = 0;
     memcpy(s->eeprom, st->eeprom, sizeof(s->eeprom));
@@ -2247,15 +2274,16 @@ bad_audio:
 
 int s3c2400_state_save(const s3c2400_t *s, FILE *f) {
     state_io_t io = state_io_file(f);
-    return state_io_write(&io, "GP32SOC7", 8u) && s3c2400_state_save_io(s, &io);
+    return state_io_write(&io, "GP32SOC8", 8u) && s3c2400_state_save_io(s, &io);
 }
 
 int s3c2400_state_load(s3c2400_t *s, FILE *f) {
     uint8_t magic[8];
     if (!f || fread(magic, 1, sizeof(magic), f) != sizeof(magic)) return 0;
-    int has_lcd = !memcmp(magic, "GP32SOC7", sizeof(magic));
+    int has_idle = !memcmp(magic, "GP32SOC8", sizeof(magic));
+    int has_lcd = has_idle || !memcmp(magic, "GP32SOC7", sizeof(magic));
     int has_phase = has_lcd || !memcmp(magic, "GP32SOC6", sizeof(magic));
     if (!has_phase && fseek(f, -(long)sizeof(magic), SEEK_CUR)) return 0;
     state_io_t io = state_io_file(f);
-    return s3c2400_state_load_io(s, &io, 1, has_phase, has_lcd);
+    return s3c2400_state_load_io(s, &io, 1, has_phase, has_lcd, has_idle);
 }

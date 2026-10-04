@@ -1,15 +1,19 @@
 /* Transactional savestate regression: a truncated or otherwise rejected load
  * must leave the live machine byte-identical, including CPU, RAM, SmartMedia
- * and queued PCM. The v0007 stream is
- * magic | gp32 image | elapsed time | frame time | arm920t image | s3c2400 image | ram | smc | audio | spans | IIS phase | LCD phase,
- * where the trailing 16 bytes carry the exact LCD scan phase and the
- * fractional HCLK remainder appended after the v0006 layout. A v0006 stream is
- * those same bytes without that tail and must keep loading through the
- * normalized RUN/60 phase kept in the SoC body. A cut past the CPU image used
- * to rewind the CPU while the caller still saw GP32_ERR_IO, with the mounted
- * SmartMedia committed before the trailing PCM had been read. Synthetic
- * fixture, no ROM needed; GP32_SOURCE can select a saved pre-change source for
- * the same fixture. */
+ * and queued PCM. The v0008 stream is
+ * magic | gp32 image | elapsed time | frame time | arm920t image | s3c2400 image | ram | smc | audio | spans | IIS phase | LCD phase | idle phase,
+ * where the phase pair that follows the spans' IIS phase carries the exact
+ * LCD scan phase and the fractional HCLK
+ * remainder appended after the v0006 layout, and the trailing uint64 carries
+ * the idle-audio phase appended after the v0007 layout. A v0007 stream is the
+ * same bytes without that trailing phase: it
+ * must keep loading through the legacy zero idle phase. A v0006 stream ends
+ * before the LCD tail and must keep loading through the normalized RUN/60
+ * phase kept in the SoC body. A cut past the CPU image used to rewind the CPU
+ * while the caller still saw GP32_ERR_IO, with the mounted SmartMedia
+ * committed before the trailing PCM had been read. Synthetic fixture, no ROM
+ * needed; GP32_SOURCE can select a saved pre-change source for the same
+ * fixture. */
 #ifndef GP32_SOURCE
 #define GP32_SOURCE "../src/gp32.c"
 #endif
@@ -20,6 +24,9 @@ static int failures;
 
 /* v0007 tail: uint64 exact LCD phase + uint64 fractional HCLK remainder. */
 static const size_t lcd_tail_bytes = 2u * sizeof(uint64_t);
+
+/* v0008 appends uint64 idle-audio phase after the v0007 LCD tail. */
+static const size_t idle_phase_bytes = sizeof(uint64_t);
 
 /* IIS byte DMA on channel 2, as in tests/s3c2400_timing_test.c: one 500-cycle
  * tick pushes one stereo frame into the captured PCM buffer. */
@@ -199,7 +206,9 @@ static void check_legacy_lcd_phase(void) {
         CHECK(again != NULL, "recapture the migrated LCD phase");
         if (again) {
             uint64_t phase = 0;
-            memcpy(&phase, again + again_size - lcd_tail_bytes, sizeof(phase));
+            /* v0008 keeps the exact LCD phase 24 bytes (16 LCD tail + 8 idle
+             * phase) before the end of the stream. */
+            memcpy(&phase, again + again_size - lcd_tail_bytes - idle_phase_bytes, sizeof(phase));
             CHECK(phase + 8u >= 660000u && phase <= 660000u + 8u,
                   "v6 normalized phase migrates to the same HCLK scan position");
             CHECK(gp32_load_state_data(g, again, again_size) == GP32_OK,
@@ -238,6 +247,10 @@ int main(int argc, char **argv) {
     CHECK(s3c2400_load_smartmedia_buffer(source->soc, src_media, sizeof(src_media), NULL, 0), "source smartmedia");
     CHECK(s3c2400_load_smartmedia_buffer(target->soc, dst_media, sizeof(dst_media), NULL, 0), "target smartmedia");
     smc_read_id(target);
+    /* This wire-layout fixture queues one uniform DMA span. Discard the
+     * boot-time idle PCM first; mixed spans have their own PCM regression. */
+    CHECK(gp32_clear_audio(source) == GP32_OK, "clear source boot audio");
+    CHECK(gp32_clear_audio(target) == GP32_OK, "clear target boot audio");
     queue_audio(source, 8u);
     queue_audio(target, 3u);
 
@@ -272,7 +285,7 @@ int main(int argc, char **argv) {
     const size_t ram_cut = soc_off + cpu_len + ram_len / 2u;
     const size_t span_bytes = sizeof(uint32_t); /* no closed spans in this fixture */
     const size_t phase_bytes = sizeof(uint64_t);
-    const size_t tail_bytes = phase_bytes + lcd_tail_bytes;
+    const size_t tail_bytes = phase_bytes + lcd_tail_bytes + idle_phase_bytes;
     const size_t smc_cut = src_size - tail_bytes - span_bytes - audio_bytes - 1u;
     const size_t gap_cut = src_size - tail_bytes - span_bytes - audio_bytes;
     CHECK(cpu_len > 0, "cpu wire image length");
@@ -308,7 +321,9 @@ int main(int argc, char **argv) {
     if (audio_bytes >= 8u)
         expect_rejected_load(target, live, live_size, src, src_size - tail_bytes - span_bytes - audio_bytes / 2u, NULL, "audio mid cut rejected with byte-identical state");
     expect_rejected_load(target, live, live_size, src, src_size - tail_bytes - span_bytes - 1u, NULL, "audio tail cut rejected with byte-identical state");
-    expect_rejected_load(target, live, live_size, src, src_size - lcd_tail_bytes, NULL, "v7 LCD tail cut rejected with byte-identical state");
+    expect_rejected_load(target, live, live_size, src, src_size - lcd_tail_bytes - idle_phase_bytes, NULL, "LCD tail cut rejected with byte-identical state");
+    expect_rejected_load(target, live, live_size, src, src_size - idle_phase_bytes / 2u, NULL, "v8 idle phase half cut rejected with byte-identical state");
+    expect_rejected_load(target, live, live_size, src, src_size - idle_phase_bytes, NULL, "v8 idle phase cut rejected with byte-identical state");
     if (path)
         expect_rejected_load(target, live, live_size, src, gap_cut, path, "file path cut rejected with byte-identical state");
 
@@ -323,17 +338,19 @@ int main(int argc, char **argv) {
     expect_rejected_load(target, live, live_size, src, src_size, NULL, "overflowing IIS phase rejected without mutation");
     memcpy(src + src_size - tail_bytes, &saved_phase, phase_bytes);
 
-    /* The v7 LCD tail is validated before any commit: a malformed exact phase
-     * or fractional HCLK remainder must not disturb the live machine. */
+    /* The LCD tail is validated before any commit: a malformed exact phase or
+     * fractional HCLK remainder must not disturb the live machine. v8 appends
+     * the idle phase after the LCD pair, so the pair sits idle_phase_bytes
+     * earlier than in a v7 stream. */
     uint64_t saved_lcd[2];
-    memcpy(saved_lcd, src + src_size - lcd_tail_bytes, sizeof(saved_lcd));
-    memcpy(src + src_size - lcd_tail_bytes, &bad_phase, phase_bytes);
+    memcpy(saved_lcd, src + src_size - lcd_tail_bytes - idle_phase_bytes, sizeof(saved_lcd));
+    memcpy(src + src_size - lcd_tail_bytes - idle_phase_bytes, &bad_phase, phase_bytes);
     expect_rejected_load(target, live, live_size, src, src_size, NULL, "overflowing LCD phase rejected without mutation");
     /* Restore the valid phase so the next case exercises the remainder check. */
-    memcpy(src + src_size - lcd_tail_bytes, &saved_lcd[0], phase_bytes);
-    memcpy(src + src_size - sizeof(uint64_t), &bad_phase, phase_bytes);
+    memcpy(src + src_size - lcd_tail_bytes - idle_phase_bytes, &saved_lcd[0], phase_bytes);
+    memcpy(src + src_size - idle_phase_bytes - sizeof(uint64_t), &bad_phase, phase_bytes);
     expect_rejected_load(target, live, live_size, src, src_size, NULL, "oversized LCD HCLK remainder rejected without mutation");
-    memcpy(src + src_size - lcd_tail_bytes, saved_lcd, sizeof(saved_lcd));
+    memcpy(src + src_size - lcd_tail_bytes - idle_phase_bytes, saved_lcd, sizeof(saved_lcd));
 
     /* A complete image still loads through both entry points and lands on the
      * reference bytes. */
@@ -353,10 +370,45 @@ int main(int argc, char **argv) {
         free(got);
     }
 
-    /* v6 predates the exact LCD tail: the same bytes cut by the last 16 must
+    /* The v8 idle-audio phase is validated against the restored RUN clock
+     * before any commit: an overflowing phase or a phase at the clock
+     * boundary must not disturb the machine. The valid loads above changed
+     * the target, so re-capture the comparison snapshot instead of reusing
+     * the pre-load `live` image. */
+    size_t idle_live_size = 0;
+    uint8_t *idle_live = capture_state(target, &idle_live_size);
+    CHECK(idle_live != NULL, "capture post-load live state");
+    uint64_t saved_idle = 0, bad_idle = UINT64_MAX;
+    uint32_t runclk = s3c2400_run_clock_hz(source->soc);
+    memcpy(&saved_idle, src + src_size - idle_phase_bytes, sizeof(saved_idle));
+    memcpy(src + src_size - idle_phase_bytes, &bad_idle, sizeof(bad_idle));
+    if (idle_live)
+        expect_rejected_load(target, idle_live, idle_live_size, src, src_size, NULL, "overflowing idle audio phase rejected without mutation");
+    if (runclk > 1u) {
+        bad_idle = (uint64_t)runclk;
+        memcpy(src + src_size - idle_phase_bytes, &bad_idle, sizeof(bad_idle));
+        if (idle_live)
+            expect_rejected_load(target, idle_live, idle_live_size, src, src_size, NULL, "idle audio phase at the restored RUN clock rejected without mutation");
+    }
+    memcpy(src + src_size - idle_phase_bytes, &saved_idle, sizeof(saved_idle));
+    free(idle_live);
+
+    /* v7 predates the idle-audio phase: the same bytes minus the trailing 8
+     * must still load and leave the idle phase at its legacy zero value. */
+    size_t v7_size = src_size - idle_phase_bytes;
+    uint8_t *v7 = malloc(v7_size);
+    CHECK(v7 != NULL, "allocate v7 state");
+    if (v7) {
+        memcpy(v7, src, v7_size);
+        memcpy(v7, gp32_state_magic_v7, sizeof(gp32_state_magic_v7));
+        CHECK(gp32_load_state_data(target, v7, v7_size) == GP32_OK, "v7 state without the idle phase remains readable");
+        free(v7);
+    }
+
+    /* v6 predates both the LCD tail and the idle phase: trimming both must
      * still load and rebuild the phase from the normalized SoC body value. */
     memcpy(src, gp32_state_magic_v6, sizeof(gp32_state_magic_v6));
-    CHECK(gp32_load_state_data(target, src, src_size - lcd_tail_bytes) == GP32_OK, "v6 state without the LCD tail remains readable");
+    CHECK(gp32_load_state_data(target, src, src_size - lcd_tail_bytes - idle_phase_bytes) == GP32_OK, "v6 state without the LCD tail remains readable");
     /* v5 predates exact IIS phase; v4 frame pacing, v3 spans, v2 elapsed time. */
     memcpy(src, gp32_state_magic_v5, sizeof(gp32_state_magic_v5));
     CHECK(gp32_load_state_data(target, src, src_size - tail_bytes) == GP32_OK, "v5 state remains readable");
