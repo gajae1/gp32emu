@@ -1725,6 +1725,58 @@ ARM_FORCE_INLINE void arm_bc_st_word(arm920t_t *c, uint32_t addr, uint32_t v) { 
 ARM_FORCE_INLINE void arm_bc_st_byte(arm920t_t *c, uint32_t addr, uint32_t v) { arm_bc_st_byte_phys(c, mmu_translate(c, addr), v); }
 ARM_FORCE_INLINE void arm_bc_st_half(arm920t_t *c, uint32_t addr, uint32_t v) { arm_bc_st_half_phys(c, mmu_translate(c, addr), v); }
 
+#if defined(ARM_JIT_NATIVE_A64)
+/* The single/half RAM emitters have already computed these operands, but a
+ * failed RAM guard has not committed anything. Keep the existing VA bus chain
+ * (including its MMU/fault behavior) and the classified executor's commit
+ * order. Only emitter-proven shapes with Rd != PC and no PC writeback enter.
+ * Capture all decoded fields before callbacks can invalidate the op storage. */
+ARM_FORCE_INLINE void arm_jit_mem_access(arm920t_t *c, const arm_jit_op_t *op,
+                                        uint32_t addr, uint32_t writeback,
+                                        uint32_t value) {
+    unsigned rn = op->a, rd = op->b, d = op->d;
+    int single = op->kind == ARM_JIT_OP_SINGLE_DT;
+    int load = !!(d & (single ? ARM_BC_SD_L : ARM_BC_HALF_L));
+    int wb = single ? (!(d & ARM_BC_SD_P) || (d & ARM_BC_SD_W)) :
+                      (!(d & ARM_BC_HALF_P) || (d & ARM_BC_HALF_W));
+    unsigned sh = op->e;
+    if (single) {
+        if (load) {
+            if (d & ARM_BC_SD_B) {
+                ARM_PROF_INC(c, helper_ld_byte);
+                value = arm_bc_ld_byte(c, addr);
+            } else {
+                ARM_PROF_INC(c, helper_ld_word);
+                value = arm_bc_ld_word(c, addr & ~3u);
+                if (addr & 3u) value = gp32_ror32(value, (addr & 3u) * 8u);
+            }
+        } else if (d & ARM_BC_SD_B) {
+            ARM_PROF_INC(c, helper_st_byte);
+            arm_bc_st_byte(c, addr, value);
+        } else {
+            ARM_PROF_INC(c, helper_st_word);
+            arm_bc_st_word(c, addr & ~3u, value);
+        }
+    } else if (load) {
+        if (sh == 1u) {
+            ARM_PROF_INC(c, helper_ld_half);
+            value = arm_bc_ld_half(c, addr);
+        } else if (sh == 2u) {
+            ARM_PROF_INC(c, helper_ld_sbyte);
+            value = (uint32_t)(int32_t)(int8_t)arm_bc_ld_byte(c, addr);
+        } else {
+            ARM_PROF_INC(c, helper_ld_shalf);
+            value = (uint32_t)(int32_t)(int16_t)arm_bc_ld_half(c, addr);
+        }
+    } else {
+        ARM_PROF_INC(c, helper_st_half);
+        arm_bc_st_half(c, addr, value);
+    }
+    if (load) write_r(c, rd, value);
+    if (wb) write_r(c, rn, writeback);
+}
+#endif
+
 ARM_FORCE_INLINE uint32_t arm_bc_shifter_operand(arm920t_t *c, const arm_jit_op_t *op, int *carry_out) {
     if (op->d & ARM_BC_DATA_IMM) {
         if (carry_out) *carry_out = (op->d & ARM_BC_DATA_IMM_CV) ? !!(op->d & ARM_BC_DATA_IMM_C) : !!(c->cpsr & C_FLAG);
