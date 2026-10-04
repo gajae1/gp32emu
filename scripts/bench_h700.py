@@ -1,6 +1,7 @@
 """Interleaved ABBA H700 benchmark with exactness and observed-clock evidence.
 
-Requires Paramiko. Supply GP32_SSH_PASSWORD in the environment; the runner
+SSH requires Paramiko and GP32_SSH_PASSWORD. Alternatively use --adb-serial
+for a USB-connected H700 Linux device (not an Android runtime test). The runner
 stages only a standalone candidate under a dedicated remote directory
 (default ROOT/bench-bin on the SD card, so repeated dev uploads cannot
 fill the small tmpfs /tmp) and never replaces the baseline or a UI core.
@@ -28,11 +29,10 @@ import os
 from pathlib import Path, PurePosixPath
 import shlex
 import statistics
+import subprocess
 import threading
 import time
 import uuid
-
-import paramiko
 
 EXACT_KEYS = ("cycles", "pc", "cpsr", "clock", "audio_frames", "video_hash", "audio_hash")
 RESULT_KEYS = EXACT_KEYS + ("fps", "elapsed")
@@ -42,6 +42,29 @@ LOG_TAIL_LIMIT = 1024   # kept stdout log prefix / stderr tail per row
 # Any of these running holds the framebuffer/CPU and skews the benchmark.
 RA_PROCESSES = ("ra64.h700", "ra64.gp32.h700", "ra32.h700",
                 "ra64.universal", "ra32.universal", "retroarch")
+
+
+def adb_execute(adb, serial, value, timeout=300):
+    """Recover remote status even from Spruce's shell-v1 adbd.
+
+    That daemon reports host success for `adb shell 'exit 7'`. Run in a
+    subshell so an explicit exit cannot bypass our unique trailing status.
+    shell-v1 merges remote stderr into stdout; transport stderr stays separate.
+    """
+    marker = "GP32_REMOTE_EXIT_" + uuid.uuid4().hex + "="
+    wrapped = "(" + value + "); gp32_status=$?; printf '\\n" + marker + "%s\\n' \"$gp32_status\""
+    result = subprocess.run([adb, "-s", serial, "shell", wrapped],
+                            capture_output=True, timeout=timeout)
+    # Old adbd PTYs can turn device CRLF into CRCRLF. Normalize before
+    # splitlines(), otherwise clock/governor/temperature fields shift.
+    out = result.stdout.decode("utf-8", "replace").replace("\r\r\n", "\n").replace("\r\n", "\n")
+    err = result.stderr.decode("utf-8", "replace")
+    if result.returncode:
+        return result.returncode, out, err
+    body, separator, status = out.rstrip("\r\n").rpartition(marker)
+    if not separator or not status.isdigit() or not 0 <= int(status) <= 255:
+        raise RuntimeError("ADB did not return the remote command status")
+    return int(status), body.rstrip("\r\n"), err
 
 
 def parse_result(text):
@@ -142,6 +165,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", default="192.168.0.204")
     parser.add_argument("--user", default="spruce")
+    parser.add_argument("--adb-serial", help="Use this explicitly selected USB ADB device instead of SSH")
+    parser.add_argument("--adb", default="adb", help="ADB executable path (USB mode only)")
     parser.add_argument("--root", default="/mnt/SDCARD/gp32-dev")
     parser.add_argument("--remote-dir",
                         help="Absolute remote directory used to stage the candidate "
@@ -154,7 +179,7 @@ def main():
                         help="Run one unscored baseline invocation before ABBA")
     options = parser.parse_args()
     password = os.environ.get("GP32_SSH_PASSWORD")
-    if password is None:
+    if not options.adb_serial and password is None:
         parser.error("Set GP32_SSH_PASSWORD in the environment")
     remote_dir = (options.remote_dir or
                   options.root.rstrip("/") + "/bench-bin").rstrip("/")
@@ -166,11 +191,16 @@ def main():
     remote = remote_dir + "/gp32-bench-" + digest[:16]
     arguments = " ".join(shlex.quote(value) for value in shlex.split(options.args))
     executables = {"baseline": options.baseline, "candidate": remote}
-    client = paramiko.SSHClient()
-    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    client = None
+    if not options.adb_serial:
+        import paramiko
+        client = paramiko.SSHClient()
+        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     rows, invocation, comparison = [], None, None
 
     def execute(value, timeout=300):
+        if options.adb_serial:
+            return adb_execute(options.adb, options.adb_serial, value, timeout)
         _, stdout, stderr = client.exec_command(value, timeout=timeout)
         out, err = stdout.read().decode(), stderr.read().decode()
         return stdout.channel.recv_exit_status(), out, err
@@ -178,7 +208,7 @@ def main():
     def command(value, timeout=300):
         status, out, err = execute(value, timeout)
         if status:
-            raise RuntimeError(f"Remote command failed ({status}): {err.strip()}")
+            raise RuntimeError(f"Remote command failed ({status}): {(err or out).strip()[-LOG_TAIL_LIMIT:]}")
         return out.strip()
 
     def snapshot():
@@ -189,16 +219,23 @@ def main():
                 "governor": lines[1] if len(lines) > 1 else None,
                 "temp_raw": lines[2] if len(lines) > 2 else None}
 
-    try:
-        client.connect(options.host, username=options.user, password=password,
-                       timeout=8, look_for_keys=False, allow_agent=False)
+    def guard():
         running = command("pidof " + " ".join(RA_PROCESSES) + " || true", 10)
         if running:
             raise RuntimeError("RetroArch is running (pids %s); benchmark deferred"
                                % running.replace("\n", " "))
+        command("test ! -e /tmp/cmd_to_run.sh", 10)
+
+    try:
+        if client:
+            client.connect(options.host, username=options.user, password=password,
+                           timeout=8, look_for_keys=False, allow_agent=False)
+        guard()
         command("test -x " + shlex.quote(options.baseline), 10)
         baseline_digest = command("sha256sum " + shlex.quote(options.baseline), 10).split()[0]
         invocation = {"host": options.host, "user": options.user, "root": options.root,
+                      "transport": "adb" if options.adb_serial else "ssh",
+                      "adb_serial": options.adb_serial,
                       "remote_dir": remote_dir,
                       "args": options.args, "args_argv": shlex.split(options.args),
                       "order": list(EXPECTED_ORDER),
@@ -215,8 +252,13 @@ def main():
             # Upload to a sibling temp first so the content-addressed path
             # only ever appears complete; staged files are never deleted.
             temp = remote + ".upload-" + uuid.uuid4().hex[:12]
-            with client.open_sftp() as transfer:
-                transfer.put(str(options.candidate), temp)
+            if options.adb_serial:
+                subprocess.run([options.adb, "-s", options.adb_serial, "push",
+                                str(options.candidate), temp], check=True,
+                               capture_output=True, timeout=120)
+            else:
+                with client.open_sftp() as transfer:
+                    transfer.put(str(options.candidate), temp)
             if command("sha256sum " + shlex.quote(temp), 10).split()[0] != digest:
                 raise RuntimeError("Uploaded executable hash mismatch")
             command("chmod 755 " + shlex.quote(temp), 10)
@@ -225,6 +267,7 @@ def main():
             raise RuntimeError("Staged executable hash mismatch")
         command("test -x " + shlex.quote(remote), 10)
         if options.prime:
+            guard()
             prime_command = ("cd " + shlex.quote(options.root) + " && " +
                              shlex.quote(options.baseline) + " " + arguments)
             status, out, err = execute(prime_command)
@@ -235,6 +278,7 @@ def main():
                                      "after": snapshot(), "scored": False}
             print(json.dumps({"priming": invocation["priming"]}), flush=True)
         for label in EXPECTED_ORDER:
+            guard()
             executable = executables[label]
             samples, errors = [], []
             stop = threading.Event()
@@ -268,7 +312,7 @@ def main():
                                    f"tail={out.strip()[-300:]!r}")
             after = snapshot()
             reference = rows[0]["result"] if rows else result
-            # This window is estimated from local receipt of the result. SSH
+            # This window is estimated from local receipt of the result. Transport
             # transit and process teardown can shift it; retain all samples
             # so a frequency transition cannot be hidden by this estimate.
             measured_samples = [sample for sample in samples
@@ -293,7 +337,8 @@ def main():
             if mismatch:
                 raise RuntimeError("CPU/video/PCM mismatch; remaining runs cancelled")
     finally:
-        client.close()
+        if client:
+            client.close()
         if rows and invocation:
             comparison = build_comparison(rows, invocation)
             for row in rows:
