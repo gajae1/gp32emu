@@ -6,6 +6,11 @@ performance, audio and input correctness across the library, not boot-only tests
 
 ## Current accepted work
 
+- State restoration now rejects invalid IIS FIFO/negative IIC indices before
+  mutating the live SoC, and normalizes old IIC data-phase counts without
+  changing transaction behavior. The defect previously allowed later register
+  writes to escape their arrays. A real-subsystem regression failed before
+  the fix; five focused state, EEPROM, IIS and persistence checks pass.
 - `4040413`: INTMOD routes peripheral sources to FIQ; IRQ arbitration excludes
   them; CPU line state is reconciled on reset/attach. PC focused checks and
   H700 routing/exception checks pass. Four release architectures build.
@@ -72,12 +77,14 @@ release builds: `build-win64-c23-resume7`, `build-h700-resume2`, and
 
 ## Parallel development round
 
-Twenty bounded workers were dispatched at max reasoning; fifteen stopped with
-provider 429 errors. An alternative-provider A64 worker also hit 429. Six
-workers currently remain assigned to JIT cache, state loading, FXE/FPK loading,
-ZIP loading, Windows audio and resampling. Their private patches/reports belong
+Twenty bounded workers were dispatched at max reasoning; sixteen stopped with
+provider 429 errors. An alternative-provider A64 worker also hit 429. The state
+worker completed and its bounds fix was integrated. Four workers remain on
+JIT cache, FXE/FPK loading, ZIP loading and resampling. Their private patches/reports belong
 under `F:/GP32/results/round133-parallel/`; they must not edit tracked source,
-run shared builds, use SSH or delegate. Record final outcomes before a handoff.
+run shared builds, use SSH or delegate. A subsequent Sol max worker owns only
+`F:/GP32/results/round134-callback/` for the resumable callback candidate.
+Record final outcomes before a handoff.
 
 ## Broader remaining evidence
 

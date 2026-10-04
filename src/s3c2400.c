@@ -2275,6 +2275,13 @@ int s3c2400_state_load_io(s3c2400_t *s, state_io_t *io, int has_audio_spans, int
 #endif
     if (!state_io_read(io, st, sizeof(*st))) return 0;
     if (st->ram_size == 0u || st->ram_size > (size_t)64u * 1024u * 1024u || st->audio_frames > (uint64_t)10u * 60u * 44100u) return 0;
+    /* Restored indices address fixed arrays on later IIC/IIS register writes.
+     * An out-of-range value turns the next guest write into an out-of-bounds
+     * store inside this heap object, so the image must be rejected here. */
+    if (st->iis_fifo_index >= GP32_ARRAY_COUNT(st->iis_fifo) || st->iic_data_index < 0) return 0;
+    /* Every IIC index above the 4-byte address stage shares one meaning; a
+     * larger stored value can only overflow iic_data_index++ at INT_MAX. */
+    if (st->iic_data_index > 4) st->iic_data_index = 4;
     uint8_t *new_ram = (uint8_t *)malloc(st->ram_size);
     if (!new_ram) return 0;
     if (!state_io_read(io, new_ram, st->ram_size)) { free(new_ram); return 0; }
