@@ -4,6 +4,10 @@ This is an optional **frontend source patch for OS/RetroArch builders**. It is
 not part of the gp32emu core build and is not installed by the Spruce package.
 The tested handheld retains its original system RetroArch binary and settings;
 the optional GP32-only selection described below uses a separate frontend.
+The handheld currently uses the original `ra64.h700` for GP32 again. The
+separate frontend failed the user's physical Spruce menu/hold-to-exit check,
+including after adding its process name to the OS control lists. Keep it an
+optional development experiment until that real button flow is qualified.
 
 ## Source and scope
 
