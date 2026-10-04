@@ -633,6 +633,10 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpara
     case WM_KEYUP:
         if (a) a->keyboard_buttons &= ~key_to_button(wparam);
         return 0;
+    case WM_KILLFOCUS:
+        /* Key releases may go to another window after Alt-Tab or a dialog. */
+        if (a) a->keyboard_buttons = 0;
+        return 0;
     case WM_COMMAND:
         app_command(a, LOWORD(wparam));
         return 0;
