@@ -2690,3 +2690,17 @@ A CommandCode worker proposed checked word-store specialization, but existing
 Princess counters show only 19,140 store helpers against 1,804,967 load helpers
 in 300 frames. That candidate is deferred until a store-heavy workload provides
 evidence; no speculative JIT specialization was added.
+
+The `31013dc` core, including the small raw-card correction, was installed on
+the idle H700 with SHA-256
+`8bec62502b179bd97a215276fe44e06ec85861894e6251b8f75e3a73c5bb8c39`.
+The previous core is backed up as
+`gp32-dev/resume109-irq-installed-core-before.so`. Protected stock frontend,
+launcher and settings hashes are unchanged (`results/resume109-irq/installed.json`).
+This update has native core evidence; stock RetroArch playback was not repeated.
+
+The separate SWE renderer audit found one remaining small optimization:
+`lcd_render_contiguous` expands all 256 palette entries even for 1/2/4-bpp,
+where every consumer masks the index. The fallback already expands only
+`mask + 1` entries. This is a concrete follow-up for the existing scanout hash
+harness; it was not folded into the already-tested IRQ build.
