@@ -120,6 +120,13 @@ enum arm_jit_inv_cause {
 #define ARM_NOINLINE
 #endif
 
+/* Preserve locality within a code page while distinguishing equal offsets
+ * in different 64-KiB regions. The full PC/generation tags still establish
+ * validity; this only selects a slot in the existing direct-mapped table. */
+ARM_FORCE_INLINE uint32_t arm_jit_block_index(uint32_t pc) {
+    return ((pc >> 2) ^ (pc >> 16)) & ARM_JIT_BLOCK_MASK;
+}
+
 ARM_FORCE_INLINE unsigned arm_ctz16(uint32_t v) {
 #if defined(__GNUC__) || defined(__clang__)
     return (unsigned)__builtin_ctz(v);
@@ -1617,7 +1624,7 @@ static ARM_NOINLINE arm_jit_block_t *arm_jit_translate(arm920t_t *c, uint32_t pc
         (c->jit_code_used > c->jit_code_size ||
          c->jit_code_size - c->jit_code_used < ARM_JIT_NATIVE_MAX_BYTES + 15u))
         arm920t_jit_invalidate_all(c, ARM_JIT_INV_CODE_RECYCLE);
-    arm_jit_block_t *b = &c->jit_blocks[(pc >> 2) & ARM_JIT_BLOCK_MASK];
+    arm_jit_block_t *b = &c->jit_blocks[arm_jit_block_index(pc)];
 #if ARM920T_PROFILING
     /* Only a different PC is a table collision. Replacing changed code at the
      * same PC after cache maintenance is not evidence of table pressure. */
@@ -3297,7 +3304,7 @@ static uint32_t arm_jit_run(arm920t_t *c, uint32_t run_done) {
             if (c->halted || thumb(c) || c->trace) break;
         }
         uint32_t pc = c->r[15] & ~3u;
-        arm_jit_block_t *b = c->jit_blocks ? &c->jit_blocks[(pc >> 2) & ARM_JIT_BLOCK_MASK] : NULL;
+        arm_jit_block_t *b = c->jit_blocks ? &c->jit_blocks[arm_jit_block_index(pc)] : NULL;
         uint32_t tag = c->jit_cache_epoch;
         /* Check the allocated header together so native dispatch can load it
          * once. Keep the null check short-circuited; nonzero valid and all

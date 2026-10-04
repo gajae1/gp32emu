@@ -1107,7 +1107,9 @@ Profiling correction: `jit_block_conflicts` now counts only eviction of a
 different PC, excluding retranslation of modified code at the same PC. Wizard's
 corrected count was 7,070 versus the former mixed count of 11,422. A simple
 high-address XOR hash increased true collisions to 7,947 and translations from
-11,814 to 12,838; it was rejected. Keep the direct-map index unchanged.
+11,814 to 12,838; it was rejected at that revision. The later resume95
+PC-fold experiment rechecks Wizard on the current core; see the dated
+JIT cache section in GP32_PERFORMANCE_STRATEGY.md.
 
 The integrated core then ran through Spruce's normal command handoff and menu
 return for 1800 frontend frames. The capture shows the expected Her Knights

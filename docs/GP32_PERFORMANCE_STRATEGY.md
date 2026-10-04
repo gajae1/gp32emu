@@ -2149,3 +2149,44 @@ The previous core is backed up as
 launcher and protected settings remain unchanged. Readback is recorded in
 `resume94-psr-blocks/installed.json`. Desktop and Android builds are staged
 privately; their packaging does not establish runtime performance acceptance.
+
+
+### Fold high PC bits into JIT slots (2026-10-04)
+
+The direct-mapped JIT table now selects its slot with
+`((pc >> 2) ^ (pc >> 16)) & ARM_JIT_BLOCK_MASK` in both translation and
+dispatch. Full PC, cache epoch and generation checks are unchanged, as are
+capacity and block/decoded-operation storage. There are no title selectors.
+
+Against source `92c8426`, the same 3000-frame Blue Angelo x64 profile reduces
+translations from 80,216 to 17,755 and true conflicts from 67,350 to 7,396.
+Arena recycles fall from two to zero; native calls, native instructions and
+portable instructions are identical. A focused Wizard combat profile retains
+the adverse tradeoff: translations 11,152 -> 11,692 and conflicts 6,589 ->
+7,083. Hashing is not a guarantee of fewer collisions for every workload.
+
+H700 release ABBA results, retaining only samples with 1512-MHz endpoints:
+
+| Replay | Before core fps | After core fps | Difference | Samples per variant |
+| --- | ---: | ---: | ---: | --- |
+| Princess slot 0, 300 frames | 74.408 | 74.024 | -0.52% | 1 / 1 |
+| Astonishia title, 180 frames | 174.111 | 175.022 | +0.52% | 2 / 2 |
+| Blue dialogue, 180 frames | 72.463 | 74.155 | +2.33% | 2 / 2 |
+| Wizard combat, 1200 warmup + 1200 measured | 320.794 | 322.856 | +0.64% | 1 / 1 |
+
+The first changing-clock samples are preserved but excluded. Endpoint clocks
+do not prove constant frequency throughout; small differences in the control
+scenes are effectively parity. All seven CPU/clock/audio-count/video/PCM
+fields match within every before/after scene. These are uncapped core replays,
+not displayed game fps or proof of frontend pacing. This change is accepted
+for reduced Blue retranslation with no material measured control regression;
+prior Windows throughput uncertainty remains unresolved.
+
+The recycle fixture now finds an actual collision instead of assuming the old
+hash, and terminates its 32-op program with MOV PC so branch stitching cannot
+silently divert the entire test into portable execution. It proves 3000 native
+calls plus arena/generation/epoch wrap correctness against the interpreter on
+Windows and H700. Windows GUI/libretro, H700, Android arm64 and ARMv7 builds
+pass; Android runtime remains untested. Evidence is under
+`results/resume95-jit-hash/` (outside this repository). All audio checks were
+silent digital PCM comparisons; no mixer, volume or frontend settings changed.
