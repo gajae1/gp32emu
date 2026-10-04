@@ -136,9 +136,20 @@ static void a64_mov(a64_emit_t *e, unsigned rd, unsigned rn) {
     a64_rr(e, 0x2a000000u, rd, 31, rn); /* orr Wd, wzr, Wn */
 }
 
+/* Materialize x19 + off in rd. A shifted ADD reaches any 4 KiB-aligned
+ * offset below 16 MiB, so the large control-field offsets that follow the TLB
+ * arrays cost one or two instructions instead of a movz/movk/add triple. */
 static void a64_cpu_addr(a64_emit_t *e, unsigned rd, size_t off) {
-    a64_imm(e, rd, (uint32_t)off);
-    a64_rr(e, 0x8b000000u, rd, 19, rd);
+    if (off <= 0xfffu) {
+        a64_u32(e, 0x91000000u | ((uint32_t)off << 10) | (19u << 5) | rd);
+    } else if ((off >> 12) <= 0xfffu) {
+        a64_u32(e, 0x91400000u | ((uint32_t)(off >> 12) << 10) | (19u << 5) | rd);
+        if (off & 0xfffu)
+            a64_u32(e, 0x91000000u | ((uint32_t)(off & 0xfffu) << 10) | (rd << 5) | rd);
+    } else {
+        a64_imm(e, rd, (uint32_t)off);
+        a64_rr(e, 0x8b000000u, rd, 19, rd);
+    }
 }
 
 static void a64_cpu_mem(a64_emit_t *e, uint32_t opcode, unsigned rt, size_t off, unsigned scale) {
@@ -152,9 +163,19 @@ static void a64_cpu_mem(a64_emit_t *e, uint32_t opcode, unsigned rt, size_t off,
         rn = 25;
         off -= control;
     } else if ((off & ((1u << scale) - 1u)) || (off >> scale) > 4095u) {
-        a64_cpu_addr(e, 17, off);
-        rn = 17;
-        off = 0;
+        /* Anchor one 4 KiB-aligned ADD below the field so the access keeps its
+         * own scaled immediate: add x17, x19, #hi, lsl #12 then ldr/str [x17, #lo].
+         * The reachable 16 MiB window covers every arm920t_t field. */
+        size_t hi = off >> 12, lo = off & 0xfffu;
+        if (hi <= 0xfffu && !(lo & ((1u << scale) - 1u)) && (lo >> scale) <= 4095u) {
+            a64_u32(e, 0x91400000u | ((uint32_t)hi << 10) | (19u << 5) | 17u);
+            rn = 17;
+            off = lo;
+        } else {
+            a64_cpu_addr(e, 17, off);
+            rn = 17;
+            off = 0;
+        }
     }
     a64_u32(e, opcode | ((uint32_t)(off >> scale) << 10) | (rn << 5) | rt);
 }

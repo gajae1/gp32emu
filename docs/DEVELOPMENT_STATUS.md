@@ -6,6 +6,9 @@ performance, audio and input correctness across the library, not boot-only tests
 
 ## Current accepted work
 
+- AArch64 address materialization uses shifted ADD immediates for CPU fields,
+  reducing generated instructions while native H700 differential/recycle
+  checks pass. See `A64_ADDRESS_MATERIALIZATION.md`; no FPS gain is claimed.
 - Fixed-capacity two-way JIT cache: fewer retranslations without enlarging the
   block table. The initial two-pass lookup regressed H700 ASR and was replaced
   with a first-way fast path. Final bounded Blue/ASR guest outputs match;
@@ -104,8 +107,10 @@ run shared builds, use SSH or delegate. A subsequent Sol max worker owns only
 `F:/GP32/results/round134-callback/` for the resumable callback candidate.
 Eight further max-effort performance workers were dispatched under
 `F:/GP32/results/round134-performance/`; four ended with provider 429, while
-A64 codegen remains active. LCD completed a private unchanged-row reuse
-candidate awaiting H700 integration/measurement. IIS completed with no justified change:
+A64 codegen completed and its CPU-field address change passed native H700
+checks. LCD's unchanged-row candidate was rejected and removed after actual
+H700 16-bit scanout regressed about 2.67x despite PC improvements. That worker
+is refining it privately using `round136-lcd` evidence. IIS completed with no justified change:
 its measured PC cost was below 0.17% in four scenes. The memory worker is
 refining its candidate to preserve MMIO read side effects. Sol completed a
 resumable callback candidate, but it faults on callback display waits and must
