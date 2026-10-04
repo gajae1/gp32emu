@@ -2727,3 +2727,21 @@ Its predecessor is preserved at
 launcher and settings hashes remain unchanged. Stock playback was not rerun
 for this bounded scanout change. The installation record is
 `results/resume110-palette/installed.json`.
+
+### Revisit the historical Little Wizard coldboot deficit (2026-10-04)
+
+A bounded workload review identified the old 2400-warmup/300-measured Little
+Wizard Korea window (historical profile builds reported about 55-64 fps).
+That review misidentified 0x15600024/0x1560000c as IIS registers: they are GPIO
+used by the SmartMedia bus, not the IIS FIFO. No audio-MMIO shortcut was added.
+
+With the current release core, the same command shape reports 151.841 core
+fps on H700 and all seven CPU/video/PCM fields match PC. BIOS and ROM hashes
+were checked equal first. Device frequency was 480 MHz before coldboot and
+1512 MHz after; this single diagnostic is not a clock-controlled before/after
+comparison, a whole-game claim or evidence of frame-time tail behavior.
+Current PC profiling shows 222,858,544 skipped instructions versus 72,354,071
+native instructions in the measured window, so the old profile must not be
+used to assume that later polling changes missed this workload. Historical
+timing and profiling modes differ; no cross-version speed ratio is claimed.
+Evidence: `results/resume110-palette/wizard-{pc,h700,parity}.json`.
