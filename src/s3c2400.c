@@ -153,11 +153,15 @@ struct s3c2400 {
      * every mutation, storage stable until s3c2400_destroy. */
     volatile uint32_t live_gpbdat, live_gpedat;
     arm_live_read32_t live_read32[2];
+    uint32_t lcd_hclk_remainder; /* fractional HCLK, denominator RUN clock */
 };
 
 static uint8_t *s3c2400_fastmem(void *user, uint32_t addr, size_t bytes, int write);
 static uint32_t s3c2400_read32_io(void *user, uint32_t addr);
 static uint32_t lcd_current_line_count(s3c2400_t *s);
+static uint32_t lcd_current_status(s3c2400_t *s);
+static int lcd_is_tft(const uint32_t *regs);
+static uint64_t lcd_panel_frame_cycles(s3c2400_t *s);
 static uint32_t clk_fclk(const s3c2400_t *s, int reg);
 static uint32_t clk_hclk(const s3c2400_t *s, int reg);
 static uint32_t clk_run(const s3c2400_t *s, int reg);
@@ -313,6 +317,7 @@ void s3c2400_reset(s3c2400_t *s) {
     memset(s->fb, 0, sizeof(s->fb));
     s->lcd_vpos = 0;
     s->lcd_line_accum = 0;
+    s->lcd_hclk_remainder = 0;
     s->lcd_line_valid = 0;
     s->lcd_timing_valid = 0;
     /* buttons survives reset as host-owned input; keep the derived port
@@ -845,6 +850,7 @@ static uint32_t io_read32(s3c2400_t *s, uint32_t addr) {
             uint32_t linecnt = (s->lcd_regs[0] & 1u) ? lcd_current_line_count(s) : 0u;
             data = (data & ~0xfffc0000u) | ((linecnt & 0x3ffu) << 18);
         }
+        if (off == 0x10u) data = (data & ~(15u << 17)) | lcd_current_status(s);
         return data;
     }
     if (addr >= 0x14a00400u && addr <= 0x14a007ffu) return lcd_palette_read32(s, addr - 0x14a00400u);
@@ -981,7 +987,7 @@ static void io_write32(s3c2400_t *s, uint32_t addr, uint32_t value, uint32_t mas
         return;
     }
     if (s->cpu_run_active && ((addr >= 0x14600000u && addr <= 0x1460007bu) ||
-                              (addr >= 0x14a00000u && addr <= 0x14a00007u) ||
+                              (addr >= 0x14a00000u && addr <= 0x14a0000fu) ||
                               (addr >= 0x15508000u && addr <= 0x15508013u))) {
         /* A register change near the end of a CPU batch must not replace the
          * DMA source, sample rate or LCD timing of its already elapsed time.
@@ -1038,13 +1044,24 @@ static void io_write32(s3c2400_t *s, uint32_t addr, uint32_t value, uint32_t mas
     }
     if (addr >= 0x14a00000u && addr <= 0x14a003ffu) {
         off = addr - 0x14a00000u;
+        int was_tft = lcd_is_tft(s->lcd_regs);
         s->lcd_line_valid = 0;
         s->lcd_timing_valid = 0;
         uint32_t old = reg_array_read(s->lcd_regs, sizeof(s->lcd_regs), off);
+        if (off == 0x10u) mask &= ~(15u << 17); /* status fields are read-only */
         reg_array_write(s->lcd_regs, sizeof(s->lcd_regs), off, value, mask);
         uint32_t now = reg_array_read(s->lcd_regs, sizeof(s->lcd_regs), off);
-        (void)old;
-        (void)now;
+        if (off <= 0x0cu && (old != now)) {
+            /* Mode changes/enable establish a new scan. Live timing writes
+             * retain elapsed HCLK position, bounded by the new geometry. */
+            if (was_tft != lcd_is_tft(s->lcd_regs) ||
+                (off == 0u && !(old & 1u) && (now & 1u))) {
+                s->lcd_line_accum = 0;
+                s->lcd_hclk_remainder = 0;
+            } else {
+                s->lcd_line_accum %= lcd_panel_frame_cycles(s);
+            }
+        }
         if (off == 0u) s3c2400_render_lcd(s);
         return;
     }
@@ -1461,14 +1478,17 @@ void s3c2400_render_lcd(s3c2400_t *s) {
     s->fb_w = w; s->fb_h = h; s->frame_counter++;
 }
 
-static uint32_t clk_fclk(const s3c2400_t *s, int reg) {
-    uint32_t data = s->clkpow[reg];
+static uint32_t pll_frequency(uint32_t data) {
     uint32_t mdiv = GP32_BITS(data, 19, 12);
     uint32_t pdiv = GP32_BITS(data, 9, 4);
     uint32_t sdiv = GP32_BITS(data, 1, 0);
     uint32_t den = (pdiv + 2u) << sdiv;
     if (!den) return 12000000u;
     return (uint32_t)(((uint64_t)(mdiv + 8u) * 12000000ull) / den);
+}
+
+static uint32_t clk_fclk(const s3c2400_t *s, int reg) {
+    return pll_frequency(s->clkpow[reg]);
 }
 
 static uint32_t clk_hclk(const s3c2400_t *s, int reg) {
@@ -1481,7 +1501,7 @@ static uint32_t clk_hclk(const s3c2400_t *s, int reg) {
     }
 }
 
-static uint32_t clk_run(const s3c2400_t *s, int reg) {
+static uint32_t run_clock_values(uint32_t f, uint32_t h) {
     /* The ARM core presently accounts one emulator cycle per decoded/executed
      * instruction group, not per ARM920T FCLK pipeline cycle. For ordinary
      * undivided clocks this maps to the firmware clock directly. In the common
@@ -1490,14 +1510,16 @@ static uint32_t clk_run(const s3c2400_t *s, int reg) {
      * use an effective bus-side throughput for frontend pacing and for all
      * peripheral-period-to-core-cycle conversions. This is clock-topology based,
      * not title-specific. */
-    uint32_t f = clk_fclk(s, reg);
-    uint32_t h = clk_hclk(s, reg);
     if (!h) return f;
     if (f >= 100000000u && h <= f / 2u && h >= 60000000u) {
         uint64_t scaled = ((uint64_t)h * 8u + 5u) / 11u;
         return scaled ? (uint32_t)scaled : h;
     }
     return h ? h : f;
+}
+
+static uint32_t clk_run(const s3c2400_t *s, int reg) {
+    return run_clock_values(clk_fclk(s, reg), clk_hclk(s, reg));
 }
 
 static uint32_t clk_pclk(const s3c2400_t *s, int reg) {
@@ -1559,24 +1581,38 @@ static uint32_t lcd_visible_lines(const s3c2400_t *s) {
     return visible;
 }
 
-static uint32_t lcd_total_lines_for_visible(uint32_t visible) {
-    uint32_t vblank_lines = (visible / 16u) + 8u;
-    if (vblank_lines < 8u) vblank_lines = 8u;
-    uint32_t total_lines = visible + vblank_lines;
-    if (total_lines <= visible) total_lines = visible + 1u;
-    return total_lines;
+static int lcd_is_tft(const uint32_t *regs) {
+    /* CLKVAL=0 is outside the documented TFT range. Keep the legacy fallback
+     * for STN and the synthetic direct-HLE framebuffer configuration. */
+    return GP32_BITS(regs[0], 6, 5) == 3u && GP32_BITS(regs[0], 17, 8) >= 1u;
+}
+
+static uint64_t lcd_tft_line_period(const uint32_t *r) {
+    uint32_t total = GP32_BITS(r[3], 7, 0) + 1u + GP32_BITS(r[2], 25, 19) + 1u +
+                     GP32_BITS(r[2], 18, 8) + 1u + GP32_BITS(r[2], 7, 0) + 1u;
+    return (uint64_t)total * 2u * (GP32_BITS(r[0], 17, 8) + 1u);
+}
+
+static uint32_t lcd_tft_total_lines(const uint32_t *r) {
+    return GP32_BITS(r[1], 5, 0) + 1u + GP32_BITS(r[1], 31, 24) + 1u +
+           GP32_BITS(r[1], 23, 14) + 1u + GP32_BITS(r[1], 13, 6) + 1u;
 }
 
 static void lcd_refresh_timing_cache(s3c2400_t *s) {
     if (s->lcd_timing_valid) return;
-    uint32_t runclk = clk_run(s, MPLLCON);
-    if (!runclk) runclk = 66000000u;
-    uint64_t frame_cycles = ((uint64_t)runclk + 30u) / 60u;
-    s->lcd_cached_frame_cycles = frame_cycles ? frame_cycles : 1u;
     s->lcd_cached_visible = lcd_visible_lines(s);
-    s->lcd_cached_total_lines = lcd_total_lines_for_visible(s->lcd_cached_visible);
-    s->lcd_cached_line_cycles = s->lcd_cached_frame_cycles / s->lcd_cached_total_lines;
-    if (!s->lcd_cached_line_cycles) s->lcd_cached_line_cycles = 1u;
+    if (lcd_is_tft(s->lcd_regs)) {
+        s->lcd_cached_total_lines = lcd_tft_total_lines(s->lcd_regs);
+        s->lcd_cached_line_cycles = lcd_tft_line_period(s->lcd_regs);
+        s->lcd_cached_frame_cycles = s->lcd_cached_line_cycles * s->lcd_cached_total_lines;
+    } else {
+        uint32_t runclk = s3c2400_run_clock_hz(s);
+        s->lcd_cached_frame_cycles = ((uint64_t)runclk + 30u) / 60u;
+        if (!s->lcd_cached_frame_cycles) s->lcd_cached_frame_cycles = 1u;
+        s->lcd_cached_total_lines = s->lcd_cached_visible + s->lcd_cached_visible / 16u + 8u;
+        s->lcd_cached_line_cycles = s->lcd_cached_frame_cycles / s->lcd_cached_total_lines;
+        if (!s->lcd_cached_line_cycles) s->lcd_cached_line_cycles = 1u;
+    }
     s->lcd_timing_valid = 1;
 }
 
@@ -1585,48 +1621,66 @@ static uint64_t lcd_panel_frame_cycles(s3c2400_t *s) {
     return s->lcd_cached_frame_cycles;
 }
 
+static void lcd_observation_deadline(s3c2400_t *s, int horizontal) {
+    unsigned bit = horizontal ? 2u : 1u;
+    if (!s->cpu_run_active || (s->cpu_lcd_deadline_set & bit)) return;
+    s->cpu_lcd_deadline_set |= bit;
+    lcd_refresh_timing_cache(s);
+    uint64_t frame = s->lcd_cached_frame_cycles, line = s->lcd_cached_line_cycles;
+    uint64_t phase = s->lcd_line_accum % frame;
+    uint64_t remaining = line - phase % line;
+    if (horizontal && lcd_is_tft(s->lcd_regs)) {
+        uint64_t pixel = 2u * (GP32_BITS(s->lcd_regs[0], 17, 8) + 1u);
+        uint64_t pos = phase % line;
+        uint64_t end = pixel * (GP32_BITS(s->lcd_regs[3], 7, 0) + 1u);
+        if (pos >= end) end += pixel * (GP32_BITS(s->lcd_regs[2], 25, 19) + 1u);
+        if (pos >= end) end += pixel * (GP32_BITS(s->lcd_regs[2], 18, 8) + 1u);
+        if (pos >= end) end = line;
+        remaining = end - pos;
+    } else if (!lcd_is_tft(s->lcd_regs)) {
+        uint64_t zero = (s->lcd_cached_visible - 1u) * line;
+        if (phase >= zero) remaining = frame - phase;
+        else if (remaining > frame - phase) remaining = frame - phase;
+    }
+    if (lcd_is_tft(s->lcd_regs)) {
+        uint64_t numerator = remaining * s3c2400_run_clock_hz(s) - s->lcd_hclk_remainder;
+        uint32_t hclk = s3c2400_hclk_hz(s);
+        remaining = (numerator + hclk - 1u) / hclk;
+    }
+    if (remaining < UINT32_MAX) arm920t_limit_run(s->cpu_irq_sink, (uint32_t)remaining);
+}
+
 static uint32_t lcd_current_line_count(s3c2400_t *s) {
     if (!s) return 0u;
-    if (s->cpu_run_active && !s->cpu_lcd_deadline_set) {
-        /* Only a guest observing LINECNT needs this deadline. Keep the value
-         * stable inside this run, then tick before it changes. The flag lives
-         * for one CPU call, so scheduling has no extra saved-state history. */
-        s->cpu_lcd_deadline_set = 1;
-        lcd_refresh_timing_cache(s);
-        uint64_t frame = s->lcd_cached_frame_cycles;
-        uint64_t line = s->lcd_cached_line_cycles;
-        uint64_t phase = s->lcd_line_accum % frame;
-        uint64_t zero_start = (uint64_t)(s->lcd_cached_visible - 1u) * line;
-        uint64_t next = phase < zero_start ? (phase / line + 1u) * line : frame;
-        if (next > frame) next = frame;
-        uint64_t remaining = next - phase;
-        if (remaining < UINT32_MAX)
-            arm920t_limit_run(s->cpu_irq_sink, (uint32_t)remaining);
-    }
-    /* Peripheral time is constant throughout an ARM execution slice. BIOS and
-     * games poll LCDCON1 heavily; reuse the exact result until time/registers
-     * change instead of repeating several integer divisions for every load. */
+    lcd_observation_deadline(s, 0);
     if (s->lcd_line_valid) return s->lcd_cached_line;
     lcd_refresh_timing_cache(s);
+    uint64_t line = (s->lcd_line_accum % s->lcd_cached_frame_cycles) / s->lcd_cached_line_cycles;
     uint32_t visible = s->lcd_cached_visible;
-
-    /*
-     * LCDCON1[27:18] is consumed by BIOS code as a live LCD scan/vblank
-     * status field.  The emulator's elapsed value is in effective ARM run
-     * cycles, so convert the GP32 panel frame cadence into the same unit
-     * before deriving the current line.  This keeps polling loops tied to the
-     * emulated LCD frame rather than to host presentation phase or raw VCLK
-     * register values that commercial GP32 software does not use literally.
-     */
-    uint64_t frame_cycles = s->lcd_cached_frame_cycles;
-    uint32_t total_lines = s->lcd_cached_total_lines;
-    uint64_t line_cycles = s->lcd_cached_line_cycles;
-
-    uint64_t line64 = (s->lcd_line_accum % frame_cycles) / line_cycles;
-    uint32_t line = (line64 >= total_lines) ? (total_lines - 1u) : (uint32_t)line64;
-    s->lcd_cached_line = line >= visible ? 0u : (visible - 1u) - line;
+    if (lcd_is_tft(s->lcd_regs)) {
+        uint32_t start = GP32_BITS(s->lcd_regs[1], 5, 0) + 1u + GP32_BITS(s->lcd_regs[1], 31, 24) + 1u;
+        line = line < start ? 0u : line - start;
+    }
+    s->lcd_cached_line = line >= visible ? 0u : visible - 1u - (uint32_t)line;
     s->lcd_line_valid = 1;
     return s->lcd_cached_line;
+}
+
+static uint32_t lcd_current_status(s3c2400_t *s) {
+    if (!(s->lcd_regs[0] & 1u) || !lcd_is_tft(s->lcd_regs)) return 0u;
+    lcd_observation_deadline(s, 1);
+    lcd_refresh_timing_cache(s);
+    uint64_t phase = s->lcd_line_accum % s->lcd_cached_frame_cycles;
+    uint32_t v = (uint32_t)(phase / s->lcd_cached_line_cycles);
+    uint32_t pixel = 2u * (GP32_BITS(s->lcd_regs[0], 17, 8) + 1u);
+    uint32_t h = (uint32_t)((phase % s->lcd_cached_line_cycles) / pixel);
+    uint32_t vs = GP32_BITS(s->lcd_regs[1], 5, 0) + 1u;
+    uint32_t vb = vs + GP32_BITS(s->lcd_regs[1], 31, 24) + 1u;
+    uint32_t hs = GP32_BITS(s->lcd_regs[3], 7, 0) + 1u;
+    uint32_t hb = hs + GP32_BITS(s->lcd_regs[2], 25, 19) + 1u;
+    uint32_t vstatus = v < vs ? 0u : v < vb ? 1u : v < vb + s->lcd_cached_visible ? 2u : 3u;
+    uint32_t hstatus = h < hs ? 0u : h < hb ? 1u : h < hb + GP32_BITS(s->lcd_regs[2],18,8) + 1u ? 2u : 3u;
+    return (vstatus << 19) | (hstatus << 17);
 }
 
 static void iis_fifo_write16(s3c2400_t *s, uint16_t sample) {
@@ -1703,7 +1757,9 @@ static void clock_apply(s3c2400_t *s, const uint32_t *registers) {
         s->pwm_accum[t] = rescale_period_progress(s->pwm_accum[t], old_pwm_period[t], s->pwm_period_cycles[t]);
     s->iis_accum = rescale_period_progress(s->iis_accum, old_iis_clock, s3c2400_run_clock_hz(s));
     uint64_t new_lcd_period = lcd_panel_frame_cycles(s);
-    if (old_lcd_period != new_lcd_period) {
+    if (lcd_is_tft(s->lcd_regs)) {
+        s->lcd_hclk_remainder = (uint32_t)((uint64_t)s->lcd_hclk_remainder * s3c2400_run_clock_hz(s) / old_iis_clock);
+    } else if (old_lcd_period != new_lcd_period) {
         /* Completed scanouts are already counted separately. Only translate
          * the current frame's phase, avoiding a product of the full history. */
         s->lcd_line_accum = (s->lcd_line_accum % old_lcd_period) * new_lcd_period / old_lcd_period;
@@ -1782,7 +1838,14 @@ void s3c2400_tick(s3c2400_t *s, uint32_t cpu_cycles) {
     if (!s || !cpu_cycles) return;
     uint64_t old_lcd_accum = s->lcd_line_accum;
     uint64_t lcd_frame_cycles = lcd_panel_frame_cycles(s);
-    s->lcd_line_accum += (uint64_t)cpu_cycles;
+    if (lcd_is_tft(s->lcd_regs)) {
+        if (s->lcd_regs[0] & 1u) {
+            uint32_t runclk = s3c2400_run_clock_hz(s);
+            uint64_t scaled = (uint64_t)cpu_cycles * s3c2400_hclk_hz(s) + s->lcd_hclk_remainder;
+            s->lcd_line_accum += scaled / runclk;
+            s->lcd_hclk_remainder = (uint32_t)(scaled % runclk);
+        }
+    } else s->lcd_line_accum += (uint64_t)cpu_cycles;
     s->lcd_line_valid = 0;
     if ((s->lcd_regs[0] & 1u) && lcd_frame_cycles &&
         (old_lcd_accum / lcd_frame_cycles) != (s->lcd_line_accum / lcd_frame_cycles)) {
@@ -1796,6 +1859,7 @@ void s3c2400_tick(s3c2400_t *s, uint32_t cpu_cycles) {
          */
         s3c2400_render_lcd(s);
     }
+    if (lcd_is_tft(s->lcd_regs)) s->lcd_line_accum %= lcd_frame_cycles;
     if (s->iis[0] & 1u) {
         iis_refresh_clock_cache(s);
         /* Carry fractional CPU periods instead of rounding each sample's
@@ -1983,7 +2047,13 @@ int s3c2400_state_save_io(const s3c2400_t *s, state_io_t *io) {
     st->fb_w = s->fb_w; st->fb_h = s->fb_h;
     st->frame_counter = s->frame_counter;
     st->lcd_vpos = s->lcd_vpos;
+    /* Retain legacy RUN/60 phase in the old body. v7 appends exact phase. */
     st->lcd_line_accum = s->lcd_line_accum;
+    if (lcd_is_tft(s->lcd_regs)) {
+        uint64_t period = lcd_tft_line_period(s->lcd_regs) * lcd_tft_total_lines(s->lcd_regs);
+        uint64_t legacy_period = ((uint64_t)s3c2400_run_clock_hz(s) + 30u) / 60u;
+        st->lcd_line_accum = (s->lcd_line_accum % period) * legacy_period / period;
+    }
     memcpy(st->eeprom, s->eeprom, sizeof(st->eeprom));
     memcpy(st->iic_data, s->iic_data, sizeof(st->iic_data));
     st->iic_data_index = s->iic_data_index;
@@ -2031,10 +2101,12 @@ int s3c2400_state_save_io(const s3c2400_t *s, state_io_t *io) {
         span.end_frame -= s->audio_read_frames;
         if (!state_io_write(io, &span, sizeof(span))) return 0;
     }
-    return state_io_write(io, &s->iis_accum, sizeof(s->iis_accum));
+    uint64_t lcd_phase[2] = {s->lcd_line_accum, s->lcd_hclk_remainder};
+    return state_io_write(io, &s->iis_accum, sizeof(s->iis_accum)) &&
+           state_io_write(io, lcd_phase, sizeof(lcd_phase));
 }
 
-int s3c2400_state_load_io(s3c2400_t *s, state_io_t *io, int has_audio_spans, int has_iis_phase) {
+int s3c2400_state_load_io(s3c2400_t *s, state_io_t *io, int has_audio_spans, int has_iis_phase, int has_lcd_phase) {
     if (!s || !io) return 0;
 #ifdef GP32EMU_WASM
     static s3c2400_state_image_t st_storage;
@@ -2083,6 +2155,24 @@ int s3c2400_state_load_io(s3c2400_t *s, state_io_t *io, int has_audio_spans, int
     /* Leave room for a maximum-width tick before committing any state. */
     if (phase > UINT64_MAX - (uint64_t)UINT32_MAX * 96000u ||
         st->iis_accum > UINT64_MAX / 96000u - UINT32_MAX) goto bad_audio;
+    uint64_t lcd_phase[2] = {st->lcd_line_accum, 0};
+    uint32_t fclk = pll_frequency(st->clkpow[MPLLCON]);
+    uint32_t hclk = (st->clkpow[5] & 2u) ? fclk / 2u : fclk;
+    uint32_t runclk = run_clock_values(fclk, hclk);
+    uint64_t legacy_period = ((uint64_t)runclk + 30u) / 60u;
+    if (!legacy_period) legacy_period = 1u;
+    uint64_t lcd_period = lcd_is_tft(st->lcd_regs) ?
+        lcd_tft_line_period(st->lcd_regs) * lcd_tft_total_lines(st->lcd_regs) : legacy_period;
+    if (has_lcd_phase) {
+        if (!state_io_read(io, lcd_phase, sizeof(lcd_phase)) ||
+            lcd_phase[1] >= runclk ||
+            (lcd_is_tft(st->lcd_regs) ? lcd_phase[0] >= lcd_period :
+             lcd_phase[0] > UINT64_MAX - UINT32_MAX)) goto bad_audio;
+    } else if (lcd_is_tft(st->lcd_regs)) {
+        /* Legacy files cannot reconstruct the missing hardware phase. Keep
+         * their normalized scan position as an explicit approximate migration. */
+        lcd_phase[0] = (st->lcd_line_accum % legacy_period) * lcd_period / legacy_period;
+    }
     smc_destroy(s->smc);
     s->smc = new_smc;
     free(s->ram);
@@ -2102,7 +2192,8 @@ int s3c2400_state_load_io(s3c2400_t *s, state_io_t *io, int has_audio_spans, int
     s->fb_w = st->fb_w; s->fb_h = st->fb_h;
     s->frame_counter = st->frame_counter;
     s->lcd_vpos = st->lcd_vpos;
-    s->lcd_line_accum = st->lcd_line_accum;
+    s->lcd_line_accum = lcd_phase[0];
+    s->lcd_hclk_remainder = (uint32_t)lcd_phase[1];
     s->lcd_line_valid = 0;
     s->lcd_timing_valid = 0;
     memcpy(s->eeprom, st->eeprom, sizeof(s->eeprom));
@@ -2156,14 +2247,15 @@ bad_audio:
 
 int s3c2400_state_save(const s3c2400_t *s, FILE *f) {
     state_io_t io = state_io_file(f);
-    return state_io_write(&io, "GP32SOC6", 8u) && s3c2400_state_save_io(s, &io);
+    return state_io_write(&io, "GP32SOC7", 8u) && s3c2400_state_save_io(s, &io);
 }
 
 int s3c2400_state_load(s3c2400_t *s, FILE *f) {
     uint8_t magic[8];
     if (!f || fread(magic, 1, sizeof(magic), f) != sizeof(magic)) return 0;
-    int has_phase = !memcmp(magic, "GP32SOC6", sizeof(magic));
+    int has_lcd = !memcmp(magic, "GP32SOC7", sizeof(magic));
+    int has_phase = has_lcd || !memcmp(magic, "GP32SOC6", sizeof(magic));
     if (!has_phase && fseek(f, -(long)sizeof(magic), SEEK_CUR)) return 0;
     state_io_t io = state_io_file(f);
-    return s3c2400_state_load_io(s, &io, 1, has_phase);
+    return s3c2400_state_load_io(s, &io, 1, has_phase, has_lcd);
 }
