@@ -279,9 +279,31 @@ Plusha's opening finishes later in the fixed-time captures; original timing
 fidelity remains unverified. Details: [LCD_TIMING.md](LCD_TIMING.md).
 
 Proactive triage still prioritizes GlooP/Pinball/Tears' default-BIOS loading
-paths, GP Fight's uncompleted match loading and controls not yet attributed in
-several scenes. Zero-PCM windows in Winter Is, Bug Eyed Monster and other
+paths and controls not yet attributed in several scenes; GP Fight's match
+loading is now observed to complete, leaving the unresolved gray final capture
+as its open item (exact follow-up below). Zero-PCM windows in Winter Is, Bug Eyed Monster and other
 scenes are investigation leads, not confirmed missing-sound defects: silence
 may be intentional. New analysis uses [SMC executable inspection](SMC_ANALYSIS.md)
 and SDK/firmware call sites; it does not count an extracted file or static
 instruction as proof of runtime correctness.
+
+## GP Fight match-loading follow-up (2026-10-05, resume127-compat)
+
+One 3,600-frame no-input continuation from the saved partially-filled
+match-loading state (`resume116-library/shard-7/07-gpfight/cont1/end.state`)
+completes loading with the current probe: frame 300 still shows the filling
+NOW LOADING bar, frame 600 shows a live four-fighter match with HP bars, and
+frame 3300 shows a P1 KO banner. Console windows show per-window video changes
+and nonzero PCM through the match. No emulator change produced this progress;
+the earlier continuation cap simply ended before the finite wait finished.
+
+The frame-3600 capture is a uniform gray screen whose destination is
+unresolved; it is not classified as a fade, idle or post-match transition
+without further evidence. This establishes that match loading completes and a
+match scene runs, not full-game compatibility, playability, input behavior or
+timing fidelity. Exact follow-up: one further short (~300-600f) no-input
+continuation from `resume127-compat/gp-fight/run/cont2-loading-3600/end.state`
+to identify what the gray screen lands on.
+
+Evidence: `resume127-compat/gp-fight/run/cont2-loading-3600/` console.txt,
+png/frame-000600.png, png/frame-003300.png and end.state.

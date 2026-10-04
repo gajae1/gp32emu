@@ -978,6 +978,14 @@ static uint32_t s3c2400_read32_io(void *user, uint32_t addr) {
     }
 }
 
+uint8_t s3c2400_eeprom_read8(const s3c2400_t *s, uint32_t addr) {
+    return s->eeprom[addr & 0x1fffu];
+}
+
+void s3c2400_eeprom_write8(s3c2400_t *s, uint32_t addr, uint8_t value) {
+    s->eeprom[addr & 0x1fffu] = value;
+}
+
 static void iic_step(s3c2400_t *s) {
     unsigned mode_selection = GP32_BITS(s->iic[1], 7, 6);
     switch (mode_selection) {
@@ -985,7 +993,7 @@ static void iic_step(s3c2400_t *s) {
         if (s->iic_data_index == 0) {
             /* first byte is the device address already in IICDS */
         } else {
-            uint8_t data = s->eeprom[s->iic_address & 0x1fffu];
+            uint8_t data = s3c2400_eeprom_read8(s, s->iic_address);
             s->iic[3] = (s->iic[3] & ~0xffu) | data;
             s->iic_address = (uint16_t)((s->iic_address + 1u) & 0x1fffu);
         }
@@ -997,7 +1005,7 @@ static void iic_step(s3c2400_t *s) {
         s->iic_data_index++;
         if (s->iic_data_index == 3) s->iic_address = (uint16_t)(((uint16_t)s->iic_data[1] << 8) | s->iic_data[2]);
         else if (s->iic_data_index >= 4 && s->iic_data[0] == 0xa0) {
-            s->eeprom[s->iic_address & 0x1fffu] = data;
+            s3c2400_eeprom_write8(s, s->iic_address, data);
             s->iic_address = (uint16_t)((s->iic_address + 1u) & 0x1fffu);
         }
         break;
@@ -1149,6 +1157,14 @@ static void io_write32(s3c2400_t *s, uint32_t addr, uint32_t value, uint32_t mas
             if (mask & 0x20u) {
                 if (!(old & 0x20u) && (now & 0x20u)) iic_start(s);
                 else if (!(now & 0x20u)) s->iic_data_index = 0;
+                else if ((old ^ now) & 0xc0u) {
+                    /* Repeated START switches transmit to receive while the
+                     * bus is still busy. The pending IICCON acknowledgement
+                     * clocks the new device address, not the first data byte.
+                     * Retaining the transmit index skips that address phase
+                     * and makes the BIOS discard EEPROM[offset] as a dummy. */
+                    s->iic_data_index = 0;
+                }
             }
         }
         return;
