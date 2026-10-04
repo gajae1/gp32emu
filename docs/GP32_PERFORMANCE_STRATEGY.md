@@ -2667,3 +2667,26 @@ correctness fix, not an FPS improvement. The installed H700 core remains the
 previously verified 1665ee4 build; this new small-card fix is source-only pending
 the next device build. The parallel input audit found no demonstrated default
 input-path defect; no speculative input change was made.
+
+### Constant-time IRQ priority selection (2026-10-04)
+
+The actual H700 disassembly retained a per-bit shifting loop in `check_irq`.
+The GCC/Clang path now uses nonzero `__builtin_ctz`, compiling to RBIT/CLZ
+on AArch64, with the existing loop retained for other compilers. Lowest-bit
+priority, pending registers and CPU IRQ-line behavior remain unchanged.
+This is a bounded-work simplification, not a demonstrated game FPS gain.
+
+Three PC replays (Princess, Astonishia title and Blue Angelo dialogue) retain
+all seven CPU/video/PCM fields. Windows timing/PWM/PCM checks pass. H700
+SmartMedia, timing and PWM checks pass, including the previous small-card fix.
+Win64 standalone/libretro, H700 and Android ARM64/ARMv7 builds pass; Android
+runtime remains untested.
+
+Princess H700 ABBA with all 12 sampled frequencies at 1512 MHz measures
+78.2345 -> 78.382 core fps (+0.19%, two runs per variant). An earlier pair
+included a 1416-MHz baseline and was correctly disqualified. Both raw runs
+are retained in `results/resume109-irq/`; no governor or audio setting changed.
+A CommandCode worker proposed checked word-store specialization, but existing
+Princess counters show only 19,140 store helpers against 1,804,967 load helpers
+in 300 frames. That candidate is deferred until a store-heavy workload provides
+evidence; no speculative JIT specialization was added.

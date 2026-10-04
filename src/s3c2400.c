@@ -465,8 +465,14 @@ static void check_irq(s3c2400_t *s) {
     if (!s->cpu_irq_sink) return;
     uint32_t pending = s->irq[0] & ~s->irq[2]; /* SRCPND masked by INTMSK */
     if (pending) {
+#if defined(__GNUC__) || defined(__clang__)
+        /* pending is nonzero: select the same lowest IRQ without scanning
+         * every lower bit on each timer/DMA interrupt and acknowledgement. */
+        unsigned n = (unsigned)__builtin_ctz(pending);
+#else
         uint32_t t = pending, n = 0;
         while (!(t & 1u)) { n++; t >>= 1; }
+#endif
         s->irq[4] |= (1u << n);
         s->irq[5] = n;
         arm920t_set_irq(s->cpu_irq_sink, 1);
