@@ -391,8 +391,9 @@ static const smc_file_buf_t *find_matching_gxc(const smc_file_list_t *list, cons
     return fallback;
 }
 
-static int valid_gxb_header(const uint8_t *p, size_t size, uint32_t *out_size) {
-    if (!p || size < 32u) return 0;
+/* Header bytes can be decrypted separately from the complete payload. */
+static int valid_gxb_header(const uint8_t *p, size_t header_size, size_t size, uint32_t *out_size) {
+    if (!p || header_size < 32u || size < 32u) return 0;
     uint32_t first = gp32_ld32le(p);
     uint32_t rom = gp32_ld32le(p + 4u);
     uint32_t ro_limit = gp32_ld32le(p + 8u);
@@ -497,17 +498,23 @@ static int gxc_candidate_arm_score_range(const uint8_t *buf, size_t size, size_t
 
 static int gxc_try_decrypt(const smc_file_buf_t *gxc, uint32_t payload_size, const gxc_key_profile_t *kp,
                            size_t periodic_chunk, size_t key_start, uint8_t **out, size_t *out_size, int *out_score) {
-    uint8_t *buf = (uint8_t *)malloc((size_t)payload_size ? (size_t)payload_size : 1u);
+    /* Every candidate shares the same scatter-header acceptance rule. Reject
+     * incompatible keys before allocating/copying/decrypting megabytes of
+     * body data for each key rotation and stride. */
+    uint8_t header[32];
+    if (payload_size < sizeof(header)) return 0;
+    memcpy(header, gxc->data + 20u, sizeof(header));
+    if (periodic_chunk) gxc_decrypt_periodic(header, sizeof(header), kp, periodic_chunk, key_start);
+    else gxc_decrypt_prefix(header, sizeof(header), kp, key_start);
+    uint32_t gxb_size = 0;
+    if (!valid_gxb_header(header, sizeof(header), payload_size, &gxb_size)) return 0;
+
+    uint8_t *buf = (uint8_t *)malloc((size_t)payload_size);
     if (!buf) return -1;
     memcpy(buf, gxc->data + 20u, (size_t)payload_size);
     if (periodic_chunk) gxc_decrypt_periodic(buf, (size_t)payload_size, kp, periodic_chunk, key_start);
     else gxc_decrypt_prefix(buf, (size_t)payload_size, kp, key_start);
 
-    uint32_t gxb_size = 0;
-    if (!valid_gxb_header(buf, (size_t)payload_size, &gxb_size)) {
-        free(buf);
-        return 0;
-    }
     *out = buf;
     *out_size = (size_t)gxb_size;
     if (out_score) *out_score = gxc_candidate_score(buf, (size_t)payload_size);
@@ -848,6 +855,11 @@ static int decrypt_commercial_gxc(const smc_file_buf_t *gxe, const smc_file_buf_
     static const uint8_t key_1018_0327[] =
         "1018game0327park1018go320327kigo1018nopa0327babo10187721"
         "0327prom1018jang03271cut1018mola0327joaa";
+    /* Recovered against BIOS-decoded RO bytes: 0x100 encrypted bytes per
+     * 0x800-byte span. The existing stride scorer selects that layout. */
+    static const uint8_t key_1020_0903[] =
+        "1020go320903kigo1020nopa0903babo102077210903prom1020jang"
+        "09031cut1020mola0903joaa1020game0903park";
     static const uint8_t key_1111[] =
         "1111nopa1111babo111177211111prom1111jang11111cut1111mola"
         "1111joaa1111game1111park1111go321111kigo";
@@ -877,6 +889,7 @@ static int decrypt_commercial_gxc(const smc_file_buf_t *gxe, const smc_file_buf_
         { "1008/0428", key_1008_0428, sizeof(key_1008_0428) - 1u },
         { "1006/0125", key_1006_0125, sizeof(key_1006_0125) - 1u },
         { "1018/0327", key_1018_0327, sizeof(key_1018_0327) - 1u },
+        { "1020/0903", key_1020_0903, sizeof(key_1020_0903) - 1u },
         { "1111/1111", key_1111, sizeof(key_1111) - 1u },
         { "0003/3000", key_0003_3000, sizeof(key_0003_3000) - 1u },
         { "0002/3000", key_0002_3000, sizeof(key_0002_3000) - 1u },
