@@ -2535,3 +2535,48 @@ throughput improvement is claimed. Windows GUI/libretro, H700 and Android
 ARM64/ARMv7 builds succeed; Android runtime remains unverified. Evidence is
 private `results/resume105-physical-access/`. No volume or device configuration
 was changed.
+
+### Fractional IIS sample scheduling (2026-10-04)
+
+The IIS scheduler used `ceil(run_clock / sample_rate)` CPU cycles for every
+sample while tagging PCM with the original integer sample rate. A continuous
+DMA fixture at 48 MHz effective CPU / 66 MHz PCLK and prescaler 6 produced
+42,933 frames in one emulated second despite advertising 42,968 Hz. Repeating
+that rounding systematically underfilled the frontend's resampled stream.
+
+IIS now accumulates `cpu_cycles * sample_rate` and carries the remainder modulo
+the effective CPU clock. It schedules the existing batched DMA transfers at
+the advertised integer rate. The old 256-cycle minimum is no longer part of
+running sample scheduling; the existing 4,000–96,000 Hz rate limits remain.
+Legacy cached-period metadata keeps its old representation. Clock changes
+preserve the sample fraction; IIS divider writes retain elapsed CPU-cycle
+progress as before. This does not claim a cycle-exact hardware divider model
+or change the existing integer sample-rate tagging convention.
+
+The same one-second fixture now produces exactly 42,968 frames with a whole
+tick, split ticks with a current-state roundtrip, and a legacy raw-SoC restore.
+GP32 state v6 appends an eight-byte exact IIS phase after the existing audio
+spans; the old body still stores cycle units. v2–v5 load by converting their
+saved cycle progress using the loaded rate. The extension is read and checked
+before committing the SoC. Tests retain rejected-load atomicity, nonzero v5
+phase migration, clock transitions and mixed-rate PCM queues. Standalone SoC
+files use a `GP32SOC6` prefix and retain seekable raw-state loading. New v6
+states require this or a newer core; older state files remain usable.
+
+Windows and H700 timing/state/timer/PCM checks pass. Android API-21 ARMv7
+exposed unavailable `fgetpos`/`fsetpos` declarations under large-file mode;
+the standalone loader now rewinds only its eight-byte probe with `fseek`.
+The affected timing/state tests pass after that portability adjustment, and
+Windows GUI/libretro, H700 and Android ARM64/ARMv7 builds succeed.
+
+H700 ABBA (two samples per variant, 1,512 MHz at all sampled endpoints):
+Princess 78.449 -> 76.5555 core fps (-2.41%), Astonishia title 177.0885 ->
+189.245 (+6.86%), Blue 74.0575 -> 74.245 (+0.25%). These are mixed short-run
+throughput results, not a universal gain. Sample/DMA timing intentionally
+changes guest execution and PCM, so old/new output equality is not expected.
+Instead, each updated H700 replay matches the updated PC replay in all seven
+CPU/clock/video/PCM fields. The benchmark preceded only the standalone-file
+probe portability edit, which the game replay does not call. Volume and
+frontend settings remain unchanged. Physical audibility and long-session
+underrun reduction remain unverified. Evidence: private
+`results/resume106-iis-fraction/`.

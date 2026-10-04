@@ -1,7 +1,7 @@
 /* Transactional savestate regression: a truncated or otherwise rejected load
  * must leave the live machine byte-identical, including CPU, RAM, SmartMedia
- * and queued PCM. The v0005 stream is
- * magic | gp32 image | elapsed time | frame time | arm920t image | s3c2400 image | ram | smc | audio | spans, and
+ * and queued PCM. The v0006 stream is
+ * magic | gp32 image | elapsed time | frame time | arm920t image | s3c2400 image | ram | smc | audio | spans | IIS phase, and
  * a cut past the CPU image used to rewind the CPU while the caller still saw
  * GP32_ERR_IO, with the mounted SmartMedia committed before the trailing PCM
  * had been read. Synthetic fixture, no ROM needed; GP32_SOURCE can select a
@@ -133,8 +133,39 @@ static void check_swi_lifecycle(void) {
     }
 }
 
+static void check_legacy_iis_phase(void) {
+    gp32_t *g = gp32_create(NULL);
+    CHECK(g != NULL, "create legacy IIS fixture");
+    if (!g) return;
+    queue_audio(g, 1u);
+    gp32_clear_audio(g);
+    s3c2400_write32(g->soc, 0x14800004u, 0xe000u);
+    s3c2400_write32(g->soc, 0x14800014u, 2u);
+    s3c2400_write32(g->soc, 0x15508008u, 5u << 5);
+    s3c2400_tick(g->soc, 100u);
+    size_t size = 0;
+    uint8_t *saved = capture_state(g, &size);
+    CHECK(saved != NULL, "capture nonzero IIS phase");
+    if (saved) {
+        memcpy(saved, gp32_state_magic_v5, sizeof(gp32_state_magic_v5));
+        CHECK(gp32_reset(g) == GP32_OK, "reset before old IIS restore");
+        CHECK(gp32_load_state_data(g, saved, size - sizeof(uint64_t)) == GP32_OK,
+              "v5 cycle phase loads at the saved clock/rate");
+        s3c2400_tick(g->soc, 1017u);
+        uint64_t frames = 0; uint32_t rate = 0;
+        (void)s3c2400_audio_samples(g->soc, &frames, &rate);
+        CHECK(frames == 0u, "legacy 100-cycle phase has no premature sample");
+        s3c2400_tick(g->soc, 1u);
+        (void)s3c2400_audio_samples(g->soc, &frames, &rate);
+        CHECK(frames == 1u && rate == 42968u, "legacy elapsed cycles survive numerator migration");
+        free(saved);
+    }
+    gp32_destroy(g);
+}
+
 int main(int argc, char **argv) {
     check_swi_lifecycle();
+    check_legacy_iis_phase();
     const char *path = argc > 1 ? argv[1] : NULL;
     gp32_t *source = gp32_create(NULL);
     gp32_t *target = gp32_create(NULL);
@@ -191,8 +222,9 @@ int main(int argc, char **argv) {
     const size_t cpu_cut = soc_off + cpu_len / 2u;
     const size_t ram_cut = soc_off + cpu_len + ram_len / 2u;
     const size_t span_bytes = sizeof(uint32_t); /* no closed spans in this fixture */
-    const size_t smc_cut = src_size - span_bytes - audio_bytes - 1u;
-    const size_t gap_cut = src_size - span_bytes - audio_bytes;
+    const size_t phase_bytes = sizeof(uint64_t);
+    const size_t smc_cut = src_size - phase_bytes - span_bytes - audio_bytes - 1u;
+    const size_t gap_cut = src_size - phase_bytes - span_bytes - audio_bytes;
     CHECK(cpu_len > 0, "cpu wire image length");
     CHECK(cpu_cut > soc_off && cpu_cut < soc_off + cpu_len, "cpu cut lands inside the cpu image");
     /* The SoC header holds a 512 KiB BIOS mirror plus a 300 KiB framebuffer,
@@ -230,10 +262,15 @@ int main(int argc, char **argv) {
         expect_rejected_load(target, live, live_size, src, gap_cut, path, "file path cut rejected with byte-identical state");
 
     uint32_t bad_count = UINT32_MAX;
-    memcpy(src + src_size - span_bytes, &bad_count, sizeof(bad_count));
+    memcpy(src + src_size - phase_bytes - span_bytes, &bad_count, sizeof(bad_count));
     expect_rejected_load(target, live, live_size, src, src_size, NULL, "invalid span count rejected without mutation");
     bad_count = 0;
-    memcpy(src + src_size - span_bytes, &bad_count, sizeof(bad_count));
+    memcpy(src + src_size - phase_bytes - span_bytes, &bad_count, sizeof(bad_count));
+    uint64_t saved_phase, bad_phase = UINT64_MAX;
+    memcpy(&saved_phase, src + src_size - phase_bytes, phase_bytes);
+    memcpy(src + src_size - phase_bytes, &bad_phase, phase_bytes);
+    expect_rejected_load(target, live, live_size, src, src_size, NULL, "overflowing IIS phase rejected without mutation");
+    memcpy(src + src_size - phase_bytes, &saved_phase, phase_bytes);
 
     /* A complete image still loads through both entry points and lands on the
      * reference bytes. */
@@ -253,27 +290,29 @@ int main(int argc, char **argv) {
         free(got);
     }
 
-    /* v4 predates frame pacing; v3 also predates spans, v2 elapsed time. */
-    size_t v4_size = src_size - sizeof(gp32_frame_time_t);
+    /* v5 predates exact IIS phase; v4 frame pacing, v3 spans, v2 elapsed time. */
+    memcpy(src, gp32_state_magic_v5, sizeof(gp32_state_magic_v5));
+    CHECK(gp32_load_state_data(target, src, src_size - phase_bytes) == GP32_OK, "v5 state remains readable");
+    size_t v4_size = src_size - phase_bytes - sizeof(gp32_frame_time_t);
     uint8_t *v4 = malloc(v4_size);
     CHECK(v4 != NULL, "allocate v4 state");
     if (v4) {
         memcpy(v4, src, frame_off);
         memcpy(v4, gp32_state_magic_v4, sizeof(gp32_state_magic_v4));
-        memcpy(v4 + frame_off, src + soc_off, src_size - soc_off);
+        memcpy(v4 + frame_off, src + soc_off, src_size - soc_off - phase_bytes);
         CHECK(gp32_load_state_data(target, v4, v4_size) == GP32_OK, "v4 state remains readable");
         CHECK(!target->frame_time.valid, "legacy frame pacing starts at loaded time");
         memcpy(v4, gp32_state_magic_v3, sizeof(gp32_state_magic_v3));
         CHECK(gp32_load_state_data(target, v4, v4_size - span_bytes) == GP32_OK, "v3 state remains readable");
         free(v4);
     }
-    size_t legacy_size = src_size - sizeof(gp32_elapsed_time_t) - sizeof(gp32_frame_time_t) - span_bytes;
+    size_t legacy_size = src_size - sizeof(gp32_elapsed_time_t) - sizeof(gp32_frame_time_t) - span_bytes - phase_bytes;
     uint8_t *legacy = malloc(legacy_size);
     CHECK(legacy != NULL, "allocate legacy state");
     if (legacy) {
         memcpy(legacy, src, time_off);
         memcpy(legacy, gp32_state_magic_v2, sizeof(gp32_state_magic_v2));
-        memcpy(legacy + time_off, src + soc_off, src_size - soc_off - span_bytes);
+        memcpy(legacy + time_off, src + soc_off, src_size - soc_off - span_bytes - phase_bytes);
         CHECK(gp32_load_state_data(target, legacy, legacy_size) == GP32_OK, "v2 state remains readable");
         uint32_t old_ms = (uint32_t)(gp32_get_cycles(source) * 1000u / direct_run_clock_hz(source));
         CHECK(direct_elapsed_ms(target) == old_ms, "v2 migration starts at former observable time");

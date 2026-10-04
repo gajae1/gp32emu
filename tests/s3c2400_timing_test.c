@@ -64,6 +64,50 @@ static uint64_t frame_count(s3c2400_t *s) {
     return frames;
 }
 
+static int check_iis_fractional_rate(s3c2400_t *s, FILE *state) {
+    /* 132 MHz PLL / half HCLK gives 48 MHz effective CPU and 66 MHz PCLK.
+     * PCLK / (6 * 256) advertises 42,968 Hz, not an integer CPU period. */
+    const uint32_t runclk = 48000000u, rate = 42968u;
+    for (unsigned split = 0; split < 3u; ++split) {
+        s3c2400_reset(s);
+        s3c2400_write32(s, 0x14800004u, 0xe000u);
+        s3c2400_write32(s, 0x14800014u, 2u);
+        s3c2400_write32(s, 0x15508008u, 5u << 5);
+        s3c2400_write32(s, 0x14600040u, 0x0c000000u);
+        s3c2400_write32(s, 0x14600044u, 0x35508010u);
+        s3c2400_write32(s, 0x14600048u, 0x10800008u);
+        s3c2400_write32(s, 0x14600058u, 2u);
+        s3c2400_write32(s, 0x15508000u, 1u);
+        if (s3c2400_run_clock_hz(s) != runclk) return 0;
+        uint64_t total = 0;
+        for (uint32_t elapsed = 0; elapsed < runclk;) {
+            uint32_t n = split ? 32749u : runclk;
+            if (split == 2u && !elapsed) n = 100u;
+            if (n > runclk - elapsed) n = runclk - elapsed;
+            s3c2400_tick(s, n);
+            uint64_t frames; uint32_t tag;
+            (void)s3c2400_audio_samples(s, &frames, &tag);
+            total += frames;
+            s3c2400_audio_clear(s);
+            elapsed += n;
+            if (frames && tag != rate) return 0; /* an empty queue has no new rate tag */
+            if (split && elapsed == (split == 2u ? 100u : 32749u)) {
+                rewind(state);
+                if (!s3c2400_state_save(s, state)) return 0;
+                s3c2400_tick(s, 12345u);
+                rewind(state);
+                /* Skipping the prefix exposes the unchanged legacy body.
+                 * At 100 cycles its cycle-unit phase is exact. */
+                if (split == 2u && fseek(state, 8L, SEEK_SET)) return 0;
+                if (!s3c2400_state_load(s, state)) return 0;
+            }
+        }
+        printf("iis_one_second split=%u frames=%" PRIu64 " rate=%u\n", split, total, rate);
+        if (total != rate) { fputs("FAIL: IIS generated duration differs from sample-rate tag\n", stderr); return 0; }
+    }
+    return 1;
+}
+
 static int check_iis_fifo_restart(s3c2400_t *s) {
     /* SDK stop disables TX FIFO to discard pending data. A completed stereo
      * frame stays available to the host, but a lone old channel must not be
@@ -199,7 +243,7 @@ int main(void) {
         if ((k % 3u) == 0u) { s3c2400_reset(s); observe(s, 31u); }
     }
     int phase_ok = check_lcd_clock_phase(s, state) && check_iis_clock_phase(s, state) &&
-                   check_iis_fifo_restart(s) && check_lcd_scanline_poll(s);
+                   check_iis_fifo_restart(s) && check_lcd_scanline_poll(s) && check_iis_fractional_rate(s, state);
     fclose(state);
     if (!phase_ok) { s3c2400_destroy(s); return 1; }
     printf("lcd_timing_trace=%016" PRIx64 "\n", hash);

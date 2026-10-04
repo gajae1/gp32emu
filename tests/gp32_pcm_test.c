@@ -407,7 +407,7 @@ static int check_mixed_rate_queue(void) {
     ok &= s3c2400_state_save_io(mixed->soc, &writer);
     gp32_clear_audio(mixed);
     state_io_t reader = state_io_reader(data, count.pos);
-    ok &= s3c2400_state_load_io(mixed->soc, &reader, 1);
+    ok &= s3c2400_state_load_io(mixed->soc, &reader, 1, 1);
     free(data);
     ok &= gp32_get_audio(mixed, &span) == GP32_OK && span.frame_count == 1u &&
           span.sample_rate_hz == 11025u && span.samples_s16_interleaved[0] == 2;
