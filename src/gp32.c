@@ -14,6 +14,10 @@
 #define GP32_DIRECT_GPOS_TIMER_COUNT 4u
 #define GP32_DIRECT_PCM_CHANNELS 4u
 
+typedef struct direct_timer_due {
+    uint32_t callback, tps, fires, epoch;
+} direct_timer_due_t;
+
 typedef struct gp32_elapsed_time {
     uint64_t nanoseconds;
     uint32_t remainder;
@@ -34,6 +38,9 @@ struct gp32 {
     char error[256];
     gp32_elapsed_time_t elapsed;
     gp32_frame_time_t frame_time;
+    /* Dispatch-only; settled before returning to a public run/save boundary. */
+    uint32_t direct_hle_pending_volume; /* bit 8 marks a pending six-bit value */
+    int direct_cpu_running;
     int direct_fxe_mode;
     uint32_t direct_fxe_entry;
     uint32_t direct_fxe_stack;
@@ -263,7 +270,10 @@ static uint32_t direct_pcm_cursor_addr(const gp32_t *g) {
 
 static void direct_update_fw_tick(gp32_t *g);
 static void direct_hle_audio_tick(gp32_t *g, uint32_t cycles, uint32_t clock);
-static void direct_hle_gpos_timer_tick(gp32_t *g, uint32_t cycles, uint32_t clock);
+static void direct_hle_gpos_timer_prepare(gp32_t *g, uint32_t cycles, uint32_t clock,
+                                        direct_timer_due_t pending[GP32_DIRECT_GPOS_TIMER_COUNT]);
+static void direct_hle_gpos_timer_dispatch(gp32_t *g,
+                                         const direct_timer_due_t pending[GP32_DIRECT_GPOS_TIMER_COUNT]);
 static gp32_status_t gp32_load_fxe_image_internal(gp32_t *g, fxe_image_t *img, int update_reset_image, int scan_file_hle, int init_smc_gpio, int preserve_hle_options);
 static int direct_handle_swi_gpos_timer(gp32_t *g, arm920t_t *cpu, uint32_t pc);
 static void direct_tick_sdk_task_sleepers(gp32_t *g, uint32_t first_task, uint32_t last_task, uint32_t ticks);
@@ -299,16 +309,36 @@ static void direct_account_elapsed(gp32_t *g, uint32_t cycles, uint32_t clock) {
 }
 
 static uint32_t direct_run_cpu(gp32_t *g, uint32_t cycles, uint32_t clock) {
+    int was_running = g->direct_cpu_running;
+    g->direct_cpu_running = 1;
     uint32_t done = s3c2400_run_cpu(g->soc, cycles);
+    g->direct_cpu_running = was_running;
     direct_account_elapsed(g, done, clock);
+    /* A refill/timer callback is already outside the foreground audio prefix.
+       Commit its command after hardware time, before its next instruction. */
+    if (g->direct_hle_callback_running && g->direct_hle_pending_volume) {
+        uint32_t volume = g->direct_hle_pending_volume;
+        g->direct_hle_pending_volume = 0;
+        s3c2400_audio_set_volume(g->soc, volume);
+    }
     return done;
 }
 
 static void direct_hle_tick(gp32_t *g, uint32_t cycles, uint32_t clock) {
     /* Every consumer receives the rate at which these cycles elapsed, even
      * if a timer/refill callback changes the clock before mixing finishes. */
-    direct_hle_gpos_timer_tick(g, cycles, clock);
+    /* Mix the elapsed prefix before either the foreground command or a timer
+       callback can change its gain. SDK refills remain at sample boundaries
+       inside audio_tick; their commands precede this foreground command. */
+    uint32_t volume = g->direct_hle_pending_volume;
+    g->direct_hle_pending_volume = 0;
+    direct_timer_due_t pending[GP32_DIRECT_GPOS_TIMER_COUNT] = {0};
+    /* A refill may start or replace a timer. Capture the old lifetimes before
+       it runs so new timers cannot inherit this already elapsed interval. */
+    direct_hle_gpos_timer_prepare(g, cycles, clock, pending);
     direct_hle_audio_tick(g, cycles, clock);
+    if (volume) s3c2400_audio_set_volume(g->soc, volume);
+    direct_hle_gpos_timer_dispatch(g, pending);
     uint32_t next_clock = direct_run_clock_hz(g);
     if (next_clock == clock) return;
     /* Remainders are fractions with the old clock as denominator. Normalize
@@ -778,6 +808,8 @@ static void direct_set_lcd_8bpp(gp32_t *g, uint32_t fb_addr, uint32_t pal_addr) 
 
 static void direct_reset_hle_runtime(gp32_t *g, int preserve_hle_options) {
     if (!g) return;
+    g->direct_hle_pending_volume = 0;
+    g->direct_cpu_running = 0;
     uint32_t saved_rate_override = preserve_hle_options ? g->direct_hle_audio_rate_override : 0u;
     memset(g->direct_fpk_handles, 0, sizeof(g->direct_fpk_handles));
     g->direct_hle_file_open_addr = 0;
@@ -1789,9 +1821,9 @@ static int direct_gpos_callback_is_scheduler(gp32_t *g, uint32_t callback) {
     return g->direct_hle_gpos_scheduler_callback == (callback & ~1u);
 }
 
-static void direct_hle_gpos_timer_tick(gp32_t *g, uint32_t cycles, uint32_t clock) {
+static void direct_hle_gpos_timer_prepare(gp32_t *g, uint32_t cycles, uint32_t clock,
+                                        direct_timer_due_t pending[GP32_DIRECT_GPOS_TIMER_COUNT]) {
     if (!g || !g->direct_fxe_mode || !g->direct_hle_gpos_timers_enabled || !cycles) return;
-    struct { uint32_t callback, tps, fires, epoch; } pending[GP32_DIRECT_GPOS_TIMER_COUNT] = {0};
     /* Settle elapsed time for every slot before guest callbacks can start or
      * reconfigure another timer. New timers must not inherit pre-start time. */
     for (uint32_t i = 0; i < GP32_DIRECT_GPOS_TIMER_COUNT; ++i) {
@@ -1806,6 +1838,10 @@ static void direct_hle_gpos_timer_tick(gp32_t *g, uint32_t cycles, uint32_t cloc
         pending[i].fires = (uint32_t)(scaled / (uint64_t)clock);
         g->direct_hle_gpos_timer[i].accum = scaled % (uint64_t)clock;
     }
+}
+
+static void direct_hle_gpos_timer_dispatch(gp32_t *g,
+                                         const direct_timer_due_t pending[GP32_DIRECT_GPOS_TIMER_COUNT]) {
     for (uint32_t i = 0; i < GP32_DIRECT_GPOS_TIMER_COUNT; ++i) {
         uint32_t cb = pending[i].callback;
         uint32_t tps = pending[i].tps;
@@ -3005,6 +3041,14 @@ static int direct_fxe_swi(void *user, arm920t_t *cpu, uint32_t imm, uint32_t pc,
     }
     case 0x0e: /* GPSDK sound-buffer allocator used by GpPcmInit. */
         return direct_handle_swi_set_sndbuffer(g, cpu);
+    case 0x17: /* GpControlVolume is void; preserve the caller's registers. */
+        if (g->direct_cpu_running) {
+            g->direct_hle_pending_volume = 0x100u | (arm920t_get_reg(cpu, 0) & 63u);
+            arm920t_stop_run(cpu);
+        } else {
+            s3c2400_audio_set_volume(g->soc, arm920t_get_reg(cpu, 0));
+        }
+        return 1;
     case 0x13: /* GPSDK/GPOS timer and scheduler command-block service. */
         return direct_handle_swi_gpos_timer(g, cpu, pc);
     case 0x11: { /* Direct-mode display callback for GpSurfaceSet/GpSurfaceFlip. */
@@ -4152,6 +4196,8 @@ static void gp32_direct_state_capture(const gp32_t *g, gp32_state_image_t *st) {
 }
 
 static void gp32_direct_state_apply(gp32_t *g, const gp32_state_image_t *st) {
+    g->direct_hle_pending_volume = 0;
+    g->direct_cpu_running = 0;
     direct_set_fxe_mode(g, st->direct_fxe_mode);
     g->direct_fxe_entry = st->direct_fxe_entry;
     g->direct_fxe_stack = st->direct_fxe_stack;

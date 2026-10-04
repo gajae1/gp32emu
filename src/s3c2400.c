@@ -567,6 +567,13 @@ static void audio_append_stereo(s3c2400_t *s, int16_t left, int16_t right, uint3
 static int16_t codec_scale(int16_t sample, uint32_t gain) {
     return (int16_t)(((int32_t)sample * (int32_t)gain) / 65536);
 }
+void s3c2400_audio_set_volume(s3c2400_t *s, uint32_t volume) {
+    if (!s) return;
+    /* The firmware sends a volume byte followed by an unmute/control byte. */
+    gp32_codec_data(&s->codec, GP32_CODEC_ADDR_DATA, (uint8_t)(volume & 63u));
+    gp32_codec_data(&s->codec, GP32_CODEC_ADDR_DATA, 0x80u);
+    s->codec_gain_q16 = gp32_codec_gain_q16(&s->codec);
+}
 static void iis_refresh_clock_cache(s3c2400_t *s);
 
 /*

@@ -45,10 +45,53 @@ unchanged performance on the legacy-state unity path, not an all-game speed
 claim or a measurement of every non-unity workload.
 
 This is a steady-state register model. De-emphasis, soft-mute ramps and
-status-register reset/format behavior remain incomplete. The direct-HLE
-SWI `0x17` service is also not implemented by this change. No claim is made
+status-register clock/format behavior remain incomplete. No claim is made
 that menu pops or every game's crackling are fixed, or that this increases
 gameplay speed.
+
+## Direct-FXE volume service
+
+Direct HLE handles SDK `GpControlVolume` (`SWI 0x17`) through the same codec
+register model. It masks the argument to six bits, then writes control
+`0x80`, exactly as the Korean v1.5.6 and European v1.6.6 firmware services do.
+It preserves r0-r3 and LR. Normal BIOS execution keeps using its real SWI
+vector and GPIO code.
+
+During timed execution the SWI ends the CPU slice. Hardware and software
+audio for that elapsed prefix are settled before its volume is applied.
+The foreground request is captured locally so an SDK refill callback cannot
+overwrite it. Refill commands take effect at the existing sample boundary;
+timer-callback commands take effect after their CPU/SoC slice. Already
+queued samples retain their previous gain, and resampling phases are kept.
+
+GPOS timer accumulation and lifetime snapshots still happen before audio
+generation. Only due-callback dispatch moves after the audio prefix and
+foreground volume commit. A timer started by a refill therefore cannot
+inherit time from before its start; reconfigured slots retain epoch checks.
+Pending commands are dispatch-only and settle before public run returns,
+so the savestate wire format stays at version 9.
+
+Regression coverage includes register preservation, wrapped arguments,
+unmute after GPIO mute, foreground/timer ordering on interpreter and JIT,
+SDK-refill sample boundaries, competing foreground/refill commands and
+timers started by refills. This follows the existing HLE scheduling model:
+callback CPU time is not recursively credited to software mixers, concurrent
+audio producers are not one chronological mix, and manual GPIO codec writes
+during direct HLE still need software-audio boundary handling. It is not
+cycle-exact BIOS replacement.
+
+The local UDA1330ATS datasheet defines soft mute but supplies no ramp
+duration, slope or equation. Volume-step smoothing is also unspecified.
+The instantaneous gain remains an explicit steady-state approximation;
+accurate transitions require additional chip documentation or measurements.
+UDA1330ATS has no RST status bit; the RST layout belongs to UDA1341TS.
+
+The HLE addition passes Windows codec/PCM/timer/state/libretro regressions
+and native H700 codec/PCM/timer tests; all four release targets build.
+Cold direct runs of Story of Bug Eyed Monster and Funny Soccer 2002 for
+1,200 frames match the preceding revision's final PC, video hash, audio
+frame count and audio hash. Funny Soccer's observed window has zero PCM,
+so that comparison does not establish working audio or full gameplay.
 
 Protocol and gain references: NXP
 [UDA1330ATS](https://www.nxp.com/docs/en/data-sheet/UDA1330ATS.pdf),

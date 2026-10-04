@@ -35,6 +35,84 @@ static void append(gp32_t *g) {
     s3c2400_audio_append_s16_stereo(g->soc, 10000, -10000, 44100);
 }
 
+/* Direct-FXE HLE SWI #0x17 (GpControlVolume), observed only through the PCM
+   the SoC captures: r0 wraps modulo 64 into VC5..VC0 (85 == 21, not clamped),
+   every call ends with the 0x80 control byte that clears a previously latched
+   mute, and the inlined service must leave r0-r3 and lr untouched. A BIOS-mode
+   CPU has no installed HLE and takes the ordinary vector-8 path instead. */
+static int swi_volume_call(gp32_t *g, uint32_t at, uint32_t arg) {
+    arm920t_set_reg(g->cpu, 0, arg);
+    arm920t_set_reg(g->cpu, 1, 0xa1a1a1a1u);
+    arm920t_set_reg(g->cpu, 2, 0x5a5a5a5au);
+    arm920t_set_reg(g->cpu, 3, 0xdeadbe00u);
+    arm920t_set_reg(g->cpu, 14, 0x0c00f00du);
+    arm920t_set_reg(g->cpu, 15, at);
+    uint32_t ran = arm920t_run(g->cpu, 1u);
+    int ok = ran == 1u && arm920t_get_pc(g->cpu) == at + 4u &&
+        arm920t_get_reg(g->cpu, 0) == arg &&
+        arm920t_get_reg(g->cpu, 1) == 0xa1a1a1a1u &&
+        arm920t_get_reg(g->cpu, 2) == 0x5a5a5a5au &&
+        arm920t_get_reg(g->cpu, 3) == 0xdeadbe00u &&
+        arm920t_get_reg(g->cpu, 14) == 0x0c00f00du;
+    if (!ok) fprintf(stderr, "swi#0x17 r0=%u: ran=%u pc=%08x r0=%08x r1=%08x r2=%08x r3=%08x lr=%08x\n",
+        (unsigned)arg, (unsigned)ran, arm920t_get_pc(g->cpu),
+        arm920t_get_reg(g->cpu, 0), arm920t_get_reg(g->cpu, 1),
+        arm920t_get_reg(g->cpu, 2), arm920t_get_reg(g->cpu, 3),
+        arm920t_get_reg(g->cpu, 14));
+    return ok;
+}
+
+static int check_direct_swi_volume(void) {
+    const uint32_t at = GP32_RAM_BASE + 0x40000u;
+    uint8_t code[8];
+    gp32_st32le(code, 0xef000017u);      /* svc #0x17 */
+    gp32_st32le(code + 4u, 0xeafffffeu); /* parked after the call */
+    int ok = 1;
+    for (int jit = 0; jit <= 1; ++jit) {
+        gp32_t *g = gp32_create(NULL);
+        if (!g) return 0;
+        gp32_set_jit(g, jit);
+
+        /* BIOS mode: no installed HLE, so the same opcode takes vector 8 and
+           leaves the codec at its unity reset gain. */
+        s3c2400_write32(g->soc, at, 0xef000017u);
+        arm920t_set_cpsr(g->cpu, 0xd3u);
+        arm920t_set_reg(g->cpu, 0, 21u);
+        arm920t_set_reg(g->cpu, 15, at);
+        int vectored = arm920t_run(g->cpu, 1u) == 1u && arm920t_get_pc(g->cpu) == 8u;
+        if (!vectored) fprintf(stderr, "bios swi#0x17: pc=%08x expected 00000008\n",
+            arm920t_get_pc(g->cpu));
+        append(g);
+        ok &= vectored && frame_is(g, 0, 10000, -10000);
+
+        fxe_image_t img = {0};
+        img.payload = code; img.payload_size = sizeof(code);
+        img.load_addr = img.entry_addr = at;
+        if (gp32_load_fxe_image_internal(g, &img, 0, 0, 0, 0) != GP32_OK) {
+            fputs("FAIL: direct FXE fixture load\n", stderr);
+            gp32_destroy(g);
+            return 0;
+        }
+        s3c2400_write32(g->soc, 0x1560002cu, 0x540000u); /* GPE9..11 outputs */
+        gp32_clear_audio(g);
+        arm920t_set_cpsr(g->cpu, 0xd3u);
+        ok &= swi_volume_call(g, at, 21u);
+        append(g);
+        ok &= swi_volume_call(g, at, 85u);
+        append(g);
+        ok &= swi_volume_call(g, at, 63u);
+        append(g);
+        command(g, 0x14u, 0x84u); /* latch the mute bit over the L3 wire */
+        ok &= swi_volume_call(g, at, 21u);
+        append(g);
+        ok &= frame_is(g, 0, 1000, -1000) && frame_is(g, 1, 1000, -1000) &&
+            frame_is(g, 2, 0, 0) && frame_is(g, 3, 1000, -1000);
+        gp32_destroy(g);
+    }
+    if (!ok) fputs("FAIL: direct-FXE SWI #0x17 GpControlVolume\n", stderr);
+    return ok;
+}
+
 static int check_clock_edge_timing(void) {
     gp32_t *g = gp32_create(NULL);
     if (!g) return 0;
@@ -71,6 +149,7 @@ static int check_clock_edge_timing(void) {
 
 int main(void) {
     if (!check_clock_edge_timing()) return 1;
+    if (!check_direct_swi_volume()) return 1;
     gp32_t *g = gp32_create(NULL);
     if (!g) return 2;
     s3c2400_write32(g->soc, 0x1560002cu, 0x540000u); /* GPE9..11 outputs */

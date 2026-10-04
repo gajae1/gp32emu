@@ -35,6 +35,8 @@ const uint32_t *s3c2400_framebuffer(s3c2400_t *soc, uint32_t *w, uint32_t *h, ui
 const int16_t *s3c2400_audio_samples(s3c2400_t *soc, uint64_t *frames, uint32_t *sample_rate_hz);
 void s3c2400_audio_append_u8_mono(s3c2400_t *soc, const uint8_t *samples, uint32_t sample_count, uint32_t sample_rate_hz);
 void s3c2400_audio_append_s16_stereo(s3c2400_t *soc, int16_t left, int16_t right, uint32_t sample_rate_hz);
+/* HLE GpControlVolume: call only after settling audio for elapsed cycles. */
+void s3c2400_audio_set_volume(s3c2400_t *soc, uint32_t volume);
 int s3c2400_audio_consume(s3c2400_t *soc, uint64_t frames);
 void s3c2400_audio_clear(s3c2400_t *soc);
 /* Capture timed silence while IIS is stopped. Disabled for standalone SoC

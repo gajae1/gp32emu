@@ -63,6 +63,134 @@ static int check_sdk_refill_slicing(uint32_t half_samples) {
     return ok;
 }
 
+static int check_sdk_refill_volume(int foreground) {
+    gp32_t *g = sdk_stream_fixture(2u);
+    if (!g) return 0;
+    const uint32_t buffer = GP32_RAM_BASE + 0x8000u;
+    const uint32_t fill = GP32_RAM_BASE + 0xc000u;
+    for (unsigned i = 0; i < 4u; ++i)
+        s3c2400_write16(g->soc, buffer + i * 2u, 42768u); /* unsigned PCM: +10000 */
+    s3c2400_write32(g->soc, fill, 0xe3a00015u);      /* MOV r0,#21 */
+    s3c2400_write32(g->soc, fill + 4u, 0xef000017u); /* GpControlVolume */
+    s3c2400_write32(g->soc, fill + 8u, 0xe12fff1eu); /* BX lr */
+    if (foreground) {
+        const uint32_t code = GP32_RAM_BASE + 0x20000u; /* Separate from the SDK mixer. */
+        for (unsigned i = 0; i < 6000u; ++i)
+            s3c2400_write32(g->soc, code + i * 4u, 0xe1a02002u);
+        s3c2400_write32(g->soc, code + 24000u, 0xef000017u);
+        arm920t_set_reg(g->cpu, 0, 0u); /* Foreground requests unity after the refill's 21. */
+        arm920t_set_reg(g->cpu, 15, code);
+        gp32_run_cycles(g, 6001u);
+    } else {
+        direct_sdk_sound_tick(g, 66000u, 66000000u);
+    }
+    uint64_t frames = 0;
+    const int16_t *pcm = s3c2400_audio_samples(g->soc, &frames, NULL);
+    int ok = pcm && frames == (foreground ? 4u : 44u);
+    for (uint64_t i = 0; i < frames; ++i) {
+        int16_t want = i < 2u ? 10000 : 1000;
+        ok &= pcm[i * 2u] == want && pcm[i * 2u + 1u] == want;
+    }
+    gp32_clear_audio(g);
+    s3c2400_audio_append_s16_stereo(g->soc, 10000, -10000, 44100u);
+    pcm = s3c2400_audio_samples(g->soc, &frames, NULL);
+    int16_t final_gain = foreground ? 10000 : 1000;
+    ok &= pcm && frames == 1u && pcm[0] == final_gain && pcm[1] == -final_gain;
+    if (!ok) fputs("FAIL: refill volume must affect only samples after its callback\n", stderr);
+    gp32_destroy(g);
+    return ok;
+}
+
+static int check_sdk_refill_starts_timer(void) {
+    gp32_t *g = sdk_stream_fixture(2u);
+    if (!g) return 0;
+    const uint32_t fill = GP32_RAM_BASE + 0xc000u;
+    const uint32_t command = GP32_RAM_BASE + 0xd000u;
+    const uint32_t count_fn = GP32_RAM_BASE + 0xe000u;
+    const uint32_t counter = GP32_RAM_BASE + 0xf000u;
+    const uint32_t start_code[] = {0xe59f0004u, 0xef000013u, 0xe12fff1eu, command};
+    const uint32_t count_code[] = {
+        0xe59f000cu, 0xe5901000u, 0xe2811001u, 0xe5801000u, 0xe12fff1eu, counter,
+    };
+    for (unsigned i = 0; i < GP32_ARRAY_COUNT(start_code); ++i)
+        s3c2400_write32(g->soc, fill + i * 4u, start_code[i]);
+    for (unsigned i = 0; i < GP32_ARRAY_COUNT(count_code); ++i)
+        s3c2400_write32(g->soc, count_fn + i * 4u, count_code[i]);
+    s3c2400_write32(g->soc, command, 4u); /* Enable previously configured timer 0. */
+    s3c2400_write32(g->soc, command + 4u, 0u);
+    g->direct_hle_gpos_timer[0].configured = 1u;
+    g->direct_hle_gpos_timer[0].tps = 1000u;
+    g->direct_hle_gpos_timer[0].callback = count_fn;
+    direct_hle_tick(g, 66000u, 66000000u);
+    int ok = g->direct_hle_gpos_timer[0].enabled &&
+        g->direct_hle_gpos_timer[0].accum == 0u &&
+        s3c2400_debug_read32(g->soc, counter) == 0u;
+    g->direct_hle_sdk_sndmixer_addr = 0u;
+    direct_hle_tick(g, 66000u, 66000000u);
+    ok &= s3c2400_debug_read32(g->soc, counter) == 1u;
+    if (!ok) fputs("FAIL: refill-started timer inherited elapsed time before its start\n", stderr);
+    gp32_destroy(g);
+    return ok;
+}
+
+static int volume_span_matches(gp32_t *g, int16_t amplitude) {
+    uint64_t frames = 0;
+    const int16_t *pcm = s3c2400_audio_samples(g->soc, &frames, NULL);
+    if (!pcm || !frames) return 0;
+    for (uint64_t i = 0; i < frames; ++i)
+        if (pcm[i * 2u] != amplitude || pcm[i * 2u + 1u] != -amplitude) return 0;
+    return 1;
+}
+
+static int check_hle_volume_order(int jit, int callback) {
+    gp32_t *g = gp32_create(NULL);
+    if (!g) return 0;
+    direct_set_fxe_mode(g, 1u);
+    direct_install_stubs(g);
+    gp32_set_jit(g, jit);
+    s3c2400_write32(g->soc, 0x14800004u, 0x3000u);
+    s3c2400_write32(g->soc, 0x14800014u, 0u); /* 66 MHz */
+    const uint32_t source = GP32_RAM_BASE + 0x40000u;
+    s3c2400_write16(g->soc, source, 42768u);
+    s3c2400_write16(g->soc, source + 2u, 22768u); /* unsigned PCM: +10000,-10000 */
+    g->direct_hle_pcm_ch[0].active = 1u;
+    g->direct_hle_pcm_ch[0].src_addr = source;
+    g->direct_hle_pcm_ch[0].size_bytes = 4u;
+    g->direct_hle_pcm_ch[0].stereo = 1u;
+    g->direct_hle_pcm_ch[0].bits = 16u;
+    g->direct_hle_pcm_ch[0].rate = 44100u;
+    g->direct_hle_pcm_ch[0].repeat = 1u;
+    for (unsigned i = 0; i < 6000u; ++i)
+        s3c2400_write32(g->soc, GP32_RAM_BASE + i * 4u, 0xe1a02002u);
+    s3c2400_write32(g->soc, GP32_RAM_BASE + 24000u,
+                   callback ? 0xe1a02002u : 0xef000017u);
+    s3c2400_write32(g->soc, GP32_RAM_BASE + 24004u, 0xeafffffeu);
+    if (callback) {
+        const uint32_t fn = GP32_RAM_BASE + 0x20000u;
+        s3c2400_write32(g->soc, fn, 0xe3a00015u);      /* MOV r0,#21 */
+        s3c2400_write32(g->soc, fn + 4u, 0xef000017u); /* GpControlVolume */
+        s3c2400_write32(g->soc, fn + 8u, 0xe12fff1eu);
+        g->direct_hle_gpos_timers_enabled = 1u;
+        g->direct_hle_gpos_timer[0].configured = 1u;
+        g->direct_hle_gpos_timer[0].enabled = 1u;
+        g->direct_hle_gpos_timer[0].callback = fn;
+        g->direct_hle_gpos_timer[0].tps = 1000u;
+        g->direct_hle_gpos_timer[0].accum = 66000000u - 6001000u;
+    }
+    arm920t_set_cpsr(g->cpu, 0xd3u);
+    arm920t_set_reg(g->cpu, 0, 21u);
+    arm920t_set_reg(g->cpu, 15, GP32_RAM_BASE);
+    int ok = gp32_run_cycles(g, 6001u) == GP32_OK && volume_span_matches(g, 10000);
+    ok &= callback ? g->direct_hle_callback_returned != 0u :
+                     gp32_get_pc(g) == GP32_RAM_BASE + 24004u;
+    gp32_clear_audio(g);
+    g->direct_hle_gpos_timers_enabled = 0u;
+    ok &= gp32_run_cycles(g, 6000u) == GP32_OK && volume_span_matches(g, 1000);
+    if (!ok) fprintf(stderr, "FAIL: volume ordering jit=%d callback=%d\n", jit, callback);
+    gp32_destroy(g);
+    return ok;
+}
+
 static int check_hle_pcm_clock_domains(void) {
     /* Equal wall time must yield the same stream under different CPU/bus
      * ratios, including the high-PLL effective instruction-budget clock. */
@@ -537,6 +665,11 @@ static int check_sdk_buffer_ownership(void) {
 }
 
 int main(void) {
+    if (!check_sdk_refill_volume(0) || !check_sdk_refill_volume(1) ||
+        !check_sdk_refill_starts_timer()) return 1;
+    for (int jit = 0; jit <= 1; ++jit)
+        for (int callback = 0; callback <= 1; ++callback)
+            if (!check_hle_volume_order(jit, callback)) return 1;
     if (!check_sdk_buffer_ownership()) return 1;
     if (!check_timed_idle_audio()) return 1;
     if (!check_mixed_rate_queue()) return 1;
