@@ -82,11 +82,27 @@ its guest loop waits for `LINECNT == 8`, which frame-aligned coarse CPU slices
 could miss indefinitely. The development core limits a run at the next visible
 line transition only after an actual LCD status read. The captured Pinball state
 now reaches a background/copyright screen after 120 frames. This establishes
-progress past that wait, not gameplay compatibility. The candidate is not
-installed on H700 because its measured scheduling cost still needs optimization.
+progress past that wait, not gameplay compatibility. The correction is now
+installed on H700 together with counted-poll acceleration (current source
+`e153e45`); its scheduling cost and bounded performance results are documented
+in `GP32_PERFORMANCE_STRATEGY.md`.
 Private evidence: `resume84-lcd/demand-120frames/`, `device-demand.json`, and
 `demand-parity.json` (matching PC/AArch64 CPU, video and PCM results in three
-existing replay scenes). The installed FIFO fix remains unchanged.
+existing replay scenes). The current core retains the FIFO restart correction.
+
+A follow-up using the frozen `e153e45` PC headless build reproduces that saved
+screen byte-for-byte, generates nonzero PCM and advances through copyright
+fade-out to the Logik State logo. From the saved logo state, one 2400-frame
+continuation with spaced START/A presses reaches the Ignition table-selection
+and high-score screen. A further 240-frame continuation with A pressed at
+frames 5-16 reaches the **Ignition playfield**, confirmed by viewing the capture.
+This establishes progress into the game and a responding selection input;
+ball launch, scoring, flippers, other tables and long-session behavior remain
+untested. It is a state-continuation result, not a new complete cold-boot or
+H700 gameplay acceptance test. No ROM/BIOS modifications or audio playback were
+used. Evidence: `resume90-pinball/FINDINGS.md`,
+`parent-next/{command,input-manifest}.json`, and
+`parent-next/table-select/{command.json,screen.png,end.state}`.
 
 Further original-BIOS analysis locates a two-directory list builder that tries
 both `gp:\\game\\` and `gp:\\gpmm\\`. GlooP's root contains GPMM but no GAME.

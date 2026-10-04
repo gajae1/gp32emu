@@ -1932,6 +1932,16 @@ portable CPU path; native-JIT writer attribution remains untested. No guest
 patch, saturation rule or output filter was added. Evidence is retained in
 `resume87-pcm-writer/FINDINGS.md` and its private store/read traces.
 
+A bounded follow-up with the Windows core from `3c5fe05` also compares JIT
+enabled and disabled over the same two-frame state replay. Both deliver the
+same 367 stereo frames at 11035 Hz, identical full PCM bytes, CPU register/
+cycle/IIS state and audio-buffer RAM. The PCM hash matches the earlier frozen
+capture, including the wrapped samples. The x64 backend generated native code,
+but profiling was off: code-arena usage establishes emission, not execution
+counts or attribution of the specific mixer block. This is JIT-mode parity
+evidence, not a per-instruction native trace. No production audio patch was
+justified. Evidence: `resume90-audio-native/FINDINGS.md` and its captures.
+
 ### Generic counted polling with observed native fallback (2026-10-04)
 
 The CPU recognizes a bounded signed countdown with fixed word loads and
@@ -1994,3 +2004,8 @@ Windows build and prior reference exactly. Existing PC poll/progress fixtures
 and Windows/H700/Android builds pass; no new synthetic tests were added for
 this control-flow-equivalent bookkeeping change. Evidence:
 `resume90-dispatch/{manifest,device,summary,pc-parity,build-artifacts}.json`.
+The follow-up core from `e153e45` is installed with SHA-256
+`bc2aa7362216400b7ebdea336d9819d06294d3903d32bacec87383babe7f91ac`.
+The previous core is backed up as `gp32-dev/resume90-dispatch-installed-core-before.so`;
+stock frontend/launcher/configuration hashes remain unchanged. See that
+directory's `installed.json` for readback. No playback or volume command ran.
