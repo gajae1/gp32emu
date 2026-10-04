@@ -2105,7 +2105,60 @@ static void case_native_spsr(void) {
 
 /* CPSR writes retire before dispatch observes a new register bank, execution
  * state or interrupt mask. Source registers must be read before bank swaps. */
+static void case_native_cpsr_same_mode(void) {
+    static const struct { unsigned field; uint32_t privileged, user; } rows[] = {
+        {0u, 0xa23456c0u, 0xa23456c0u},
+        {1u, 0x12345640u, 0x123456c0u},
+        {2u, 0x12345ac0u, 0x123456c0u},
+        {4u, 0x125a56c0u, 0x123456c0u},
+        {7u, 0x125a5a40u, 0x123456c0u},
+        {9u, 0xa5345640u, 0xa53456c0u},
+        {15u, 0xa55a5a40u, 0xa53456c0u},
+    };
+    static const unsigned modes[] = {0x13u, 0x10u, 0x11u, 0x1fu};
+    for (unsigned i = 0; i < GP32_ARRAY_COUNT(rows); ++i) {
+        current_case = "native-cpsr-live-privilege";
+        setup_pair();
+        seed_spsr_banks();
+        const uint32_t program[] = {0xe120f001u | (rows[i].field << 16), 0xeafffffeu};
+        load_both(program, GP32_ARRAY_COUNT(program));
+        uint64_t misses = 0;
+        for (unsigned j = 0; j < GP32_ARRAY_COUNT(modes); ++j) {
+            unsigned m = modes[j];
+            set_cpsr_both(0x123456c0u | m);
+            set_reg_both(1u, 0xa55a5a40u | (m == 0x10u ? 0x11u : m));
+            set_pc_both(CODE_ADDR);
+            CHECK(arm920t_run(cpu_jit, 1u) == 1u, "CPSR exact native budget");
+            CHECK(arm920t_run(cpu_ref, 1u) == 1u, "CPSR exact reference budget");
+            compare_state();
+            CHECK(arm920t_get_cpsr(cpu_ref) ==
+                  ((m == 0x10u ? rows[i].user : rows[i].privileged) | m),
+                  "live privilege and selected CPSR bytes");
+            CHECK(arm920t_get_pc(cpu_ref) == CODE_ADDR + 4u, "MSR retires once");
+            arm920t_register_context_t actual = {0}, expected = {0};
+            arm920t_get_register_context(cpu_jit, &actual);
+            arm920t_get_register_context(cpu_ref, &expected);
+            CHECK(!memcmp(&actual, &expected, sizeof(actual)), "CPSR preserves banked state");
+            if (j) CHECK(arm920t_get_jit_misses(cpu_jit) == misses,
+                         "reuse compiled MSR across privilege modes");
+            misses = arm920t_get_jit_misses(cpu_jit);
+        }
+        gp32_cpu_profile_t profile;
+        arm920t_get_cpu_profile(cpu_jit, &profile);
+        if (profile.supported && profile.native_backend == 2u) {
+            CHECK(profile.native_arm_insns == GP32_ARRAY_COUNT(modes), "native MSR coverage");
+            /* A control-byte write with a deliberately different USER source
+             * mode takes the shared privilege helper. Other writes stay native;
+             * architectural expectations above do not depend on that route. */
+            CHECK(profile.helper_interp_ops == ((rows[i].field & 1u) ? 1u : 0u),
+                  "only USER's different source mode needs the privilege helper");
+        }
+        teardown_pair();
+    }
+}
+
 static void case_native_cpsr(void) {
+    case_native_cpsr_same_mode();
     const uint32_t bank_program[] = {
         0xe12ff00du, /* MSR CPSR_fsxc,sp: source is the outgoing SVC bank */
         0xe1a06008u, /* MOV r6,r8: observe incoming FIQ bank */
