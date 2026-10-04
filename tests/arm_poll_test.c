@@ -871,6 +871,27 @@ static void counted_setup(unsigned jit, uint32_t counter) {
 
 static void case_counted_poll(void) {
     for (unsigned jit = 0; jit < 2; ++jit) {
+        current_case = "counted-already-stable-entry";
+        counted_setup(jit, 100u);
+        arm920t_set_trace(cpu_ref, 1, NULL, NULL);
+        /* A prior run can leave the input accumulators and scratch register
+         * stable already. Still observe both real loads in this new run. */
+        set_reg_both(3, 0xf0f0aa55u); set_reg_both(4, 0x55aa0ff0u);
+        set_reg_both(5, 0x55aa0ff0u); set_cpsr_both(0x200000d3u);
+        CHECK(arm920t_run(cpu_fast, 16u) == arm920t_run(cpu_ref, 16u), "warm entry budget");
+        compare_state(1);
+        CHECK(bus_fast.r32 == 2u && bus_ref.r32 == 4u,
+              "one real stable observation suffices for the second repetition");
+        /* Changed host input must be consumed even when the previous run
+         * established a fixed point; no entry proof persists between runs. */
+        store_both(DATA_ADDR, 0x0000ff00u);
+        store_both(DATA_ADDR + 4u, 0xff000000u);
+        CHECK(arm920t_run(cpu_fast, 17u) == arm920t_run(cpu_ref, 17u), "changed input partial budget");
+        compare_state(1);
+        CHECK(arm920t_get_reg(cpu_fast, 3) == 0x0000aa00u &&
+              arm920t_get_reg(cpu_fast, 4) == 0x55000000u, "fresh input after previous proof");
+        teardown_pair();
+
         current_case = jit ? "counted-native-enabled" : "counted-portable";
         counted_setup(jit, 10000u);
         run_chunks(CHUNKS, NCHUNKS, 1, NULL, NULL);

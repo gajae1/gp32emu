@@ -2960,3 +2960,47 @@ expectation also failed without the new tests; it now expects the existing
 small-raw-image geometry's exact 4 MiB ID. Windows GUI/libretro and Android
 arm64/v7a builds pass. Android runtime, acoustic output and all-game/long-session
 acceptance remain unverified. Evidence: `results/resume114-live-mmio/`.
+
+### Prove an already-stable counted loop from its entry state (2026-10-05)
+
+Counted polling previously required two observed portable repetitions even
+when the first repetition preserved every non-counter register and CPSR.
+The dispatcher now snapshots the entry state before that real repetition;
+the existing fixed-point/delta/mapping checks can then prove the remaining
+repetitions redundant. Every new run still performs actual reads before a
+skip. Changed inputs, partial loops, invalidation, interrupts and shortened
+deadlines retain the existing rejection and accounting rules.
+
+This applies only to the existing counted-loop whitelist: fixed-address
+word loads, counter-independent AND operations, a positive SUB step and the
+checked exit/backedge. General polling and stack-writing leaf wrappers are
+excluded; their first pass can change hidden memory despite equal registers.
+An initial broader experiment was rejected for that missing proof, regardless
+of its benchmark result. No game-specific addresses or new persistent state
+are introduced; the guest clock and retired cycle count remain unchanged.
+
+Final H700 ABBA against the installed live-GPIO version (`390e48c73f0b`),
+all measured samples at 1512 MHz, all seven CPU/video/PCM outputs identical:
+
+| Replay | Baseline median core fps | Candidate median | Change |
+| --- | ---: | ---: | ---: |
+| Princess slot 0, 600 warmup / 600 measured | 82.952 | 101.931 | +22.88% |
+| Her Knights combat, 1200 warmup / 1200 measured | 142.685 | 141.7415 | -0.66% |
+
+The small measured Her regression is retained in the evidence and accepted
+against the substantial improvement in the heavier Princess replay; this is
+not a claim of a speedup in every game. There were 24/32 measured frequency
+samples, respectively. These are core throughput figures, not display FPS.
+
+In the 600/1200 Princess profile, portable instructions fall from 42,907,021
+to 23,933,629 versus the prior live-GPIO profile. Exactly 18,973,392 instructions
+move into accounted polling skips; native instructions, JIT hits/misses and
+all seven CPU/video/PCM outputs stay identical.
+
+The focused regression starts with already-stable accumulators/CPSR, proves
+that one real observation is followed by an exact skipped repetition, changes
+the input, and compares a partial subsequent run against the traced interpreter.
+PC and H700 polling tests pass, as do the full H700 ARM differential and audio
+queue/resampling/lifecycle tests. Windows GUI/libretro, H700 and Android32/64
+builds pass. Evidence: `results/resume115-poll-entry/`. No additional acoustic,
+Android runtime or all-game acceptance is claimed.

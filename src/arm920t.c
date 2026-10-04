@@ -3415,6 +3415,18 @@ static uint32_t arm_jit_run(arm920t_t *c, uint32_t run_done) {
 
         if (!done) {
             stable_reads = c->bus.is_stable_read32 && b->poll_prefix;
+            /* A real complete repetition may already be a fixed point of
+             * its entry state. Seed that comparison once, rather than always
+             * requiring a second observed repetition. Per-access stability,
+             * cached mappings and all post-execution fences still prove it;
+             * Only the counted load/AND body has no hidden memory writes:
+             * leaf wrappers may initialize a stack slot on their first pass. */
+            if (stable_reads && counted && poll_pc != pc) {
+                poll_pc = pc;
+                poll_count = b->count;
+                poll_cpsr = c->cpsr;
+                memcpy(poll_regs, c->r, sizeof(poll_regs));
+            }
             done = arm_jit_run_portable(c, b, c->run_limit - total, total, &stable_reads);
         }
         if (!done) break;
