@@ -93,6 +93,17 @@ static int parse_args(int argc, char **argv, app_options_t *o) {
     return 1;
 }
 
+/* Close and reopen the audio backend so host audio queued before a machine
+ * state change cannot play on.  The core drops its unread PCM on a successful
+ * state load; this drops the matching host queue the same way Qt and Win64 do,
+ * and reuses the original options so rate and buffering are unchanged. */
+static void sdl3_audio_reopen(gp32_audio_backend_t **audio, const gp32_audio_options_t *options) {
+    if (!audio || !*audio) return;
+    gp32_audio_destroy(*audio);
+    *audio = gp32_audio_sdl3_create(options);
+    if (!*audio) fprintf(stderr, "SDL audio unavailable: %s\n", SDL_GetError());
+}
+
 int main(int argc, char **argv) {
     app_options_t args;
     if (!parse_args(argc, argv, &args)) {
@@ -196,11 +207,11 @@ int main(int argc, char **argv) {
     }
 
     gp32_audio_backend_t *audio = NULL;
+    gp32_audio_options_t aopt;
+    memset(&aopt, 0, sizeof(aopt));
+    aopt.sample_rate_hz = args.audio_rate;
+    aopt.buffer_frames = 2048u;
     if (!args.no_audio) {
-        gp32_audio_options_t aopt;
-        memset(&aopt, 0, sizeof(aopt));
-        aopt.sample_rate_hz = args.audio_rate;
-        aopt.buffer_frames = 2048u;
         audio = gp32_audio_sdl3_create(&aopt);
         if (!audio) fprintf(stderr, "SDL audio unavailable: %s\n", SDL_GetError());
     }
@@ -229,6 +240,8 @@ int main(int argc, char **argv) {
             gp32_status_t lst = gp32_load_state(g, args.state_path);
             fprintf(stderr, "%s state: %s\n", lst == GP32_OK ? "loaded" : "load", lst == GP32_OK ? args.state_path : gp32_get_error(g));
             if (lst == GP32_OK) {
+                /* The loaded state must not be preceded by pre-load sound. */
+                sdl3_audio_reopen(&audio, &aopt);
                 emu_accum_units = 1000000ull;
             }
         }

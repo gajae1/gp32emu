@@ -717,6 +717,40 @@ static void a64_block_dt_transfer(a64_emit_t *e, const arm_jit_op_t *op,
     unsigned idx = 0;
     for (unsigned r = 0; r < 16u; ++r) {
         if (!(list & (1u << r))) continue;
+        if (!two_page && r < 14u) {
+            uint32_t remaining = list & 0x7fffu & ~((1u << (r + 1u)) - 1u);
+            if (remaining) {
+                unsigned next = arm_ctz16(remaining);
+                /* The complete aligned span was proved to be direct RAM
+                 * before any mutation. Pair adjacent transfer slots, even
+                 * for sparse guest lists; PC retains its precheck and scalar
+                 * pipeline semantics. Cross-page fragments stay scalar.
+                 * w2 (writeback), w5 (page split) and w14 (PC) survive. */
+                uint32_t ram_pair = (load ? 0x29400000u : 0x29000000u) |
+                                    (idx << 15) | (3u << 10) | (12u << 5) | 1u;
+                uint32_t guest_pair = (load ? 0x29000000u : 0x29400000u) |
+                    ((uint32_t)(offsetof(arm920t_t, r) / 4u + r) << 15) |
+                    (3u << 10) | (19u << 5) | 1u;
+                if (load) {
+                    a64_u32(e, ram_pair); /* ldp w1, w3, [x12, #idx*4] */
+                    if (next == r + 1u) a64_u32(e, guest_pair);
+                    else {
+                        a64_put_guest(e, r, 1);
+                        a64_put_guest(e, next, 3);
+                    }
+                } else {
+                    if (next == r + 1u) a64_u32(e, guest_pair);
+                    else {
+                        a64_guest(e, 1, r, op->pc);
+                        a64_guest(e, 3, next, op->pc);
+                    }
+                    a64_u32(e, ram_pair); /* stp w1, w3, [x12, #idx*4] */
+                }
+                r = next;
+                idx += 2u;
+                continue;
+            }
+        }
         unsigned base = 12u, off = idx;
         if (two_page) {
             /* cmp w5, #idx; csel x13, x12, x15, HI selects page 0 exactly

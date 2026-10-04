@@ -46,6 +46,9 @@ static int g_reset_calls;
 static int g_client_stopped;
 static int g_stop_before_reset;
 static int g_render_calls;
+static UINT32 g_requested_frames;
+static UINT32 g_released_frames;
+static int16_t g_render_scratch[8192 * 2];
 static gp32_win64_audio_t g_audio;
 
 static HRESULT STDMETHODCALLTYPE fake_get_current_padding(IAudioClient *This, UINT32 *pNumPaddingFrames) {
@@ -62,14 +65,17 @@ static HRESULT STDMETHODCALLTYPE fake_reset(IAudioClient *This) {
     return S_OK;
 }
 static HRESULT STDMETHODCALLTYPE fake_get_buffer(IAudioRenderClient *This, UINT32 NumFramesRequested, BYTE **ppData) {
-    (void)This; (void)NumFramesRequested;
+    (void)This;
     ++g_render_calls;
-    if (ppData) *ppData = NULL;
-    return E_FAIL;
+    g_requested_frames = NumFramesRequested;
+    if (!ppData || NumFramesRequested > 8192u) return E_FAIL;
+    *ppData = (BYTE *)g_render_scratch;
+    return S_OK;
 }
 static HRESULT STDMETHODCALLTYPE fake_release_buffer(IAudioRenderClient *This, UINT32 NumFramesWritten, DWORD dwFlags) {
-    (void)This; (void)NumFramesWritten; (void)dwFlags;
+    (void)This; (void)dwFlags;
     ++g_render_calls;
+    g_released_frames += NumFramesWritten;
     return S_OK;
 }
 
@@ -186,6 +192,69 @@ int main(void) {
     CHECK(control_rc == 0, "control submit returns 0");
     uint32_t control_at = (control_read + control_frames) % g_audio.frame_cap;
     CHECK(g_audio.queue[control_at * 2] == 0, "submit without the underrun flag does not fade");
+
+    /* After start, the ring can be empty while the endpoint still holds
+     * the prebuffered audio. Its unused space must not become a silence gap. */
+    WAVEFORMATEX pcm;
+    memset(&pcm, 0, sizeof pcm);
+    pcm.wFormatTag = WAVE_FORMAT_PCM;
+    pcm.nChannels = 2;
+    pcm.nSamplesPerSec = 48000;
+    pcm.wBitsPerSample = 16;
+    pcm.nBlockAlign = 4;
+    pcm.nAvgBytesPerSec = 48000u * 4u;
+    g_audio.mixfmt = &pcm;
+    g_audio.wasapi_buffer_frames = 4800;
+    g_audio.read_frame = 0;
+    g_audio.frame_count = 0;
+    g_audio.underrun = 0;
+    g_audio.last_ring_l = 0;
+    g_audio.last_ring_r = 0;
+    g_audio.have_last_ring = 0;
+    g_audio.playback_started = 0;
+    g_audio.wasapi_started = 0;
+
+    static int16_t prebuffer[4096 * 2];
+    for (int i = 0; i < 4096; ++i) { prebuffer[i * 2 + 0] = 1000; prebuffer[i * 2 + 1] = -1000; }
+    CHECK(ensure_queue(&g_audio, 4096u) == 1, "queue capacity for the prebuffer case");
+    ring_write_bulk_unlocked(&g_audio, prebuffer, 4096u);
+
+    g_client.padding = 0;
+    g_start_calls = 0; g_stop_calls = 0; g_reset_calls = 0;
+    g_render_calls = 0; g_requested_frames = 0; g_released_frames = 0;
+    CHECK(gp32_win64_audio_pump_backend(&g_audio) == 0, "prebuffer pump returns 0");
+    CHECK(g_start_calls == 1, "prebuffer pump started the stream once");
+    CHECK(g_released_frames == 4096u, "prebuffer wrote exactly the queued frames");
+    CHECK(g_audio.frame_count == 0u, "prebuffer consumed the whole queue");
+    CHECK(g_audio.playback_started == 1, "prebuffer pump entered playback");
+    CHECK(g_audio.underrun == 0, "a full prebuffer raises no gap");
+
+    /* Real post-start state: empty ring, endpoint 4096 frames in the 4800 frame buffer. */
+    g_client.padding = 4096;
+    g_render_calls = 0; g_requested_frames = 0; g_released_frames = 0;
+    CHECK(gp32_win64_audio_pump_backend(&g_audio) == 0, "empty-ring pump returns 0");
+    CHECK(g_render_calls == 0, "no endpoint buffer is requested without queued audio");
+    CHECK(g_released_frames == 0u, "the pump fabricates no silence after a start");
+    CHECK(g_audio.underrun == 0, "an empty ring on a running stream raises no gap");
+
+    /* Partial ring: only the real frames may reach the endpoint. */
+    static int16_t partial[100 * 2];
+    for (int i = 0; i < 100; ++i) { partial[i * 2 + 0] = 12345; partial[i * 2 + 1] = -12345; }
+    ring_write_bulk_unlocked(&g_audio, partial, 100u);
+    g_audio.last_ring_l = 24000;
+    g_audio.last_ring_r = 24000;
+    g_audio.have_last_ring = 1;
+    for (int i = 100; i < 132; ++i) { g_render_scratch[i * 2 + 0] = -1; g_render_scratch[i * 2 + 1] = -1; }
+    g_render_calls = 0; g_requested_frames = 0; g_released_frames = 0;
+    CHECK(gp32_win64_audio_pump_backend(&g_audio) == 0, "short-ring pump returns 0");
+    CHECK(g_requested_frames == 100u, "the endpoint is asked for exactly the queued frames");
+    CHECK(g_released_frames == 100u, "only real queued frames are rendered");
+    CHECK(g_render_scratch[0] == 12345 && g_render_scratch[1] == -12345,
+          "a rendered frame carries the queued sample");
+    CHECK(g_render_scratch[100 * 2 + 0] == -1 && g_render_scratch[100 * 2 + 1] == -1,
+          "no fade or silence tail is written past the real frames");
+    CHECK(g_audio.underrun == 0, "a short ring raises no gap while the endpoint is buffered");
+    CHECK(g_audio.frame_count == 0u, "the real frames were consumed");
 
     free(g_audio.queue);
     free(g_audio.tmp);
