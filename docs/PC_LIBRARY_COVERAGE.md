@@ -40,4 +40,30 @@ Frozen core baseline: 2341f6c (before GPIO cache/audio delivery changes). 33 col
 
 Summary: 26 reached gameplay/story/application, two menu/setup only, five loading-stalled (including two homebrews). Winter Is story progression is not established merely by selecting Start. Funny Soccer reached character hub/shop but no match.
 
-Source SMC hashes, exact inputs, states and screenshots are in the private `resume83-library` manifest/coverage and per-game run directories. No ROM, BIOS, state or screenshots are committed. Parallel probe/profile timings are not performance acceptance. The handheld is offline for user disassembly; no further device access is authorized until it is ready.
+Source SMC hashes, exact inputs, states and screenshots are in the private `resume83-library` manifest/coverage and per-game run directories. No ROM, BIOS, state or screenshots are committed. Parallel probe/profile timings are not performance acceptance.
+
+## Firmware follow-up
+
+The table above retains the original BIOS baseline (SHA-256 prefix
+`ecf63b73bbd1`). A subsequent unchanged-core/unchanged-SMC cold-start comparison
+used supplied official v1.6.6 images and 3,600 frames per run:
+
+| Title | Beta `c9a09a1be3fd` | 2003-05-21 `797d9ba36794` | 2004-10-10 `ba237195539f` |
+| --- | --- | --- | --- |
+| GlooP Deluxe | Gameplay/HUD | Level selection | Level selection |
+| Tears | Korean story dialogue | Korean story dialogue | Korean story dialogue |
+| Pinball Dreams | White screen, no PCM | White screen, no PCM | White screen, no PCM |
+| Dynamate | Puzzle board | Puzzle board | Puzzle board |
+| SmashGP | Title / Press Start | Title / Press Start | Title / Press Start |
+
+These are firmware-dependent observations, not a new emulator fix or proof
+that the original BIOS is faulty. Shared CPU/device behavior may still be
+involved. The original GlooP loading loop also reproduces with the interpreter:
+independent 2,400-frame cold starts plus ten measured frames match all seven
+CPU/video/PCM fields with JIT on/off. This narrows the investigation beyond a
+native-JIT-only defect. Do not substitute BIOS files automatically by title.
+
+Private evidence: `resume84-firmware/{inventory,gloop-results,more-results}.json`,
+per-run states/screenshots and `resume83-loading-parent/gloop-cold-parity.json`.
+Existing homebrew samples remain useful diagnostics; further homebrew game
+downloads are outside the user's requested collection scope.

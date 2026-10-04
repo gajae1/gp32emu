@@ -1771,7 +1771,15 @@ is fixed; the captured guest PCM's large internal discontinuities remain.
 
 Private evidence: `results/resume82-princess/device.json`,
 `results/resume82-gpio/SUMMARY.md`, and `results/resume83-audio-fix/` under the
-local GP32 workspace. The user powered down the device for disassembly after
-these tests. These changes have **not** been installed on the handheld; the
-previous b89cdb61 core remains the last confirmed installation. No further SSH
-access or handheld runs should occur until the user says the device is ready.
+local GP32 workspace.
+
+After the user reconnected the device, this tested core was installed with
+SHA-256 `edcf176fb68995f55281d6caa5e4d08add8aa1ad7099f78e0c8e6fc56126813a`.
+The previous b89cdb61 core is preserved at
+`gp32-dev/resume84-installed-core-before.so`. The promotion guard confirmed
+RetroArch was stopped and MainUI was present. Stock frontend, launcher and
+configuration hashes were unchanged. Evidence: `resume84-install/installed.json`.
+
+The user's volume remains untouched at their selected zero setting. No game
+frontend or mixer command was run during promotion. Continue digital PCM,
+buffer and timing validation silently; audible speaker acceptance remains open.
