@@ -907,7 +907,7 @@ static int a64_one(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
  * exceptions and PC-writing data/memory from the repeating prefix. The tail
  * after a conditional backedge keeps every existing exit/helper path. */
 static uint32_t a64_selfloop_prefix(arm920t_t *c, arm_jit_block_t *b) {
-    if (c->bus.is_stable_read32 && b->poll_backedge) return 0;
+    if (arm_jit_needs_poll(c, b)) return 0;
     for (unsigned i = 0; i < b->count; ++i) {
         const arm_jit_op_t *op = &arm_jit_ops(c, b)[i];
         /* Existing register-only leaf inlining proves LR/SP/mode unchanged.
