@@ -8,6 +8,13 @@ class device. This does not promise that a game originally animating at 30 fps
 will acquire 60 unique animation frames. A headless benchmark above 60 fps is
 necessary headroom, not sufficient proof of 60 fps in RetroArch.
 
+The current stretch goal is three times the throughput of a **fixed slow
+workload on the pre-change core**, not three times the emulated GP32 clock.
+Preserve normal guest speed and spend the headroom on combat, transitions and
+audio. Acceptance remains sustained real-time presentation, no host-caused
+audio starvation and bounded frame/input latency; a 75--90 core-fps heavy
+window is an initial headroom target, not a whole-library guarantee.
+
 The tested RG SP has a 720x480 screen and an H700 with four Cortex-A53 cores
 advertised at 1.5 GHz [Anbernic RG SP specification](https://anbernic.com/products/rg-sp).
 Its core currently executes GP32 CPU and peripheral events predominantly in
@@ -1300,3 +1307,64 @@ Installed core SHA-256 is
 `7c4efb6f92702f603f35568676ae3356a37c4d3a4d6bd925ad0ae2ca9c25a5da`;
 backup is `gp32-dev/resume68-installed-core-before.so`. Protected settings
 remain unchanged; deployment did not rewrite user saves.
+
+## resume75: retry call folding after a cold callee mapping becomes available
+
+Astonishia Story R's title music reproduces the reported slowdown without
+a gameplay save. The BIOS auto-start reaches the title at frame 2400. A
+300-frame continuation generates 115,677 stereo PCM frames. The earlier
+silent boot-only samples do not characterize this workload.
+
+Against `f710557`, the hot timer wrapper and its caller each dispatch about
+19.25 million times in that window. Speculative call collection refuses a
+missing/mismatched TLB entry, correctly avoiding page walks and device reads.
+However, that cold failure permanently leaves the call split even after
+ordinary execution establishes the mapping. Firmware and game code can
+collide in the same TLB slot.
+
+Blocks now remember a deferred call target. At the next dispatch where a
+side-effect-free code peek succeeds, the ordinary translator retries call
+collection. Unsupported callees retain their normal call. Existing fetch
+revalidation, loaded-return checks, interrupt fences and stable-poll proofs
+still apply. This is shared CPU code, with no game addresses or timing hacks.
+The block field is derived JIT metadata, not serialized state.
+
+On the Windows profiling build, the same title continuation reduces native
+block calls from 62,329,492 to 6,594,886. Stable-poll skipped instructions rise
+from 72,104,106 to 257,742,726 while the final CPU state, clock, generated PCM
+count, video hash and PCM hash stay identical. These are logical work counts,
+not an across-backend host-speed ratio.
+
+H700 release builds were compared in ABBA order, with 120 warmup and 300
+measured frames from the same title state:
+
+| Run | Core frames/s | CPU frequency before / after (MHz) |
+| --- | ---: | ---: |
+| Before A1 | 35.651 | 480 / 1200 |
+| After B1 | 183.644 | 1200 / 1416 |
+| After B2 | 202.053 | 1416 / 1512 |
+| Before A2 | 54.197 | 1512 / 1512 |
+
+All seven output fields match across the four runs. Frequency ramping
+disqualifies an exact aggregate speedup ratio; the governor was not changed.
+The improved title window has substantial core headroom. This does not
+establish combat minima, frontend frame pacing or physical speaker quality.
+
+A synthetic cold-MMU-callee regression checks ragged budgets, register/RAM
+equivalence against instruction execution, reduced dispatches, and modified
+callee revalidation after guest I-cache maintenance. Its performance assertion
+fails on the old core. Windows JIT, poll, exception and code-arena recycling
+tests pass; H700 cold-callee and stable-poll tests pass. Short Windows Blue
+Angelo NPC and Astonishia inn replays retain all seven output fields.
+Android ARM64 and ARMv7 builds also pass; Android runtime is untested.
+
+Private evidence: `F:/GP32/results/resume75-astonishia/`, including
+`hot-profile.json`, `after-profile.json`, `h700-abba.json`, CPU test logs,
+`regression-before.log` and `pc-game-equivalence.json`. ROMs and save states
+are not committed.
+
+The installed H700 core SHA-256 is
+`98840170c667287b3ebd3f55b37c2d6f087ee436b52087bcb1aba78b1e17b161`.
+The previous core is backed up at `gp32-dev/resume75-installed-core-before.so`.
+Deployment verified the stock frontend, launcher and settings hashes unchanged;
+it did not modify ROMs or saves. Reopen the game to load the updated core.

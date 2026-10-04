@@ -1503,6 +1503,54 @@ static void case_native_literal_addresses(void) {
 static uint32_t cache_branch(uint32_t pc, uint32_t target, int link) {
     return (link ? 0xeb000000u : 0xea000000u) | (((target - pc - 8u) >> 2) & 0x00ffffffu);
 }
+/* The caller is translated before its callee has a TLB entry. Once real
+ * execution fills that entry, it must gain the same call folding as a warm
+ * mapping, without changing partial-budget or later cache-flush behavior. */
+static void case_cold_leaf_mapping(void) {
+    const uint32_t caller = 0x10001000u, callee = 0x10002000u;
+    const uint32_t code = RAM_BASE + 0x10000u, leaf = RAM_BASE + 0x20000u;
+    const uint32_t ttb = RAM_BASE + 0x4000u, l2 = RAM_BASE + 0x8000u;
+    const uint32_t setup[] = {0xee02af10u, 0xee01bf10u};
+    current_case = "cold-callee-mapping";
+    setup_pair();
+    arm920t_set_trace(cpu_ref, 1, NULL, NULL);
+    load_both(setup, GP32_ARRAY_COUNT(setup));
+    set_mem_both(ttb, 2u);
+    set_mem_both(ttb + 0x300u, RAM_BASE | 2u);
+    set_mem_both(ttb + 0x400u, l2 | 1u);
+    set_mem_both(l2 + 4u, code | 2u);
+    set_mem_both(l2 + 8u, leaf | 2u);
+    set_mem_both(code, cache_branch(caller, callee, 1));
+    set_mem_both(code + 4u, 0xe2844001u); /* ADD r4,r4,#1 */
+    set_mem_both(code + 8u, cache_branch(caller + 8u, caller, 0));
+    set_mem_both(leaf, 0xe92d4000u);      /* PUSH {lr} */
+    set_mem_both(leaf + 4u, 0xe5970000u); /* LDR r0,[r7] */
+    set_mem_both(leaf + 8u, 0xe8bd8000u); /* POP {pc} */
+    set_mem_both(DATA_ADDR, 0x12345678u);
+    set_reg_both(7, DATA_ADDR);
+    set_reg_both(10, ttb);
+    set_reg_both(11, 1u);
+    set_reg_both(13, RAM_BASE + 0x30000u);
+    run_cache_pair(CODE_ADDR, 2u);
+    run_cache_pair(caller, 1u); /* cold call; do not fetch its target early */
+    CHECK(ref_reg(15) == callee, "cold call target");
+    run_chunks();
+    set_reg_both(13, RAM_BASE + 0x30000u);
+    set_reg_both(4, 0u);
+    arm920t_reset_cpu_profile(cpu_jit);
+    run_cache_pair(caller, 1200u);
+    CHECK(ref_reg(0) == 0x12345678u && ref_reg(4) == 200u, "folded call results");
+    gp32_cpu_profile_t p;
+    arm920t_get_cpu_profile(cpu_jit, &p);
+    if (p.supported && p.native_backend)
+        CHECK(p.native_block_calls < 300u, "cold mapping kept separate call/return dispatches");
+    set_mem_both(leaf + 4u, 0xe3a00077u); /* change the collected callee */
+    set_mem_both(CODE_ADDR + 8u, 0xee070f15u); /* MCR p15,0,r0,c7,c5,0 */
+    run_cache_pair(CODE_ADDR + 8u, 1u);
+    run_cache_pair(caller, 6u);
+    CHECK(ref_reg(0) == 0x77u, "cache maintenance revalidates collected callee");
+    teardown_pair();
+}
 static void case_cache_unchanged(void) {
     const uint32_t target = RAM_BASE + 0x3000u;
     current_case = "cache-unchanged-reuse";
@@ -2127,6 +2175,7 @@ int main(int argc, char **argv) {
     int ram_end_only = argc == 2 && !strcmp(argv[1], "--ram-end");
     int leaf_only = argc == 2 && !strcmp(argv[1], "--unframed-leaf");
     int nested_only = argc == 2 && !strcmp(argv[1], "--nested-leaf");
+    int cold_only = argc == 2 && !strcmp(argv[1], "--cold-leaf");
     int chain_only = argc == 2 && !strcmp(argv[1], "--branch-chain");
     int forward_only = argc == 2 && !strcmp(argv[1], "--forward-loop");
     int callback_only = argc == 2 && !strcmp(argv[1], "--callback-pc");
@@ -2134,7 +2183,9 @@ int main(int argc, char **argv) {
     int irq_only = argc == 2 && !strcmp(argv[1], "--callback-irq");
     int block_only = argc == 2 && !strcmp(argv[1], "--block-callback");
     int portable_only = argc == 2 && !strcmp(argv[1], "--portable-callback");
-    if (nested_only) {
+    if (cold_only) {
+        case_cold_leaf_mapping();
+    } else if (nested_only) {
         case_nested_framed_leaf();
     } else if (portable_only) {
         portable_callbacks = 1;
@@ -2169,6 +2220,7 @@ int main(int argc, char **argv) {
     case_native_mmu_mode_changes();
     case_native_mapped_ram_end();
     case_cache_unchanged();
+    case_cold_leaf_mapping();
     case_cache_modified(0);
     case_cache_modified(1);
     case_native_alu_region();

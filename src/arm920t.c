@@ -174,6 +174,7 @@ typedef struct arm_jit_block {
     uint8_t native_ok;
     uint8_t poll_prefix;
     uint8_t poll_backedge;
+    uint32_t deferred_inline_pc;
     arm_jit_native_fn native;
 } arm_jit_block_t;
 
@@ -1506,6 +1507,7 @@ static ARM_NOINLINE arm_jit_block_t *arm_jit_translate(arm920t_t *c, uint32_t pc
     b->count = 0;
     b->native_ok = 0;
     b->native = NULL;
+    b->deferred_inline_pc = 0;
     uint32_t cur = pc & ~3u;
     for (uint8_t i = 0; i < ARM_JIT_MAX_INSNS; ++i) {
         if (i && ((cur ^ pc) & ~ARM_JIT_PAGE_MASK)) break;
@@ -1523,7 +1525,11 @@ static ARM_NOINLINE arm_jit_block_t *arm_jit_translate(arm920t_t *c, uint32_t pc
         if (arm_jit_is_uncond_bl(insn) && i + 8u < ARM_JIT_MAX_INSNS) {
             uint32_t tpc = arm_jit_branch_target(cur, insn);
             uint32_t first = 0;
-            (void)arm_jit_peek_fetch(c, tpc, &first);
+            /* A cold callee may share a TLB slot with firmware. Keep the
+             * ordinary call until execution has supplied its mapping, then
+             * retry collection without a speculative page-table walk. */
+            if (!arm_jit_peek_fetch(c, tpc, &first) && tpc)
+                b->deferred_inline_pc = tpc;
             if (arm_jit_is_leaf_push_lr(first)) {
                 arm_jit_op_t leaf[32];
                 unsigned nleaf = arm_jit_collect_framed(c, tpc, leaf,
@@ -3095,6 +3101,14 @@ static uint32_t arm_jit_run(arm920t_t *c, uint32_t cycles) {
         } else {
             c->jit_hits++;
             ARM_PROF_INC(c, jit_hits);
+        }
+
+        if (b->deferred_inline_pc) {
+            uint32_t first;
+            if (arm_jit_peek_fetch(c, b->deferred_inline_pc, &first)) {
+                b = arm_jit_translate(c, pc);
+                if (!b) break;
+            }
         }
 
         uint32_t done = 0;
