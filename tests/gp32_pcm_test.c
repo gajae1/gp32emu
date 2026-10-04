@@ -16,7 +16,7 @@ static gp32_t *sdk_stream_fixture(uint32_t half_samples) {
     const uint32_t code[] = {
         0xe5903000u, 0xe2833001u, 0xe5803000u, 0xe5813000u, 0xe12fff1eu,
     }; /* Increment object word, copy it into the released half, BX lr. */
-    g->direct_fxe_mode = 1;
+    direct_set_fxe_mode(g, 1u);
     direct_install_stubs(g);
     gp32_set_jit(g, 1);
     s3c2400_write32(g->soc, 0x14800004u, 0x3000u);
@@ -78,7 +78,7 @@ static int check_hle_pcm_clock_domains(void) {
     for (unsigned k = 0; k < GP32_ARRAY_COUNT(pll); ++k) {
         gp32_t *g = gp32_create(NULL);
         if (!g) return 0;
-        g->direct_fxe_mode = 1;
+        direct_set_fxe_mode(g, 1u);
         s3c2400_write32(g->soc, 0x14800004u, pll[k]);
         s3c2400_write32(g->soc, 0x14800014u, div[k]);
         g->direct_hle_audio_asset = &asset;
@@ -165,7 +165,7 @@ static int check_sdk_channel_mix(void) {
 static int check_callback_clock_audio(int sdk) {
     gp32_t *g = sdk ? sdk_stream_fixture(70u) : gp32_create(NULL);
     if (!g) return 0;
-    g->direct_fxe_mode = 1;
+    direct_set_fxe_mode(g, 1u);
     direct_install_stubs(g);
     gp32_set_jit(g, 1);
     s3c2400_write32(g->soc, 0x14800004u, 0x3000u);

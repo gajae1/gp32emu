@@ -89,7 +89,52 @@ static void expect_rejected_load(gp32_t *g, const uint8_t *live, size_t live_siz
     free(after);
 }
 
+static void check_swi_route(gp32_t *g, uint32_t pc, int direct) {
+    s3c2400_write32(g->soc, pc, 0xef000011u); /* direct surface service: r0=1 */
+    arm920t_set_cpsr(g->cpu, 0xd3u);
+    arm920t_set_reg(g->cpu, 0u, 0u);
+    arm920t_set_reg(g->cpu, 15u, pc);
+    CHECK(arm920t_run(g->cpu, 1u) == 1u, "one SWI instruction");
+    CHECK(arm920t_get_pc(g->cpu) == (direct ? pc + 4u : 8u), "mode selects HLE or BIOS vector");
+    CHECK(arm920t_get_reg(g->cpu, 0u) == (direct ? 1u : 0u), "only direct mode handles the service");
+}
+
+static void check_swi_lifecycle(void) {
+    const uint32_t pc = GP32_RAM_BASE + 0x4000u;
+    uint8_t code[8];
+    gp32_st32le(code, 0xef000011u);
+    gp32_st32le(code + 4u, 0xeafffffeu);
+    for (int jit = 0; jit <= 1; ++jit) {
+        gp32_t *g = gp32_create(NULL);
+        CHECK(g != NULL, "create SWI lifecycle fixture");
+        if (!g) continue;
+        gp32_set_jit(g, jit);
+        check_swi_route(g, pc, 0);
+        size_t bios_size = 0, direct_size = 0;
+        uint8_t *bios = capture_state(g, &bios_size), *direct = NULL;
+        CHECK(bios != NULL, "save BIOS mode");
+        fxe_image_t img = {0};
+        img.payload = code; img.payload_size = sizeof(code);
+        img.load_addr = img.entry_addr = pc;
+        CHECK(gp32_load_fxe_image_internal(g, &img, 0, 0, 0, 0) == GP32_OK,
+              "FXE loader installs direct services");
+        check_swi_route(g, pc, 1);
+        direct = capture_state(g, &direct_size);
+        CHECK(direct != NULL, "save direct mode");
+        CHECK(gp32_reset(g) == GP32_OK, "reset without retained FXE image");
+        check_swi_route(g, pc, 0);
+        if (bios && direct) {
+            CHECK(gp32_load_state_data(g, direct, direct_size) == GP32_OK, "restore direct over BIOS");
+            check_swi_route(g, pc, 1);
+            CHECK(gp32_load_state_data(g, bios, bios_size) == GP32_OK, "restore BIOS over direct");
+            check_swi_route(g, pc, 0);
+        }
+        free(bios); free(direct); gp32_destroy(g);
+    }
+}
+
 int main(int argc, char **argv) {
+    check_swi_lifecycle();
     const char *path = argc > 1 ? argv[1] : NULL;
     gp32_t *source = gp32_create(NULL);
     gp32_t *target = gp32_create(NULL);

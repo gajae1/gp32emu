@@ -3200,6 +3200,14 @@ static int direct_fxe_swi(void *user, arm920t_t *cpu, uint32_t imm, uint32_t pc,
     }
 }
 
+/* The hook only implements direct-FXE services. BIOS mode uses the CPU's
+ * ordinary SWI exception path without an otherwise always-declined callback.
+ * Keep this derived pointer synchronized with the serialized mode flag. */
+static void direct_set_fxe_mode(gp32_t *g, uint32_t mode) {
+    g->direct_fxe_mode = mode;
+    arm920t_set_swi_handler(g->cpu, mode ? direct_fxe_swi : NULL, g);
+}
+
 gp32_t *gp32_create(const gp32_options_t *opt) {
     gp32_t *g = (gp32_t *)calloc(1, sizeof(*g));
     if (!g) return NULL;
@@ -3211,7 +3219,6 @@ gp32_t *gp32_create(const gp32_options_t *opt) {
     g->cpu = arm920t_create(&bus);
     if (!g->cpu) { gp32_destroy(g); return NULL; }
     s3c2400_set_irq_sink(g->soc, g->cpu);
-    arm920t_set_swi_handler(g->cpu, direct_fxe_swi, g);
     if (opt && opt->enable_trace) arm920t_set_trace(g->cpu, 1, bridge_log, g);
 #if defined(GP32EMU_WASM)
     int direct_smc = 0;
@@ -3364,7 +3371,7 @@ static gp32_status_t gp32_load_fxe_image_internal(gp32_t *g, fxe_image_t *img, i
         seterr(g, "%s", e[0] ? e : "FXE RAM load failed");
         return GP32_ERR_BAD_IMAGE;
     }
-    g->direct_fxe_mode = 1;
+    direct_set_fxe_mode(g, 1u);
     g->direct_fxe_entry = img->entry_addr;
     g->direct_fxe_stack = GP32_RAM_BASE + (uint32_t)s3c2400_ram_size(g->soc);
     g->direct_fxe_fb_addr = 0u;
@@ -3510,7 +3517,7 @@ gp32_status_t gp32_reset(gp32_t *g) {
         }
         return st;
     }
-    g->direct_fxe_mode = 0;
+    direct_set_fxe_mode(g, 0u);
     g->direct_fxe_fb_addr = 0;
     g->direct_fxe_image_end = 0;
     g->direct_fxe_bpp = 0;
@@ -4110,7 +4117,7 @@ static void gp32_direct_state_capture(const gp32_t *g, gp32_state_image_t *st) {
 }
 
 static void gp32_direct_state_apply(gp32_t *g, const gp32_state_image_t *st) {
-    g->direct_fxe_mode = st->direct_fxe_mode;
+    direct_set_fxe_mode(g, st->direct_fxe_mode);
     g->direct_fxe_entry = st->direct_fxe_entry;
     g->direct_fxe_stack = st->direct_fxe_stack;
     g->direct_fxe_fb_addr = st->direct_fxe_fb_addr;
@@ -4272,7 +4279,6 @@ static int gp32_state_read(gp32_t *g, state_io_t *io, gp32_state_image_t *direct
 static void gp32_state_loaded(gp32_t *g, const gp32_state_image_t *direct) {
     gp32_direct_state_apply(g, direct);
     s3c2400_set_irq_sink(g->soc, g->cpu);
-    arm920t_set_swi_handler(g->cpu, direct_fxe_swi, g);
     gp32_clear_audio(g);
     direct_fix_gp32_additive_blend_shadow_endpoint(g);
 }

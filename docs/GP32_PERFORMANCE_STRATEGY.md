@@ -2474,3 +2474,39 @@ The new `--ram-page-tags` selection also runs the existing mapped-page and
 MMU-mode-change cases. Focused Windows and native H700 checks pass against
 the restored production implementation. This is additional correctness
 coverage, not a new emulation fix or performance claim.
+
+### Mode-dependent direct-FXE SWI registration (2026-10-04)
+
+The direct-FXE service callback is now registered only while direct-FXE mode
+is active. BIOS execution previously called it only to return immediately
+without handling the SWI. One private helper synchronizes the mode flag and
+callback during FXE loading, reset without a retained image, and saved-state
+application. The callback remains derived state; serialized layouts do not
+change. CPU reset preserves callbacks, so clearing it on the BIOS reset path
+is necessary. No title-specific condition or CPU instruction implementation
+was added.
+
+An earlier native SWI-helper candidate preserved replay results but regressed
+Princess throughput by 3.20% (Astonishia -0.26%, Blue +0.43%). That CPU change
+was reverted and was not deployed. Its patch and raw results remain privately
+under `results/resume104-swi/`; final mode-registration evidence is under
+`results/resume104-swi/mode-hook/`.
+
+Final H700 ABBA measurements used two samples per variant, with all sampled
+clock endpoints at 1,512 MHz. Princess was 77.7755 -> 78.097 core fps (+0.41%),
+Astonishia title 176.8065 -> 176.581 (-0.13%), and Blue 73.885 -> 73.688
+(-0.27%). This is a near-neutral cleanup, not an established speedup. All
+seven compared CPU/clock/video/PCM fields match in the Windows and H700
+saved-scene replays; these rates are uncapped core throughput, not displayed
+game frame rates.
+
+State tests execute actual SWIs through FXE loading, BIOS reset, and state
+restoration in both directions, with JIT enabled and disabled. Existing timer
+and PCM fixtures use the same mode setter. Windows state/timer/PCM checks and
+H700 state/timer/PCM/terminal-SWI checks pass. A retained CPU regression covers
+declined callbacks that mutate live state and flush JIT, plus failed SWI
+predicates, against the interpreter and all register banks. Production CPU
+source is unchanged. Windows GUI/libretro, H700, and Android ARM64/ARMv7
+builds succeed; Android runtime remains unverified. Digital audio tests do
+not establish physical speaker quality. Volume, mixer, governor, stock
+frontend and user settings were not changed.
