@@ -171,9 +171,9 @@ typedef struct arm_jit_block {
     uint32_t valid;
     uint32_t generation;
     uint8_t count;
-    uint8_t native_ok;
+    uint8_t native_ok; /* 0: unattempted; 1: compiled; 2: failed lazy attempt. */
     uint8_t poll_prefix;
-    uint8_t poll_backedge;
+    uint8_t poll_backedge; /* bit 0: backedge; bits 1..4: counted register + 1. */
     uint32_t deferred_inline_pc;
     arm_jit_native_fn native;
 } arm_jit_block_t;
@@ -1540,6 +1540,55 @@ static int arm_jit_poll_has_progress(arm920t_t *c, arm_jit_block_t *b) {
     return (progress & ~repeated) != 0u;
 }
 
+/* Narrow counted poll: CMP Rn,#0; BLE outside; {LDR/AND}*;
+ * SUB Rn,Rn,#positive; B entry. No counter-dependent body, flags, writes,
+ * changing load bases, conditional body, wrappers, or PC/SP/LR operands.
+ * This is a structural proof only: stable loads and a body fixed point must
+ * still be observed in THIS run before any repetition may be omitted. */
+static uint8_t arm_jit_counted_poll(arm920t_t *c, arm_jit_block_t *b) {
+    if (b->count < 5u || b->poll_prefix != b->count || !b->poll_backedge ||
+        (uint64_t)b->tag_pc + (b->count - 1u) * 4u > UINT32_MAX) return 0;
+    const arm_jit_op_t *ops = arm_jit_ops(c, b);
+    const arm_jit_op_t *cmp = &ops[0], *exit = &ops[1];
+    const arm_jit_op_t *sub = &ops[b->count - 2u], *edge = &ops[b->count - 1u];
+    unsigned reg = cmp->b;
+    if (cmp->kind != ARM_JIT_OP_DATA || cmp->cond != 14u || cmp->a != 10u ||
+        reg >= 13u || cmp->c != 0u || cmp->imm != 0u ||
+        (cmp->d & (ARM_BC_DATA_IMM | ARM_BC_DATA_S | ARM_BC_DATA_REGSHIFT)) !=
+            (ARM_BC_DATA_IMM | ARM_BC_DATA_S) ||
+        exit->kind != ARM_JIT_OP_BRANCH || exit->cond != 13u ||
+        (exit->insn & (1u << 24)) ||
+        sub->kind != ARM_JIT_OP_DATA || sub->cond != 14u || sub->a != 2u ||
+        sub->b != reg || sub->c != reg || !sub->imm || sub->imm > INT32_MAX ||
+        (sub->d & (ARM_BC_DATA_IMM | ARM_BC_DATA_S | ARM_BC_DATA_REGSHIFT)) != ARM_BC_DATA_IMM ||
+        !arm_jit_is_uncond_b_no_link(edge->insn) ||
+        arm_jit_branch_target(edge->pc, edge->insn) != b->tag_pc) return 0;
+    uint32_t target = arm_jit_branch_target(exit->pc, exit->insn);
+    if (target >= b->tag_pc && target <= edge->pc) return 0;
+    uint32_t written = 0, bases = 0;
+    unsigned loads = 0;
+    for (unsigned i = 0; i < b->count; ++i) {
+        const arm_jit_op_t *op = &ops[i];
+        if (op->reserved || op->pc != b->tag_pc + i * 4u) return 0;
+        if (i < 2u || i >= b->count - 2u) continue;
+        if (op->cond != 14u) return 0;
+        if (op->kind == ARM_JIT_OP_SINGLE_DT) {
+            if ((op->d & ~ARM_BC_SD_U) != (ARM_BC_SD_P | ARM_BC_SD_L) ||
+                op->a >= 13u || op->b >= 13u || op->a == reg || op->b == reg) return 0;
+            bases |= 1u << op->a;
+            written |= 1u << op->b;
+            ++loads;
+        } else if (op->kind == ARM_JIT_OP_DATA) {
+            if (op->a != 0u || op->b != op->c || op->c >= 13u || op->c == reg ||
+                (op->d & (ARM_BC_DATA_S | ARM_BC_DATA_REGSHIFT))) return 0;
+            if (!(op->d & ARM_BC_DATA_IMM) &&
+                (op->e >= 13u || op->e == reg || op->g || op->h)) return 0;
+            written |= 1u << op->c;
+        } else return 0;
+    }
+    return loads && !(written & bases) ? (uint8_t)(reg + 1u) : 0;
+}
+
 static int arm_jit_needs_poll(arm920t_t *c, arm_jit_block_t *b) {
     return c->bus.is_stable_read32 && b->poll_backedge &&
            !arm_jit_poll_has_progress(c, b);
@@ -1698,9 +1747,13 @@ static ARM_NOINLINE arm_jit_block_t *arm_jit_translate(arm920t_t *c, uint32_t pc
             arm_jit_branch_target(op->pc, op->insn) == b->tag_pc)
             b->poll_backedge = 1;
     }
+    b->poll_backedge |= (uint8_t)(arm_jit_counted_poll(c, b) << 1);
     b->valid = 1;
     ARM_PROF_INC(c, jit_blocks_compiled);
-    if (c->jit_enabled && !arm_jit_needs_poll(c, b)) {
+    /* Counted candidates first observe real portable reads. Do not allocate
+     * unused native code for stable loops; rejected observations may compile
+     * once later at dispatch. Other blocks keep their existing publication. */
+    if (c->jit_enabled && !(b->poll_backedge >> 1) && !arm_jit_needs_poll(c, b)) {
         arm_jit_compile_native(c, b);
 #if ARM920T_PROFILING && ARM920T_NATIVE_BACKEND
         /* Both backends count actual reserve failures at the allocation site. */
@@ -3125,6 +3178,24 @@ static void arm_jit_compile_native(arm920t_t *c, arm_jit_block_t *b) {
 static void arm_jit_compile_native(arm920t_t *c, arm_jit_block_t *b) { GP32_UNUSED(c); GP32_UNUSED(b); }
 #endif
 
+/* A poll proof must not create extra page-table reads while checking a load,
+ * including a partial counted iteration decoded at a different entry PC. */
+static int arm_poll_load_mapping_cached(const arm920t_t *c, const arm_jit_op_t *op) {
+    if (!(c->cp15[1] & 1u) || op->kind != ARM_JIT_OP_SINGLE_DT) return 1;
+    uint32_t base = op->a == 15u ? op->pc + 8u : c->r[op->a];
+    uint32_t va = (op->d & ARM_BC_SD_U) ? base + op->imm : base - op->imm;
+    const arm_tlb_entry_t *e = &c->tlb_entry[(va >> 12) & 0xfffu];
+    if (!e->valid || (va & ~e->mask) != e->va_base) return 0;
+    uint32_t pa = (e->pa_base | (va & e->mask)) & ~3u;
+    /* arm_bc_ld_word_phys's fallback calls rb32 and translates PA again.
+     * Reject it: a VA hit alone does not exclude that second walk/fault or
+     * establish the stability of the final bus address. Direct RAM/BIOS and
+     * physical-I/O paths read exactly this PA without another translation. */
+    return (c->jit_ram_base && arm_jit_addr_in_ram(pa, 4u)) ||
+           (c->jit_bios_base && arm_jit_addr_in_bios(pa, 4u)) ||
+           arm_jit_addr_in_identity_io(pa, 4u);
+}
+
 static int arm_poll_read_stable(arm920t_t *c, const arm_jit_op_t *op) {
     if (op->kind == ARM_JIT_OP_BLOCK_DT) {
         /* The leaf wrapper's idempotent stack write must target ordinary RAM,
@@ -3149,8 +3220,34 @@ static int arm_poll_read_stable(arm920t_t *c, const arm_jit_op_t *op) {
          * Every store in the observed repetition must already be a no-op. */
         return p && gp32_ld32le(p) == c->r[op->b];
     }
-    return !(addr & 3u) && c->bus.is_stable_read32 &&
+    return !(addr & 3u) && arm_poll_load_mapping_cached(c, op) && c->bus.is_stable_read32 &&
            c->bus.is_stable_read32(c->bus.user, mmu_translate(c, addr));
+}
+
+/* No native block is active at lazy compilation. Recycle before emitting,
+ * then restart dispatch: wrap may have cleared the block being considered.
+ * Keep the emitter's large scratch frame out of the hot dispatch function.
+ * Failed attempts are derived block state, reset only by retranslation. */
+static ARM_NOINLINE int arm_counted_poll_compile(arm920t_t *c, arm_jit_block_t *b) {
+#if ARM920T_NATIVE_BACKEND
+    if (!c->jit_enabled || b->native_ok || arm_jit_needs_poll(c, b)) return 0;
+    if (c->jit_code && c->jit_code_used &&
+        c->jit_code_size > ARM_JIT_NATIVE_MAX_BYTES + 15u &&
+        (c->jit_code_used > c->jit_code_size ||
+         c->jit_code_size - c->jit_code_used < ARM_JIT_NATIVE_MAX_BYTES + 15u)) {
+        arm920t_jit_invalidate_all(c, ARM_JIT_INV_CODE_RECYCLE);
+        return 1;
+    }
+    b->native_ok = 2u;
+    arm_jit_compile_native(c, b);
+#if ARM920T_PROFILING
+    if (b->native) c->prof.jit_native_compiled++;
+    else c->prof.jit_native_failed++;
+#endif
+#else
+    GP32_UNUSED(c); GP32_UNUSED(b);
+#endif
+    return 0;
 }
 
 /* The classified interpreter is much larger than native block dispatch. Keep
@@ -3185,6 +3282,38 @@ static ARM_NOINLINE uint32_t arm_jit_run_portable(arm920t_t *c,
     return done;
 }
 
+/* Equality excluding the counter proves a fixed point of the deterministic
+ * body, not permission to ignore other changing registers. Fixed bases plus
+ * current TLB hits exclude walks, TLB replacement and CP15 fault changes in
+ * omitted iterations. No proof data survives this arm_jit_run invocation. */
+static uint32_t arm_counted_poll_repeats(arm920t_t *c, const arm_jit_block_t *b,
+                                       const uint32_t previous[16], uint32_t budget) {
+    unsigned reg = (b->poll_backedge >> 1) - 1u;
+    const arm_jit_op_t *ops = arm_jit_ops(c, b);
+    uint32_t step = ops[b->count - 2u].imm, n = c->r[reg];
+    if (!n || n > INT32_MAX || previous[reg] > INT32_MAX ||
+        previous[reg] - n != step ||
+        memcmp(previous, c->r, reg * sizeof(uint32_t)) ||
+        memcmp(previous + reg + 1u, c->r + reg + 1u, (15u - reg) * sizeof(uint32_t))) return 0;
+    if (c->cp15[1] & 1u) {
+        for (unsigned i = 2u; i < b->count - 2u; ++i) {
+            const arm_jit_op_t *op = &ops[i];
+            if (op->kind != ARM_JIT_OP_SINGLE_DT) continue;
+            if (!arm_poll_load_mapping_cached(c, op)) return 0;
+        }
+    }
+    /* Every omitted CMP sees a positive signed counter: NZCV=0010.
+     * ceil(n/step) full iterations may reach zero or a negative value; the
+     * subsequent exit CMP/BLE (and every partial iteration) execute normally.
+     * n,step <= INT32_MAX exclude signed SUB overflow even on the final step.
+     * Divide before multiplication to stay inside the live uint32 budget. */
+    uint32_t repeats = budget / b->count;
+    uint32_t until_exit = (n - 1u) / step + 1u;
+    if (repeats > until_exit) repeats = until_exit;
+    c->r[reg] -= (uint32_t)((uint64_t)repeats * step);
+    return repeats;
+}
+
 static uint32_t arm_jit_run(arm920t_t *c, uint32_t run_done) {
     if (!c || run_done >= c->run_limit || thumb(c) || c->trace) return 0;
     if (!c->jit_ram_base) c->jit_ram_base = fastmem(c, ARM_JIT_RAM_BASE_ADDR, 1u, 0);
@@ -3192,6 +3321,9 @@ static uint32_t arm_jit_run(arm920t_t *c, uint32_t run_done) {
     uint32_t total = run_done;
     uint32_t poll_pc = UINT32_MAX, poll_count = 0, poll_cpsr = 0;
     uint32_t poll_regs[16];
+    /* Rejection authorizes only actual native execution, never skipping.
+     * It is transient, and cache/state changes revoke this run's decision. */
+    uint32_t rejected_pc = UINT32_MAX, rejected_generation = 0, rejected_epoch = 0;
     /* A checked native helper can enable tracing during a bus callback.
      * Return to arm920t_run so the next instruction uses exec_arm's logger. */
     while (total < c->run_limit && !c->halted && !thumb(c) && !c->trace) {
@@ -3235,11 +3367,22 @@ static uint32_t arm_jit_run(arm920t_t *c, uint32_t run_done) {
         int stable_reads = 0;
         /* Fetch/translation callbacks may also shorten the current run. */
         if (total >= c->run_limit) break;
-        /* Translation only publishes native for eligible blocks. In
-         * particular, a bus with stable reads leaves polling backedges on
-         * the portable path unless register progress is proven. The bus
-         * callbacks are fixed at CPU creation. */
-        if (b->native && (c->run_limit - total) >= b->count) {
+        int counted = (b->poll_backedge >> 1) != 0;
+        uint32_t generation = c->jit_generation, epoch = c->jit_cache_epoch;
+        /* Use the existing per-read portable observation, not a second
+         * speculative stability preflight. A missing contract rejects at
+         * once; otherwise observe a full real repetition in this run first.
+         * Native self-chains still execute every instruction and load. */
+        int native_allowed = !counted || !c->bus.is_stable_read32 ||
+            (rejected_pc == pc && rejected_generation == generation && rejected_epoch == epoch);
+        if (ARM920T_NATIVE_BACKEND && c->jit_enabled && native_allowed &&
+            (c->run_limit - total) >= b->count && counted && !b->native_ok) {
+            if (arm_counted_poll_compile(c, b)) {
+                poll_pc = rejected_pc = UINT32_MAX;
+                continue;
+            }
+        }
+        if (b->native && c->jit_enabled && native_allowed && (c->run_limit - total) >= b->count) {
             done = b->native(c, c->run_limit - total);
 #if ARM920T_PROFILING
             c->prof.native_block_calls++;
@@ -3254,14 +3397,24 @@ static uint32_t arm_jit_run(arm920t_t *c, uint32_t run_done) {
         }
         if (!done) break;
         total += done;
+        if (counted && !stable_reads && c->jit_generation == generation && c->jit_cache_epoch == epoch &&
+            done == b->count && c->r[15] == pc && !thumb(c) && !c->halted && !c->trace) {
+            rejected_pc = pc;
+            rejected_generation = generation;
+            rejected_epoch = epoch;
+        }
         if (stable_reads && done <= b->poll_prefix && c->r[15] == pc && !thumb(c) && !c->halted &&
             !(c->irq_line && !(c->cpsr & I_FLAG)) && !(c->fiq_line && !(c->cpsr & F_FLAG))) {
-            if (poll_pc == pc && poll_count == done && poll_cpsr == c->cpsr &&
-                memcmp(poll_regs, c->r, sizeof(poll_regs)) == 0) {
+            if (poll_pc == pc && poll_count == done && poll_cpsr == c->cpsr) {
                 /* A callback can move the deadline behind this instruction.
                  * Saturate before subtracting, and never skip past the live
                  * deadline using the budget captured on entry. */
-                uint32_t repeats = total < c->run_limit ? (c->run_limit - total) / done : 0;
+                uint32_t budget = total < c->run_limit ? c->run_limit - total : 0;
+                uint32_t repeats = 0;
+                if ((b->poll_backedge >> 1) && done == b->count)
+                    repeats = arm_counted_poll_repeats(c, b, poll_regs, budget);
+                else if (memcmp(poll_regs, c->r, sizeof(poll_regs)) == 0)
+                    repeats = budget / done;
                 total += repeats * done;
                 c->jit_hits += repeats;
 #if ARM920T_PROFILING
