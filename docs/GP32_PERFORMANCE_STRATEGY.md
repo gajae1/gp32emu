@@ -2275,3 +2275,38 @@ use the generated tail, whereas a dropped oldest queue creates its gap at the
 retained head. That proposal is not applied without a correct delivered-PCM
 reproducer. No volume, mixer, governor or frontend setting was changed.
 Evidence: private `results/resume97-h700/`.
+
+
+### Audio recovery after forced queue discard (2026-10-04)
+
+The libretro delivery layer now blends the first 44 output frames (about
+1 ms at 44.1 kHz) after a forced oldest-queue or oversized-source discard.
+The anchor is the last stereo frame actually accepted by the frontend, not
+the resampler's generated tail. Normal delivery, short lossless backpressure,
+source PCM, resampling and the 250-ms queue limit are unchanged.
+
+The blend is prepared in a 176-byte scratch buffer during output. Refused
+samples remain raw in the pending queue and do not advance recovery; partial
+acceptance advances only the accepted count. Another discard during recovery
+starts from the last accepted blended endpoint. Both batch and single-sample
+callbacks use this path. Reset, unload and state restore clear transient
+output history with the other audio state. No samples or latency are added.
+
+Two digital fixtures first failed on a 32,000-unit recovery step. The final
+fixtures cover both discard paths, zero/partial acceptance, another discard
+after seven recovered frames, and switching to the single-sample callback.
+Their recovery steps are bounded and both channels match the retained source
+exactly after the 44-frame prefix. Existing overflow expectations were updated
+only for these intentional prefixes; all other retained frames remain exact.
+The complete existing libretro audio/lifecycle test passes on Windows and H700.
+
+A separate real-libretro capture links the same current core library with the
+old and new delivery source. Princess, Astonishia title and Blue each run 300
+frames; before/after accepted frame counts and complete PCM hashes match,
+with no pending output at run boundaries. No speaker playback was used.
+Windows/H700/Android arm64/ARMv7 libretro builds pass; the standalone PC audio
+backend is unchanged. This fixes an emulator-created recovery discontinuity,
+not low framerate itself, source-generated clipping or every audible artifact.
+Android runtime and hardware listening acceptance remain open. Evidence:
+private `results/resume98-audio-gap/` (red/green logs, native result, real-game
+PCM capture, manifest). Volume, mixer and RetroArch settings were untouched.
