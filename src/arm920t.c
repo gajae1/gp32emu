@@ -1198,7 +1198,17 @@ static int arm_jit_may_write_pc(uint32_t insn) {
     }
     if ((insn & 0x0f000000u) == 0x0f000000u) return 1;
     if ((insn & 0x0c000000u) == 0x00000000u) {
-        if ((insn & 0x01900000u) == 0x01000000u) return 1; /* MRS/MSR: CPSR/SPSR edge */
+        if ((insn & 0x01900000u) == 0x01000000u) {
+            /* Reading status into an ordinary register or writing a saved
+             * status bank cannot change the active execution state. Keep
+             * these in the trace; CPSR writes and unknown PSR encodings
+             * retain their dispatch boundary. */
+            if ((insn & 0x0fbf0fffu) == 0x010f0000u)
+                return ((insn >> 12) & 0xfu) == 15u;
+            if ((insn & 0x0db0f000u) == 0x0120f000u && (insn & (1u << 22)))
+                return 0;
+            return 1;
+        }
         return (((insn >> 12) & 0xfu) == 15u);
     }
     if ((insn & 0x0c000000u) == 0x04000000u) return GP32_BIT(insn,20) && (((insn >> 12) & 0xfu) == 15u);
@@ -2250,6 +2260,15 @@ ARM_FORCE_INLINE void arm_jit_exec_classified(arm920t_t *c, const arm_jit_op_t *
 static void arm_jit_write_pc_x_helper(arm920t_t *c, uint32_t v) { ARM_PROF_INC(c, helper_write_pc); write_pc_x(c, v); }
 
 #if defined(__x86_64__) || defined(_M_X64)
+/* Read-only status access has no bus callback or active-mode side effect.
+ * The x64 emitter can consume the value without a checked interpreter call. */
+static uint32_t arm_x64_read_spsr(arm920t_t *c) {
+    ARM_PROF_INC(c, helper_interp_ops);
+    ARM_PROF_INC(c, helper_op_kinds[ARM_JIT_OP_PSR]);
+    uint32_t *saved = spsr_ptr(c, mode(c));
+    return saved ? *saved : c->cpsr;
+}
+
 #ifndef ARM_JIT_CODE_SIZE
 #define ARM_JIT_CODE_SIZE (64u * 1024u * 1024u)
 #endif
@@ -3006,12 +3025,25 @@ static int x64_emit_one(x64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
         x64_emit_return_imm(e, done);
         return 1;
     }
+    case ARM_JIT_OP_PSR: {
+        unsigned rd = (op->insn >> 12) & 15u;
+        if ((op->insn & 0x0fbf0fffu) == 0x010f0000u && rd != 15u) {
+            if (op->insn & (1u << 22)) {
+                x64_emit_arg0_cpu(e);
+                x64_call_abs(e, (uintptr_t)arm_x64_read_spsr);
+            } else x64_mov_r32_mem_cpu(e, X64_EAX, cpsr_off());
+            x64_mov_mem_cpu_r32(e, arm_reg_off(rd), X64_EAX);
+            return 1;
+        }
+        x64_emit_call_helper_op(e, op);
+        if (op->stop) x64_emit_return_imm(e, done);
+        return 1;
+    }
     case ARM_JIT_OP_COPROC:
         if (x64_emit_coproc_local(e, op, done)) return 1;
         /* fall through */
     case ARM_JIT_OP_UNDEFINED:
     case ARM_JIT_OP_INTERP:
-    case ARM_JIT_OP_PSR:
     case ARM_JIT_OP_SWP:
     case ARM_JIT_OP_SWI:
     default:

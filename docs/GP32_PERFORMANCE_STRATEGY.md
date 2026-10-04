@@ -2090,3 +2090,62 @@ The previous SPSR core is preserved at
 `gp32-dev/resume93-cpsr-installed-core-before.so`. Installation readback and
 unchanged stock frontend/launcher/settings hashes are in
 `resume93-cpsr/installed.json`. Interactive frontend acceptance remains open.
+
+### Status reads within native blocks (2026-10-04)
+
+Valid MRS into a register other than PC and writes to SPSR no longer end a
+decoded block. CPSR writes, MRS to PC and unknown PSR encodings retain their
+old dispatch boundaries. Poll proofs and leaf collection still exclude PSR
+operations. On x64, MRS CPSR is a direct load and MRS SPSR uses a small
+read-only helper, retaining the live-mode bank selection and bankless CPSR
+fallback. Other PSR operations keep the checked path. No guest address or
+title selects this optimization.
+
+Against `bef7135`, H700 ABBA replays show Princess 72.626 -> 74.379 core fps
+(+2.41%), Astonishia title 175.333 -> 175.479 (+0.08%), and Blue Angelo
+72.710 -> 72.764 (+0.07%). Treat the last two as effectively unchanged.
+Princess has one valid baseline and two candidate samples; a changing-clock
+baseline was excluded. Other scenes have two samples per variant. Retained
+endpoints were 1512 MHz; constant frequency throughout is not established.
+All seven replay fields match the prior Windows reference exactly.
+
+Windows performance is **unresolved**, not an established speedup. Initial
+3000-frame ABBA runs against the older packaged `e153e45` x64 binary produced
+mixed medians and large within-variant spread. Two bounded affinity-controlled
+follow-ups, including the x64 MRS helper revision, still produced large
+negative/mixed timing differences under other host load. Raw wall-time and
+process-CPU-time results are retained in `resume94-psr-blocks/pc/` and
+`pc-*-affinity*.json`; they must not be omitted or promoted to a speedup claim.
+All long-replay CPU/video/PCM fields agree.
+
+A separate counter-only Blue replay uses the exact `bef7135` CPU source and
+the final candidate with otherwise identical profile libraries. Native calls
+fall from 238,491,196 to 237,897,679, PSR helper calls from 2,287,052 to
+2,000,552, and portable instructions change by only 12 out of roughly 2.4
+billion guest instructions. Native compilation failures and poll-skipped
+instructions are unchanged. This narrows the diagnosis; it does **not** prove
+wall-time non-regression. Evidence: `pc-profile/{manifest,blue}.json`.
+
+Focused PSR/CPSR and exception fixtures pass on Windows and H700. A new
+profile-enabled fixture proves that a CMP/SPSR/conditional-ALU sequence
+retires all seven operations in one native block on both backends, while
+split budgets preserve every intermediate state. Its initial B-self ending
+was stitched twice by the existing decoder and therefore required eight
+budget slots; an explicit PC write now defines the intended seven-operation
+test boundary without relaxing the native-call assertion. The Windows test
+cache was found to have profiling disabled and was explicitly rebuilt with
+profiling enabled for this assertion. See `TEST_DIAGNOSIS.md`.
+
+H700 release/profile, Windows GUI/libretro and Android arm64/ARMv7 builds
+pass; Android runtime and live frontend acceptance remain open. The x64-only
+follow-up changed only AArch64 debug sections: every allocated section's
+bytes/address and BSS shape match the measured H700 binary, allowing reuse
+of those replays (`a64-reuse.json`). No playback, mixer or volume command ran.
+
+The installed H700 core SHA-256 is
+`517139394f93c281d55ead0cdd085529c1daa9637f4611c9ed2a025db2bbd194`.
+The previous core is backed up as
+`gp32-dev/resume94-psr-blocks-installed-core-before.so`; stock RetroArch,
+launcher and protected settings remain unchanged. Readback is recorded in
+`resume94-psr-blocks/installed.json`. Desktop and Android builds are staged
+privately; their packaging does not establish runtime performance acceptance.
