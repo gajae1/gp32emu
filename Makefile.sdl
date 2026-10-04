@@ -20,6 +20,7 @@ LIB_OBJS = \
 	src/gp32.o \
 	src/arm920t.o \
 	src/s3c2400.o \
+	src/gp32_codec.o \
 	src/smartmedia.o \
 	src/smc_direct.o \
 	src/fxe.o \
