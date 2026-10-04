@@ -3176,19 +3176,20 @@ static void case_cache_maintenance_native(void) {
  * ragged budgets elsewhere, and an instruction-at-a-time reference here.
  * On A64 the profile must also prove that whole-op dispatch was removed. */
 static void case_checked_access(void) {
-    const struct { uint32_t insn; unsigned effect; uint32_t base; } cases[] = {
-        {0xe4942004u, 1u, IO_ADDR},       /* LDR post / SoC yield */
-        {0xe4d42004u, 2u, IO_ADDR},       /* LDRB post / redirected PC */
-        {0xe0d420f4u, 3u, IO_ADDR},       /* LDRSH post / NZCV change */
-        {0xe5d42000u, 4u, IO_ADDR},       /* LDRB / Thumb change */
-        {0xe7a42081u, 5u, IO_ADDR},       /* STR shifted offset! / flush */
-        {0xe5642001u, 6u, IO_ADDR + 1u},  /* STRB negative offset! / disable */
-        {0xe0c420b4u, 7u, IO_ADDR},       /* STRH post / trace */
-        {0xe13440b1u, 8u, IO_ADDR + 2u},  /* LDRH r4,[r4,-r1]! / Rd==Rn */
-        {0xe1d420d0u, 9u, IO_ADDR},       /* LDRSB / FIQ */
-        {0xe5942000u, 0u, IO_ADDR + 1u},  /* unaligned word / rotate */
-        {0xe0d420b4u, 1u, IO_ADDR},       /* LDRH post / yield */
-        {0xe4842004u, 1u, IO_ADDR},       /* STR post / yield */
+    /* dir: 0 = halfword helper (no single counters), 1 = single load, 2 = single store */
+    const struct { uint32_t insn; unsigned effect; uint32_t base; unsigned dir; } cases[] = {
+        {0xe4942004u, 1u, IO_ADDR, 1u},       /* LDR post / SoC yield */
+        {0xe4d42004u, 2u, IO_ADDR, 1u},       /* LDRB post / redirected PC */
+        {0xe0d420f4u, 3u, IO_ADDR, 0u},       /* LDRSH post / NZCV change */
+        {0xe5d42000u, 4u, IO_ADDR, 1u},       /* LDRB / Thumb change */
+        {0xe7a42081u, 5u, IO_ADDR, 2u},       /* STR shifted offset! / flush */
+        {0xe5642001u, 6u, IO_ADDR + 1u, 2u},  /* STRB negative offset! / disable */
+        {0xe0c420b4u, 7u, IO_ADDR, 0u},       /* STRH post / trace */
+        {0xe13440b1u, 8u, IO_ADDR + 2u, 0u},  /* LDRH r4,[r4,-r1]! / Rd==Rn */
+        {0xe1d420d0u, 9u, IO_ADDR, 0u},       /* LDRSB / FIQ */
+        {0xe5942000u, 0u, IO_ADDR + 1u, 1u},  /* unaligned word / rotate */
+        {0xe0d420b4u, 1u, IO_ADDR, 0u},       /* LDRH post / yield */
+        {0xe4842004u, 1u, IO_ADDR, 2u},       /* STR post / yield */
     };
     for (unsigned i = 0; i < GP32_ARRAY_COUNT(cases); ++i) {
         current_case = "checked-access";
@@ -3238,6 +3239,29 @@ static void case_checked_access(void) {
                   "checked-access fixture must reach one access helper");
             CHECK(profile.helper_op_kinds[5u] == 0u && profile.helper_op_kinds[6u] == 0u,
                   "checked access avoids whole-op HALF/SINGLE_DT dispatch");
+            if (cases[i].dir) {
+                /* mem/ldword helpers bypass exec_classified but must keep the
+                 * same attribution: MMU is off so the probe always hits, and
+                 * the IO window lands on the non-RAM counter and its record. */
+                CHECK(profile.slow_bail_single_tlbmiss == 0u &&
+                      profile.slow_bail_single_nonram == 1u &&
+                      profile.single_nonram_regions[IO_ADDR >> 24] == 1u,
+                      "checked access attributes the non-RAM single transfer");
+                const gp32_memory_profile_t *rec = &profile.single_nonram_addresses[0];
+                CHECK(rec->physical_address == bus_jit.mem_addr &&
+                      rec->first_pc == CODE_ADDR && rec->reads + rec->writes == 1u &&
+                      (cases[i].dir == 1u ? rec->reads : rec->writes) == 1u,
+                      "non-RAM record tracks the one real bus access");
+            } else {
+                /* Halfword ops share the checked helper but are never single
+                 * transfers; only the generic bail reason may advance. */
+                CHECK(profile.slow_bail_single_nonram == 0u &&
+                      profile.single_nonram_regions[IO_ADDR >> 24] == 0u &&
+                      (profile.single_nonram_addresses[0].reads |
+                       profile.single_nonram_addresses[0].writes) == 0u &&
+                      profile.slow_bail_other != 0u,
+                      "checked halfword never enters single counters");
+            }
         }
         printf("checked-access %u insn=%08" PRIx32 " effect=%u cycles=%u\n",
                i, cases[i].insn, cases[i].effect, dj);
@@ -3325,6 +3349,17 @@ static void case_checked_access_translation(void) {
           arm920t_get_cp15(cpu_jit, 6u) == arm920t_get_cp15(cpu_ref, 6u) &&
           arm920t_get_cp15(cpu_ref, 6u) == 0x13000000u,
           "MMU fault status/address preserve existing tolerant behavior");
+    gp32_cpu_profile_t mmu_profile;
+    arm920t_get_cpu_profile(cpu_jit, &mmu_profile);
+    if (mmu_profile.supported && mmu_profile.native_backend == 2u) {
+        /* The reason probe runs before the access fills a TLB entry, so each
+         * of the three single transfers is a miss here, never a non-RAM hit. */
+        CHECK(mmu_profile.slow_bail_single_tlbmiss == 3u &&
+              mmu_profile.slow_bail_single_nonram == 0u &&
+              (mmu_profile.single_nonram_addresses[0].reads |
+               mmu_profile.single_nonram_addresses[0].writes) == 0u,
+              "cold-TLB miss outranks non-RAM attribution");
+    }
     teardown_pair();
 }
 
