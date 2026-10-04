@@ -256,6 +256,29 @@ int main(void) {
     CHECK(g_audio.underrun == 0, "a short ring raises no gap while the endpoint is buffered");
     CHECK(g_audio.frame_count == 0u, "the real frames were consumed");
 
+    /* Drain tail: the endpoint still holds real frames. A reset now would
+     * discard them; the stream must keep playing until padding reaches 0. */
+    g_client.padding = 200;
+    g_start_calls = 0; g_stop_calls = 0; g_reset_calls = 0;
+    g_client_stopped = 0; g_stop_before_reset = 0;
+    g_render_calls = 0; g_requested_frames = 0; g_released_frames = 0;
+    CHECK(gp32_win64_audio_pump_backend(&g_audio) == 0, "draining pump returns 0");
+    CHECK(g_stop_calls == 0 && g_reset_calls == 0,
+          "pump does not reset while real frames remain in the endpoint");
+    CHECK(g_render_calls == 0, "draining pump requests no endpoint buffer");
+    CHECK(g_audio.playback_started == 1 && g_audio.wasapi_started == 1,
+          "stream stays started so the trailing frames can play out");
+    CHECK(g_audio.underrun == 0, "no gap is raised while real audio still drains");
+
+    /* Endpoint fully drained: the same drain policy resets and re-arms. */
+    g_client.padding = 0;
+    CHECK(gp32_win64_audio_pump_backend(&g_audio) == 0, "drained pump returns 0");
+    CHECK(g_stop_calls == 1 && g_reset_calls == 1, "drained pump stops and resets once");
+    CHECK(g_stop_before_reset == 1, "drained pump called Stop before Reset");
+    CHECK(g_audio.playback_started == 0 && g_audio.wasapi_started == 0,
+          "drained pump re-arms the prebuffer");
+    CHECK(g_audio.underrun == 1, "drained pump raises the gap flag");
+
     free(g_audio.queue);
     free(g_audio.tmp);
     DeleteCriticalSection(&g_audio.lock);

@@ -1633,3 +1633,34 @@ Installed H700 core SHA-256:
 Backup: `gp32-dev/resume79-installed-core-before.so`. Stock RetroArch,
 launcher and protected configuration hashes are unchanged. Reopen a game
 to load this core; no settings adjustment is required.
+
+## resume80: preserve audio tails and trace BIOS-origin discontinuities
+
+WASAPI no longer stops/resets an endpoint merely because its remaining audio
+is at most 256 frames. It waits for zero padding, preserving the real tail
+(up to 5.3 ms at 48 kHz) before the existing rebuffer policy. The targeted
+mock-endpoint test fails before and passes after the change. SDL3 now includes
+the incoming batch when deciding whether to discard excessive backlog,
+preserving soft-limit drop priority and the existing whole-batch acceptance
+policy. Ordinary-stream PCM/counts are unchanged in its focused probe;
+cap-sized-or-smaller burst submissions no longer leave an oversized queue.
+A single batch larger than the cap can still exceed it, as in the other
+backends. Settings and fade constants were not changed. Native speaker
+acceptance remains unverified.
+
+The resume79 source impulse was traced to an original zero byte in the old
+Korea v1.5.6 diagnostic BIOS: its guest mixer converts that U8 value to
+0x8000 and writes both channels before DMA reads them. JIT/interpreter boot
+WAVs match. H700 actually loads the Europe v1.6.6 image from its ROM directory,
+whose boot sound has no such terminal impulse. With that matching image,
+scripted BIOS menu changes do produce large negative PCM tails, again from
+guest mixing of original BIOS bytes and with identical JIT/interpreter output.
+This narrows the source of the values but does not prove that physical DAC,
+mute or analog output behavior is already emulated correctly. No game/BIOS
+special case, asset modification or speculative fade was added.
+
+Private evidence: `F:/GP32/results/resume80-source/README.md`,
+`resume80-win-drain/` and `resume80-sdl-limit/`. The
+[MAME GP32 driver](https://github.com/mamedev/mame/blob/master/src/mame/gamepark/gp32.cpp)
+was consulted for its L3 pin handling and IIS output; it is not a verified
+analog-output reference. Hardware/output-stage investigation remains open.

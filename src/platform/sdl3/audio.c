@@ -151,7 +151,11 @@ static gp32_status_t sdl3_audio_submit(gp32_audio_backend_t *backend, const gp32
 
     const int max_queued = (int)(GP32_SDL3_AUDIO_MAX_LATENCY_FRAMES * 2u * sizeof(int16_t));
     const int soft_queued = (int)(GP32_SDL3_AUDIO_SOFT_LIMIT_FRAMES * 2u * sizeof(int16_t));
-    if (queued_bytes > max_queued) {
+    /* Include the incoming batch when deciding whether to discard old backlog.
+     * Preserve soft-limit drop priority and accept the whole retained batch,
+     * even when that batch alone exceeds the limit, as the other backends do. */
+    if (queued_bytes > max_queued ||
+        (queued_bytes <= soft_queued && queued_bytes > max_queued - (int)bytes)) {
         (void)SDL_ClearAudioStream(a->stream);
         gp32_audio_resampler_mark_gap(&a->resampler, dst_rate);
         queued_bytes = 0;
