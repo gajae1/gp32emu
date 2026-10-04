@@ -2791,3 +2791,16 @@ The same audio fixture passes natively on H700. Windows standalone/libretro,
 H700 and Android ARM64/ARMv7 builds pass; Android execution is still untested.
 The instrumented stock playback above predates this boundary fix and is not
 presented as evidence of audible improvement after it.
+
+The fbcddc4 release core was installed on idle H700 with an exclusive backup,
+atomic replacement and hash readback. Installed SHA-256:
+`5c3e3b8eb46d36e61ac9989f5a48a575ef3d7db9df94a9d853f41b1be95bc545`.
+Stock RetroArch, launcher and protected settings remained unchanged; device
+volume remained zero. Evidence: `results/resume111-frame-tails/installed.json`.
+
+A separate AArch64 dispatch design review proposes a bounded thunk that calls
+existing callback-free native blocks, retaining their entry/exit ABI. This is
+not implemented: current execution-weighted eligible coverage and successor
+run lengths are needed before its additional guards can justify their cost.
+The private design and correctness boundaries are retained in
+`results/resume111-frame-tails/native-chain-design.md`.
