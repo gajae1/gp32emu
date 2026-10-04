@@ -2016,8 +2016,30 @@ void s3c2400_tick(s3c2400_t *s, uint32_t cpu_cycles) {
     }
 }
 
+static uint32_t iis_dma_irq_budget(s3c2400_t *s, uint32_t budget) {
+    const uint32_t *r = &s->dma[2u << 3];
+    if (!(s->iis[0] & 1u) || !(r[6] & 2u) || !GP32_BIT(r[2], 28) ||
+        !GP32_BIT(r[2], 23) || GP32_BITS(r[2], 25, 24) != 0u) return budget;
+    iis_refresh_clock_cache(s);
+    uint32_t count = r[3] & 0x000fffffu;
+    uint32_t frames = iis_dma_transfers_per_frame(s) == 2u ? (count + 1u) / 2u : count;
+    /* Whole-service mode drains its count on the next request. A zero count
+     * also reloads/disables and requests the IRQ on that first request. */
+    if (!frames || GP32_BIT(r[2], 26)) frames = 1u;
+    uint64_t terminal = (uint64_t)frames * s->iis_cached_run_hz;
+    uint64_t progress = s->iis_accum + (uint64_t)budget * s->iis_cached_rate_hz;
+    if (progress < terminal) return budget;
+    if (terminal <= s->iis_accum) return 1u;
+    uint64_t remaining = terminal - s->iis_accum;
+    return (uint32_t)((remaining + s->iis_cached_rate_hz - 1u) / s->iis_cached_rate_hz);
+}
+
 uint32_t s3c2400_run_cpu(s3c2400_t *s, uint32_t cpu_cycles) {
     if (!s || !s->cpu_irq_sink || !cpu_cycles) return 0;
+    /* Let the guest service terminal-count IRQs before consuming the rest of
+     * a large host slice. DMA/IIS/clock writes already yield and settle the
+     * old state, so the next call derives a fresh deadline after such writes. */
+    cpu_cycles = iis_dma_irq_budget(s, cpu_cycles);
     s->cpu_run_active = 1;
     s->cpu_run_clock_written = 0;
     s->cpu_lcd_deadline_set = 0;
