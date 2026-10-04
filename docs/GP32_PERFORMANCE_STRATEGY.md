@@ -3111,3 +3111,35 @@ Focused Windows PCM, timing, timer, transactional-state and libretro-audio
 checks pass. The PCM/state/libretro-audio tests also pass on H700, using only
 RAM temporary storage; Windows/H700/Android arm64 and armv7 cores build.
 Private evidence: `resume120-audio/{baseline,candidate,checks,protected}.json`.
+
+## Common clock and TFT bookkeeping (2026-10-05)
+
+FCLK/HCLK/effective RUN values are now derived when the clock registers change,
+instead of recomputing the PLL/dividers on each public clock query. Reset,
+state load, and the deferred clock-write path all rebuild this host-only
+cache, including the temporary old-clock view used to settle elapsed cycles.
+No state format or guest clock policy changes.
+
+TFT ticks use the existing normalized phase to detect a frame crossing with a
+comparison. Modulo is needed only after a crossing. Equal HCLK/RUN clocks add
+whole cycles and retain the fractional remainder unchanged; other ratios keep
+the original rational calculation. Maximum uint32 cycle slices, fractional
+clock switches, status polling and legacy state loads retain their behavior.
+
+Against `b15e205`, Windows replays of Astonishia title, Blue dialogue and
+Princess Maker slot0 retain exact CPU/video/audio results over 1800 frames.
+Host timing varied enough that PC percentage gains are not established.
+A warmed H700 ABBA run at an observed 1512 MHz throughout every measured window
+also retains exact results: Astonishia title median 176.734 -> 177.6025 fps
+(1.0049x), effectively comparable total throughput rather than a large gain.
+These are headless emulation throughput figures, not the game's own animation
+rate. The isolated SoC tick experiment retains byte-identical serialized
+state in equal-clock, fractional-clock and disabled-display modes and reduces
+its loop cost; its endpoint-only frequency observations do not qualify a
+precise speed ratio. The earlier unprimed H700 run is explicitly disqualified
+because the governor changed frequency during measurement.
+
+Focused PC timing/LCD/PCM/timer/state checks and H700 timing/LCD checks pass;
+Windows, H700 and Android arm64/armv7 builds pass. Private evidence is under
+`resume121-common`: `pc-combined.json`, `title-combined-h700.json`,
+`tick-h700.json`, `checks.json`. No governor or audio-device settings changed.
