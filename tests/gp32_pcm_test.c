@@ -1,6 +1,7 @@
 /* Exercise the real U8 PCM conversion sites, including private HLE mixers.
  * Run with -fsanitize=shift to catch signed shifts below the U8 midpoint. */
 #include "../src/gp32.c"
+#include "gp32_callback_test_support.h"
 
 static const uint8_t input[] = {0, 1, 127, 128, 129, 254, 255};
 static const int16_t expected[] = {-32768, -32512, -256, 0, 256, 32256, 32512};
@@ -45,8 +46,8 @@ static int check_sdk_refill_slicing(uint32_t half_samples) {
     gp32_t *batch = sdk_stream_fixture(half_samples), *split = sdk_stream_fixture(half_samples);
     if (!batch || !split) { gp32_destroy(batch); gp32_destroy(split); return 0; }
     uint32_t clock = direct_run_clock_hz(batch);
-    direct_sdk_sound_tick(batch, clock / 100u, clock);
-    for (unsigned i = 0; i < 100u; ++i) direct_sdk_sound_tick(split, clock / 10000u, clock);
+    test_sdk_sound_tick(batch, clock / 100u, clock);
+    for (unsigned i = 0; i < 100u; ++i) test_sdk_sound_tick(split, clock / 10000u, clock);
     uint64_t a_frames = 0, b_frames = 0;
     uint32_t a_rate = 0, b_rate = 0;
     const int16_t *a = s3c2400_audio_samples(batch->soc, &a_frames, &a_rate);
@@ -80,9 +81,9 @@ static int check_sdk_refill_volume(int foreground) {
         s3c2400_write32(g->soc, code + 24000u, 0xef000017u);
         arm920t_set_reg(g->cpu, 0, 0u); /* Foreground requests unity after the refill's 21. */
         arm920t_set_reg(g->cpu, 15, code);
-        gp32_run_cycles(g, 6001u);
+        test_run_cycles(g, 6001u);
     } else {
-        direct_sdk_sound_tick(g, 66000u, 66000000u);
+        test_sdk_sound_tick(g, 66000u, 66000000u);
     }
     uint64_t frames = 0;
     const int16_t *pcm = s3c2400_audio_samples(g->soc, &frames, NULL);
@@ -121,12 +122,12 @@ static int check_sdk_refill_starts_timer(void) {
     g->direct_hle_gpos_timer[0].configured = 1u;
     g->direct_hle_gpos_timer[0].tps = 1000u;
     g->direct_hle_gpos_timer[0].callback = count_fn;
-    direct_hle_tick(g, 66000u, 66000000u);
+    test_hle_tick(g, 66000u, 66000000u);
     int ok = g->direct_hle_gpos_timer[0].enabled &&
         g->direct_hle_gpos_timer[0].accum == 0u &&
         s3c2400_debug_read32(g->soc, counter) == 0u;
     g->direct_hle_sdk_sndmixer_addr = 0u;
-    direct_hle_tick(g, 66000u, 66000000u);
+    test_hle_tick(g, 66000u, 66000000u);
     ok &= s3c2400_debug_read32(g->soc, counter) == 1u;
     if (!ok) fputs("FAIL: refill-started timer inherited elapsed time before its start\n", stderr);
     gp32_destroy(g);
@@ -180,12 +181,11 @@ static int check_hle_volume_order(int jit, int callback) {
     arm920t_set_cpsr(g->cpu, 0xd3u);
     arm920t_set_reg(g->cpu, 0, 21u);
     arm920t_set_reg(g->cpu, 15, GP32_RAM_BASE);
-    int ok = gp32_run_cycles(g, 6001u) == GP32_OK && volume_span_matches(g, 10000);
-    ok &= callback ? g->direct_hle_callback_returned != 0u :
-                     gp32_get_pc(g) == GP32_RAM_BASE + 24004u;
+    int ok = test_run_cycles(g, 6001u) == GP32_OK && volume_span_matches(g, 10000);
+    ok &= gp32_get_pc(g) == GP32_RAM_BASE + 24004u && !g->direct_hle_callback_running;
     gp32_clear_audio(g);
     g->direct_hle_gpos_timers_enabled = 0u;
-    ok &= gp32_run_cycles(g, 6000u) == GP32_OK && volume_span_matches(g, 1000);
+    ok &= test_run_cycles(g, 6000u) == GP32_OK && volume_span_matches(g, 1000);
     if (!ok) fprintf(stderr, "FAIL: volume ordering jit=%d callback=%d\n", jit, callback);
     gp32_destroy(g);
     return ok;
@@ -221,8 +221,8 @@ static int check_hle_pcm_clock_domains(void) {
         g->direct_hle_pcm_ch[0].rate = 11025u;
         g->direct_hle_pcm_ch[0].repeat = 1u;
         uint32_t budget = direct_run_clock_hz(g) / 100u;
-        g->direct_vblank_wait_cycles = budget;
-        gp32_status_t status = gp32_run_cycles(g, budget);
+
+        gp32_status_t status = test_hle_interval(g, budget) ? GP32_OK : GP32_ERR_CPU_FAULT;
         uint64_t frames = 0;
         uint32_t rate = 0;
         const int16_t *pcm = s3c2400_audio_samples(g->soc, &frames, &rate);
@@ -265,7 +265,7 @@ static int check_sdk_channel_mix(void) {
         g->direct_hle_sdk_sndmixer_addr = mixer;
         g->direct_hle_sdk_sndsrcexist_addr = status;
         uint32_t budget = (uint32_t)(((uint64_t)direct_run_clock_hz(g) * 5u + 44099u) / 44100u);
-        direct_sdk_sound_tick(g, budget, direct_run_clock_hz(g));
+        test_sdk_sound_tick(g, budget, direct_run_clock_hz(g));
         uint64_t frames = 0;
         uint32_t rate = 0;
         const int16_t *pcm = s3c2400_audio_samples(g->soc, &frames, &rate);
@@ -333,8 +333,8 @@ static int check_callback_clock_audio(int sdk) {
             s3c2400_write32(g->soc, callback + 4u, step ? 0xe3a01000u : 0xe3a01002u);
             arm920t_flush_jit(g->cpu);
         } else g->direct_hle_gpos_timer[0].enabled = 0u;
-        g->direct_vblank_wait_cycles = budgets[step];
-        ok = gp32_run_cycles(g, budgets[step]) == GP32_OK;
+
+        ok = test_hle_interval(g, budgets[step]);
         uint64_t frames = 0;
         uint32_t rate = 0;
         (void)s3c2400_audio_samples(g->soc, &frames, &rate);

@@ -89,3 +89,31 @@ address. The callback reaches its tail before returning through that stub.
 PC timer, PCM, file and state checks pass; the timer regression also passes on
 the H700 native backend from RAM with protected files unchanged. This is a return-identity fix; the
 larger resumable-callback and interruptible-display-wait work remains open.
+
+
+## Integrated resumable callbacks and guest display wait (2026-10-05)
+
+Direct-HLE refill/timer callbacks now run inside the caller's CPU budget in
+slices of at most 4096 cycles and resume across frames instead of being
+abandoned after a fixed synchronous limit. The foreground context is restored
+only after the callback reaches its private return stub (the 094024d owner and
+return-PC check is kept). The SDK display wait runs as a guest loop over a
+64-bit elapsed-nanosecond mirror, so guest IRQ/FIQ, LCD, IIS and PWM keep
+running while a game waits. The former host idle-cycle wait is removed.
+Display cadence is a fixed 60 Hz HLE schedule, not a TFT vblank edge.
+
+State v11 appends the next display slot (85 words). v10 and v2-v9 load; legacy
+pending host waits migrate once into the guest loop using the restored clock,
+which is an explicit approximation. Each callback has a 1-second emulated
+watchdog; timeouts, halts and SDK task switches inside a callback raise a
+sticky CPU fault. HLE mixing and GPOS ticks pause during callback CPU time.
+
+Evidence: the e89e85c display reproduction fails on both backends and passes
+after integration; a 1.2M-cycle callback completes. All 26 PC tests pass,
+including new `gp32_callback` and `gp32_wait` fixtures (nested IRQ/FIQ waits,
+wraps, clock changes, save/load). The callback, wait, timer, PCM, state and
+file tests pass natively on H700. Princess, Astonishia, Blue Angelo and Her
+Knights SMC scenes are identical to `ee3a2de` in JIT and interpreter (600
+frames). DynaMate v2.0 runs 60 frames identically on both backends. WinterSports
+Eins alpha still leaves RAM at `06cc4dec`, exactly as before. Raw evidence:
+`F:/GP32/results/round134-callback/` and `round139-callback/`.

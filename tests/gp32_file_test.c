@@ -77,7 +77,7 @@ static int check_card_query(void) {
     }
     g->direct_fpk_asset_count = 0u;
     arm920t_set_reg(g->cpu, 0, surface);
-    ok &= direct_fxe_swi(g, g->cpu, 0x11u, direct_stub_addr(g), 0);
+    ok &= direct_fxe_swi(g, g->cpu, 0x11u, direct_wait_swi_addr(g), 0);
     ok &= g->direct_fxe_fb_addr == direct_default_surface_addr(1) && g->direct_vblank_wait_requested;
     gp32_destroy(g);
     if (!ok) fputs("FAIL: card query aliases display callback\n", stderr);

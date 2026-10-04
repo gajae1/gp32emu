@@ -58,6 +58,11 @@ int s3c2400_state_save(const s3c2400_t *soc, FILE *f);
 int s3c2400_state_load(s3c2400_t *soc, FILE *f);
 int s3c2400_state_save_io(const s3c2400_t *soc, state_io_t *io);
 int s3c2400_state_load_io(s3c2400_t *soc, state_io_t *io, int has_audio_spans, int has_iis_phase, int has_lcd_phase, int has_idle_phase, int has_codec);
+/* HLE continuation validates against incoming RAM/clock. Legacy guest-wait
+ * migration also requires its saved stack to fit before SoC commit. Zero
+ * parameters disable the corresponding check for the compatibility wrapper. */
+int s3c2400_state_load_io_checked(s3c2400_t *soc, state_io_t *io, int has_audio_spans, int has_iis_phase, int has_lcd_phase, int has_idle_phase, int has_codec,
+                                uint32_t expected_ram_size, uint32_t expected_run_clock, uint32_t required_ram_size);
 
 uint8_t s3c2400_read8(void *user, uint32_t addr);
 uint16_t s3c2400_read16(void *user, uint32_t addr);

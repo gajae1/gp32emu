@@ -30,10 +30,13 @@ performance, audio and input correctness across the library, not boot-only tests
 - No claim of full gameplay, original-hardware sound, latency or Android
   runtime acceptance follows from these checks.
 
-## Immediate work: interruptible direct-HLE display wait
+## Direct-HLE display wait and resumable callbacks (integrated)
 
-Production still uses a host idle wait that postpones IRQ/FIQ execution.
-`HLE_WAIT_INTERRUPTS.md` describes the reproduced defect and scope.
+Resumable callbacks and the guest-loop display wait are now in production;
+see the integrated section at the end of `HLE_WAIT_INTERRUPTS.md`. The notes
+below record the earlier prototypes and remain for history. Open limits: SDK
+task switches inside callbacks fault, HLE mixing pauses during callbacks, and
+WinterSports Eins alpha still leaves RAM.
 
 Private candidate/evidence on the development machine:
 `F:/GP32/results/resume131-wait/`:

@@ -93,10 +93,14 @@ gp32_status_t gp32_save_state_data(gp32_t *gp32, void *data, size_t size);
 gp32_status_t gp32_load_state_data(gp32_t *gp32, const void *data, size_t size);
 
 gp32_status_t gp32_reset(gp32_t *gp32);
-/* Explicit CPU-cycle stepping, independent of host frame pacing. */
+/* Explicit CPU-cycle budget shared by foreground and HLE callback execution,
+ * independent of host frame pacing. Unfinished callbacks/display waits remain pending.
+ * Callback watchdog/stall/unsupported-task faults return GP32_ERR_CPU_FAULT
+ * until reset or a nonfault state load; gp32_get_error describes the fault. */
 gp32_status_t gp32_run_cycles(gp32_t *gp32, uint32_t cycles);
 /* Advance one 60 Hz interval of emulated time, including guest clock changes
- * and callback execution. Pacing carry is restored by savestates. */
+ * and callback execution. A callback can remain pending across frames.
+ * Pacing carry, callbacks and guest display waits are restored by savestates. */
 gp32_status_t gp32_run_frame(gp32_t *gp32);
 gp32_status_t gp32_set_jit(gp32_t *gp32, int enabled);
 /* Overrides HLE playback rate for raw SEF PCM. 0 restores SDK-derived auto rate. */
