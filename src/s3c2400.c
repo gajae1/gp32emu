@@ -447,7 +447,8 @@ static uint32_t iis_frame_rate_hz(const s3c2400_t *s);
 static uint64_t iis_period_cpu_cycles(const s3c2400_t *s);
 static uint32_t iis_dma_transfers_per_frame(const s3c2400_t *s);
 
-static void audio_append_stereo(s3c2400_t *s, int16_t left, int16_t right);
+static void audio_append_stereo(s3c2400_t *s, int16_t left, int16_t right, uint32_t rate);
+static void iis_refresh_clock_cache(s3c2400_t *s);
 
 /*
  * Reserve room for a whole IIS DMA batch in one growth decision.
@@ -497,6 +498,7 @@ static uint32_t dma_iis_fast_trigger_count(s3c2400_t *s, uint32_t *r, uint32_t r
     int inc_dst = GP32_BIT(r[1],29) == 0;
     int service = GP32_BIT(r[2],26);
     if (!tc || !requests || inc_dst || dst != 0x15508010u || dsz == 0u) return 0;
+    iis_refresh_clock_cache(s);
     /*
      * Units this call can move: single-service mode stops after the requests
      * handed in by the caller, whole-service mode hands the channel's whole
@@ -536,7 +538,7 @@ static uint32_t dma_iis_fast_trigger_count(s3c2400_t *s, uint32_t *r, uint32_t r
             out += 2;                                                  \
             frames++;                                                  \
         } else {                                                       \
-            audio_append_stereo(s, (int16_t)(left), (int16_t)(right)); \
+            audio_append_stereo(s, (int16_t)(left), (int16_t)(right), s->iis_cached_rate_hz); \
         }                                                              \
         last_right = (uint16_t)(right);                                \
     } while (0)
@@ -554,22 +556,26 @@ static uint32_t dma_iis_fast_trigger_count(s3c2400_t *s, uint32_t *r, uint32_t r
             if (inc_src) src += 2u;
         } else {
             uint32_t v = rp ? gp32_ld32le(rp) : s3c2400_read32(s, src);
-            uint16_t lo = (uint16_t)v;
-            uint16_t hi = (uint16_t)(v >> 16);
+            /* A word write to IISFIF pushes its upper halfword first, just
+             * like the generic MMIO path. Preserve that order with a pending
+             * halfword too; otherwise the fast path swaps stereo channels. */
+            uint16_t first = (uint16_t)(v >> 16);
+            uint16_t second = (uint16_t)v;
             if (idx) {
-                /* A halfword is still queued from earlier: it pairs with the
-                 * low halfword and the high halfword becomes the queued one. */
-                IIS_PCM_APPEND(pending, lo);
-                pending = hi;
+                IIS_PCM_APPEND(pending, first);
+                pending = second;
             } else {
-                IIS_PCM_APPEND(lo, hi);
-                pending = lo;
+                IIS_PCM_APPEND(first, second);
+                pending = first;
             }
             if (inc_src) src += 4u;
         }
     }
 #undef IIS_PCM_APPEND
-    if (direct) s->audio_frames = base_frames + frames;
+    if (direct) {
+        s->audio_frames = base_frames + frames;
+        if (frames) s->audio_sample_rate_hz = s->iis_cached_rate_hz;
+    }
     s->iis_fifo[0] = pending;
     s->iis_fifo[1] = last_right;
     s->iis_fifo_index = idx;
@@ -917,7 +923,6 @@ static void io_write32(s3c2400_t *s, uint32_t addr, uint32_t value, uint32_t mas
         if (off == 0x00u && ((old ^ s->iis[0]) & 1u)) s->iis_accum = 0;
         if (off == 0x04u || off == 0x08u) {
             s->iis_clock_dirty = 1;
-            s->audio_sample_rate_hz = iis_frame_rate_hz(s);
         }
         if (off == 0x10u) {
             if (mask & 0xffff0000u) iis_fifo_write16(s, (uint16_t)(value >> 16));
@@ -1345,7 +1350,7 @@ uint32_t s3c2400_run_clock_hz(const s3c2400_t *s) {
     return h ? h : 66000000u;
 }
 
-static void audio_append_stereo(s3c2400_t *s, int16_t left, int16_t right) {
+static void audio_append_stereo(s3c2400_t *s, int16_t left, int16_t right, uint32_t rate) {
     if (!s) return;
     if (s->audio_frames >= s->audio_cap_frames) {
         if (!audio_reserve_frames(s, 1u)) return;
@@ -1353,21 +1358,21 @@ static void audio_append_stereo(s3c2400_t *s, int16_t left, int16_t right) {
     s->audio[s->audio_frames * 2u + 0u] = left;
     s->audio[s->audio_frames * 2u + 1u] = right;
     s->audio_frames++;
+    s->audio_sample_rate_hz = rate;
 }
 
 void s3c2400_audio_append_u8_mono(s3c2400_t *s, const uint8_t *samples, uint32_t sample_count, uint32_t sample_rate_hz) {
     if (!s || !samples || !sample_count) return;
-    s->audio_sample_rate_hz = sample_rate_hz ? sample_rate_hz : 11025u;
+    uint32_t rate = sample_rate_hz ? sample_rate_hz : 11025u;
     for (uint32_t i = 0; i < sample_count; ++i) {
         int16_t v = (int16_t)(((int)samples[i] - 128) * 256);
-        audio_append_stereo(s, v, v);
+        audio_append_stereo(s, v, v, rate);
     }
 }
 
 void s3c2400_audio_append_s16_stereo(s3c2400_t *s, int16_t left, int16_t right, uint32_t sample_rate_hz) {
     if (!s) return;
-    s->audio_sample_rate_hz = sample_rate_hz ? sample_rate_hz : 11025u;
-    audio_append_stereo(s, left, right);
+    audio_append_stereo(s, left, right, sample_rate_hz ? sample_rate_hz : 11025u);
 }
 
 
@@ -1438,7 +1443,8 @@ static void iis_fifo_write16(s3c2400_t *s, uint16_t sample) {
     s->iis_fifo[s->iis_fifo_index++] = sample;
     if (s->iis_fifo_index >= 2u) {
         s->iis_fifo_index = 0;
-        audio_append_stereo(s, (int16_t)s->iis_fifo[0], (int16_t)s->iis_fifo[1]);
+        iis_refresh_clock_cache(s);
+        audio_append_stereo(s, (int16_t)s->iis_fifo[0], (int16_t)s->iis_fifo[1], s->iis_cached_rate_hz);
     }
 }
 
@@ -1557,7 +1563,6 @@ static void iis_refresh_clock_cache(s3c2400_t *s) {
     s->iis_cached_rate_hz = iis_frame_rate_hz(s);
     s->iis_cached_period_cycles = iis_period_cpu_cycles(s);
     if (!s->iis_cached_period_cycles) s->iis_cached_period_cycles = 1u;
-    s->audio_sample_rate_hz = s->iis_cached_rate_hz;
     s->iis_clock_dirty = 0;
 }
 
