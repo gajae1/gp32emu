@@ -1870,6 +1870,90 @@ static void case_native_spsr(void) {
     case_native_spsr_exception_return();
 }
 
+/* CPSR writes retire before dispatch observes a new register bank, execution
+ * state or interrupt mask. Source registers must be read before bank swaps. */
+static void case_native_cpsr(void) {
+    const uint32_t bank_program[] = {
+        0xe12ff00du, /* MSR CPSR_fsxc,sp: source is the outgoing SVC bank */
+        0xe1a06008u, /* MOV r6,r8: observe incoming FIQ bank */
+        0xe121f00du, /* MSR CPSR_c,sp: source is now FIQ's SP */
+        0xe1a0500du, /* MOV r5,sp: original SVC SP must be restored */
+        0xeafffffeu
+    };
+    current_case = "native-cpsr-bank-source";
+    setup_pair();
+    set_cpsr_both(0x600000d3u);
+    set_reg_both(13u, 0x600000d1u);
+    arm920t_t *pair[] = {cpu_jit, cpu_ref};
+    for (unsigned i = 0; i < 2u; ++i) {
+        arm920t_register_context_t context;
+        arm920t_get_register_context(pair[i], &context);
+        context.bank_fiq[0] = 0x77788899u;
+        context.bank_fiq[5] = 0xd3u;
+        arm920t_set_register_context(pair[i], &context);
+    }
+    load_both(bank_program, GP32_ARRAY_COUNT(bank_program));
+    run_native_case();
+    CHECK(ref_reg(6) == 0x77788899u, "CPSR switch selected the FIQ register bank");
+    CHECK(ref_reg(5) == 0x600000d1u && ref_reg(13) == 0x600000d1u,
+          "banked MSR source was captured before switching and SVC SP restored");
+    CHECK(arm920t_get_cpsr(cpu_ref) == 0x600000d3u, "CPSR bank round trip");
+    teardown_pair();
+
+    const uint32_t thumb_program[] = {
+        0xe321f033u, /* MSR CPSR_c,#SVC|T */
+        0x21bb205au, /* Thumb MOVS r0,#0x5a; MOVS r1,#0xbb */
+        0xe7fee7feu  /* Thumb B self; decoding as ARM instead would fault */
+    };
+    current_case = "native-cpsr-thumb-exit";
+    setup_pair();
+    set_cpsr_both(0xd3u);
+    load_both(thumb_program, GP32_ARRAY_COUNT(thumb_program));
+    run_native_case();
+    CHECK(ref_reg(0) == 0x5au && ref_reg(1) == 0xbbu, "MSR must dispatch into Thumb");
+    CHECK((arm920t_get_cpsr(cpu_ref) & 0x20u) && arm920t_get_pc(cpu_ref) == CODE_ADDR + 8u,
+          "Thumb state and final PC after MSR");
+    teardown_pair();
+
+    for (unsigned fiq = 0; fiq < 2u; ++fiq) {
+        const uint32_t program[] = {
+            fiq ? 0xe321f093u : 0xe321f053u, /* MSR CPSR_c, unmask one line */
+            0xe3a0505au, /* MOV r5,#0x5a: must not execute before the exception */
+            0xeafffffeu
+        };
+        current_case = fiq ? "native-cpsr-unmask-fiq" : "native-cpsr-unmask-irq";
+        setup_pair();
+        set_cpsr_both(0xd3u);
+        load_both(program, GP32_ARRAY_COUNT(program));
+        set_mem_both(0x18u, 0xeafffffeu);
+        set_mem_both(0x1cu, 0xeafffffeu);
+        if (fiq) { arm920t_set_fiq(cpu_jit, 1); arm920t_set_fiq(cpu_ref, 1); }
+        else { arm920t_set_irq(cpu_jit, 1); arm920t_set_irq(cpu_ref, 1); }
+        run_native_case();
+        CHECK(ref_reg(5) == 0u && arm920t_get_pc(cpu_ref) == (fiq ? 0x1cu : 0x18u),
+              "unmasked pending interrupt taken before the next guest instruction");
+        CHECK((arm920t_get_cpsr(cpu_ref) & 31u) == (fiq ? 0x11u : 0x12u), "interrupt mode");
+        teardown_pair();
+    }
+
+    const uint32_t partial_program[] = {
+        0xe122f00fu, /* MSR CPSR_x,pc: source PC+8 supplies byte 0x04 */
+        0xe124f00fu, /* MSR CPSR_s,pc: source PC+8 supplies byte 0x00 */
+        0xe120f002u, /* existing zero-field NZCV-only behavior */
+        0xe10f3000u, /* MRS r3,CPSR */
+        0xeafffffeu
+    };
+    current_case = "native-cpsr-partial-pc";
+    setup_pair();
+    set_cpsr_both(0x0fffaad3u);
+    set_reg_both(2u, 0xb1234567u);
+    load_both(partial_program, GP32_ARRAY_COUNT(partial_program));
+    run_native_case();
+    CHECK(ref_reg(3) == 0xbf0004d3u && arm920t_get_cpsr(cpu_ref) == 0xbf0004d3u,
+          "PC-source byte writes and zero-field NZCV preserve unselected bits");
+    teardown_pair();
+}
+
 static void case_native_mapped_block(void) {
     const uint32_t va = 0x10000ffcu;
     const uint32_t ttb = RAM_BASE + 0x4000u, l2 = RAM_BASE + 0x8000u;
@@ -2845,7 +2929,9 @@ int main(int argc, char **argv) {
     int access_only = argc == 2 && !strcmp(argv[1], "--checked-access");
     int poll_only = argc == 2 && !strcmp(argv[1], "--poll-progress");
     int psr_only = argc == 2 && !strcmp(argv[1], "--psr");
-    if (psr_only) {
+    if (argc == 2 && !strcmp(argv[1], "--cpsr")) {
+        case_native_cpsr();
+    } else if (psr_only) {
         case_native_spsr();
         case_native_longmul_psr();
     } else if (poll_only) {
@@ -2916,6 +3002,7 @@ int main(int argc, char **argv) {
     case_native_regshift();
     case_native_longmul_psr();
     case_native_spsr();
+    case_native_cpsr();
     case_cache_maintenance_native();
     case_native_mapped_block();
     case_unframed_leaf();
@@ -2960,7 +3047,7 @@ int main(int argc, char **argv) {
         return 1;
     }
     printf("PASS: arm jit differential (%s), jit events=%" PRIu64 " fallbacks=%" PRIu64 "\n",
-           psr_only ? "spsr" : poll_only ? "poll-progress" : access_only ? "checked-access" : pairs_only ? "block-pairs/fences" : portable_only ? "portable-callback" : block_only ? "block-callback" : irq_only ? "callback-IRQ" : chain_only ? "branch-chain" : forward_only ? "forward-loop" : callback_only ? "callback-PC" : (leaf_only ? "unframed-leaf" : (ram_end_only ? "mapped-page-RAM-end" : (loops_only ? "loop-fences" : "flags/shift/branch/mem/half/block/mul/seeded/budget/loop-fences"))),
+           (argc == 2 && !strcmp(argv[1], "--cpsr")) ? "cpsr" : psr_only ? "spsr" : poll_only ? "poll-progress" : access_only ? "checked-access" : pairs_only ? "block-pairs/fences" : portable_only ? "portable-callback" : block_only ? "block-callback" : irq_only ? "callback-IRQ" : chain_only ? "branch-chain" : forward_only ? "forward-loop" : callback_only ? "callback-PC" : (leaf_only ? "unframed-leaf" : (ram_end_only ? "mapped-page-RAM-end" : (loops_only ? "loop-fences" : "flags/shift/branch/mem/half/block/mul/seeded/budget/loop-fences"))),
            jit_events, jit_fallbacks);
     return 0;
 }
