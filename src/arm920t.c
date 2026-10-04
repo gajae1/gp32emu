@@ -3279,10 +3279,13 @@ static ARM_NOINLINE uint32_t arm_jit_run_portable(arm920t_t *c,
     uint32_t done = 0;
     const uint32_t generation = c->jit_generation;
     const uint32_t epoch = c->jit_cache_epoch;
+    /* Decoded ops live in one stable allocation for the CPU's lifetime; the
+     * generation/epoch fences below guard in-place reuse of the block. */
+    const arm_jit_op_t *ops = arm_jit_ops(c, b);
     for (uint8_t i = 0; i < b->count && done < budget && run_done + done < c->run_limit; ++i) {
-        const arm_jit_op_t *op = &arm_jit_ops(c, b)[i];
+        const arm_jit_op_t *op = &ops[i];
         if ((c->r[15] & ~3u) != op->pc || thumb(c)) break;
-        uint32_t expected_next = (i + 1u < b->count) ? (arm_jit_ops(c, b)[i + 1u].pc & ~3u) : (op->pc + 4u);
+        uint32_t expected_next = (i + 1u < b->count) ? (ops[i + 1u].pc & ~3u) : (op->pc + 4u);
         if (*stable_reads && (i >= b->poll_prefix || !arm_poll_read_stable(c, op))) *stable_reads = 0;
         arm_jit_exec_classified_bc(c, op);
         ARM_PROF_INC(c, block_interp_arm_insns);

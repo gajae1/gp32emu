@@ -195,3 +195,75 @@ has this cause: Tears' earlier uninitialized count slot and real-hardware
 behavior were not observed. No card or firmware was modified. Evidence:
 `resume92-tears-origin/FINDINGS.md`, `tears-fat.json`, and
 `run-120/{stdout.txt,provenance.json}`.
+
+
+## Single-build library refresh (2026-10-05, b31cb2f)
+
+All 31 catalog titles were cold-started for 3600 virtual frames on one frozen
+PC profile library. Seven disjoint shards were assigned; five provider calls
+failed with 429, and the parent completed their runs locally. Fourteen agent
+assignments across runtime, SDK and coverage work included those failed calls;
+this is not a claim of fourteen simultaneously productive workers.
+
+Twenty-seven titles also received one 600-1200-frame continuation, using
+explicit inputs and either the new boot state or a documented older scene.
+All 58 bounded runs exited successfully. Visual inspection, not exit status,
+determined the scenes below. Menus, active gameplay, and state continuations
+are deliberately separate. No device ROMs, user states, volume or settings
+were modified. Timings from parallel profile runs are not speed measurements.
+
+| ID | Title | Current-build observed scene / limit |
+| ---: | --- | --- |
+| 1 | Astonishia Story R | Title; older-state continuation reaches inn dialogue |
+| 2 | Blue Angelo | Language selection; older-state continuation reaches field/HUD |
+| 3 | Dooly Soccer | Match dialogue and goal presentation |
+| 4 | Dungeon & Guarder | Difficulty menu to field/story with party and HUD |
+| 5 | Dyhard | New/load/save menu; no deeper continuation this batch |
+| 6 | Funny Soccer | Character selection; prior match state continues on field |
+| 7 | GP Fight | Character/story sequence and partially filled match-loading bar; match not reached within cap |
+| 8 | GlooP Deluxe | Default BIOS loading screen; beta-BIOS playfield state loads, scripted START opens pause menu |
+| 9 | Hany Party Game | Title; prior-state continuation reaches platform minigame/HUD |
+| 10 | Her Knights | Title; prior combat state continues in stage |
+| 11 | Holeman | Title; prior racing state continues on track/HUD |
+| 12 | Kimchiman | Combat sprites/HUD visible in cold boot; controls not attributed |
+| 13 | Little Girl Mill | Story; prior-state continuation reaches character/title presentation, no new movement proof |
+| 14 | Little Wizard | Character selection to VS and active match/round progression |
+| 15 | OneShot Voca | Vocabulary controls and word/definition presentation |
+| 16 | Pinball Dreams | Default BIOS loading screen; 2003-05-21 BIOS state continues on Ignition playfield |
+| 17 | Princess Maker 2 | Naming screen; prior-state continuation reaches room/status panel |
+| 18 | Rally Pop | Level selection to arena/characters/HUD |
+| 19 | Raphael | Opening illustration; no deeper continuation this batch |
+| 20 | Story of Bug Eyed Monster | Story dialogue; scripted continuation opens save confirmation |
+| 21 | Super Plusha | Menu to platform stage, enemies and HUD |
+| 22 | Tales of Windy Land | Story; prior-state continuation reaches outdoor field |
+| 23 | Tanggle's Magic Square | Puzzle board |
+| 24 | Tears | Default BIOS loading screen; beta-BIOS state continues Korean story |
+| 25 | Therapy | Title to Korean narration/story |
+| 26 | Tomak | Arcade/options menu; no deeper continuation this batch |
+| 27 | Topy Topy Gogo | Title; prior racing state continues in race |
+| 28 | W.B.W. | Title to forest field and wolf dialogue |
+| 29 | Winter Is | Menu; prior chapter state advances Korean train narration; sound fidelity unresolved |
+| 30 | Wizard Slayer | Difficulty menu; prior-state continuation reaches dark field/transition, controls not attributed |
+| 31 | Woody & Kunta | Menu; bounded prior-state continuation ends at menu, no fresh gameplay claim |
+
+The three default-BIOS loading limitations are reproduced historical findings,
+not three new emulator defects. Alternate BIOS plus saved-state continuation
+is not equivalent to a successful cold boot with the default BIOS. Likewise,
+GP Fight's changing loading presentation at the time cap is not a proven hang.
+Old/new PCM hashes differ across intended IIS fractional-clock fixes; a hash
+change across those revisions alone does not establish an audio regression.
+
+Evidence: private `resume116-library/manifest.json`, `parent-{boot,extra,
+continuation}.json`, per-run commands/metrics/captures, `fallback-state-map.json`,
+and `shard-{4,7}/REPORT.md`. The frozen library SHA-256 is
+`c90ce3855d88ef3b364d348a390cd911896ffdef6fee723eb91c7cb14059d7f5`;
+the probe SHA-256 is
+`51dd513d4ba728dd6db3e413a051019da30434b8a0201637584a92103962774c`.
+Subsequent portable-op pointer optimization was tested separately and is not
+silently substituted for this frozen coverage revision.
+
+New common diagnostic leads are the register-insensitive LCD period/static
+LCDCON5 status and Blue partial-frame audio delivery deficit; see the latest
+sections of GP32_PERFORMANCE_STRATEGY.md. The user's speed and audible-pop
+reports, full gameplay/long sessions, input latency and Android runtime remain
+open. Successful boot screenshots do not close those gates.
