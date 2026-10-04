@@ -16,6 +16,22 @@
 #include "arm_jit_test.c"
 #undef main
 
+/* Way-aware lookups: a set holds ARM_JIT_BLOCK_WAYS slots, so matching the
+ * set base alone no longer identifies this PC's own block. */
+static arm_jit_block_t *block_for_pc(uint32_t pc) {
+    arm_jit_block_t *set = &cpu_jit->jit_blocks[arm_jit_block_index(pc)];
+    for (unsigned way = 0; way < ARM_JIT_BLOCK_WAYS; ++way)
+        if (set[way].valid && set[way].tag_pc == pc) return &set[way];
+    return NULL;
+}
+static arm_jit_block_t *native_block_for_pc(uint32_t pc) {
+    arm_jit_block_t *set = &cpu_jit->jit_blocks[arm_jit_block_index(pc)];
+    for (unsigned way = 0; way < ARM_JIT_BLOCK_WAYS; ++way)
+        if (set[way].valid && set[way].tag_pc == pc && set[way].native_ok && set[way].native)
+            return &set[way];
+    return NULL;
+}
+
 int main(void) {
 #if !ARM920T_NATIVE_BACKEND
     puts("SKIP: native backend unavailable");
@@ -23,17 +39,19 @@ int main(void) {
 #else
     current_case = "arena-churn";
     setup_pair();
-    /* Find a real collision rather than depending on one particular hash. */
-    uint32_t addresses[] = {RAM_BASE + 0x400u, 0u};
+    /* Find a real set overflow rather than depending on one particular hash.
+     * Two ways keep a colliding pair resident, so a third PC in the same set
+     * is what still forces intra-generation replacement here. */
+    uint32_t addresses[] = {RAM_BASE + 0x400u, 0u, 0u};
     for (uint32_t pc = addresses[0] + 0x100u; pc <= RAM_BASE + RAM_SIZE - 0x100u; pc += 4u) {
-        if (arm_jit_block_index(pc) == arm_jit_block_index(addresses[0])) {
-            addresses[1] = pc;
-            break;
-        }
+        if (arm_jit_block_index(pc) != arm_jit_block_index(addresses[0])) continue;
+        if (!addresses[1]) { addresses[1] = pc; continue; }
+        addresses[2] = pc;
+        break;
     }
-    CHECK(addresses[1] != 0u, "churn fixture could not find a cache collision");
-    if (!addresses[1]) { teardown_pair(); return 1; }
-    for (unsigned j = 0; j < 2u; ++j) {
+    CHECK(addresses[1] != 0u && addresses[2] != 0u, "churn fixture could not find a cache collision");
+    if (!addresses[2]) { teardown_pair(); return 1; }
+    for (unsigned j = 0; j < 3u; ++j) {
         for (unsigned i = 0; i < 32u; ++i) {
             /* A register PC write ends exactly at 32 operations; B self can
              * be stitched once more and force this budget into portable code. */
@@ -43,11 +61,11 @@ int main(void) {
     }
     uint32_t initial_generation = cpu_jit->jit_generation;
     for (unsigned i = 0; i < 3000u; ++i) {
-        set_reg_both(15u, addresses[i & 1u]);
-        set_reg_both(1u, addresses[i & 1u] + 31u * 4u);
+        set_reg_both(15u, addresses[i % 3u]);
+        set_reg_both(1u, addresses[i % 3u] + 31u * 4u);
         CHECK(arm920t_run(cpu_jit, 32u) == arm920t_run(cpu_ref, 32u), "churn budget");
-        arm_jit_block_t *b = &cpu_jit->jit_blocks[arm_jit_block_index(addresses[i & 1u])];
-        CHECK(b->native_ok && b->native, "new block lost native execution after cache fill");
+        CHECK(native_block_for_pc(addresses[i % 3u]) != NULL,
+              "new block lost native execution after cache fill");
         if ((i % 100u) == 0u) compare_state();
         if (failures) break;
     }
@@ -55,9 +73,9 @@ int main(void) {
     CHECK(cpu_jit->prof.native_block_calls == 3000u, "churn did not execute each native block");
     /* Invoke the native entry directly with insufficient budget: its early
      * return must unwind the host frame without changing guest state. */
-    arm_jit_block_t *short_block = &cpu_jit->jit_blocks[arm_jit_block_index(addresses[1])];
-    CHECK(short_block->native && short_block->native_ok, "short-budget block unavailable");
-    if (short_block->native && short_block->native_ok) {
+    arm_jit_block_t *short_block = native_block_for_pc(addresses[2999u % 3u]);
+    CHECK(short_block != NULL, "short-budget block unavailable");
+    if (short_block) {
         CHECK(short_block->native(cpu_jit, short_block->count - 1u) == 0u,
               "native short-budget entry executed guest instructions");
         compare_state();
@@ -71,7 +89,8 @@ int main(void) {
     CHECK(arm920t_run(cpu_jit, 32u) == arm920t_run(cpu_ref, 32u), "wrap budget");
     compare_state();
     CHECK(cpu_jit->jit_generation == 1u, "generation wrap failed");
-    CHECK(cpu_jit->jit_blocks[arm_jit_block_index(addresses[0])].native_ok,
+    arm_jit_block_t *wrapped_block = block_for_pc(addresses[0]);
+    CHECK(wrapped_block && wrapped_block->native_ok,
           "wrap cleared the block under translation");
     /* A guest cache epoch can wrap while its MCR native block is active.
      * It must retire that arena without overwriting the returning block. */

@@ -6,6 +6,12 @@ performance, audio and input correctness across the library, not boot-only tests
 
 ## Current accepted work
 
+- Fixed-capacity two-way JIT cache: fewer retranslations without enlarging the
+  block table. The initial two-pass lookup regressed H700 ASR and was replaced
+  with a first-way fast path. Final bounded Blue/ASR guest outputs match;
+  Blue translations fall 10,463 to 3,983 and arena recycles 1 to 0. Throughput
+  remains roughly unchanged; see `JIT_CACHE_ASSOCIATIVITY.md` for limits and
+  rejected measurements. Four C23 release architectures build; not installed.
 - `c7612ec`: state restoration rejects invalid IIS FIFO/negative IIC indices before
   mutating the live SoC, and normalizes old IIC data-phase counts without
   changing transaction behavior. The defect previously allowed later register
@@ -87,15 +93,25 @@ defect or proven beneficial change; its extensive private checks are worker
 evidence, not blanket game/audio acceptance. A requested scratch-log deletion
 was blocked by automatic review and was not retried.
 
-The original JIT cache worker remains active. Private patches/reports belong
+The original JIT cache worker completed a fixed-capacity two-way cache candidate.
+Parent integration corrected its native-block assertions and removed its H700
+dispatch regression. Bounded Blue Angelo/ASR comparisons are complete under
+`F:/GP32/results/round135-cache/`; this is not installed. Validation scope is in
+`JIT_CACHE_ASSOCIATIVITY.md`.
+Private patches/reports belong
 under `F:/GP32/results/round133-parallel/`; they must not edit tracked source,
 run shared builds, use SSH or delegate. A subsequent Sol max worker owns only
 `F:/GP32/results/round134-callback/` for the resumable callback candidate.
 Eight further max-effort performance workers were dispatched under
 `F:/GP32/results/round134-performance/`; four ended with provider 429, while
-A64 codegen, LCD, memory bus and IIS workers remain active. With the original
-JIT-cache worker and Sol this is six outstanding tasks; their IDs are in the
-private dispatch JSON files. Record final outcomes before a handoff.
+A64 codegen remains active. LCD completed a private unchanged-row reuse
+candidate awaiting H700 integration/measurement. IIS completed with no justified change:
+its measured PC cost was below 0.17% in four scenes. The memory worker is
+refining its candidate to preserve MMIO read side effects. Sol completed a
+resumable callback candidate, but it faults on callback display waits and must
+not ship alone; that worker is now integrating the wide guest wait and state
+compatibility. Their IDs are in the private dispatch JSON files. Record final
+outcomes before a handoff.
 
 ## Broader remaining evidence
 
