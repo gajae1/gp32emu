@@ -2466,7 +2466,47 @@ static void case_cache_modified(int leaf) {
 }
 /* Exercise native RAM-page lookup against instruction-by-instruction MMU
  * execution, including two VAs colliding in the 4096-entry TLB index. */
+static void case_native_ram_mmio_alias(void) {
+    const uint32_t va = 0x10007000u, alias = 0x11007000u;
+    const uint32_t ttb = RAM_BASE + 0x4000u, l2 = RAM_BASE + 0x8000u;
+    const uint32_t program[] = {
+        0xee02af10u, 0xee01bf10u, /* MCR TTB/control */
+        0xe5901000u, 0xe5902000u, /* fill RAM mapping, then hit it */
+        0xe5983000u,             /* alias must read MMIO, not cached RAM */
+        0xe5904000u, 0xe5905000u, /* restore RAM mapping, then hit it again */
+        0xeafffffeu,
+    };
+    current_case = "mapped-RAM-MMIO-tag-collision";
+    setup_pair();
+    arm920t_set_trace(cpu_ref, 1, NULL, NULL);
+    load_both(program, GP32_ARRAY_COUNT(program));
+    set_reg_both(0, va); set_reg_both(8, alias);
+    set_reg_both(10, ttb); set_reg_both(11, 1u);
+    set_mem_both(ttb, 2u); /* BIOS identity section */
+    set_mem_both(ttb + 0x400u, l2 | 1u);
+    set_mem_both(ttb + 0x440u, (l2 + 0x1000u) | 1u);
+    set_mem_both(l2 + 0x1cu, DATA_ADDR | 2u);
+    set_mem_both(l2 + 0x101cu, IO_ADDR | 2u);
+    set_mem_both(DATA_ADDR, 0x89abcdefu);
+    bus_jit.observe_cpu = cpu_jit; bus_ref.observe_cpu = cpu_ref;
+    for (unsigned repeat = 0; repeat < 2u; ++repeat) {
+        run_cache_pair(CODE_ADDR + (repeat ? 8u : 0u), 64u);
+        CHECK(ref_reg(1) == 0x89abcdefu && ref_reg(2) == 0x89abcdefu &&
+              ref_reg(4) == 0x89abcdefu && ref_reg(5) == 0x89abcdefu,
+              "RAM reads survive a non-RAM colliding tag");
+        CHECK(ref_reg(3) == CODE_ADDR + 20u, "MMIO observes its real instruction PC");
+        CHECK(bus_jit.io_count == repeat + 1u && bus_ref.io_count == repeat + 1u,
+              "each non-RAM alias executes exactly one bus callback");
+    }
+    gp32_cpu_profile_t profile;
+    arm920t_get_cpu_profile(cpu_jit, &profile);
+    if (profile.supported && profile.native_backend)
+        CHECK(profile.native_arm_insns >= 10u, "tag collision exercises native execution");
+    teardown_pair();
+}
+
 static void case_native_mapped_pages(void) {
+    case_native_ram_mmio_alias();
     const uint32_t masks[] = {0xfffu, 0xffffu, 0xfffffu, 0x3ffu};
     const uint32_t va = 0x100077fdu, alias = va + 0x01000000u;
     const uint32_t ttb = RAM_BASE + 0x4000u, l2 = RAM_BASE + 0x8000u;
@@ -3215,7 +3255,10 @@ int main(int argc, char **argv) {
     int access_only = argc == 2 && !strcmp(argv[1], "--checked-access");
     int poll_only = argc == 2 && !strcmp(argv[1], "--poll-progress");
     int psr_only = argc == 2 && !strcmp(argv[1], "--psr");
-    if (argc == 2 && !strcmp(argv[1], "--exception-return")) {
+    if (argc == 2 && !strcmp(argv[1], "--ram-page-tags")) {
+        case_native_mapped_pages();
+        case_native_mmu_mode_changes();
+    } else if (argc == 2 && !strcmp(argv[1], "--exception-return")) {
         case_native_exception_return();
         case_native_spsr_exception_return();
     } else if (argc == 2 && !strcmp(argv[1], "--terminal-helper")) {
@@ -3352,6 +3395,7 @@ int main(int argc, char **argv) {
         return 1;
     }
     printf("PASS: arm jit differential (%s), jit events=%" PRIu64 " fallbacks=%" PRIu64 "\n",
+           (argc == 2 && !strcmp(argv[1], "--ram-page-tags")) ? "ram-page-tags" :
            (argc == 2 && !strcmp(argv[1], "--exception-return")) ? "exception-return" :
            (argc == 2 && !strcmp(argv[1], "--terminal-helper")) ? "terminal-helper" :
            (argc == 2 && !strcmp(argv[1], "--ldm-pc-native")) ? "ldm-pc-native" :

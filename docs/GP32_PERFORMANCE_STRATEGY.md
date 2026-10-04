@@ -2448,3 +2448,29 @@ a full discard followed by new output. The existing Win64 audio fixture and
 Windows GUI build pass. No audio endpoint, mixer or volume was opened or
 changed; this is digital-path evidence, not a physical listening verdict.
 Evidence: private `results/resume102-cpsr/audio-check.json`.
+
+### Rejected packed AArch64 RAM-page lookup (2026-10-04)
+
+A candidate replaced the address-add plus word-pair load with one scaled
+64-bit load, then consumed the upper XOR-offset word through a shifted EOR.
+It kept the full 20-bit VA tag comparison and all memory guards. Encodings
+were disassembled, and a 300-frame Princess replay preserved CPU/video/PCM
+results while reducing generated code from 1,227,152 to 1,218,324 bytes.
+
+H700 ABBA results (two samples per variant, all sampled clock endpoints at
+1,512 MHz) were mixed: Princess 77.723 -> 75.7225 core fps (-2.57%), Astonishia
+title 175.8825 -> 179.54 (+2.08%), and Blue 73.9865 -> 76.763 (+3.75%). All
+seven compared CPU/clock/video/PCM fields remained identical. Fewer emitted
+instructions did not establish a uniform throughput benefit; the cause of
+the Princess regression was not isolated. The candidate was not deployed,
+and production source was restored. Rebuilt H700 release/profile binaries
+match their previous hashes. The patch and raw results are retained privately
+under `results/resume103-packed-tlb/`; do not repeat this experiment unchanged.
+
+A retained regression checks RAM and MMIO VAs sharing the same 12-bit cache
+index but different full tags. It requires exactly one MMIO callback with
+the correct guest PC, then verifies returning to RAM and reusing the block.
+The new `--ram-page-tags` selection also runs the existing mapped-page and
+MMU-mode-change cases. Focused Windows and native H700 checks pass against
+the restored production implementation. This is additional correctness
+coverage, not a new emulation fix or performance claim.
