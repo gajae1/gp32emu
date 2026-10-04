@@ -3004,3 +3004,72 @@ PC and H700 polling tests pass, as do the full H700 ARM differential and audio
 queue/resampling/lifecycle tests. Windows GUI/libretro, H700 and Android32/64
 builds pass. Evidence: `results/resume115-poll-entry/`. No additional acoustic,
 Android runtime or all-game acceptance is claimed.
+
+
+### Reuse decoded portable-block storage (2026-10-05)
+
+`arm_jit_run_portable` now resolves its decoded-op array once per block rather
+than recomputing the block index and allocation base for each instruction and
+next-PC lookup. The allocation lives until CPU destruction; generation/epoch,
+callback, instruction budget and exit fences remain in their original order.
+No guest instruction, cycle, clock, or title-specific behavior changes.
+
+Matched-1512-MHz H700 ABBA against `b31cb2f`, release builds:
+
+| Scene | Baseline median core fps | Candidate | Change |
+| --- | ---: | ---: | ---: |
+| Princess slot0, 600 warm / 600 measured | 101.7265 | 102.7895 | +1.04% |
+| Astonishia title, 1200 warm / 1200 measured | 187.0225 | 187.872 | +0.45%, effectively neutral |
+
+All seven CPU/video/PCM comparison fields match in all runs, with 20 and 26
+measured clock samples respectively and no monitoring errors. These are core
+throughput measurements, not panel fps or full-game compatibility. The earlier
+`b4a544e` vs `b31cb2f` Astonishia run retained exact outputs but its clock ramp
+invalidated the speed comparison; its raw +2.93% is not an accepted gain.
+Native H700 full ARM differential and poll suites pass. H700, Windows libretro
+and GUI, Android arm64/v7 builds pass; Android runtime remains untested.
+Private evidence: `resume117-portable-ops/{princess,astonishia}-abba.json` and
+`checks.json`. Device installation remains the separately recorded `b4a544e`.
+
+### LCD and partial-frame audio findings (2026-10-05)
+
+The Blue Angelo speed report prompted a separate timing investigation. Libretro
+advertises 60 fps and each `retro_run` advances one 1/60-second virtual interval.
+Stored stock configuration has video/audio sync enabled; this does not prove
+a runtime fast-forward toggle was inactive during the user's session.
+
+A public-SoC-API probe changes only CLKVAL from 5 to 11 at 60-MHz HCLK/RUN,
+with fixed Htotal284/Vtotal263. Hardware-derived periods are 896304/1792608
+HCLK cycles, but both LINECNT streams wrap 60 times per second. The current LCD
+model ignores the programmed pixel divider/porches and returns static LCDCON5
+status. This is a reproduced common fidelity gap, not yet a production fix.
+Local mirkoSDK `gp_grafik.c` and GP32 MAME4ALL `vblank.c` independently use the
+register-derived refresh formula; their palette/flip routines also poll LCDCON5.
+The SoC manual, not SDK code alone, must define exact status-bit semantics.
+
+Blue slot0 itself programs MPLLCON24001/CLKDIVN2: FCLK132MHz, HCLK66MHz,
+effective RUN48MHz. Its LCD period is 2*(3+1)*255*327 = 667080 HCLK cycles,
+98.938658Hz. Consequently forced60 would be slower than its programmed LCD
+cadence: this finding does NOT establish the cause of perceived acceleration.
+Correct LCD phase units, timing writes and legacy-state conversion need an
+explicit migration before replacing the current model. Private design/probe:
+`resume116-lcd-probe/DESIGN.md`, `result.txt`, `blue-registers.txt`; local SDK
+source excerpts and provenance: `resume116-sdk-lcd/REPORT.md`.
+
+A fresh no-backpressure libretro replay (300 runs, 5 virtual seconds) delivers
+220499 stereo frames for Astonishia title (one-frame initial interpolation
+latency against 220500) and 219343 for Blue dialogue (1157-frame deficit,
+26.24ms). Blue delivers only265 samples on run63 and52 on run128; pending_max=0.
+These partial-frame boundaries are a current timing-accounting lead, not a
+proven cause of the reported audible crackle. Padding every short active block
+would lose start/stop placement and must not replace timestamped source/idle
+accounting without a reproducer. Preserve guest PCM and rate transitions.
+Older title deficits predate the fractional IIS fix and must not be reported
+as current. Evidence: `resume116-library/audio-{timeline,boundary}.json` and
+`blue-audio-boundaries.txt`.
+
+The older Blue NPC trace independently establishes that the guest disables
+DMA/IIS, reads SMC data and later restarts audio across approximately65 virtual
+frames. Faster host execution alone cannot erase that interval. Whether its
+length matches original hardware is still unverified; it is distinct from the
+partial-frame delivery deficit above. No mixer/frontend/governor was changed.
