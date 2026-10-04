@@ -42,7 +42,6 @@ static uint8_t *g_save_state_buf;
 static uint32_t g_save_state_size;
 static uint32_t g_save_state_capacity;
 static uint64_t g_frame_count;
-static uint64_t g_cycle_accum;
 static int g_have_bios;
 static int g_have_media;
 static gp32_audio_resampler_t g_resampler;
@@ -65,7 +64,6 @@ static void destroy_machine(void) {
     g_audio_frames = 0;
     g_save_state_size = 0;
     g_frame_count = 0;
-    g_cycle_accum = 0;
     gp32_audio_resampler_reset(&g_resampler);
     if (g_video_effects_ready) gp32_video_effects_reset(&g_video_effects);
 }
@@ -180,13 +178,7 @@ static void collect_audio_append(void) {
 static uint32_t run_one_frame(uint32_t button_mask, int do_video, int append_audio) {
     if (!g_gp32 || g_status != GP32_WASM_STATUS_RUNNING) return 0u;
     gp32_set_buttons(g_gp32, button_mask);
-    uint32_t run_hz = gp32_get_run_clock_hz(g_gp32);
-    if (!run_hz) run_hz = 66000000u;
-    g_cycle_accum += (uint64_t)run_hz;
-    uint32_t frame_cycles = (uint32_t)(g_cycle_accum / 60u);
-    g_cycle_accum -= (uint64_t)frame_cycles * 60u;
-    if (!frame_cycles) frame_cycles = 1u;
-    gp32_status_t st = gp32_run_cycles(g_gp32, frame_cycles);
+    gp32_status_t st = gp32_run_frame(g_gp32);
     if (st != GP32_OK) { set_error(GP32_WASM_ERR_CPU, gp32_get_error(g_gp32)); return 0u; }
     if (do_video) stage_frame();
     if (append_audio) collect_audio_append();
@@ -273,7 +265,6 @@ uint32_t gp32_wasm_start(void) {
     if (!ensure_machine()) return 0u;
     gp32_set_jit(g_gp32, 0);
     if (g_have_bios) gp32_reset(g_gp32);
-    g_cycle_accum = 0;
     g_frame_count = 0;
     g_audio_frames = 0;
     gp32_audio_resampler_reset(&g_resampler);

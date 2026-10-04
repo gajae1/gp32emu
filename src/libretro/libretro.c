@@ -60,7 +60,6 @@ static int use_jit;
 static int use_lcd_persistence;
 static int use_frame_interpolation;
 static int boot_mode; /* 0=auto BIOS if available, 1=require BIOS, 2=direct/HLE */
-static uint64_t cycle_accum;
 
 static const char *path_basename(const char *p) {
     if (!p) return "gp32";
@@ -593,15 +592,6 @@ static void flush_audio(void) {
     }
 }
 
-static uint32_t frame_cycles(void) {
-    uint32_t hz = emu ? gp32_get_run_clock_hz(emu) : 66000000u;
-    if (!hz) hz = 66000000u;
-    cycle_accum += hz;
-    uint32_t c = (uint32_t)(cycle_accum / 60u);
-    cycle_accum -= (uint64_t)c * 60u;
-    return c ? c : 1u;
-}
-
 /* libretro only accepts a NULL frame when the frontend returned true from
  * RETRO_ENVIRONMENT_GET_CAN_DUPE. Other frontends must be handed real pixels
  * again; after an effect pass those pixels live in effect_rgb, so the last
@@ -633,7 +623,7 @@ void retro_run(void) {
     if (!emu) { present_duplicate_frame(); return; }
     if (input_poll_cb) input_poll_cb();
     gp32_set_buttons(emu, read_buttons());
-    gp32_run_cycles(emu, frame_cycles());
+    gp32_run_frame(emu);
     gp32_framebuffer_desc_t fb;
     int have_fb = gp32_get_framebuffer(emu, &fb) == GP32_OK;
     int effects_active = effects_ready && gp32_video_effects_active(&effects);
@@ -749,7 +739,6 @@ bool retro_load_game(const struct retro_game_info *game) {
         if (emu && load_content(emu, game, 0)) {
             gp32_set_jit(emu, use_jit);
             gp32_video_effects_reset(&effects);
-            cycle_accum = 0;
             return true;
         }
         if (emu) {
@@ -788,7 +777,6 @@ bool retro_load_game(const struct retro_game_info *game) {
         return false;
     }
     gp32_video_effects_reset(&effects);
-    cycle_accum = 0;
     return true;
 }
 

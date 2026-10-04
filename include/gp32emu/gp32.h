@@ -93,7 +93,11 @@ gp32_status_t gp32_save_state_data(gp32_t *gp32, void *data, size_t size);
 gp32_status_t gp32_load_state_data(gp32_t *gp32, const void *data, size_t size);
 
 gp32_status_t gp32_reset(gp32_t *gp32);
+/* Explicit CPU-cycle stepping, independent of host frame pacing. */
 gp32_status_t gp32_run_cycles(gp32_t *gp32, uint32_t cycles);
+/* Advance one 60 Hz interval of emulated time, including guest clock changes
+ * and callback execution. Pacing carry is restored by savestates. */
+gp32_status_t gp32_run_frame(gp32_t *gp32);
 gp32_status_t gp32_set_jit(gp32_t *gp32, int enabled);
 /* Overrides HLE playback rate for raw SEF PCM. 0 restores SDK-derived auto rate. */
 gp32_status_t gp32_set_hle_sef_rate(gp32_t *gp32, uint32_t sample_rate_hz);

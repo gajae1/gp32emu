@@ -66,7 +66,7 @@ static uint32_t bios_auto_start_buttons_for_frame(uint64_t frame) {
             (frame >= 2200u && frame < 2240u)) ? GP32_BUTTON_A : 0u;
 }
 
-/* One emulated frame: dynamic budget = run clock / 60 with carry. */
+/* Legacy cycle budgets retained for comparisons with pre-frame-time results. */
 static uint32_t frame_cycles_for(gp32_t *g, uint64_t *accum) {
     uint32_t run_hz = gp32_get_run_clock_hz(g);
     if (!run_hz) run_hz = 66000000u;
@@ -93,11 +93,12 @@ static uint64_t hash_audio(uint64_t h, const gp32_audio_desc_t *aud) {
 
 static int usage(const char *argv0) {
     fprintf(stderr,
-        "usage: %s --bios bios.bin --smc game.smc [--state file] [--warmup N=2400] [--frames N=600] [--jit] [--input-script script.txt] [--cpu-profile]\n"
+        "usage: %s --bios bios.bin --smc game.smc [--state file] [--warmup N=2400] [--frames N=600] [--jit] [--input-script script.txt] [--cpu-profile] [--legacy-cycle-frames]\n"
         "Times --frames frames after --warmup warmup frames. BIOS+SMC runs without an input script get the same\n"
         "auto A pulses as headless_main. Prints one JSON object: fps, elapsed, cycles, pc, cpsr, clock,\n"
         "audio_frames, video/audio FNV-1a-64 hashes. --cpu-profile resets CPU workload counters at the\n"
-        "warmup boundary and appends a cpu_profile object (requires a GP32EMU_CPU_PROFILE build).\n",
+        "warmup boundary and appends a cpu_profile object (requires a GP32EMU_CPU_PROFILE build).\n"
+        "Default pacing matches frontends; --legacy-cycle-frames replays the former clock/60 budget.\n",
         argv0);
     return 2;
 }
@@ -195,7 +196,7 @@ static void print_cpu_profile_json(const gp32_cpu_profile_t *p) {
 int main(int argc, char **argv) {
     const char *bios = NULL, *smc = NULL, *state_path = NULL, *input_script_path = NULL;
     uint64_t warmup = 2400, frames = 600;
-    int jit = 0, cpu_profile = 0;
+    int jit = 0, cpu_profile = 0, legacy_cycle_frames = 0;
 
     for (int i = 1; i < argc; ++i) {
         if (!strcmp(argv[i], "--bios") && i + 1 < argc) bios = argv[++i];
@@ -204,6 +205,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--warmup") && i + 1 < argc) warmup = strtoull(argv[++i], NULL, 0);
         else if (!strcmp(argv[i], "--frames") && i + 1 < argc) frames = strtoull(argv[++i], NULL, 0);
         else if (!strcmp(argv[i], "--jit")) jit = 1;
+        else if (!strcmp(argv[i], "--legacy-cycle-frames")) legacy_cycle_frames = 1;
         else if (!strcmp(argv[i], "--cpu-profile")) cpu_profile = 1;
         else if (!strcmp(argv[i], "--input-script") && i + 1 < argc) input_script_path = argv[++i];
         else if (!strcmp(argv[i], "--help") || !strcmp(argv[i], "-h")) { usage(argv[0]); return 0; }
@@ -254,8 +256,8 @@ int main(int argc, char **argv) {
 
         if (!timed && frame >= warmup) { timed = 1; t0 = now_seconds(); if (cpu_profile) gp32_reset_cpu_profile(g); }
 
-        uint32_t n = frame_cycles_for(g, &cycle_accum);
-        st = gp32_run_cycles(g, n);
+        st = legacy_cycle_frames ? gp32_run_cycles(g, frame_cycles_for(g, &cycle_accum))
+                                 : gp32_run_frame(g);
         if (st != GP32_OK) break;
 
         if (timed) {
@@ -289,6 +291,7 @@ int main(int argc, char **argv) {
            fps, elapsed, measured, warmup, gp32_get_cycles(g),
            gp32_get_pc(g), gp32_get_cpsr(g), gp32_get_run_clock_hz(g),
            audio_frames, video_hash, audio_hash, jit);
+    printf(",\"frame_pacing\":\"%s\"", legacy_cycle_frames ? "legacy_cycles" : "time");
     if (cpu_profile) {
         gp32_cpu_profile_t p;
         if (gp32_get_cpu_profile(g, &p) == GP32_OK) print_cpu_profile_json(&p);

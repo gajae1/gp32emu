@@ -1417,3 +1417,61 @@ Installed H700 core SHA-256:
 Backup: `gp32-dev/resume76-installed-core-before.so`. Stock RetroArch, its
 launcher and protected configuration hashes are unchanged. Physical speaker
 quality and whole-game performance remain separate acceptance work.
+
+
+## resume77: run host frames by emulated time across clock changes
+
+The former frontend budget sampled the CPU clock once per frame. A guest
+STR changing the divider from 66 to 33 MHz made that frame last 33,333,318 ns;
+the reverse transition lasted 8,333,348 ns. The hardware slice already yielded
+at the register write, but the outer frame still consumed its original number
+of CPU cycles. This was a shared pacing error, not a game-specific bottleneck.
+
+`gp32_run_frame` now schedules a 60 Hz emulated-time deadline and recalculates
+its remaining cycle budget after each CPU/idle slice. Synchronous guest HLE
+callback execution counts toward the same deadline. Instruction/callback
+overshoot carries into subsequent frames instead of adding another full
+interval. The same clock-change probes now measure 16,666,681 and 16,666,666 ns.
+This fixes time accounting; it does not raise the emulated CPU clock or promise
+a throughput multiplier. HLE event settlement during callbacks and the
+cycle-based vblank-wait bookkeeping remain separate follow-up work.
+
+Libretro, Win64, Qt, SDL 1.2/3, WASM and automatic headless frames use this
+common API. Explicit headless/SDL cycle budgets remain raw cycle execution.
+Benchmarks now use the frontend pacing by default, record `frame_pacing`, and
+provide `--legacy-cycle-frames` for comparisons with earlier measurements.
+The raw-cycle Astonishia title replay still matches all seven prior output
+fields (300 frames, 2,013,722,500 total cycles, 115,677 PCM frames).
+
+State v5 adds a 16-byte deadline/fraction extension so rewind/run-ahead and
+ordinary state loading retain frame cadence, including callback overshoot.
+The loader still accepts v2/v3/v4 and rebases their frame pacing at loaded time.
+New states require the updated core. Reset and explicit cycle stepping rebase
+pacing. Truncated/invalid metadata is rejected before applying machine state.
+
+Focused Windows checks pass: timer/frame pacing (interpreter and JIT), state
+transactionality/migration, libretro audio, persistence and input. Sixty
+frames stay within one instruction of one second; state restoration reproduces
+the continuation and a real guest callback's frame overshoot. H700 timer/state
+checks pass. Android ARM64 and ARMv7 libraries build. SDL1/SDL3/Win64 and the
+WASM bridge compile as translation units; Qt and browser runtime acceptance
+were not exercised in this change.
+
+On H700 at observed 1512 MHz start/end, 180-frame native replays measured
+212.013 core fps for the existing Astonishia title state and 81.926 for the
+Blue Angelo left-to-NPC state. CPU state, clock, PCM count and video/audio
+hashes match the corresponding Windows runs. These short core measurements
+exclude stock RetroArch presentation and physical speaker/input acceptance;
+they establish neither all-game performance nor a before/after speedup.
+A fresh 2400-frame Astonishia boot plus 180 measured frames also ran on PC.
+
+Private evidence: `F:/GP32/results/resume77-frame-clock/` (`before.txt`,
+`after.txt`, `pc-games.json`, `device.json`, build logs and regression output).
+The attempted CommandCode worker returned HTTP 429 without changes; all edits
+were completed locally.
+
+Installed H700 core SHA-256:
+`4c71e7c4b0f1f21f93b772c3d724dc8208343d779fbcfed16fab429cdf0ed7cf`.
+Backup: `gp32-dev/resume77-installed-core-before.so`. Stock RetroArch,
+launcher and protected configuration hashes are unchanged. User ROMs and
+saves were not modified. Reopen the game to load the updated core.

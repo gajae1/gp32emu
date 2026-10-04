@@ -1,7 +1,7 @@
 /* Transactional savestate regression: a truncated or otherwise rejected load
  * must leave the live machine byte-identical, including CPU, RAM, SmartMedia
- * and queued PCM. The v0004 stream is
- * magic | gp32 image | elapsed time | arm920t image | s3c2400 image | ram | smc | audio | spans, and
+ * and queued PCM. The v0005 stream is
+ * magic | gp32 image | elapsed time | frame time | arm920t image | s3c2400 image | ram | smc | audio | spans, and
  * a cut past the CPU image used to rewind the CPU while the caller still saw
  * GP32_ERR_IO, with the mounted SmartMedia committed before the trailing PCM
  * had been read. Synthetic fixture, no ROM needed; GP32_SOURCE can select a
@@ -139,7 +139,8 @@ int main(int argc, char **argv) {
     /* Truncation boundaries from the live component sizes, not a copied wire
      * layout: gp32 header, CPU image, ram blob, then smc tail and PCM tail. */
     const size_t time_off = sizeof(gp32_state_magic) + sizeof(gp32_state_image_t);
-    const size_t soc_off = time_off + sizeof(gp32_elapsed_time_t);
+    const size_t frame_off = time_off + sizeof(gp32_elapsed_time_t);
+    const size_t soc_off = frame_off + sizeof(gp32_frame_time_t);
     const size_t cpu_len = cpu_image_bytes(source);
     const size_t ram_len = s3c2400_ram_size(target->soc);
     const size_t cpu_cut = soc_off + cpu_len / 2u;
@@ -161,7 +162,12 @@ int main(int argc, char **argv) {
     CHECK(live != NULL, "capture live target state");
     if (!live) return 2;
 
-    expect_rejected_load(target, live, live_size, src, soc_off - 1u, NULL, "elapsed time cut rejected without mutation");
+    expect_rejected_load(target, live, live_size, src, frame_off - 1u, NULL, "elapsed time cut rejected without mutation");
+    expect_rejected_load(target, live, live_size, src, soc_off - 1u, NULL, "frame time cut rejected without mutation");
+    gp32_frame_time_t bad_frame = {0u, 60u, 1u};
+    memcpy(src + frame_off, &bad_frame, sizeof(bad_frame));
+    expect_rejected_load(target, live, live_size, src, src_size, NULL, "invalid frame fraction rejected without mutation");
+    memset(src + frame_off, 0, sizeof(bad_frame));
     uint8_t saved_time[sizeof(gp32_elapsed_time_t)];
     memcpy(saved_time, src + time_off, sizeof(saved_time));
     gp32_elapsed_time_t invalid_time = {1u, 0u, 0u};
@@ -202,10 +208,21 @@ int main(int argc, char **argv) {
         free(got);
     }
 
-    /* v3 predates span metadata; v2 also predates elapsed-time metadata. */
-    memcpy(src, gp32_state_magic_v3, sizeof(gp32_state_magic_v3));
-    CHECK(gp32_load_state_data(target, src, src_size - span_bytes) == GP32_OK, "v3 state remains readable");
-    size_t legacy_size = src_size - sizeof(gp32_elapsed_time_t) - span_bytes;
+    /* v4 predates frame pacing; v3 also predates spans, v2 elapsed time. */
+    size_t v4_size = src_size - sizeof(gp32_frame_time_t);
+    uint8_t *v4 = malloc(v4_size);
+    CHECK(v4 != NULL, "allocate v4 state");
+    if (v4) {
+        memcpy(v4, src, frame_off);
+        memcpy(v4, gp32_state_magic_v4, sizeof(gp32_state_magic_v4));
+        memcpy(v4 + frame_off, src + soc_off, src_size - soc_off);
+        CHECK(gp32_load_state_data(target, v4, v4_size) == GP32_OK, "v4 state remains readable");
+        CHECK(!target->frame_time.valid, "legacy frame pacing starts at loaded time");
+        memcpy(v4, gp32_state_magic_v3, sizeof(gp32_state_magic_v3));
+        CHECK(gp32_load_state_data(target, v4, v4_size - span_bytes) == GP32_OK, "v3 state remains readable");
+        free(v4);
+    }
+    size_t legacy_size = src_size - sizeof(gp32_elapsed_time_t) - sizeof(gp32_frame_time_t) - span_bytes;
     uint8_t *legacy = malloc(legacy_size);
     CHECK(legacy != NULL, "allocate legacy state");
     if (legacy) {

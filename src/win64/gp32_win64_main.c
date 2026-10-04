@@ -74,7 +74,6 @@ typedef struct app_state {
     LONG_PTR windowed_exstyle;
     uint32_t keyboard_buttons;
     uint32_t buttons;
-    uint32_t run_hz_remainder;
     uint64_t frame_index;
     uint64_t fps_tick_ms;
     uint32_t render_frames;
@@ -177,7 +176,6 @@ static void app_destroy_machine(app_state_t *a) {
     if (!a) return;
     if (a->emu) gp32_destroy(a->emu);
     a->emu = NULL;
-    a->run_hz_remainder = 0;
     a->frame_index = 0;
     a->accum_units = 1000000ull;
 }
@@ -300,7 +298,6 @@ static int app_reset_machine(app_state_t *a) {
     if (st != GP32_OK) { app_set_status(a, gp32_get_error(a->emu)); return 0; }
     gp32_clear_audio(a->emu);
     app_create_audio(a);
-    a->run_hz_remainder = 0;
     a->accum_units = 1000000ull;
     return 1;
 }
@@ -660,12 +657,7 @@ static uint64_t qpc_elapsed_us(app_state_t *a, LARGE_INTEGER now) {
 static void run_one_frame(app_state_t *a) {
     if (!a || !a->emu) return;
     gp32_set_buttons(a->emu, a->buttons);
-    uint32_t run_hz = gp32_get_run_clock_hz(a->emu);
-    if (!run_hz) run_hz = GP32_DEFAULT_CLOCK_HZ;
-    a->run_hz_remainder += run_hz % 60u;
-    uint32_t cycles = run_hz / 60u;
-    if (a->run_hz_remainder >= 60u) { cycles++; a->run_hz_remainder -= 60u; }
-    if (gp32_run_cycles(a->emu, cycles) != GP32_OK) { app_set_status(a, gp32_get_error(a->emu)); a->running = 0; return; }
+    if (gp32_run_frame(a->emu) != GP32_OK) { app_set_status(a, gp32_get_error(a->emu)); a->running = 0; return; }
     if (a->audio || a->recorder) {
         gp32_audio_desc_t aud;
         while (gp32_get_audio(a->emu, &aud) == GP32_OK && aud.frame_count > 0) {

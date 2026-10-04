@@ -20,6 +20,12 @@ typedef struct gp32_elapsed_time {
     uint32_t clock_hz;
 } gp32_elapsed_time_t;
 
+typedef struct gp32_frame_time {
+    uint64_t deadline_ns;
+    uint32_t remainder; /* fractional nanoseconds, denominator 60 */
+    uint32_t valid;
+} gp32_frame_time_t;
+
 struct gp32 {
     s3c2400_t *soc;
     arm920t_t *cpu;
@@ -27,6 +33,7 @@ struct gp32 {
     void *log_user;
     char error[256];
     gp32_elapsed_time_t elapsed;
+    gp32_frame_time_t frame_time;
     int direct_fxe_mode;
     uint32_t direct_fxe_entry;
     uint32_t direct_fxe_stack;
@@ -3349,6 +3356,7 @@ gp32_status_t gp32_load_smartmedia_direct_data(gp32_t *g, const void *data, size
 static gp32_status_t gp32_load_fxe_image_internal(gp32_t *g, fxe_image_t *img, int update_reset_image, int scan_file_hle, int init_smc_gpio, int preserve_hle_options) {
     char e[256] = {0};
     memset(&g->elapsed, 0, sizeof(g->elapsed));
+    memset(&g->frame_time, 0, sizeof(g->frame_time));
     direct_reset_hle_runtime(g, preserve_hle_options);
     s3c2400_reset(g->soc);
     s3c2400_install_hle_bios(g->soc);
@@ -3493,6 +3501,7 @@ gp32_status_t gp32_save_smartmedia(gp32_t *g, const char *path) {
 gp32_status_t gp32_reset(gp32_t *g) {
     if (!g) return GP32_ERR_INVALID_ARGUMENT;
     memset(&g->elapsed, 0, sizeof(g->elapsed));
+    memset(&g->frame_time, 0, sizeof(g->frame_time));
     if (g->direct_reset_image_valid && g->direct_reset_image.payload && g->direct_reset_image.payload_size) {
         gp32_status_t st = gp32_load_fxe_image_internal(g, &g->direct_reset_image, 0, g->direct_reset_scan_file_hle, g->direct_reset_init_smc_gpio, 1);
         if (st == GP32_OK) {
@@ -3743,11 +3752,26 @@ static int direct_try_resume_sdk_task(gp32_t *g) {
     return 0;
 }
 
-gp32_status_t gp32_run_cycles(gp32_t *g, uint32_t cycles) {
-    if (!g) return GP32_ERR_INVALID_ARGUMENT;
+/* Recalculate after every CPU yield: a guest clock-register write ends the
+ * current slice, and synchronous HLE callbacks also advance elapsed time. */
+static uint32_t direct_frame_budget(const gp32_t *g, uint64_t deadline) {
+    if (g->elapsed.nanoseconds >= deadline) return 0u;
+    uint32_t clock = direct_run_clock_hz(g);
+    uint64_t ns = deadline - g->elapsed.nanoseconds;
+    if (ns > (uint64_t)32768u * 1000000000u / clock + 1u) return 32768u;
+    uint64_t fraction = g->elapsed.remainder;
+    if (g->elapsed.clock_hz && g->elapsed.clock_hz != clock)
+        fraction = fraction * clock / g->elapsed.clock_hz;
+    uint64_t cycles = (ns * clock - fraction + 999999999u) / 1000000000u;
+    return cycles > 32768u ? 32768u : (uint32_t)cycles;
+}
+
+static gp32_status_t gp32_run(gp32_t *g, uint32_t cycles, int timed) {
     direct_fix_gp32_additive_blend_shadow_endpoint(g);
     uint32_t remaining = cycles;
-    while (remaining) {
+    for (;;) {
+        if (timed) remaining = direct_frame_budget(g, g->frame_time.deadline_ns);
+        if (!remaining) break;
         uint32_t idle = direct_consume_idle_wait(g, remaining);
         if (idle) {
             remaining -= idle;
@@ -3781,6 +3805,31 @@ gp32_status_t gp32_run_cycles(gp32_t *g, uint32_t cycles) {
     direct_fix_gp32_additive_blend_shadow_endpoint(g);
     direct_select_visible_surface(g);
     return GP32_OK;
+}
+
+gp32_status_t gp32_run_cycles(gp32_t *g, uint32_t cycles) {
+    if (!g) return GP32_ERR_INVALID_ARGUMENT;
+    /* Explicit stepping establishes a fresh origin for the next host frame. */
+    memset(&g->frame_time, 0, sizeof(g->frame_time));
+    return gp32_run(g, cycles, 0);
+}
+
+gp32_status_t gp32_run_frame(gp32_t *g) {
+    if (!g) return GP32_ERR_INVALID_ARGUMENT;
+    if (!g->frame_time.valid) {
+        g->frame_time.deadline_ns = g->elapsed.nanoseconds;
+        g->frame_time.remainder = 0u;
+        g->frame_time.valid = 1u;
+    }
+    /* Retain instruction/callback overshoot across frames instead of adding
+     * another full interval to the time already consumed. */
+    uint32_t ns = 1000000000u + g->frame_time.remainder;
+    g->frame_time.deadline_ns += ns / 60u;
+    g->frame_time.remainder = ns % 60u;
+    gp32_status_t st = gp32_run(g, 0u, 1);
+    if (g->elapsed.nanoseconds < g->frame_time.deadline_ns)
+        memset(&g->frame_time, 0, sizeof(g->frame_time)); /* CPU stopped */
+    return st;
 }
 
 gp32_status_t gp32_set_jit(gp32_t *g, int enabled) {
@@ -4158,7 +4207,9 @@ static void gp32_direct_state_apply(gp32_t *g, const gp32_state_image_t *st) {
 
 static const uint8_t gp32_state_magic_v2[16] = { 'G','P','3','2','S','T','A','T','E','v','0','0','0','2',0,0 };
 static const uint8_t gp32_state_magic_v3[16] = { 'G','P','3','2','S','T','A','T','E','v','0','0','0','3',0,0 };
-static const uint8_t gp32_state_magic[16] = { 'G','P','3','2','S','T','A','T','E','v','0','0','0','4',0,0 };
+static const uint8_t gp32_state_magic_v4[16] = { 'G','P','3','2','S','T','A','T','E','v','0','0','0','4',0,0 };
+static const uint8_t gp32_state_magic[16] = { 'G','P','3','2','S','T','A','T','E','v','0','0','0','5',0,0 };
+static_assert(sizeof(gp32_frame_time_t) == 16u, "fixed frame-time wire extension");
 static_assert(sizeof(gp32_elapsed_time_t) == 16u, "fixed elapsed-time wire extension");
 
 static int gp32_state_write(const gp32_t *g, state_io_t *io) {
@@ -4167,6 +4218,7 @@ static int gp32_state_write(const gp32_t *g, state_io_t *io) {
     return state_io_write(io, gp32_state_magic, sizeof(gp32_state_magic)) &&
            state_io_write(io, &direct, sizeof(direct)) &&
            state_io_write(io, &g->elapsed, sizeof(g->elapsed)) &&
+           state_io_write(io, &g->frame_time, sizeof(g->frame_time)) &&
            arm920t_state_save_io(g->cpu, io) &&
            s3c2400_state_save_io(g->soc, io);
 }
@@ -4175,7 +4227,8 @@ static int gp32_state_read(gp32_t *g, state_io_t *io, gp32_state_image_t *direct
     uint8_t got[sizeof(gp32_state_magic)];
     if (!state_io_read(io, got, sizeof(got))) return 0;
     int legacy = memcmp(got, gp32_state_magic_v2, sizeof(got)) == 0;
-    int has_spans = memcmp(got, gp32_state_magic, sizeof(got)) == 0;
+    int has_frame_time = memcmp(got, gp32_state_magic, sizeof(got)) == 0;
+    int has_spans = has_frame_time || memcmp(got, gp32_state_magic_v4, sizeof(got)) == 0;
     if ((!legacy && !has_spans && memcmp(got, gp32_state_magic_v3, sizeof(got)) != 0) ||
         !state_io_read(io, direct, sizeof(*direct))) return 0;
     gp32_elapsed_time_t elapsed = {0};
@@ -4183,6 +4236,14 @@ static int gp32_state_read(gp32_t *g, state_io_t *io, gp32_state_image_t *direct
         if (!state_io_read(io, &elapsed, sizeof(elapsed))) return 0;
         if (elapsed.clock_hz ? elapsed.remainder >= elapsed.clock_hz :
             (elapsed.remainder != 0u || elapsed.nanoseconds != 0u)) return 0;
+    }
+    gp32_frame_time_t frame_time = {0};
+    if (has_frame_time) {
+        if (!state_io_read(io, &frame_time, sizeof(frame_time))) return 0;
+        if (frame_time.valid > 1u || frame_time.remainder >= 60u ||
+            (!frame_time.valid && (frame_time.deadline_ns || frame_time.remainder)) ||
+            (frame_time.deadline_ns > elapsed.nanoseconds &&
+             frame_time.deadline_ns - elapsed.nanoseconds > 16666667u)) return 0;
     }
     /* Keep CPU state pending until the SoC has read every section. Its large
      * state image already uses most of a Windows thread's default stack, so
@@ -4202,6 +4263,7 @@ static int gp32_state_read(gp32_t *g, state_io_t *io, gp32_state_image_t *direct
         }
         arm920t_state_apply(g->cpu, cpu);
         g->elapsed = elapsed;
+        g->frame_time = frame_time;
     }
     free(cpu);
     return ok;
