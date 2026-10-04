@@ -2,6 +2,7 @@
  * countdown/reload/IRQ period. Timer 4 has no compare register. */
 #include "s3c2400.h"
 #include <stdio.h>
+#include <string.h>
 
 static int check_clock_phase(s3c2400_t *s, uint32_t control, uint32_t irq_mask) {
     s3c2400_reset(s);
@@ -30,6 +31,92 @@ static int check_clock_phase(s3c2400_t *s, uint32_t control, uint32_t irq_mask) 
 fail:
     fputs("FAIL: PWM clock change rewinds counter or shifts IRQ boundary\n", stderr);
     return 0;
+}
+
+
+/* A real ARM handler must observe the same timer expirations regardless of
+ * the host CPU slice. Delayed guest enable also checks pre-write time. */
+typedef struct timer_result {
+    uint32_t regs[16], cpsr, count, pending, control;
+} timer_result_t;
+
+static int run_timer_cpu(unsigned quantum, int jit, unsigned timer,
+                         int reload, int delayed, timer_result_t *out) {
+    s3c2400_t *s = s3c2400_create(8u * 1024u * 1024u);
+    if (!s) return 0;
+    arm_bus_t bus = s3c2400_get_bus(s);
+    arm920t_t *c = arm920t_create(&bus);
+    if (!c) { s3c2400_destroy(s); return 0; }
+    s3c2400_set_irq_sink(s, c);
+    arm920t_set_jit(c, jit);
+    uint8_t bios[32] = {0};
+    gp32_st32le(bios + 0x18u, 0xe51ff004u);
+    gp32_st32le(bios + 0x1cu, 0x0c001000u);
+    char error[128];
+    int ok = s3c2400_load_bios_buffer(s, bios, sizeof(bios), error, sizeof(error));
+    if (!ok) goto end;
+    const uint32_t handler[] = {
+        0xe5823000u, /* str r3,[r2]: acknowledge SRCPND */
+        0xe5823010u, /* str r3,[r2,#16]: acknowledge INTPND */
+        0xe2855001u, /* add r5,r5,#1 */
+        0xe25ef004u, /* subs pc,lr,#4 */
+    };
+    const uint32_t enable[] = {
+        0xe3a06064u, /* mov r6,#100 */
+        0xe2566001u, /* subs r6,r6,#1 */
+        0x1afffffdu, /* bne to subs */
+        0xe5801000u, /* str r1,[r0]: enable timer after elapsed CPU work */
+        0xeafffffeu,
+    };
+    for (unsigned i = 0; i < GP32_ARRAY_COUNT(handler); ++i)
+        s3c2400_write32(s, 0x0c001000u + i*4u, handler[i]);
+    for (unsigned i = 0; i < GP32_ARRAY_COUNT(enable); ++i)
+        s3c2400_write32(s, 0x0c000000u + i*4u, enable[i]);
+    if (!delayed) s3c2400_write32(s, 0x0c000000u, 0xeafffffeu);
+    uint32_t control = timer ? 0x100000u : 1u;
+    if (reload) control |= timer ? 0x400000u : 8u;
+    s3c2400_write32(s, 0x14800004u, 0u);
+    s3c2400_write32(s, 0x14800014u, 0u);
+    s3c2400_write32(s, 0x1510000cu + timer*12u, 499u);
+    if (!delayed) s3c2400_write32(s, 0x15100008u, control);
+    s3c2400_write32(s, 0x14400008u, ~(1u << (10u + timer)));
+    arm920t_set_cpsr(c, 0x53u);
+    arm920t_set_reg(c, 0u, 0x15100008u);
+    arm920t_set_reg(c, 1u, control);
+    arm920t_set_reg(c, 2u, 0x14400000u);
+    arm920t_set_reg(c, 3u, 1u << (10u + timer));
+    arm920t_set_reg(c, 15u, 0x0c000000u);
+    for (unsigned remaining = 5000u; remaining;) {
+        unsigned step = remaining < quantum ? remaining : quantum;
+        uint32_t done = s3c2400_run_cpu(s, step);
+        if (!done || done > step) { ok = 0; goto end; }
+        remaining -= done;
+    }
+    for (unsigned i = 0; i < 16; ++i) out->regs[i] = arm920t_get_reg(c, i);
+    out->cpsr = arm920t_get_cpsr(c);
+    out->count = s3c2400_read32(s, timer ? 0x15100040u : 0x15100014u);
+    out->pending = s3c2400_read32(s, 0x14400000u);
+    out->control = s3c2400_read32(s, 0x15100008u);
+end:
+    arm920t_destroy(c); s3c2400_destroy(s); return ok;
+}
+
+static int check_cpu_slices(void) {
+    for (int jit = 0; jit <= 1; ++jit)
+        for (unsigned timer = 0; timer <= 4; timer += 4)
+            for (int reload = 0; reload <= 1; ++reload)
+                for (int delayed = 0; delayed <= 1; ++delayed) {
+                    timer_result_t fine = {0}, coarse = {0};
+                    if (!run_timer_cpu(1, jit, timer, reload, delayed, &fine) ||
+                        !run_timer_cpu(32768, jit, timer, reload, delayed, &coarse)) return 0;
+                    if (fine.regs[5] != (reload ? 4u : 1u) ||
+                        memcmp(&fine, &coarse, sizeof(fine))) {
+                        fprintf(stderr, "FAIL: timer=%u jit=%d reload=%d delayed=%d IRQ=%u/%u count=%u/%u\n",
+                                timer, jit, reload, delayed, fine.regs[5], coarse.regs[5], fine.count, coarse.count);
+                        return 0;
+                    }
+                }
+    return 1;
 }
 
 int main(void) {
@@ -69,7 +156,7 @@ int main(void) {
     }
     int phase_ok = check_clock_phase(s, control, irq_mask);
     s3c2400_destroy(s);
-    if (!phase_ok) return 1;
+    if (!phase_ok || !check_cpu_slices()) return 1;
     if (events < 2u) { fputs("FAIL: timer reload was not exercised\n", stderr); return 1; }
     puts("PASS: PWM duty changes preserve countdown and repeated IRQ timing across all timers");
     return 0;

@@ -1063,9 +1063,10 @@ static void io_write32(s3c2400_t *s, uint32_t addr, uint32_t value, uint32_t mas
     }
     if (s->cpu_run_active && ((addr >= 0x14600000u && addr <= 0x1460007bu) ||
                               (addr >= 0x14a00000u && addr <= 0x14a0000fu) ||
+                              (addr >= 0x15100000u && addr <= 0x15100043u) ||
                               (addr >= 0x15508000u && addr <= 0x15508013u))) {
         /* A register change near the end of a CPU batch must not replace the
-         * DMA source, sample rate or LCD timing of its already elapsed time.
+         * DMA source, timer, sample rate or LCD timing of its elapsed time.
          * Finish the current instruction, tick the old peripheral state, then
          * apply its stores. Reads in SWP/LDM precede any deferred store. */
         defer_io_write(s, addr, value, mask);
@@ -2016,6 +2017,19 @@ void s3c2400_tick(s3c2400_t *s, uint32_t cpu_cycles) {
     }
 }
 
+static uint32_t pwm_event_budget(s3c2400_t *s, uint32_t budget) {
+    static const uint32_t start_mask[5] = {1u, 0x100u, 0x1000u, 0x10000u, 0x100000u};
+    if (!(s->pwm[2] & 0x111101u)) return budget;
+    pwm_refresh_clock_cache(s);
+    for (unsigned t = 0; t < 5u; ++t) {
+        if (!(s->pwm[2] & start_mask[t])) continue;
+        uint64_t period = s->pwm_period_cycles[t];
+        uint64_t remaining = period > s->pwm_accum[t] ? period - s->pwm_accum[t] : 1u;
+        if (remaining < budget) budget = (uint32_t)remaining;
+    }
+    return budget;
+}
+
 static uint32_t iis_dma_irq_budget(s3c2400_t *s, uint32_t budget) {
     const uint32_t *r = &s->dma[2u << 3];
     if (!(s->iis[0] & 1u) || !(r[6] & 2u) || !GP32_BIT(r[2], 28) ||
@@ -2040,6 +2054,9 @@ uint32_t s3c2400_run_cpu(s3c2400_t *s, uint32_t cpu_cycles) {
      * a large host slice. DMA/IIS/clock writes already yield and settle the
      * old state, so the next call derives a fresh deadline after such writes. */
     cpu_cycles = iis_dma_irq_budget(s, cpu_cycles);
+    /* Timer IRQs and timer-driven DMA must become visible before the next
+     * period. Guest timer writes also yield, settling the old interval first. */
+    cpu_cycles = pwm_event_budget(s, cpu_cycles);
     s->cpu_run_active = 1;
     s->cpu_run_clock_written = 0;
     s->cpu_lcd_deadline_set = 0;
