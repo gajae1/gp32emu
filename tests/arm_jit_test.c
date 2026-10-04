@@ -1860,6 +1860,56 @@ static void case_native_spsr_exception_return(void) {
     teardown_pair();
 }
 
+/* SPSR bank selection uses host comparisons, but the following predicates
+ * must still see guest Z=1. Cover one actual native block and cuts on both
+ * sides of each PSR instruction. */
+static void case_native_psr_continuation(void) {
+    const uint32_t program[] = {
+        0xe1500000u, /* CMP r0,r0: Z=1, unlike the nonzero SPSR bank offset */
+        0xe14f2000u, /* MRS r2,SPSR */
+        0x03a0305au, /* MOVEQ r3,#0x5a */
+        0xe168f001u, /* MSR SPSR_f,r1 */
+        0x02834001u, /* ADDEQ r4,r3,#1 */
+        0x13a040eeu, /* MOVNE r4,#0xee: must remain skipped */
+        0xe1a0f006u  /* MOV pc,r6: explicit boundary, no B-self trace stitching */
+    };
+    for (unsigned split = 0; split < 2u; ++split) {
+        current_case = split ? "psr-continuation-budget" : "psr-continuation-native";
+        setup_pair();
+        seed_spsr_banks();
+        set_cpsr_both(0xd3u);
+        set_reg_both(1u, 0x12000000u);
+        set_reg_both(6u, CODE_ADDR + 0x40u);
+        load_both(program, GP32_ARRAY_COUNT(program));
+        static const uint32_t cuts[] = {1u, 1u, 1u, 1u, 2u, 1u};
+        for (unsigned i = 0; i < (split ? GP32_ARRAY_COUNT(cuts) : 1u); ++i) {
+            uint32_t budget = split ? cuts[i] : 7u;
+            CHECK(arm920t_run(cpu_jit, budget) == budget, "PSR native budget");
+            CHECK(arm920t_run(cpu_ref, budget) == budget, "PSR reference budget");
+            compare_state();
+            compare_spsr_banks();
+        }
+        CHECK(ref_reg(2) == SPSR_SVC_SEED && ref_reg(3) == 0x5au && ref_reg(4) == 0x5bu,
+              "predicates after PSR access retain guest flags");
+        CHECK(spsr_bank(cpu_ref, SPSR_MODE_SVC) == 0x12243546u, "saved flags updated");
+        CHECK(arm920t_get_cpsr(cpu_ref) == 0x600000d3u, "SPSR access preserves active flags");
+        CHECK(arm920t_get_pc(cpu_ref) == CODE_ADDR + 0x40u, "PSR trace ends at explicit PC write");
+        gp32_cpu_profile_t profile;
+        arm920t_get_cpu_profile(cpu_jit, &profile);
+        if (!split && profile.supported && profile.native_backend) {
+            if (profile.native_block_calls != 1u || profile.native_arm_insns != 7u)
+                fprintf(stderr, "PSR block route: backend=%u calls=%" PRIu64
+                        " native=%" PRIu64 " portable=%" PRIu64 " compiled=%" PRIu64 "\n",
+                        profile.native_backend, profile.native_block_calls,
+                        profile.native_arm_insns, profile.block_interp_arm_insns,
+                        profile.jit_native_compiled);
+            CHECK(profile.native_block_calls == 1u && profile.native_arm_insns == 7u,
+                  "PSR sequence and dependent predicates execute in one native block");
+        }
+        teardown_pair();
+    }
+}
+
 /* Focused SPSR bundle; --psr runs this plus case_native_longmul_psr. */
 static void case_native_spsr(void) {
     case_native_spsr_mode_banks();
@@ -2929,7 +2979,9 @@ int main(int argc, char **argv) {
     int access_only = argc == 2 && !strcmp(argv[1], "--checked-access");
     int poll_only = argc == 2 && !strcmp(argv[1], "--poll-progress");
     int psr_only = argc == 2 && !strcmp(argv[1], "--psr");
-    if (argc == 2 && !strcmp(argv[1], "--cpsr")) {
+    if (argc == 2 && !strcmp(argv[1], "--psr-blocks")) {
+        case_native_psr_continuation();
+    } else if (argc == 2 && !strcmp(argv[1], "--cpsr")) {
         case_native_cpsr();
     } else if (psr_only) {
         case_native_spsr();
@@ -3002,6 +3054,7 @@ int main(int argc, char **argv) {
     case_native_regshift();
     case_native_longmul_psr();
     case_native_spsr();
+    case_native_psr_continuation();
     case_native_cpsr();
     case_cache_maintenance_native();
     case_native_mapped_block();
@@ -3047,6 +3100,7 @@ int main(int argc, char **argv) {
         return 1;
     }
     printf("PASS: arm jit differential (%s), jit events=%" PRIu64 " fallbacks=%" PRIu64 "\n",
+           (argc == 2 && !strcmp(argv[1], "--psr-blocks")) ? "psr-blocks" :
            (argc == 2 && !strcmp(argv[1], "--cpsr")) ? "cpsr" : psr_only ? "spsr" : poll_only ? "poll-progress" : access_only ? "checked-access" : pairs_only ? "block-pairs/fences" : portable_only ? "portable-callback" : block_only ? "block-callback" : irq_only ? "callback-IRQ" : chain_only ? "branch-chain" : forward_only ? "forward-loop" : callback_only ? "callback-PC" : (leaf_only ? "unframed-leaf" : (ram_end_only ? "mapped-page-RAM-end" : (loops_only ? "loop-fences" : "flags/shift/branch/mem/half/block/mul/seeded/budget/loop-fences"))),
            jit_events, jit_fallbacks);
     return 0;
