@@ -340,8 +340,16 @@ void retro_get_system_av_info(struct retro_system_av_info *info) {
     info->timing.sample_rate = GP32_AUDIO_RATE;
 }
 
+/* Fractional idle duration, in 1/(60 * 2^24) source-frame units. The
+ * extra precision preserves elapsed time when the guest changes sample rate;
+ * the bounded remainder times any uint32_t rate still fits in uint64_t. */
+static uint64_t audio_idle_fraction;
+static uint32_t audio_idle_rate;
+
 static void reset_audio(void) {
     audio_pending_frames = 0;
+    audio_idle_fraction = 0;
+    audio_idle_rate = 0;
     gp32_audio_resampler_init(&audio_resampler);
 }
 
@@ -511,7 +519,9 @@ static int submit_audio_resampled(const gp32_audio_desc_t *aud) {
 
     size_t in_frames = (size_t)aud->frame_count;
     size_t need = in_frames;
-    int resample = src_rate != dst_rate || audio_resampler.have_prev;
+    int copy_aligned = audio_resampler.src_rate == src_rate &&
+                       audio_resampler.phase_q32 == (UINT64_C(1) << 32);
+    int resample = src_rate != dst_rate || (audio_resampler.have_prev && !copy_aligned);
     if (resample) {
         need = gp32_audio_resampler_max_output_frames(&audio_resampler, in_frames, src_rate, dst_rate, 0);
     }
@@ -561,9 +571,38 @@ static int submit_audio_resampled(const gp32_audio_desc_t *aud) {
     } else {
         gp32_audio_resampler_reset(&audio_resampler);
         memcpy(out, aud->samples_s16_interleaved, in_frames * 2u * sizeof(int16_t));
+        /* Direct copies have already emitted their final sample. Retain that
+         * endpoint with the next output one tick ahead for a later rate change. */
+        audio_resampler.src_rate = src_rate;
+        audio_resampler.dst_rate = dst_rate;
+        audio_resampler.prev_l = out[(in_frames - 1u) * 2u];
+        audio_resampler.prev_r = out[(in_frames - 1u) * 2u + 1u];
+        audio_resampler.have_prev = 1;
+        audio_resampler.phase_q32 = UINT64_C(1) << 32;
+        audio_resampler.last_out_l = audio_resampler.prev_l;
+        audio_resampler.last_out_r = audio_resampler.prev_r;
+        audio_resampler.have_last_out = 1;
     }
     audio_pending_frames += out_frames;
     return 1;
+}
+
+static void submit_idle_silence(uint32_t rate) {
+    static const int16_t silence[GP32_AUDIO_FRAMES_PER_VIDEO * 2u] = {0};
+    const uint64_t denominator = UINT64_C(60) << 24;
+    if (!rate) rate = GP32_AUDIO_RATE;
+    if (audio_idle_rate && rate != audio_idle_rate)
+        audio_idle_fraction = audio_idle_fraction * rate / audio_idle_rate;
+    audio_idle_rate = rate;
+    uint64_t budget = audio_idle_fraction + ((uint64_t)(rate % 60u) << 24);
+    size_t frames = rate / 60u + (size_t)(budget / denominator);
+    audio_idle_fraction = budget % denominator;
+    while (frames) {
+        size_t chunk = frames < GP32_AUDIO_FRAMES_PER_VIDEO ? frames : GP32_AUDIO_FRAMES_PER_VIDEO;
+        gp32_audio_desc_t silent = {silence, chunk, rate};
+        if (!submit_audio_resampled(&silent)) break;
+        frames -= chunk;
+    }
 }
 
 static void flush_audio(void) {
@@ -656,10 +695,9 @@ void retro_run(void) {
         } else {
             /* Keep audio-driven frontend pacing alive while emulated audio is
              * idle. Never pad short active blocks or alter their sample rate. */
-            static const int16_t silence[GP32_AUDIO_FRAMES_PER_VIDEO * 2u] = {0};
-            gp32_audio_desc_t silent = {silence, GP32_AUDIO_FRAMES_PER_VIDEO, GP32_AUDIO_RATE};
-            gp32_audio_resampler_reset(&audio_resampler);
-            submit_audio_resampled(&silent);
+            /* Silence occupies the same source sample grid as active audio,
+             * including the boundary interpolation and fractional duration. */
+            submit_idle_silence(aud.sample_rate_hz);
         }
     }
     flush_audio();

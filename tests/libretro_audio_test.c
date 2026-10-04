@@ -392,29 +392,82 @@ static void test_silence_and_gap(void) {
     CHECK(all_zero, "silent-core output must be zero in both callback modes");
 
     start_case();
-    feed(4, 11025, -2000);
-    size_t count = captured_frames;
-    memcpy(expected, captured, count * 2u * sizeof(int16_t));
-    start_case();
-    feed(4, 11025, 2000);
-    captured_frames = 0;
-    allowance = 0;
-    feed(0, 11025, 0);
-    allowance = SIZE_MAX;
-    feed(4, 11025, -2000);
-    CHECK(captured_frames == 735u + count, "rejected silence must be retained before resumed audio");
-    all_zero = captured_frames >= 735u;
-    for (size_t i = 0; i < 735u * 2u && all_zero; ++i) if (captured[i]) all_zero = 0;
-    CHECK(all_zero, "silence must precede resumed PCM");
-    CHECK(captured_frames == 735u + count &&
-          !memcmp(expected, captured + 735u * 2u, count * 2u * sizeof(int16_t)),
-          "resampling must not interpolate across an idle audio gap");
-
-    start_case();
     feed(1, 11025, 100);
     CHECK(captured_frames == 0, "a resampler awaiting input must not insert silence");
     feed(1, 11025, 200);
     CHECK(captured_frames == 4, "short active blocks must not be padded or stretched");
+}
+
+static void constant_audio(size_t frames, uint32_t rate, int16_t value) {
+    for (size_t i = 0; i < frames; ++i) {
+        input_pcm[i * 2u] = value;
+        input_pcm[i * 2u + 1u] = (int16_t)-value;
+    }
+    scripted_audio = (gp32_audio_desc_t){input_pcm, frames, rate};
+    callback_calls = 0;
+    retro_run();
+}
+
+static void test_idle_boundaries(void) {
+    /* Independent 4:1 sample grid: two constants supply one interval;
+     * floor(11025/60)=183 zero samples supply 183 more intervals.
+     * The carried end points linearly interpolate over four outputs. */
+    start_case();
+    allowance = 2;
+    constant_audio(2, 11025, -4000);
+    constant_audio(0, 11025, 0);
+    constant_audio(2, 11025, 8000);
+    CHECK(captured_frames == 2 && audio_pending_frames == 742,
+          "idle carry and fractional counts survive a blocked callback");
+    allowance = SIZE_MAX;
+    per_call = 7;
+    flush_audio();
+    CHECK(captured_frames == 744, "idle emits 732 frames, not forced 735");
+    int exact = captured_frames == 744;
+    for (size_t i = 0; i < captured_frames && exact; ++i) {
+        int value = i < 4 ? -4000 : i < 8 ? -4000 + (int)(i - 4) * 1000 :
+                    i < 736 ? 0 : i < 740 ? (int)(i - 736) * 2000 : 8000;
+        if (captured[i * 2u] != value || captured[i * 2u + 1u] != -value) exact = 0;
+    }
+    CHECK(exact, "idle boundaries match analytic linear interpolation in both channels");
+    retro_set_audio_sample_batch(NULL);
+    constant_audio(0, 11025, 0);
+    CHECK(captured_frames == 1480, "next idle retains the three-quarter source fraction");
+
+    start_case();
+    constant_audio(2, 44100, -4000);
+    constant_audio(0, 11025, 0);
+    const int16_t tail[] = {-3000, 3000, -2000, 2000, -1000, 1000, 0, 0};
+    CHECK(captured_frames == 733 && !memcmp(captured + 4, tail, sizeof(tail)),
+          "direct copy retains last sample and one output tick across a rate change");
+}
+
+static void test_idle_rate_counts(void) {
+    const uint32_t rates[] = {11025, 11035, 32000, 48000, 96000};
+    for (size_t r = 0; r < sizeof(rates) / sizeof(rates[0]); ++r) {
+        start_case();
+        size_t total = 0;
+        for (unsigned frame = 0; frame < 60; ++frame) {
+            captured_frames = 0;
+            constant_audio(0, rates[r], 0);
+            total += captured_frames;
+        }
+        /* One second provides rate samples, hence rate-1 intervals on a
+         * fresh interpolator. Rational ceiling is independent of its Q32 code. */
+        size_t want = ((uint64_t)(rates[r] - 1u) * 44100u + rates[r] - 1u) / rates[r];
+        CHECK(total == want, "one-second idle count follows source intervals and fractional budget");
+    }
+    start_case();
+    constant_audio(2, 11025, 0);
+    constant_audio(0, 11025, 0);
+    constant_audio(0, 22050, 0);
+    /* 0.75/11025 seconds of debt becomes 1.5 source samples at 22050;
+     * the next idle supplies floor(367.5+1.5)=369 intervals, 738 outputs. */
+    CHECK(captured_frames == 1474, "idle source-rate switch preserves fractional wall time");
+    retro_reset();
+    captured_frames = 0;
+    constant_audio(0, 22050, 0);
+    CHECK(captured_frames == 732, "reset clears idle time debt and interpolation history");
 }
 
 static void test_lifecycle(const char *state_path) {
@@ -584,6 +637,8 @@ int main(int argc, char **argv) {
     test_mixed_spans();
     test_source_rate_phase();
     test_silence_and_gap();
+    test_idle_boundaries();
+    test_idle_rate_counts();
     test_sustained_backpressure();
     test_partial_overflow_recovery();
     test_oversized_block_recovery();
