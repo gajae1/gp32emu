@@ -33,9 +33,9 @@ static int zip_name_safe(const char *name) {
     if (isalpha((unsigned char)name[0]) && name[1] == ':') return 0;
     const char *p = name;
     while (*p) {
-        if ((p[0] == '.' && p[1] == '.' && (p[2] == '\0' || p[2] == '/' || p[2] == '\\')) ||
-            ((p[0] == '/' || p[0] == '\\') && p[1] == '.' && p[2] == '.' &&
-             (p[3] == '\0' || p[3] == '/' || p[3] == '\\'))) {
+        if (p[0] == '.' && p[1] == '.' &&
+            (p == name || p[-1] == '/' || p[-1] == '\\') &&
+            (p[2] == '\0' || p[2] == '/' || p[2] == '\\')) {
             return 0;
         }
         ++p;

@@ -6,7 +6,7 @@ performance, audio and input correctness across the library, not boot-only tests
 
 ## Current accepted work
 
-- State restoration now rejects invalid IIS FIFO/negative IIC indices before
+- `c7612ec`: state restoration rejects invalid IIS FIFO/negative IIC indices before
   mutating the live SoC, and normalizes old IIC data-phase counts without
   changing transaction behavior. The defect previously allowed later register
   writes to escape their arrays. A real-subsystem regression failed before
@@ -78,13 +78,24 @@ release builds: `build-win64-c23-resume7`, `build-h700-resume2`, and
 ## Parallel development round
 
 Twenty bounded workers were dispatched at max reasoning; sixteen stopped with
-provider 429 errors. An alternative-provider A64 worker also hit 429. The state
-worker completed and its bounds fix was integrated. Four workers remain on
-JIT cache, FXE/FPK loading, ZIP loading and resampling. Their private patches/reports belong
+provider 429 errors. An alternative-provider A64 worker also hit 429. State,
+loader and ZIP workers completed; their fixes are integrated. Long raw-GXB
+labels now use bounded title copying, and dotted ZIP directory names are no
+longer falsely rejected. Both failed focused regressions before their fixes;
+the combined file check now passes. The resampler worker found no actionable
+defect or proven beneficial change; its extensive private checks are worker
+evidence, not blanket game/audio acceptance. A requested scratch-log deletion
+was blocked by automatic review and was not retried.
+
+The original JIT cache worker remains active. Private patches/reports belong
 under `F:/GP32/results/round133-parallel/`; they must not edit tracked source,
 run shared builds, use SSH or delegate. A subsequent Sol max worker owns only
 `F:/GP32/results/round134-callback/` for the resumable callback candidate.
-Record final outcomes before a handoff.
+Eight further max-effort performance workers were dispatched under
+`F:/GP32/results/round134-performance/`; four ended with provider 429, while
+A64 codegen, LCD, memory bus and IIS workers remain active. With the original
+JIT-cache worker and Sol this is six outstanding tasks; their IDs are in the
+private dispatch JSON files. Record final outcomes before a handoff.
 
 ## Broader remaining evidence
 

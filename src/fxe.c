@@ -664,7 +664,8 @@ int fxe_load_buffer(const uint8_t *data, size_t size, const char *label, fxe_ima
     out->payload_size = size;
     out->was_fxe = 0;
     out->was_b2fxec = 0;
-    strcpy(out->title, label && label[0] ? label : "raw GXB");
+    const char *raw_title = label && label[0] ? label : "raw GXB";
+    copy_zstr(out->title, sizeof(out->title), (const uint8_t *)raw_title, sizeof(out->title) - 1u);
     {
         char decrunch_err[256] = {0};
         if (b2fxec_host_decrunch(out, decrunch_err, sizeof(decrunch_err))) return 1;
