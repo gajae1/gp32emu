@@ -3042,7 +3042,9 @@ A public-SoC-API probe changes only CLKVAL from 5 to 11 at 60-MHz HCLK/RUN,
 with fixed Htotal284/Vtotal263. Hardware-derived periods are 896304/1792608
 HCLK cycles, but both LINECNT streams wrap 60 times per second. The current LCD
 model ignores the programmed pixel divider/porches and returns static LCDCON5
-status. This is a reproduced common fidelity gap, not yet a production fix.
+status. This is a reproduced common fidelity gap. The subsequent TFT
+implementation is documented in [LCD_TIMING.md](LCD_TIMING.md); these
+measurements describe the pre-fix model.
 Local mirkoSDK `gp_grafik.c` and GP32 MAME4ALL `vblank.c` independently use the
 register-derived refresh formula; their palette/flip routines also poll LCDCON5.
 The SoC manual, not SDK code alone, must define exact status-bit semantics.

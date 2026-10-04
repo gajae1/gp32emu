@@ -267,3 +267,21 @@ LCDCON5 status and Blue partial-frame audio delivery deficit; see the latest
 sections of GP32_PERFORMANCE_STRATEGY.md. The user's speed and audible-pop
 reports, full gameplay/long sessions, input latency and Android runtime remain
 open. Successful boot screenshots do not close those gates.
+
+## TFT candidate follow-up (2026-10-05)
+
+The register-derived TFT candidate repeats all 31 cold boots and three older
+ASR/Blue/Princess scenes successfully at the harness level. Two apparent scene
+changes received bounded follow-ups: Tales' black final capture advances into
+story/title without input, while Super Plusha finishes its opening and reaches
+a platform stage with input. Neither observation establishes a hang. Super
+Plusha's opening finishes later in the fixed-time captures; original timing
+fidelity remains unverified. Details: [LCD_TIMING.md](LCD_TIMING.md).
+
+Proactive triage still prioritizes GlooP/Pinball/Tears' default-BIOS loading
+paths, GP Fight's uncompleted match loading and controls not yet attributed in
+several scenes. Zero-PCM windows in Winter Is, Bug Eyed Monster and other
+scenes are investigation leads, not confirmed missing-sound defects: silence
+may be intentional. New analysis uses [SMC executable inspection](SMC_ANALYSIS.md)
+and SDK/firmware call sites; it does not count an extracted file or static
+instruction as proof of runtime correctness.
