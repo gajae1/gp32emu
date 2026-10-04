@@ -433,7 +433,9 @@ static int wasapi_pump(gp32_win64_audio_t *a) {
     HRESULT hr = IAudioClient_GetCurrentPadding(a->client, &padding);
     if (FAILED(hr)) return -1;
 
-    if (started && queued == 0u && padding <= 256u) {
+    /* Resetting discards whatever the endpoint still holds, so wait for a
+     * fully drained buffer before re-arming the prebuffer. */
+    if (started && queued == 0u && padding == 0u) {
         if (a->wasapi_started) IAudioClient_Stop(a->client);
         IAudioClient_Reset(a->client);
         a->wasapi_started = 0;
