@@ -1180,7 +1180,7 @@ static void arm920t_jit_invalidate_all(arm920t_t *c, unsigned cause) {
     c->jit_code_used = 0;
 }
 
-static int arm_jit_is_safe_cp15_mrc(uint32_t insn);
+static int arm_jit_is_local_cp15_op(uint32_t insn);
 static int arm_jit_may_write_pc(uint32_t insn) {
     if ((insn & 0x0ffffff0u) == 0x012fff10u || (insn & 0x0ffffff0u) == 0x012fff30u) return 1;
     if ((insn & 0xfe000000u) == 0xfa000000u) return 1;
@@ -1199,7 +1199,7 @@ static int arm_jit_may_write_pc(uint32_t insn) {
     if ((insn & 0x0c000000u) == 0x04000000u) return GP32_BIT(insn,20) && (((insn >> 12) & 0xfu) == 15u);
     if ((insn & 0x0e000000u) == 0x08000000u) return GP32_BIT(insn,20) && (insn & (1u << 15));
     if ((insn & 0x0e000090u) == 0x00000090u) return GP32_BIT(insn,20) && (((insn >> 12) & 0xfu) == 15u);
-    if ((insn & 0x0f000000u) == 0x0e000000u) return !arm_jit_is_safe_cp15_mrc(insn); /* MRC p15 reads can stay in-trace. */
+    if ((insn & 0x0f000000u) == 0x0e000000u) return !arm_jit_is_local_cp15_op(insn); /* Local p15 reads/data maintenance can stay in-trace. */
     return 0;
 }
 
@@ -1207,11 +1207,15 @@ static int arm_jit_is_uncond_b_no_link(uint32_t insn) {
     return ((insn >> 28) == 14u) && ((insn & 0x0f000000u) == 0x0a000000u);
 }
 
-static int arm_jit_is_safe_cp15_mrc(uint32_t insn) {
+static int arm_jit_is_local_cp15_op(uint32_t insn) {
     if ((insn & 0x0f000010u) != 0x0e000010u) return 0;
-    if (!GP32_BIT(insn, 20)) return 0;
-    if (((insn >> 8) & 0xfu) != 15u) return 0;
-    return (((insn >> 12) & 0xfu) != 15u);
+    if (((insn >> 8) & 0xfu) != 15u || ((insn >> 12) & 0xfu) == 15u) return 0;
+    if (GP32_BIT(insn, 20)) return 1;
+    /* In this core, data-cache maintenance/drain only records c7. Match
+     * cp15_write's behavior; I-cache invalidation and MMU/TLB writes must
+     * still leave the trace. Do not generalize this to arbitrary MCRs. */
+    unsigned crn = (insn >> 16) & 15u, crm = insn & 15u;
+    return crn == 7u && (crm == 6u || crm == 10u || crm == 14u);
 }
 
 static int arm_jit_is_uncond_bl(uint32_t insn) {
@@ -1518,7 +1522,7 @@ static ARM_NOINLINE arm_jit_block_t *arm_jit_translate(arm920t_t *c, uint32_t pc
         op->cond = (uint8_t)(insn >> 28);
         op->kind = (uint8_t)arm_jit_classify(insn);
         op->stop = (uint8_t)arm_jit_may_write_pc(insn);
-        op->reserved = (op->kind == ARM_JIT_OP_COPROC && arm_jit_is_safe_cp15_mrc(insn)) ? 6u : 0u;
+        op->reserved = (op->kind == ARM_JIT_OP_COPROC && arm_jit_is_local_cp15_op(insn)) ? 6u : 0u;
         arm_bc_decode_op(op);
         b->count = (uint8_t)(i + 1u);
 
@@ -2864,17 +2868,19 @@ static int x64_emit_bx(x64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
     return 1;
 }
 
-static int x64_emit_coproc_mrc(x64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
+static int x64_emit_coproc_local(x64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
     const uint32_t insn = op->insn;
-    if ((insn & 0x0f000010u) != 0x0e000010u) return 0;
-    if (!GP32_BIT(insn, 20)) return 0; /* MCR writes can change CP15/cache state; keep helper path. */
-    if (((insn >> 8) & 0xfu) != 15u) return 0;
+    if (!arm_jit_is_local_cp15_op(insn)) return 0;
     unsigned crn = (insn >> 16) & 0xfu;
     unsigned rd = (insn >> 12) & 0xfu;
-    if (rd == 15u) return 0;
-    if (crn == 0u) x64_mov_r32_imm(e, X64_EAX, 0x41129200u);
-    else x64_mov_r32_mem_cpu(e, X64_EAX, (uint32_t)offsetof(arm920t_t, cp15) + (crn & 15u) * 4u);
-    x64_emit_store_arm_reg(e, rd, X64_EAX);
+    if (!GP32_BIT(insn, 20)) {
+        x64_emit_load_arm_reg(e, X64_EAX, rd, op->pc);
+        x64_mov_mem_cpu_r32(e, (uint32_t)offsetof(arm920t_t, cp15) + crn * 4u, X64_EAX);
+    } else {
+        if (crn == 0u) x64_mov_r32_imm(e, X64_EAX, 0x41129200u);
+        else x64_mov_r32_mem_cpu(e, X64_EAX, (uint32_t)offsetof(arm920t_t, cp15) + crn * 4u);
+        x64_emit_store_arm_reg(e, rd, X64_EAX);
+    }
     if (op->reserved != 6u) x64_emit_return_imm(e, done);
     return 1;
 }
@@ -2902,7 +2908,7 @@ static int x64_emit_one(x64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
         return 1;
     }
     case ARM_JIT_OP_COPROC:
-        if (x64_emit_coproc_mrc(e, op, done)) return 1;
+        if (x64_emit_coproc_local(e, op, done)) return 1;
         /* fall through */
     case ARM_JIT_OP_UNDEFINED:
     case ARM_JIT_OP_INTERP:
