@@ -595,7 +595,20 @@ static uint32_t dma_iis_fast_trigger_count(s3c2400_t *s, uint32_t *r, uint32_t r
         }                                                              \
         last_right = (uint16_t)(right);                                \
     } while (0)
-    for (uint32_t i = 0; i < units; ++i) {
+    const uint16_t native_one = 1u;
+    if (direct && fp && inc_src && !idx && dsz == 1u && units >= 2u &&
+        *(const uint8_t *)&native_one == 1u) {
+        /* Contiguous little-endian halfwords already have the host PCM
+         * layout. Copy complete pairs and retain an odd final halfword in
+         * the emulated FIFO, exactly as individual writes would do. */
+        uint32_t paired = units & ~1u;
+        memcpy(out, fp, (size_t)paired * 2u);
+        frames = paired >> 1;
+        idx = units & 1u;
+        pending = gp32_ld16le(fp + (size_t)(units - (idx ? 1u : 2u)) * 2u);
+        last_right = gp32_ld16le(fp + (size_t)(paired - 1u) * 2u);
+        src += units * 2u;
+    } else for (uint32_t i = 0; i < units; ++i) {
         const uint8_t *rp = fp ? fp + (size_t)i * fstep : ram_ptr(s, src, step);
         if (dsz == 1u) {
             uint16_t v = rp ? (uint16_t)(rp[0] | ((uint16_t)rp[1] << 8)) : s3c2400_read16(s, src);
@@ -1667,9 +1680,17 @@ void s3c2400_tick(s3c2400_t *s, uint32_t cpu_cycles) {
             while (periods64) {
                 uint32_t frame_batch = periods64 > 2048u ? 2048u : (uint32_t)periods64;
                 uint32_t transfer_count = frame_batch * transfers_per_frame;
-                uint32_t done_fast = dma_request_iis_fast_count(s, transfer_count);
-                if (done_fast < transfer_count) {
-                    for (uint32_t i = done_fast; i < transfer_count; ++i) dma_request_iis(s);
+                while (transfer_count) {
+                    /* Auto-reload can finish one RAM span and expose another
+                     * in this tick. Revalidate it through the same fast gate
+                     * instead of sending the entire remainder one unit at a
+                     * time. Unsupported sources retain their bus side effects. */
+                    uint32_t done = dma_request_iis_fast_count(s, transfer_count);
+                    if (!done) {
+                        for (uint32_t i = 0; i < transfer_count; ++i) dma_request_iis(s);
+                        break;
+                    }
+                    transfer_count -= done;
                 }
                 periods64 -= frame_batch;
             }
