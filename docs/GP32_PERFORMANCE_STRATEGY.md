@@ -2891,3 +2891,25 @@ samples, not instruction latency or a speed comparison. Poll observation is
 therefore a larger current target than BIOS loads or leaf stack frames.
 Evidence: `results/resume113-helper-attribution/` profile diff, checked-access
 red/green logs, sample analysis and release-section comparison.
+
+### Rejected poll mapping-result reuse (2026-10-05)
+
+A candidate reused the physical address already established by the read-only
+poll TLB proof instead of repeating address calculation and mmu_translate.
+Cached misses still refused skipping, existing direct-window restrictions and
+MMU-off behavior were retained, and no callback was moved across the proof.
+PC and native H700 poll-equivalence tests passed. Matched-clock Princess ABBA
+(600 warmup / 600 measured) was output-exact but changed median core throughput
+from 77.895 to 77.5155 fps (-0.49%; 32 measured samples at 1512 MHz). The change
+was restored and no further game sweep was run for this rejected candidate.
+
+The next larger MMIO design is an optional provider certificate for aligned
+live word readbacks, loaded afresh by A64 native code after RAM rejection and
+cached MMU validation. S3C2400 could expose two SoC-owned GPIO readback words;
+arbitrary buses retain all callbacks. This remains a private proposal, not an
+implemented optimization: freshness must cover GPIO writes, buttons, card
+replacement failures, reset and final state commit. Descriptor lifetime and
+CPU hot-field layout must be resolved before adoption; simply appending a bus
+field would shift following CPU fields. No dynamic pointer cache, speculative
+page walk, game-address match or retained input value is justified by these
+measurements. See `results/resume113-helper-attribution/mmio-design.md`.
