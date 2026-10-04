@@ -2580,3 +2580,45 @@ probe portability edit, which the game replay does not call. Volume and
 frontend settings remain unchanged. Physical audibility and long-session
 underrun reduction remain unverified. Evidence: private
 `results/resume106-iis-fraction/`.
+
+### Rejected LCD boundary arithmetic candidate (2026-10-04)
+
+A candidate replaced the old/new frame-quotient comparison in `s3c2400_tick`
+with `new_accum % frame_cycles < cpu_cycles`, removing one integer division
+without adding state. Frame periods are bounded by the clock registers, so
+multi-frame ticks and unsigned accumulator wrap retain the boundary decision.
+The existing LCD timing trace, including clock changes and exact-line polling,
+was unchanged; three PC and H700 replays preserve all seven CPU/video/PCM fields.
+
+H700 ABBA at 1,512-MHz sampled endpoints was near neutral: Princess
+78.2425 -> 77.8625 core fps (-0.49%), Astonishia 188.7775 -> 188.954 (+0.09%),
+Blue 73.7575 -> 74.1755 (+0.57%). This did not establish a useful speedup.
+The candidate was reverted and never installed. Its patch and raw measurements
+remain privately in `results/resume107-lcd-boundary/`; do not repeat the same
+experiment unchanged. Production retains the fractional IIS correction.
+
+### Fractional IIS through stock RetroArch (2026-10-04)
+
+The installed `1665ee4` core ran Princess Maker 2 Korea slot 0 through the
+original Spruce RetroArch for 1,800 requested frames. The copied old state
+loaded successfully, including migration from 26,590,624 to 26,590,632 state
+bytes. The final capture reaches the story dialogue and reports 59.56 fps,
+1,801 frames and zero dropped frames. This is one final overlay reading, not
+a frame-time percentile or a claim about every guest animation frame.
+
+The existing ALSA interposer observed 1,988 successful writes accepting
+1,526,784 stereo frames at 48 kHz. EPIPE, suspend, EAGAIN, other errors and
+recovery calls were zero. The overlay's 21.12% underrun indicator is the
+previously documented low-water occupancy statistic, not a count of hardware
+xruns. Most zero-valued output remains at startup/shutdown; this capture does
+not establish whether any isolated software padding is audible or quantify
+an improvement against a controlled old-core playback.
+
+The bounded run exited with status zero and MainUI returned. The installed
+core, stock frontend, launcher, protected configs and original manual/automatic
+states retained their pre-run hashes. Private config/options/state copies were
+used, with the original audio/video pacing settings; volume and mixer were not
+changed. An initial local result-path escaping error stopped staging before
+frontend launch; resumption accepted only identical already-staged files.
+Evidence: `results/resume107-lcd-boundary/stock-iis/` (staged/protected manifests,
+runtime log, final capture, exit record and digital ALSA counters).
