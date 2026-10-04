@@ -1484,6 +1484,62 @@ static int arm_jit_forward_loop(arm920t_t *c, uint32_t entry,
     return 0;
 }
 
+/* Prove only a straight-line, ordinary-register/load loop with one backedge.
+ * A conditional branch may leave the loop, but may not bypass the progress
+ * instruction and rejoin it. Calls, stitched traces and leaf wrappers retain
+ * the polling path. Count ALL possible writes, including those before the
+ * step: a counter reloaded/reset on each iteration is not progress.
+ * A single unconditional self ADD/SUB by a decoded nonzero immediate changes
+ * its register modulo 2^32, even on overflow and with S set. Flag-only tests
+ * do not write Rd; loads do, including Rd==Rn. No SP/LR/PC proof is attempted. */
+static int arm_jit_poll_has_progress(arm920t_t *c, arm_jit_block_t *b) {
+    unsigned edge = 0, edges = 0;
+    const arm_jit_op_t *ops = arm_jit_ops(c, b);
+    for (unsigned i = 0; i < b->poll_prefix; ++i) {
+        const arm_jit_op_t *op = &ops[i];
+        if (op->kind == ARM_JIT_OP_BRANCH && op->cond != 15u &&
+            !(op->insn & (1u << 24)) &&
+            arm_jit_branch_target(op->pc, op->insn) == b->tag_pc) {
+            edge = i;
+            ++edges;
+        }
+    }
+    if (edges != 1u || (uint64_t)b->tag_pc + edge * 4u > UINT32_MAX) return 0;
+    uint32_t written = 0, repeated = 0, progress = 0;
+    for (unsigned i = 0; i <= edge; ++i) {
+        const arm_jit_op_t *op = &ops[i];
+        if (op->reserved || op->pc != b->tag_pc + i * 4u) return 0;
+        uint32_t dest = 0;
+        if (op->kind == ARM_JIT_OP_BRANCH) {
+            if (op->insn & (1u << 24)) return 0;
+            if (i != edge) {
+                uint32_t target = arm_jit_branch_target(op->pc, op->insn);
+                if (op->cond >= 14u || (target >= b->tag_pc && target <= ops[edge].pc)) return 0;
+            }
+        } else if (op->kind == ARM_JIT_OP_DATA) {
+            if (op->a >= 8u && op->a <= 11u) continue; /* TST/TEQ/CMP/CMN */
+            if (op->c >= 13u) return 0;
+            dest = 1u << op->c;
+            if (op->cond == 14u && (op->a == 2u || op->a == 4u) &&
+                op->b == op->c && (op->d & ARM_BC_DATA_IMM) && op->imm)
+                progress |= dest;
+        } else if (op->kind == ARM_JIT_OP_SINGLE_DT) {
+            /* Loads only, without writeback, byte or register offsets. */
+            if ((op->d & ~ARM_BC_SD_U) != (ARM_BC_SD_P | ARM_BC_SD_L) ||
+                op->b >= 13u) return 0;
+            dest = 1u << op->b;
+        } else return 0;
+        repeated |= written & dest;
+        written |= dest;
+    }
+    return (progress & ~repeated) != 0u;
+}
+
+static int arm_jit_needs_poll(arm920t_t *c, arm_jit_block_t *b) {
+    return c->bus.is_stable_read32 && b->poll_backedge &&
+           !arm_jit_poll_has_progress(c, b);
+}
+
 /* Keep translation (including the native emitter's large scratch buffer) out
  * of the dispatch loop. Inlining it inflates the hot frame and register spills
  * even when every block lookup hits already compiled code. */
@@ -1639,7 +1695,7 @@ static ARM_NOINLINE arm_jit_block_t *arm_jit_translate(arm920t_t *c, uint32_t pc
     }
     b->valid = 1;
     ARM_PROF_INC(c, jit_blocks_compiled);
-    if (c->jit_enabled && !(c->bus.is_stable_read32 && b->poll_backedge)) {
+    if (c->jit_enabled && !arm_jit_needs_poll(c, b)) {
         arm_jit_compile_native(c, b);
 #if ARM920T_PROFILING && ARM920T_NATIVE_BACKEND
         /* Both backends count actual reserve failures at the allocation site. */
@@ -3173,7 +3229,8 @@ static uint32_t arm_jit_run(arm920t_t *c, uint32_t cycles) {
         int stable_reads = 0;
         /* Translation only publishes native for eligible blocks. In
          * particular, a bus with stable reads leaves polling backedges on
-         * the portable path. The bus callbacks are fixed at CPU creation. */
+         * the portable path unless register progress is proven. The bus
+         * callbacks are fixed at CPU creation. */
         if (b->native && (cycles - total) >= b->count) {
             done = b->native(c, cycles - total);
 #if ARM920T_PROFILING

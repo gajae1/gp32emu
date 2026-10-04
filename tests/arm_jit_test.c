@@ -279,6 +279,88 @@ static void set_mem_both(uint32_t addr, uint32_t v) {
 }
 static uint32_t ref_reg(unsigned i) { return arm920t_get_reg(cpu_ref, i); }
 
+static int tb_poll_stable(void *u, uint32_t a) {
+    (void)u;
+    return a == DATA_ADDR || a == DATA_ADDR + 4u;
+}
+
+/* Stable loads do not make a changing counter a poll. Use different registers
+ * from workload code, and inspect native coverage before reaching any parking
+ * branch. The traced reference also avoids decoded-block/poll optimizations. */
+static void case_poll_progress(void) {
+    static const struct {
+        const char *name;
+        uint32_t step, initial, expected;
+    } cases[] = {
+        {"poll-countdown", 0xe2477001u, 96u, 32u},
+        {"poll-add-wrap", 0xe2877001u, UINT32_MAX, 63u},
+        {"poll-sub-wrap", 0xe2477001u, 0u, UINT32_MAX - 63u},
+        {"poll-adds", 0xe2977001u, UINT32_MAX, 63u},
+        {"poll-subs", 0xe2577001u, 0u, UINT32_MAX - 63u},
+        {"poll-rotated-step", 0xe2877102u, 9u, 9u},
+        {"poll-load-alias", 0xe2477001u, 96u, 32u},
+        {"poll-conditional-backedge", 0xe2577001u, 96u, 32u}
+    };
+    for (unsigned k = 0; k < GP32_ARRAY_COUNT(cases); ++k) {
+        current_case = cases[k].name;
+        setup_pair();
+        /* The bus is copied at create time. Recreate only the native CPU. */
+        arm920t_destroy(cpu_jit);
+        bus_jit.bus.is_stable_read32 = tb_poll_stable;
+        cpu_jit = arm920t_create(&bus_jit.bus);
+        if (!cpu_jit) exit(2);
+        arm920t_reset(cpu_jit, CODE_ADDR);
+        arm920t_set_jit(cpu_jit, 1);
+        arm920t_set_trace(cpu_ref, 1, NULL, NULL);
+        uint32_t program[] = {
+            k == 0u ? 0xe3570000u : 0xe3560000u, /* CMP counter/exit latch,#0 */
+            k == 0u ? 0xda000005u : 0x1a000005u, /* BLE/BNE outside loop */
+            k == 6u ? 0xe5900000u : 0xe5905000u, /* LDR, including Rd==Rn */
+            0xe0033005u, 0xe5915000u, 0xe0044005u,
+            cases[k].step, k == 7u ? 0x1afffff7u : 0xeafffff7u, 0xeafffffeu
+        };
+        load_both(program, GP32_ARRAY_COUNT(program));
+        set_reg_both(0u, DATA_ADDR);
+        set_reg_both(1u, DATA_ADDR + 4u);
+        set_reg_both(3u, UINT32_MAX);
+        set_reg_both(4u, UINT32_MAX);
+        set_reg_both(7u, cases[k].initial);
+        set_mem_both(DATA_ADDR, k == 6u ? DATA_ADDR : 0x55aa55aau);
+        set_mem_both(DATA_ADDR + 4u, 0xaa55aa55u);
+        CHECK(arm920t_run(cpu_jit, 512u) == arm920t_run(cpu_ref, 512u), "counter coverage budget");
+        compare_state();
+        CHECK(ref_reg(7u) == cases[k].expected, "counter must change modulo 2^32");
+        CHECK(arm920t_get_pc(cpu_jit) == CODE_ADDR, "coverage ends on loop entry");
+        gp32_cpu_profile_t p;
+        arm920t_get_cpu_profile(cpu_jit, &p);
+        if (p.supported) {
+            CHECK(p.poll_skipped_insns == 0u, "changing counter must never fast-forward");
+            if (p.native_backend) {
+                /* A conditional backedge includes its exit in the translated
+                 * block. Its final short budget can legitimately use portable
+                 * execution; bound that tail by the complete trace length. */
+                if (k == 7u)
+                    CHECK(p.native_arm_insns > 0u &&
+                          p.block_interp_arm_insns < GP32_ARRAY_COUNT(program) &&
+                          p.native_arm_insns + p.block_interp_arm_insns == 512u,
+                          "conditional counter loop needs native coverage with only a short tail");
+                else CHECK(p.native_arm_insns == 512u, "counter loop must execute entirely native");
+            }
+        }
+        printf("%s native=%" PRIu64 " portable=%" PRIu64 " skipped=%" PRIu64 "\n",
+               current_case, p.native_arm_insns, p.block_interp_arm_insns, p.poll_skipped_insns);
+        run_chunks(); /* flags, partial blocks, and countdown exit */
+        /* Take the early exit with a large native-eligible budget as well. */
+        set_reg_both(15u, CODE_ADDR);
+        if (k == 0u) set_reg_both(7u, 0x80000000u);
+        else set_reg_both(6u, 1u);
+        CHECK(arm920t_run(cpu_jit, 16u) == arm920t_run(cpu_ref, 16u), "early-exit budget");
+        compare_state();
+        CHECK(arm920t_get_pc(cpu_jit) == CODE_ADDR + 32u, "early exit reaches parking branch");
+        teardown_pair();
+    }
+}
+
 /* ------------------------------------------------------------------ cases */
 
 /* ADDS/ADC/SBCS/RSBS/TST plus conditional MVNNE / ADDEQ. */
@@ -2469,7 +2551,10 @@ int main(int argc, char **argv) {
     int portable_only = argc == 2 && !strcmp(argv[1], "--portable-callback");
     int pairs_only = argc == 2 && !strcmp(argv[1], "--block-pairs");
     int access_only = argc == 2 && !strcmp(argv[1], "--checked-access");
-    if (access_only) {
+    int poll_only = argc == 2 && !strcmp(argv[1], "--poll-progress");
+    if (poll_only) {
+        case_poll_progress();
+    } else if (access_only) {
         case_checked_access();
         case_checked_access_translation();
         case_callback_irq_commit();
@@ -2518,6 +2603,7 @@ int main(int argc, char **argv) {
     } else if (ram_end_only) {
         case_native_mapped_ram_end();
     } else {
+    case_poll_progress();
     case_native_mapped_pages();
     case_native_literal_addresses();
     case_native_mmu_mode_changes();
@@ -2577,7 +2663,7 @@ int main(int argc, char **argv) {
         return 1;
     }
     printf("PASS: arm jit differential (%s), jit events=%" PRIu64 " fallbacks=%" PRIu64 "\n",
-           access_only ? "checked-access" : pairs_only ? "block-pairs/fences" : portable_only ? "portable-callback" : block_only ? "block-callback" : irq_only ? "callback-IRQ" : chain_only ? "branch-chain" : forward_only ? "forward-loop" : callback_only ? "callback-PC" : (leaf_only ? "unframed-leaf" : (ram_end_only ? "mapped-page-RAM-end" : (loops_only ? "loop-fences" : "flags/shift/branch/mem/half/block/mul/seeded/budget/loop-fences"))),
+           poll_only ? "poll-progress" : access_only ? "checked-access" : pairs_only ? "block-pairs/fences" : portable_only ? "portable-callback" : block_only ? "block-callback" : irq_only ? "callback-IRQ" : chain_only ? "branch-chain" : forward_only ? "forward-loop" : callback_only ? "callback-PC" : (leaf_only ? "unframed-leaf" : (ram_end_only ? "mapped-page-RAM-end" : (loops_only ? "loop-fences" : "flags/shift/branch/mem/half/block/mul/seeded/budget/loop-fences"))),
            jit_events, jit_fallbacks);
     return 0;
 }

@@ -1673,8 +1673,20 @@ instructions through portable decoded blocks and 67,866,349 through native
 blocks. Of the portable work, 101,069,530 instructions belong to one eight-op
 loop that decrements a counter on every backedge. The current polling-candidate
 gate excludes it from native compilation even though its changing counter
-prevents a fixed-point skip. A generic proof of loop progress is being evaluated;
-no game address or instruction signature should enter production code.
+prevents a fixed-point skip. The compiler now admits conservative straight-line
+counter loops with one backedge and a nonzero unconditional self ADD/SUB whose
+destination has no other possible writes. Early exits remain guarded. No game
+address or instruction signature is part of the classifier.
+
+In the same 300-frame replay, portable work falls to 21,677 instructions and
+native work rises to 168,923,941. Existing poll-skip counts remain exactly 22
+events / 554,382 instructions, and all seven CPU/video/PCM fields match.
+A pinned-process PC ABBA gives 262.521/314.813 fps before and
+370.973/403.964 after (mean +34.2%); the host was busy and these samples retain
+timing variance. They do not establish H700 speedup. Focused x64 differential
+tests pass for changing loops and false-progress/stable-poll cases. A53 static,
+H700 libretro/bench, Win64 GUI and Android ARM64/ARMv7 C23 builds pass; native
+A64 execution and device presentation remain pending.
 
 The same saved cutscene advances through text during a 600-frame PC replay,
 with PCM present in every frame and six image changes. These are static slide
@@ -1684,6 +1696,12 @@ are deferred while the user plays other games. Sound work remains active:
 the reported Dooly Soccer startup pop is being compared at source and frontend
 delivery boundaries; original waveform values alone do not prove hardware
 speaker behavior.
+
+A bounded Dooly capture matches a queue-free replay of the existing resampler
+and silence policy bit-exactly; no additional delivery-queue glitch was found.
+The recorded resume edge of 0 to 5137 and large intra-span source steps still
+need to be correlated with the audible report. This does not validate the
+source emulation or output model, and does not isolate the cause to the driver.
 
 Win64 now clears keyboard state on focus loss, preventing a key release sent
 to another window from leaving GP32 buttons pressed. A hidden-window probe of

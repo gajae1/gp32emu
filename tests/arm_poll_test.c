@@ -276,14 +276,34 @@ static void load_prog(const uint32_t *prog, size_t n) {
 static void case_poll_stable(int fastmem_ram) {
     current_case = fastmem_ram ? "poll-stable-fastmem" : "poll-stable";
     setup_pair(fastmem_ram);
-    if (fastmem_ram) arm920t_set_jit(cpu_fast, 1);
+    arm920t_set_jit(cpu_fast, 1);
+    arm920t_set_jit(cpu_ref, 0);
     load_prog(PROG_POLL, sizeof(PROG_POLL) / sizeof(PROG_POLL[0]));
     add_stable(&bus_fast, DATA_ADDR);
     set_reg_both(1u, DATA_ADDR);
 
+    /* An aligned budget isolates the complete backedge block. Ragged budgets
+     * below can legitimately compile a suffix whose backedge targets a
+     * different entry, even in the original implementation. */
+    arm920t_reset_cpu_profile(cpu_fast);
+    CHECK(arm920t_run(cpu_fast, 384u) == arm920t_run(cpu_ref, 384u), "aligned stable-poll budget");
+    compare_state(0);
+    gp32_cpu_profile_t p;
+    arm920t_get_cpu_profile(cpu_fast, &p);
+    if (p.supported) {
+        CHECK(p.native_arm_insns == 0u, "complete stable poll must retain portable execution");
+        CHECK(p.poll_skipped_insns > 0u, "true stable poll must still fast-forward");
+    }
+    printf("%s aligned_native=%" PRIu64 " aligned_skipped=%" PRIu64 "\n",
+           current_case, p.native_arm_insns, p.poll_skipped_insns);
     uint64_t fr = 0, rr = 0;
     run_chunks(CHUNKS, NCHUNKS, 0, &fr, &rr);
     CHECK(bus_fast.stable_queries > 0u, "stability callback was never consulted");
+    arm920t_get_cpu_profile(cpu_fast, &p);
+    if (p.supported)
+        CHECK(p.poll_skipped_insns > 0u, "true stable poll must still fast-forward");
+    printf("%s native=%" PRIu64 " skipped=%" PRIu64 "\n",
+           current_case, p.native_arm_insns, p.poll_skipped_insns);
     if (!fastmem_ram) {
         /* fastmem would bypass the read32 counter, so only the callback-bus
          * variant can observe the polling rate and the reduction. */
@@ -291,6 +311,53 @@ static void case_poll_stable(int fastmem_ram) {
         CHECK(fr * 8u <= rr, "fast path did not significantly reduce polling reads");
     }
     teardown_pair();
+}
+
+/* Apparent increments which do NOT prove progress. In particular, a load or
+ * reset before the step invalidates the proof just as a later overwrite does.
+ * Run these with JIT enabled and a traced, instruction-by-instruction oracle;
+ * their stable repetitions must remain portable and actually fast-forward. */
+static void case_false_progress(void) {
+    static const struct {
+        const char *name;
+        unsigned count;
+        uint32_t program[7];
+    } cases[] = {
+        {"zero-step", 3u, {0xe5910000u, 0xe2822000u, 0xeafffffcu}},
+        {"rotated-zero-step", 3u, {0xe5910000u, 0xe2822100u, 0xeafffffcu}},
+        {"conditional-step", 4u, {0xe5910000u, 0xe3500000u, 0x12822001u, 0xeafffffbu}},
+        {"different-source", 3u, {0xe5910000u, 0xe2802001u, 0xeafffffcu}},
+        {"reload-before-step", 3u, {0xe5912000u, 0xe2822001u, 0xeafffffcu}},
+        {"reload-after-step", 3u, {0xe2822001u, 0xe5912000u, 0xeafffffcu}},
+        {"reset-before-step", 4u, {0xe5910000u, 0xe3a02000u, 0xe2822001u, 0xeafffffbu}},
+        {"reset-after-step", 5u, {0xe5910000u, 0xe3500000u, 0xe2822001u, 0x03a02000u, 0xeafffffau}},
+        {"cancelled-step", 4u, {0xe5910000u, 0xe2822001u, 0xe2422001u, 0xeafffffbu}},
+        /* BEQ skips the increment but rejoins at the unconditional backedge. */
+        {"bypassed-step", 5u, {0xe5910000u, 0xe3500000u, 0x0a000000u, 0xe2822001u, 0xeafffffau}},
+        /* Two backedges: the earlier one can bypass the step. */
+        {"two-backedges", 5u, {0xe5910000u, 0xe3500000u, 0x0afffffcu, 0xe2822001u, 0xeafffffau}}
+    };
+    for (unsigned k = 0; k < sizeof(cases) / sizeof(cases[0]); ++k) {
+        current_case = cases[k].name;
+        setup_pair(0);
+        arm920t_set_jit(cpu_fast, 1);
+        arm920t_set_jit(cpu_ref, 0);
+        arm920t_set_trace(cpu_ref, 1, NULL, NULL);
+        load_prog(cases[k].program, cases[k].count);
+        add_stable(&bus_fast, DATA_ADDR);
+        set_reg_both(1u, DATA_ADDR);
+        run_chunks(CHUNKS, NCHUNKS, 1, NULL, NULL);
+        gp32_cpu_profile_t p;
+        arm920t_get_cpu_profile(cpu_fast, &p);
+        if (p.supported) {
+            CHECK(p.native_arm_insns == 0u, "false progress must not admit native polling");
+            CHECK(p.poll_skipped_insns > 0u, "stable false-progress loop must still fast-forward");
+        }
+        CHECK(bus_fast.r32 * 8u <= bus_ref.r32, "false-progress poll must retain reduced reads");
+        printf("%s native=%" PRIu64 " skipped=%" PRIu64 "\n",
+               current_case, p.native_arm_insns, p.poll_skipped_insns);
+        teardown_pair();
+    }
 }
 
 /* Nonzero stable word: the loop exits on the first check and parks on B self. */
@@ -338,6 +405,8 @@ static void case_literal(void) {
 static void case_bl_helper(void) {
     current_case = "bl-helper";
     setup_pair(1);
+    arm920t_set_jit(cpu_fast, 1);
+    arm920t_set_jit(cpu_ref, 0);
     load_prog(PROG_BL, sizeof(PROG_BL) / sizeof(PROG_BL[0]));
     for (test_bus_t *b = &bus_fast; b; b = (b == &bus_fast) ? &bus_ref : NULL) {
         b->no_fast_lo = RAM_BASE;
@@ -656,6 +725,7 @@ static void case_pending_irq(void) {
 int main(void) {
     case_poll_stable(0);
     case_poll_stable(1);   /* identical contract when RAM loads ride fastmem */
+    case_false_progress();
     case_poll_exits();
     case_literal();
     case_bl_helper();
