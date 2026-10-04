@@ -405,7 +405,10 @@ static void refresh_input_bitmask_support(void) {
 }
 
 static uint32_t read_buttons(void) {
-    if (!input_state_cb || input_device != RETRO_DEVICE_JOYPAD) return 0;
+    /* An analog RetroPad still exposes its digital controls as JOYPAD.
+     * GP32 uses those buttons only; NONE and unrelated devices stay inactive. */
+    if (!input_state_cb ||
+        (input_device != RETRO_DEVICE_JOYPAD && input_device != RETRO_DEVICE_ANALOG)) return 0;
     uint32_t m = 0;
     if (input_bitmasks) {
         /* Bit N of the mask is RETRO_DEVICE_ID_JOYPAD_<N>; the 16-button

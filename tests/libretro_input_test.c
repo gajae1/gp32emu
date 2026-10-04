@@ -205,6 +205,18 @@ int main(void) {
             for (unsigned p = 0; p < sizeof(pads) / sizeof(pads[0]); ++p) {
                 if (!check_pad(modes[mi], jit, pads[p])) { retro_deinit(); return 1; }
             }
+            /* A frontend may connect a RetroPad with analog support. Its
+             * digital buttons still use the JOYPAD query protocol; selecting
+             * that device must not disconnect the GP32's digital controls. */
+            static const unsigned analog_devices[] = {
+                RETRO_DEVICE_ANALOG, RETRO_DEVICE_ANALOG | 0x100u
+            };
+            for (unsigned d = 0; d < sizeof(analog_devices) / sizeof(analog_devices[0]); ++d) {
+                retro_set_controller_port_device(0, analog_devices[d]);
+                if (!check_pad(modes[mi], jit, 0xffffu) || !check_pad(modes[mi], jit, 0u)) {
+                    retro_deinit(); return 1;
+                }
+            }
             /* Disabling a port must release the guest even when the physical
              * pad remains held. Reconnecting must expose the live pad again. */
             simulated_mask = 0xffffu;
