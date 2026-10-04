@@ -161,6 +161,25 @@ static void ring_write_bulk_unlocked(gp32_win64_audio_t *a, const int16_t *src, 
     a->frame_count += frames;
 }
 
+/* Dropping queued frames makes the device jump from the frame it last read to
+ * whatever the head becomes: retained PCM, or the head of the chunk that
+ * refills an emptied ring. Glide the head in place from that last-read frame
+ * over the same ~1 ms window the SDL backends use for the same trim. */
+static void ramp_ring_head_from_last_read(gp32_win64_audio_t *a) {
+    if (!a || !a->have_last_ring || !a->frame_cap || !a->frame_count) return;
+    uint32_t fade = a->sample_rate ? a->sample_rate / 1000u : 44u;
+    if (fade < 16u) fade = 16u;
+    if (fade > 96u) fade = 96u;
+    if (fade > a->frame_count) fade = a->frame_count;
+    for (uint32_t i = 0; i < fade; ++i) {
+        int16_t *p = a->queue + (size_t)((a->read_frame + i) % a->frame_cap) * 2u;
+        int32_t num = (int32_t)(i + 1u);
+        int32_t den = (int32_t)fade;
+        p[0] = (int16_t)((int32_t)a->last_ring_l + ((int32_t)p[0] - (int32_t)a->last_ring_l) * num / den);
+        p[1] = (int16_t)((int32_t)a->last_ring_r + ((int32_t)p[1] - (int32_t)a->last_ring_r) * num / den);
+    }
+}
+
 static void fill_gap_tail(gp32_win64_audio_t *a, int16_t *out, uint32_t frames) {
     if (!a || !out || !frames) return;
     int32_t l0 = a->have_last_ring ? a->last_ring_l : 0;
@@ -247,12 +266,18 @@ int gp32_win64_audio_submit(gp32_win64_audio_t *a, const gp32_audio_desc_t *audi
     if (out_sz > UINT32_MAX) { set_error(a, "resampled audio chunk too large"); return -1; }
     uint32_t out_frames = (uint32_t)out_sz;
     audio_lock(a);
+    /* Arm before the append so the glide still lands when the discard empties
+     * the ring and the new head is this chunk. The resampler's phase belongs
+     * to the source stream: only queued output was skipped, so its carry is
+     * preserved instead of marked. */
+    int gap_head = 0;
     if (a->frame_count + out_frames > GP32_AUDIO_MAX_LATENCY_FRAMES) {
         drop_oldest(a, a->frame_count + out_frames - GP32_AUDIO_MAX_LATENCY_FRAMES);
-        gp32_audio_resampler_mark_gap(&a->resampler, dst_rate);
+        gap_head = a->have_last_ring;
     }
     if (!ensure_queue(a, out_frames)) { audio_unlock(a); set_error(a, "audio queue allocation failed"); return -1; }
     ring_write_bulk_unlocked(a, a->tmp, out_frames);
+    if (gap_head) ramp_ring_head_from_last_read(a);
     audio_unlock(a);
 #if GP32EMU_ENABLE_THREADS
     if (a->pump_event) SetEvent(a->pump_event);

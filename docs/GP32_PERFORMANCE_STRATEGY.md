@@ -2393,3 +2393,58 @@ All seven compared guest CPU/video/PCM fields remain exact in each replay.
 The H700 Princess profile moves all 662,608 classified DATA calls to the
 dedicated PC helper without changing native instruction counts. Volume,
 mixer, governor, stock frontend and user settings were not changed.
+
+### Same-mode AArch64 CPSR writes (2026-10-04)
+
+Terminating MSR CPSR operations now update selected bits in native code when
+the requested mode is unchanged. The effective mask still comes from live
+USER/privileged status, so a block reused in another mode cannot gain write
+privileges. Different source-mode bits take the existing shared helper before
+extra mask preparation; it preserves bank switching and USER flags-only access.
+Every route retains the dispatch boundary for Thumb and pending interrupts.
+
+The first implementation reduced helper calls but added work to actual mode
+changes. Its ABBA result was mixed: Princess +1.47%, Astonishia title -1.38%,
+Blue -0.36%. Moving the different-mode guard earlier retained the fast path
+without that extra preparation on the fallback route. Final ABBA measurements
+(two samples per variant; sampled clock endpoints all 1,512 MHz) were:
+
+| Saved scene | Baseline core fps | Updated core fps | Change |
+| --- | ---: | ---: | ---: |
+| Princess Maker 2 | 76.177 | 78.1095 | +2.54% |
+| Astonishia title | 177.2265 | 176.743 | -0.27% |
+| Blue Angelo | 73.9795 | 73.4475 | -0.72% |
+
+This is a targeted Princess gain, not a universal speedup or displayed-frame
+rate claim; small negative control results are retained. CPU, clock, PCM count,
+video and PCM hashes match in every before/after replay. The final Princess
+profile reduces PSR helper calls from 663,633 to 1,266 in 300 frames.
+
+The focused fixture reuses a compiled MSR across SVC, USER, FIQ and SYS with
+selected byte masks and exact one-instruction budgets, comparing all register
+banks. Existing tests retain real bank changes, PC operands, Thumb entry and
+pending IRQ/FIQ checks. Final focused and full H700 JIT differential tests pass;
+the initial Windows focused fixture also passes. H700 release and Android
+ARM64 builds succeed; Android runtime remains unverified. No volume, mixer,
+governor or frontend settings changed. Evidence: private
+`results/resume102-cpsr/`, with initial results retained and final results in
+`refined/`.
+
+### Win64 output-queue discard boundary (2026-10-04)
+
+The standalone Windows backend previously reset the source resampler when
+trimming old queued output. That armed a fade at the next input block while
+leaving the actual playback discontinuity at the new queue head untouched.
+The shared waveOut/WASAPI submission path now preserves resampler carry and
+blends the queue head from the last frame read by the output consumer over
+approximately 1 ms. The blend runs after appending, under the same queue lock,
+so a discard that empties the ring also covers the newly appended head.
+Normal output and the existing pump-underrun recovery path are unchanged.
+
+The device-free regression fails six checks against the saved original source
+and passes with the fix. It covers a wrapped retained head, independent stereo
+levels, unchanged PCM after the blend, uninterrupted resampler phase/carry, and
+a full discard followed by new output. The existing Win64 audio fixture and
+Windows GUI build pass. No audio endpoint, mixer or volume was opened or
+changed; this is digital-path evidence, not a physical listening verdict.
+Evidence: private `results/resume102-cpsr/audio-check.json`.

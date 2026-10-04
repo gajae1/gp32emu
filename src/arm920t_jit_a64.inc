@@ -1396,8 +1396,8 @@ static void a64_spsr_offset(a64_emit_t *e) {
     a64_u32(e, 0xb8636883u); /* ldr w3, [x4, x3] */
 }
 
-/* SPSR access cannot change the active mode or interrupt masks. CPSR writes
- * still use a helper unless only the flags byte can change. */
+/* SPSR access cannot change the active mode or interrupt masks. Terminating
+ * CPSR writes can keep same-mode updates native. */
 static int a64_psr_mov(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
     const uint32_t insn = op->insn;
     unsigned rd = (insn >> 12) & 0xfu;
@@ -1451,9 +1451,43 @@ static int a64_psr_mov(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
                 a64_imm(e, 1, gp32_ror32(insn & 0xffu, ((insn >> 8) & 0xfu) * 2u));
             else a64_guest(e, 1, insn & 0xfu, op->pc);
             a64_imm(e, 2, mask);
-            a64_rr(e, 0xaa000000u, 0, 31, 19);
-            a64_ptr(e, 16, (uintptr_t)arm_a64_msr_cpsr);
-            a64_u32(e, 0xd63f0200u); /* blr x16; caller emits the stop epilogue */
+            /* Keep w1/w2 intact for the bank-switch fallback. The effective
+             * mask comes from the live mode, never the block's compile mode. */
+            a64_load(e, 3, offsetof(arm920t_t, cpsr));
+            a64_rr(e, 0x4a000000u, 5, 1, 3);
+            size_t switch_bank = 0;
+            if (mask & MODE_MASK) {
+                /* Reject a different source mode before preparing the live
+                 * privilege mask. USER writes that request another mode also
+                 * take the shared helper, which enforces flags-only access. */
+                a64_mask(e, 6, 5, MODE_MASK);
+                switch_bank = e->pos;
+                a64_u32(e, 0x35000006u); /* cbnz w6 -> shared bank-switch helper */
+            }
+            unsigned effective_mask = 2u;
+            if (mask & 0x00ffffffu) {
+                a64_mask(e, 6, 3, MODE_MASK);
+                a64_cmp_imm(e, 6, MODE_USR);
+                a64_mask(e, 4, 2, 0xff000000u);
+                a64_u32(e, 0x1a820084u); /* csel w4, w4, w2, EQ: USER flags only */
+                effective_mask = 4u;
+            }
+            /* delta = (operand ^ old CPSR) & effective mask. XORing it back
+             * preserves every unselected bit, including zero-field NZCV. */
+            a64_rr(e, 0x0a000000u, 5, 5, effective_mask);
+            a64_rr(e, 0x4a000000u, 3, 3, 5);
+            a64_store(e, 3, offsetof(arm920t_t, cpsr));
+            if (mask & MODE_MASK) {
+                size_t updated = a64_jump(e, 14u);
+                a64_patch(e, switch_bank, e->pos);
+                a64_rr(e, 0xaa000000u, 0, 31, 19);
+                a64_ptr(e, 16, (uintptr_t)arm_a64_msr_cpsr);
+                a64_u32(e, 0xd63f0200u); /* blr x16: original operand and mask */
+                a64_patch(e, updated, e->pos);
+            }
+            e->nzcv_valid = 0; /* compare/helper flags are not guest NZCV */
+            /* Both paths keep the caller's stop epilogue: commit PC, return,
+             * then let dispatch observe Thumb and pending IRQ/FIQ changes. */
             return 1;
         }
         if (insn & (1u << 25)) {                           /* immediate form */
