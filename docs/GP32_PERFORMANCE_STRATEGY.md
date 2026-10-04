@@ -2622,3 +2622,29 @@ changed. An initial local result-path escaping error stopped staging before
 frontend launch; resumption accepted only identical already-staged files.
 Evidence: `results/resume107-lcd-boundary/stock-iis/` (staged/protected manifests,
 runtime log, final capture, exit record and digital ALSA counters).
+
+### USB H700 benchmark transport (2026-10-04)
+
+`scripts/bench_h700.py` accepts `--adb-serial SERIAL` and an optional
+`--adb PATH` to use USB instead of SSH. The other baseline, candidate,
+arguments and output options are unchanged. USB mode does not need Paramiko
+or an SSH password. It requires an existing remote baseline, stages only a
+hash-verified standalone candidate, and checks for RetroArch or a queued
+MainUI launch before each run. It does not change the installed core,
+frontend, volume, mixer or governor.
+
+The connected Spruce H700 advertises Nexus 4 USB descriptors but actually
+runs `rgsp` / `sun50iw9` Linux. Its shell-v1 adbd returns host status zero
+even for remote `exit 7`; a unique trailing marker now carries the real
+remote status. CRCRLF from its PTY is normalized before parsing telemetry.
+Remote exit 7, a missing command (127), quoting and three-field telemetry
+were checked on the device. Remote stderr is merged into stdout by shell-v1.
+
+A same-binary Princess Maker 2 slot-0 ABBA run preserved all seven CPU,
+video and PCM fields through USB, including a newly staged upload. The
+normal conservative governor ramped from 480 to 1512 MHz, so the runner
+correctly rejected a performance comparison. This validates the transport,
+not a speedup. Initial raw telemetry has blank lines from CRCRLF; the narrow
+post-fix telemetry check confirms the correction without repeating gameplay.
+Evidence: `results/resume108-adb/`. No Android runtime was tested: the local
+SDK has no configured AVD/system image and this USB device is Linux.
