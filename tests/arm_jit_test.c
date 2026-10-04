@@ -1967,6 +1967,82 @@ static void case_native_spsr_exception_return(void) {
     teardown_pair();
 }
 
+/* Retire just the return, before executing the target. This distinguishes
+ * restored Thumb alignment and old-bank LR reads from an ordinary PC write. */
+static void case_native_exception_return(void) {
+    static const struct {
+        const char *name;
+        uint32_t insn, cpsr, saved, lr, pc, result_cpsr;
+    } rows[] = {
+        {"return-svc-arm", 0xe1b0f00eu, 0x600000d3u, 0x90000010u,
+         CODE_ADDR + 0x43u, CODE_ADDR + 0x40u, 0x90000010u},
+        {"return-irq-thumb", 0xe25ef004u, 0x600000d2u, 0xa000003fu,
+         CODE_ADDR + 0x47u, CODE_ADDR + 0x42u, 0xa000003fu},
+        {"return-fiq-svc", 0xe25ef004u, 0x600000d1u, 0x30000013u,
+         CODE_ADDR + 0x47u, CODE_ADDR + 0x40u, 0x30000013u},
+        {"return-usr-flags", 0xe1b0f00eu, 0xf00000d0u, 0u,
+         CODE_ADDR + 0x43u, CODE_ADDR + 0x40u, 0x300000d0u},
+        {"return-sys-flags", 0xe25ef004u, 0xf00000dfu, 0u,
+         CODE_ADDR + 0x47u, CODE_ADDR + 0x40u, 0x200000dfu},
+        {"return-condition-skipped", 0x01b0f00eu, 0x200000d3u, 0x90000030u,
+         CODE_ADDR + 0x43u, CODE_ADDR + 4u, 0x200000d3u},
+        {"return-fiq-regshift", 0xe1b0f218u, 0x600000d1u, 0x90000030u,
+         0u, CODE_ADDR + 0x42u, 0x90000030u},
+    };
+    for (unsigned i = 0; i < GP32_ARRAY_COUNT(rows); ++i) {
+        current_case = rows[i].name;
+        setup_pair();
+        seed_spsr_banks();
+        set_cpsr_both(rows[i].cpsr);
+        set_reg_both(14u, rows[i].lr);
+        set_reg_both(8u, (CODE_ADDR + 0x42u) / 2u);
+        set_reg_both(2u, 1u);
+        arm920t_t *pair[] = {cpu_jit, cpu_ref};
+        for (unsigned p = 0; p < 2u; ++p) {
+            arm920t_register_context_t ctx;
+            arm920t_get_register_context(pair[p], &ctx);
+            switch (rows[i].cpsr & 31u) {
+            case SPSR_MODE_SVC: ctx.spsr_svc = rows[i].saved; break;
+            case SPSR_MODE_IRQ: ctx.spsr_irq = rows[i].saved; break;
+            case SPSR_MODE_FIQ: ctx.spsr_fiq = rows[i].saved; break;
+            }
+            arm920t_set_register_context(pair[p], &ctx);
+        }
+        const uint32_t program[] = {rows[i].insn, 0xe1a0f00fu};
+        load_both(program, GP32_ARRAY_COUNT(program));
+        CHECK(arm920t_run(cpu_jit, 1u) == 1u, "native return exact budget");
+        CHECK(arm920t_run(cpu_ref, 1u) == 1u, "reference return exact budget");
+        compare_state();
+        compare_spsr_banks();
+        arm920t_register_context_t actual = {0}, expected = {0};
+        arm920t_get_register_context(cpu_jit, &actual);
+        arm920t_get_register_context(cpu_ref, &expected);
+        CHECK(!memcmp(&actual, &expected, sizeof(actual)), "return preserves every register bank");
+        CHECK(arm920t_get_pc(cpu_ref) == rows[i].pc, "return target/alignment");
+        CHECK(arm920t_get_cpsr(cpu_ref) == rows[i].result_cpsr, "restored or bankless ALU flags");
+        gp32_cpu_profile_t prof;
+        arm920t_get_cpu_profile(cpu_jit, &prof);
+        if (prof.supported && prof.native_backend) {
+            CHECK(prof.native_block_calls == 1u && prof.native_arm_insns == 1u,
+                  "return used native block");
+            if (rows[i].insn != 0xe1b0f218u || prof.native_backend == 2u)
+                CHECK(prof.helper_op_kinds[1] == 0u, "return avoids classified DATA helper");
+        }
+        if (i == 0u) {
+            /* Restoring IRQ enable must expose a pending interrupt before
+             * the first target instruction, even across the run boundary. */
+            arm920t_set_irq(cpu_jit, 1);
+            arm920t_set_irq(cpu_ref, 1);
+            CHECK(arm920t_run(cpu_jit, 1u) == 1u, "return IRQ native budget");
+            CHECK(arm920t_run(cpu_ref, 1u) == 1u, "return IRQ reference budget");
+            compare_state();
+            compare_spsr_banks();
+            CHECK(arm920t_get_pc(cpu_ref) == 0x18u, "IRQ taken before return target");
+        }
+        teardown_pair();
+    }
+}
+
 /* SPSR bank selection uses host comparisons, but the following predicates
  * must still see guest Z=1. Cover one actual native block and cuts on both
  * sides of each PSR instruction. */
@@ -3086,7 +3162,10 @@ int main(int argc, char **argv) {
     int access_only = argc == 2 && !strcmp(argv[1], "--checked-access");
     int poll_only = argc == 2 && !strcmp(argv[1], "--poll-progress");
     int psr_only = argc == 2 && !strcmp(argv[1], "--psr");
-    if (argc == 2 && !strcmp(argv[1], "--terminal-helper")) {
+    if (argc == 2 && !strcmp(argv[1], "--exception-return")) {
+        case_native_exception_return();
+        case_native_spsr_exception_return();
+    } else if (argc == 2 && !strcmp(argv[1], "--terminal-helper")) {
         case_terminal_swi_yield();
         case_native_alu_region();
         case_native_spsr_exception_return();
@@ -3173,6 +3252,7 @@ int main(int argc, char **argv) {
     case_native_regshift();
     case_native_longmul_psr();
     case_native_spsr();
+    case_native_exception_return();
     case_native_psr_continuation();
     case_native_cpsr();
     case_cache_maintenance_native();
@@ -3219,6 +3299,7 @@ int main(int argc, char **argv) {
         return 1;
     }
     printf("PASS: arm jit differential (%s), jit events=%" PRIu64 " fallbacks=%" PRIu64 "\n",
+           (argc == 2 && !strcmp(argv[1], "--exception-return")) ? "exception-return" :
            (argc == 2 && !strcmp(argv[1], "--terminal-helper")) ? "terminal-helper" :
            (argc == 2 && !strcmp(argv[1], "--ldm-pc-native")) ? "ldm-pc-native" :
            (argc == 2 && !strcmp(argv[1], "--psr-blocks")) ? "psr-blocks" :
