@@ -78,6 +78,12 @@ struct s3c2400 {
     smc_t *smc;
     arm920t_t *cpu_irq_sink;
     uint32_t buttons;
+    /* Active-low GPIO input bits derived from buttons on every assignment.
+     * Host input changes once per frame while games poll GPBDAT/GPEDAT per
+     * instruction, so each port read stays a single load instead of the
+     * ten-branch mapping below. button_in0 feeds GPBDAT[15:8], button_in1
+     * feeds GPEDAT[7:6]. Derived state; never serialized. */
+    uint32_t button_in0, button_in1;
     uint32_t fb[320 * 240];
     uint32_t fb_w, fb_h;
     uint64_t frame_counter;
@@ -168,6 +174,26 @@ static void slog(s3c2400_t *s, const char *fmt, ...) {
     s->log(s->log_user, buf);
 }
 
+/* Recompute the guest-visible GPIO input bits from the host button mask.
+ * Called wherever buttons is assigned: set_buttons, reset and state load. */
+static void buttons_refresh(s3c2400_t *s) {
+    const uint32_t b = s->buttons;
+    uint32_t v = 0xffffu;
+    if (b & GP32_BUTTON_LEFT)  v &= ~0x0100u;
+    if (b & GP32_BUTTON_DOWN)  v &= ~0x0200u;
+    if (b & GP32_BUTTON_RIGHT) v &= ~0x0400u;
+    if (b & GP32_BUTTON_UP)    v &= ~0x0800u;
+    if (b & GP32_BUTTON_L)     v &= ~0x1000u;
+    if (b & GP32_BUTTON_B)     v &= ~0x2000u;
+    if (b & GP32_BUTTON_A)     v &= ~0x4000u;
+    if (b & GP32_BUTTON_R)     v &= ~0x8000u;
+    s->button_in0 = v;
+    v = 0xffffu;
+    if (b & GP32_BUTTON_START)  v &= ~0x0040u;
+    if (b & GP32_BUTTON_SELECT) v &= ~0x0080u;
+    s->button_in1 = v;
+}
+
 s3c2400_t *s3c2400_create(size_t ram_size) {
     s3c2400_t *s = (s3c2400_t *)calloc(1, sizeof(*s));
     if (!s) return NULL;
@@ -241,6 +267,9 @@ void s3c2400_reset(s3c2400_t *s) {
     s->lcd_line_accum = 0;
     s->lcd_line_valid = 0;
     s->lcd_timing_valid = 0;
+    /* buttons survives reset as host-owned input; keep the derived port
+     * bits in lockstep (also covers the calloc'ed create path). */
+    buttons_refresh(s);
 }
 
 arm_bus_t s3c2400_get_bus(s3c2400_t *s) {
@@ -315,7 +344,7 @@ int s3c2400_load_ram_image(s3c2400_t *s, uint32_t addr, const uint8_t *data, siz
 
 size_t s3c2400_ram_size(const s3c2400_t *s) { return s ? s->ram_size : 0u; }
 
-void s3c2400_set_buttons(s3c2400_t *s, uint32_t mask) { if (s) s->buttons = mask; }
+void s3c2400_set_buttons(s3c2400_t *s, uint32_t mask) { if (s) { s->buttons = mask; buttons_refresh(s); } }
 
 static uint8_t expand6(uint32_t v) {
     v &= 0x3fu;
@@ -405,25 +434,6 @@ static void lcd_palette_write32(s3c2400_t *s, uint32_t off, uint32_t value, uint
         /* DATA[31:16] is invalid for S3C2400 palette entries. */
     }
     s->lcd_palette[i] = cur;
-}
-
-static uint32_t button_in0(const s3c2400_t *s) {
-    uint32_t v = 0xffffu;
-    if (s->buttons & GP32_BUTTON_LEFT)  v &= ~0x0100u;
-    if (s->buttons & GP32_BUTTON_DOWN)  v &= ~0x0200u;
-    if (s->buttons & GP32_BUTTON_RIGHT) v &= ~0x0400u;
-    if (s->buttons & GP32_BUTTON_UP)    v &= ~0x0800u;
-    if (s->buttons & GP32_BUTTON_L)     v &= ~0x1000u;
-    if (s->buttons & GP32_BUTTON_B)     v &= ~0x2000u;
-    if (s->buttons & GP32_BUTTON_A)     v &= ~0x4000u;
-    if (s->buttons & GP32_BUTTON_R)     v &= ~0x8000u;
-    return v;
-}
-static uint32_t button_in1(const s3c2400_t *s) {
-    uint32_t v = 0xffffu;
-    if (s->buttons & GP32_BUTTON_START)  v &= ~0x0040u;
-    if (s->buttons & GP32_BUTTON_SELECT) v &= ~0x0080u;
-    return v;
 }
 
 static void smc_lines_reset(gp32_smc_lines_t *m) { memset(m, 0, sizeof(*m)); }
@@ -796,7 +806,7 @@ static uint32_t io_read32(s3c2400_t *s, uint32_t addr) {
         uint32_t data = reg_array_read(s->gpio, sizeof(s->gpio), off);
         switch (off) {
         case 0x08: data = (data & ~1u) | (!s->smc_lines.read ? 1u : 0u); break;
-        case 0x0c: data = (data & ~0xffffu) | s->smc_lines.datarx | (button_in0(s) & 0xff00u); break;
+        case 0x0c: data = (data & ~0xffffu) | s->smc_lines.datarx | (s->button_in0 & 0xff00u); break;
         case 0x24:
             data &= ~0x3c0u;
             if (!s->smc_lines.busy) data |= 0x200u;
@@ -810,7 +820,7 @@ static uint32_t io_read32(s3c2400_t *s, uint32_t addr) {
             if (s->smc_lines.add_latch) data |= 0x10u;
             if (!s->smc_lines.do_write) data |= 0x08u;
             if (!smc_is_present(s->smc)) data |= 0x04u;
-            data |= button_in1(s) & 0xc0u;
+            data |= s->button_in1 & 0xc0u;
             break;
         }
         return data;
@@ -837,7 +847,7 @@ static uint32_t s3c2400_read32_io(void *user, uint32_t addr) {
     case 0x15100040u: return pwm_current_count(s, 4u);
     case 0x15400004u: return s->iic[1] & ~0x0fu;
     case 0x15600008u: return (s->gpio[0x08u >> 2] & ~1u) | (!s->smc_lines.read ? 1u : 0u);
-    case 0x1560000cu: return (s->gpio[0x0cu >> 2] & ~0xffffu) | s->smc_lines.datarx | (button_in0(s) & 0xff00u);
+    case 0x1560000cu: return (s->gpio[0x0cu >> 2] & ~0xffffu) | s->smc_lines.datarx | (s->button_in0 & 0xff00u);
     case 0x15600024u: {
         uint32_t data = s->gpio[0x24u >> 2] & ~0x3c0u;
         if (!s->smc_lines.busy) data |= 0x200u;
@@ -852,7 +862,7 @@ static uint32_t s3c2400_read32_io(void *user, uint32_t addr) {
         if (s->smc_lines.add_latch) data |= 0x10u;
         if (!s->smc_lines.do_write) data |= 0x08u;
         if (!smc_is_present(s->smc)) data |= 0x04u;
-        return data | (button_in1(s) & 0xc0u);
+        return data | (s->button_in1 & 0xc0u);
     }
     default:
         return io_read32(s, addr);
@@ -1985,6 +1995,7 @@ int s3c2400_state_load_io(s3c2400_t *s, state_io_t *io, int has_audio_spans) {
     s->audio_read_frames = s->audio_boundary_head = 0;
     memcpy(s->bios, st->bios, sizeof(s->bios));
     s->buttons = st->buttons;
+    buttons_refresh(s);
     memcpy(s->fb, st->fb, sizeof(s->fb));
     s->fb_w = st->fb_w; s->fb_h = st->fb_h;
     s->frame_counter = st->frame_counter;

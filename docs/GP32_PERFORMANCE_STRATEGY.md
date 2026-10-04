@@ -1742,3 +1742,36 @@ full RetroArch presentation acceptance are still open. Evidence:
 The captured loop's two base registers address GPBDAT and GPEDAT. Repeated
 button-bit assembly inside these real GPIO reads is the next measured-path
 candidate; input sampling and SmartMedia side effects must stay unchanged.
+
+### GPIO input derivation and idle PCM continuity (2026-10-04)
+
+GPIO button bits are now derived when host input changes, on reset and after
+state load, instead of being assembled on every GPBDAT/GPEDAT read. Reads still
+compose the current SmartMedia signals; no MMIO reads or guest time are skipped.
+The serialized machine layout is unchanged. Focused GPIO, input, state and SoC
+timing checks pass. H700 native GPIO tests and the same three replay hashes pass.
+At 1512 MHz, warmed ABBA Princess cutscene means are 55.049 -> 56.202 core fps
+(1.0209x); Astonishia title 198.384 -> 198.804 and Blue NPC 82.386 -> 82.471
+are approximately flat. This remains below the 60-fps target.
+
+Libretro idle silence now passes through the guest-rate resampler, preserving
+the carried endpoint and fractional duration across idle/active transitions.
+An aligned 44.1-kHz copy retains its last sample and next-output timestamp, so
+it remains an exact memcpy path while supporting a subsequent rate change.
+No additional fade, volume adjustment or title-specific rule was introduced.
+Analytic sample-grid tests cover both channels, blocked/partial callbacks,
+rate changes, fractional counts and reset. Existing queue/lifecycle tests pass
+on Windows and native H700; Win64 and Android ARM32/ARM64 builds also pass.
+
+Replaying the previously captured Dooly source PCM through the actual changed
+libretro delivery code reduces the measured stop/resume edge peaks from
+3469/5137 to 880/1286 sample units, with no pending delivery backlog. This is
+digital boundary evidence, not proof that the user's intermittent speaker pop
+is fixed; the captured guest PCM's large internal discontinuities remain.
+
+Private evidence: `results/resume82-princess/device.json`,
+`results/resume82-gpio/SUMMARY.md`, and `results/resume83-audio-fix/` under the
+local GP32 workspace. The user powered down the device for disassembly after
+these tests. These changes have **not** been installed on the handheld; the
+previous b89cdb61 core remains the last confirmed installation. No further SSH
+access or handheld runs should occur until the user says the device is ready.
