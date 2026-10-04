@@ -1221,3 +1221,50 @@ Installed core SHA-256 is
 `37909b5a3946c5d696493771acef54767994840b5dff83223e9b7ada92d609f5`;
 backup is `gp32-dev/resume66-installed-core-before.so`. Protected settings
 remain unchanged; deployment did not rewrite user saves.
+
+## resume67: retain LCD frame phase through clock changes
+
+Clock application now converts the current LCD frame's progress to the new
+CPU-cycle period. Completed frame history is removed before multiplication;
+completed scanout counts are already stored separately. Previously, changing
+48-to-24 MHz half-way through a frame reinterpreted the old cycle counter as
+a whole new frame and jumped the scan position back to its start. The same
+correction applies after the guest-write execution boundary from resume66.
+The saved-state layout remains unchanged, including reading older accumulated
+LCD histories. The existing approximate 60 Hz panel model is not replaced.
+
+The old-code regression fails. A 5,000.5-frame history now retains scan position
+through both divider directions, produces no extra frame on the write, and
+emits the next scanout exactly after the remaining half-frame. Save/load retains
+that boundary. Windows/H700 LCD timing, PWM and state checks pass; Android
+ARM64/ARMv7 builds pass.
+
+The old golden LCD trace `47779e5037cd7b27` included the phase jump and is
+intentionally replaced with `db468039216226ad`. A separate rational
+frame-fraction calculation reproduces both the legacy trace and the corrected
+trace, including cycle quantization and save/restore, rather than accepting
+an unexplained new hash. Derivation and observations are in
+`F:/GP32/results/resume67-lcd-phase/derive_trace.py` and `.json`.
+
+Her Knights/Tomak saved-scene replays remain exact in all seven CPU/video/PCM
+fields. A fresh Windows BIOS-to-Her-Knights run reaches the same Korean title
+capture as resume28; its CPU endpoint differs, so fresh-boot CPU equivalence
+is not claimed. The first unqualified H700 replay was slower, requiring a
+clock-observed comparison before drawing any performance conclusion.
+
+The resulting Her Knights ABBA comparison is clock-qualified at 1,512 MHz
+with all seven fields exact. Baseline throughput is 160.640/161.470 benchmark
+frames/s; candidate is 161.405/160.620. Medians are 161.055 and 161.0125
+(ratio 0.9997), effectively parity. Both versions also show a slower initial
+warmup around 144 frames/s, so the first candidate replay alone was not
+evidence of a regression. Governor settings were not changed. This throughput
+is for the bounded replay, not the game's internal animation frame rate.
+
+Evidence: `F:/GP32/results/resume67-lcd-phase/`. This is a frame-timing fix,
+not complete-game, physical scanout or speaker acceptance. HLE callback event
+settlement/budgeting, prescaler transitions and mixed-rate IIS queues remain
+separate work.
+Installed core SHA-256 is
+`de1f9a1a42358766800249cba535c1350d05db1980b9bfe5da3e0918697734a4`;
+backup is `gp32-dev/resume67-installed-core-before.so`. Protected settings
+remain unchanged; deployment did not rewrite user saves.

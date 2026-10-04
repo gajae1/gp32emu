@@ -3304,3 +3304,24 @@ changes and mixed-rate IIS queues still need work. This is not a complete
 timing model or speaker-quality acceptance claim.
 The verified core is installed with a backup and unchanged protected settings;
 the performance section records its hash and backup path.
+
+### LCD frame phase through clock changes (resume67)
+
+Clock changes now preserve the LCD's fractional frame position instead of
+reinterpreting all past CPU cycles. The regression covers a long elapsed
+history, both clock directions, no spurious frame, the exact next-frame
+boundary and state restore. Windows/H700 timing, PWM and state checks pass;
+Android ARM64/ARMv7 builds pass. The corrected trace is independently derived
+and intentionally differs from the earlier phase-jump trace.
+
+Her Knights/Tomak saved-scene CPU/video/PCM fields remain exact. A fresh
+Windows Her Knights boot reaches the same Korean title image as before,
+without claiming an identical CPU endpoint or complete-game acceptance.
+Evidence: `F:/GP32/results/resume67-lcd-phase/`; the performance section
+records the trace derivation and comparison. The approximate 60 Hz panel model
+and saved-state format are unchanged. Callback event/budget settlement and
+audio prescaler/rate transitions remain open.
+The verified core is installed with a backup and unchanged protected settings.
+The Her Knights comparison at observed 1,512 MHz is effectively unchanged
+(candidate/baseline throughput ratio 0.9997); deployment details and bounded
+measurement scope are in the performance section.
