@@ -101,6 +101,11 @@ enum arm_jit_inv_cause {
 #define ARM_JIT_BLOCK_COUNT 16384u
 #endif
 #define ARM_JIT_BLOCK_MASK  (ARM_JIT_BLOCK_COUNT - 1u)
+/* Keep colliding hot PCs resident without growing the block/operation tables. */
+#define ARM_JIT_BLOCK_WAYS  2u
+#if ARM_JIT_BLOCK_COUNT < 2 || (ARM_JIT_BLOCK_COUNT & ARM_JIT_BLOCK_MASK)
+#error ARM_JIT_BLOCK_COUNT must be a power of two and at least two
+#endif
 #ifndef ARM_JIT_MAX_INSNS
 #define ARM_JIT_MAX_INSNS   96u
 #endif
@@ -121,10 +126,11 @@ enum arm_jit_inv_cause {
 #endif
 
 /* Preserve locality within a code page while distinguishing equal offsets
- * in different 64-KiB regions. The full PC/generation tags still establish
- * validity; this only selects a slot in the existing direct-mapped table. */
+ * in different 64-KiB regions, then scale to the first slot of the PC's
+ * ARM_JIT_BLOCK_WAYS-way set. The full PC/generation tags still establish
+ * validity; this only selects where the set lives in the table. */
 ARM_FORCE_INLINE uint32_t arm_jit_block_index(uint32_t pc) {
-    return ((pc >> 2) ^ (pc >> 16)) & ARM_JIT_BLOCK_MASK;
+    return (((pc >> 2) ^ (pc >> 16)) & (ARM_JIT_BLOCK_MASK >> 1)) * ARM_JIT_BLOCK_WAYS;
 }
 
 ARM_FORCE_INLINE unsigned arm_ctz16(uint32_t v) {
@@ -1636,13 +1642,19 @@ static ARM_NOINLINE arm_jit_block_t *arm_jit_translate(arm920t_t *c, uint32_t pc
         (c->jit_code_used > c->jit_code_size ||
          c->jit_code_size - c->jit_code_used < ARM_JIT_NATIVE_MAX_BYTES + 15u))
         arm920t_jit_invalidate_all(c, ARM_JIT_INV_CODE_RECYCLE);
-    arm_jit_block_t *b = &c->jit_blocks[arm_jit_block_index(pc)];
+    /* Pick the way to (re)fill. An unused or stale way is free, and a block
+     * for this same PC is the code-changed case; only a set whose two ways
+     * both hold live blocks for other PCs is a table conflict. */
+    uint32_t set = arm_jit_block_index(pc);
+    arm_jit_block_t *b = &c->jit_blocks[set];
+    if (b->valid && b->generation == c->jit_generation && b->tag_pc != pc) {
+        arm_jit_block_t *alt = &c->jit_blocks[set + 1u];
+        if (!alt->valid || alt->generation != c->jit_generation || alt->tag_pc == pc)
+            b = alt;
 #if ARM920T_PROFILING
-    /* Only a different PC is a table collision. Replacing changed code at the
-     * same PC after cache maintenance is not evidence of table pressure. */
-    if (b->valid && b->generation == c->jit_generation && b->tag_pc != pc)
-        c->prof.jit_block_conflicts++;
+        else c->prof.jit_block_conflicts++;
 #endif
+    }
     b->valid = 0;
     b->tag_pc = pc;
     b->tag_cache_epoch = c->jit_cache_epoch;
@@ -3354,15 +3366,23 @@ static uint32_t arm_jit_run(arm920t_t *c, uint32_t run_done) {
             if (c->halted || thumb(c) || c->trace) break;
         }
         uint32_t pc = c->r[15] & ~3u;
-        arm_jit_block_t *b = c->jit_blocks ? &c->jit_blocks[arm_jit_block_index(pc)] : NULL;
         uint32_t tag = c->jit_cache_epoch;
-        /* Check the allocated header together so native dispatch can load it
-         * once. Keep the null check short-circuited; nonzero valid and all
-         * three tags are still required before executing the cached block. */
+        arm_jit_block_t *b = c->jit_blocks ? &c->jit_blocks[arm_jit_block_index(pc)] : NULL;
+        /* Keep the first-way hit as short as the direct-mapped lookup. Only
+         * consult the other way after a miss; revalidate changed epochs before
+         * accepting either way, exactly as for the original single slot. */
         if (!b || !((b->valid != 0u) & (b->tag_pc == pc) &
                     (b->tag_cache_epoch == tag) & (b->generation == c->jit_generation))) {
+            arm_jit_block_t *alt = b ? b + 1 : NULL;
             if (b && b->valid && b->tag_pc == pc &&
                 b->generation == c->jit_generation && arm_jit_fetch_unchanged(c, b)) {
+                b->tag_cache_epoch = tag;
+                c->jit_hits++;
+                ARM_PROF_INC(c, jit_hits);
+            } else if (alt && alt->valid && alt->tag_pc == pc &&
+                       alt->generation == c->jit_generation &&
+                       (alt->tag_cache_epoch == tag || arm_jit_fetch_unchanged(c, alt))) {
+                b = alt;
                 b->tag_cache_epoch = tag;
                 c->jit_hits++;
                 ARM_PROF_INC(c, jit_hits);
