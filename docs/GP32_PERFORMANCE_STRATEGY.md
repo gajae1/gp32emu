@@ -1814,3 +1814,45 @@ Stock frontend/launcher/configuration hashes are unchanged. This promotion and
 all subsequent device checks leave volume untouched and produce no audible
 playback. Win64 and Android ARM32/ARM64 builds pass. Evidence:
 `resume84-fifo/installed.json`; staged PC binaries: `resume84-fifo/pc/`.
+
+### LCD scanline observation deadlines (2026-10-04, development only)
+
+Pinball's captured loop waits for `LINECNT == 8`. Frame-aligned 32768-cycle
+CPU slices repeatedly missed that line, so the wait could persist indefinitely.
+A generic correction limits the current CPU run at the next line transition
+when the guest actually reads LCD status. The zero-count/vblank interval remains
+one interval. LCD timing writes now finish their instruction and tick elapsed
+time under the old timing before taking effect, like existing DMA/IIS writes.
+
+The CPU deadline is relative to the start of the active run and can only shrink.
+Interpreter, portable execution, native callbacks/chains and stable-poll skips
+honor it. It resets each run and adds no serialized state or title-specific rule.
+The focused scanline regression previously failed and now passes. Deadline tests
+cover callbacks, native chains, polling, Thumb/ARM transitions and subsequent
+runs. Affected Windows tests and native H700 polling/timing fixtures pass;
+Windows, H700 and Android ARM32/ARM64 builds pass.
+
+An earlier unconditional per-line cap was rejected after reducing Blue Angelo
+from about 82 to 63 core fps. The observation-triggered candidate recovers some
+of that cost, but is still slower than the old incorrect scheduler. At a fixed
+1512-MHz H700 clock, paired ABBA replay means are:
+
+| Replay | Installed FIFO baseline | LCD candidate | Change |
+| --- | ---: | ---: | ---: |
+| Princess Maker cutscene | 56.311 | 54.889 | -2.5% |
+| Astonishia title | 199.208 | 181.707 | -8.8% |
+| Blue Angelo NPC approach | 82.533 | 73.990 | -10.4% |
+
+These are headless core throughput values, not displayed game frame rates.
+Both candidate H700 runs match the PC candidate in cycles, PC, CPSR, emulated
+clock, PCM frame count, video hash and PCM hash for all three replays. Pinball
+advances to a background/copyright screen after 120 frames; gameplay remains
+unverified. Princess still misses the 60-core-fps target.
+
+Commit `bd2faa7` preserves the correction for further optimization. It is **not
+installed on H700**; the FIFO core `f46d2a1a6ce2ef543780214d68ed698d548ba63e3d5bb4da5e77ad9b6b3023d2`
+remains installed. Volume and stock frontend settings were untouched; tests
+produced no audible playback. Evidence under the local results directory:
+`resume84-lcd/{device-demand,demand-parity,candidate-manifest}.json` and
+`resume84-lcd/demand-120frames/`. Original-BIOS loading-pointer corruption is a
+separate unresolved issue, described in `PC_LIBRARY_COVERAGE.md`.
