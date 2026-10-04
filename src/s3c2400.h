@@ -48,7 +48,7 @@ void s3c2400_audio_clear(s3c2400_t *soc);
 void s3c2400_set_audio_idle(s3c2400_t *soc, int enabled);
 void s3c2400_render_lcd(s3c2400_t *soc);
 void s3c2400_tick(s3c2400_t *soc, uint32_t cpu_cycles);
-/* Execute the attached CPU and settle hardware time at clock-write boundaries. */
+/* Execute the attached CPU, yielding at clock writes and IIS DMA IRQ deadlines. */
 uint32_t s3c2400_run_cpu(s3c2400_t *soc, uint32_t cpu_cycles);
 uint32_t s3c2400_debug_read32(s3c2400_t *soc, uint32_t addr);
 uint32_t s3c2400_fclk_hz(const s3c2400_t *soc);

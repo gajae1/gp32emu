@@ -3175,3 +3175,13 @@ next useful measurement is active-IIS missing periods in real saved scenes,
 separate from intentional stopped-IIS silence. No production audio behavior
 changes here. Evidence: `results/resume128-audio/starvation.{c,log}` and
 `parent-reproduction.md`; the earlier IIS-format manual extracts remain valid.
+
+### IIS DMA completion deadline (2026-10-05)
+
+CPU execution now stops at the next IRQ-enabled IIS DMA2 completion so guest
+refill handlers can run before subsequent serial periods. The common fix
+removes eight missing PCM frames in the bounded Astonishia cold-start replay;
+it adds no replacement samples. Fine/coarse scheduling parity passes for five
+DMA scenarios in interpreter and JIT modes, including on H700. See
+[IIS DMA interrupt scheduling](IIS_DMA_TIMING.md) for measurements, build
+coverage and the still-unresolved hardware FIFO and idle-wait boundaries.
