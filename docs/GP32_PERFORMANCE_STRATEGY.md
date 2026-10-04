@@ -1716,3 +1716,29 @@ Private evidence: `F:/GP32/results/resume81-princess/`,
 `resume81-indexed/REPORT.md`, `resume80-integration/focus-result.log`,
 and `resume80-win-gui/README.md`. The prior A64 memory-helper candidate also
 still requires native A64 runtime and performance acceptance before deployment.
+
+### H700 acceptance after the user finished playing
+
+The final combined A53 binary passes checked-access, changing-counter-loop
+and stable-poll fixtures. Princess Maker, Astonishia title and Blue NPC replays
+match all seven PC CPU/video/PCM fields. At 1512 MHz throughout each measured
+run, interleaved ABBA averages are:
+
+| Fixed scene | Before core fps | After core fps | Ratio |
+| --- | ---: | ---: | ---: |
+| Princess Maker slot-0 cutscene, 300 frames | 20.585 | 54.995 | 2.672x |
+| Astonishia title, 180 frames | 198.474 | 199.536 | 1.005x |
+| Blue Angelo NPC approach, 180 frames | 82.082 | 82.143 | 1.001x |
+
+The last two changes are small enough to treat as approximately flat.
+Princess remains below 60 core fps, so the performance goal is not reached.
+The improved core is installed with SHA-256
+`b89cdb612f6a10c1bc7d20989e5ba8334228c82ba0d07a9f7600d5fbc6f30dab`.
+Previous core: `gp32-dev/resume81-installed-core-before.so`. Stock RetroArch,
+launcher and protected configuration hashes are unchanged. Physical sound and
+full RetroArch presentation acceptance are still open. Evidence:
+`F:/GP32/results/resume81-princess/device.json` and `installed.json`.
+
+The captured loop's two base registers address GPBDAT and GPEDAT. Repeated
+button-bit assembly inside these real GPIO reads is the next measured-path
+candidate; input sampling and SmartMedia side effects must stay unchanged.
