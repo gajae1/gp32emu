@@ -58,16 +58,6 @@ static int dump_frame_now(gp32_t *g, const char *path, int rotate) {
     return 0;
 }
 
-static uint32_t frame_cycles_for(gp32_t *g, int cycles_per_frame_set, uint32_t cycles_per_frame, uint64_t *cycle_accum) {
-    if (cycles_per_frame_set) return cycles_per_frame ? cycles_per_frame : 1u;
-    uint32_t run_hz = gp32_get_run_clock_hz(g);
-    if (!run_hz) run_hz = 66000000u;
-    *cycle_accum += (uint64_t)run_hz;
-    uint32_t frame_cycles = (uint32_t)(*cycle_accum / 60u);
-    *cycle_accum -= (uint64_t)frame_cycles * 60u;
-    return frame_cycles ? frame_cycles : 1u;
-}
-
 static void put_le16(FILE *f, uint16_t v) {
     fputc((int)(v & 0xffu), f);
     fputc((int)((v >> 8) & 0xffu), f);
@@ -286,7 +276,6 @@ int main(int argc, char **argv) {
     if (record_mkv && frames == 0) frames = (uint64_t)cycles / (uint64_t)(cycles_per_frame ? cycles_per_frame : 1u);
     if (record_mkv && frames == 0) frames = 1;
     gp32_media_recorder_t *recorder = NULL;
-    uint64_t dynamic_cycle_accum = 0;
     if (frames) {
         if (record_mkv) {
             char rec_err[256] = {0};
@@ -326,8 +315,10 @@ int main(int argc, char **argv) {
                 if (progress) fprintf(stderr, "button cycles=%" PRIu64 " mask=%08" PRIx32 "\n", gp32_get_cycles(g), events[next_event].mask);
                 next_event++;
             }
-            uint32_t n = frame_cycles_for(g, cycles_per_frame_set, cycles_per_frame, &dynamic_cycle_accum);
-            st = gp32_run_cycles(g, n);
+            uint64_t frame_start = gp32_get_cycles(g);
+            st = cycles_per_frame_set ? gp32_run_cycles(g, cycles_per_frame ? cycles_per_frame : 1u)
+                                      : gp32_run_frame(g);
+            uint64_t n = gp32_get_cycles(g) - frame_start;
             if (st != GP32_OK) break;
             if (recorder) {
                 gp32_framebuffer_desc_t fb;
@@ -342,7 +333,7 @@ int main(int argc, char **argv) {
                     if (!gp32_media_recorder_add_frame(recorder, &fb, frame)) { fprintf(stderr, "mkv video write failed: %s\n", gp32_media_recorder_error(recorder)); st = GP32_ERR_IO; break; }
                 }
             }
-            if (progress) fprintf(stderr, "frame=%" PRIu64 " cycles=%" PRIu64 " frame_cycles=%" PRIu32 " pc=%08" PRIx32 " cpsr=%08" PRIx32 " run_hz=%" PRIu32 " fclk=%" PRIu32 "\n", frame, gp32_get_cycles(g), n, gp32_get_pc(g), gp32_get_cpsr(g), gp32_get_run_clock_hz(g), gp32_get_fclk_hz(g));
+            if (progress) fprintf(stderr, "frame=%" PRIu64 " cycles=%" PRIu64 " frame_cycles=%" PRIu64 " pc=%08" PRIx32 " cpsr=%08" PRIx32 " run_hz=%" PRIu32 " fclk=%" PRIu32 "\n", frame, gp32_get_cycles(g), n, gp32_get_pc(g), gp32_get_cpsr(g), gp32_get_run_clock_hz(g), gp32_get_fclk_hz(g));
         }
         if (recorder) {
             int rec_ok = gp32_media_recorder_close(recorder);

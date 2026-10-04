@@ -401,9 +401,101 @@ static void check_peripheral_clock_boundary(int jit) {
     }
 }
 
+/* The guest changes its CPU divider at the start of a host frame. A fixed
+ * clock/60 budget incorrectly turns the frame into 8.3 or 33.3 ms. */
+static void check_frame_clock_change(int jit) {
+    for (unsigned up = 0; up < 2u; ++up) {
+        gp32_t *g = gp32_create(NULL);
+        CHECK(g != NULL, "create frame clock core");
+        if (!g) return;
+        gp32_set_jit(g, jit);
+        const uint32_t code = GP32_RAM_BASE + 0x4000u;
+        s3c2400_write32(g->soc, 0x14800004u, 0x3000u);
+        s3c2400_write32(g->soc, 0x14800014u, up ? 2u : 0u);
+        s3c2400_write32(g->soc, code, 0xe5801000u); /* STR r1,[r0] */
+        s3c2400_write32(g->soc, code + 4u, 0xeafffffeu); /* B . */
+        arm920t_set_reg(g->cpu, 0, 0x14800014u);
+        arm920t_set_reg(g->cpu, 1, up ? 0u : 2u);
+        arm920t_set_reg(g->cpu, 15, code);
+        CHECK(gp32_run_frame(g) == GP32_OK, "run clock-changing frame");
+        CHECK(g->elapsed.nanoseconds >= 16666666u && g->elapsed.nanoseconds < 16666760u,
+              "frame stays at 1/60 second across guest clock write");
+        /* Save at a fractional frame boundary and compare the continuation,
+         * as a run-ahead/rewind frontend would. */
+        gp32_t *clone = gp32_create(NULL);
+        size_t size = gp32_state_size(g);
+        uint8_t *state = malloc(size);
+        CHECK(clone && state && gp32_save_state_data(g, state, size) == GP32_OK,
+              "save frame pacing");
+        if (clone && state) {
+            CHECK(gp32_load_state_data(clone, state, size) == GP32_OK, "restore frame pacing");
+            gp32_set_jit(clone, jit);
+            for (unsigned frame = 1; frame < 60u; ++frame) {
+                CHECK(gp32_run_frame(g) == GP32_OK && gp32_run_frame(clone) == GP32_OK,
+                      "advance restored frame");
+                CHECK(gp32_get_cycles(g) == gp32_get_cycles(clone) &&
+                      g->elapsed.nanoseconds == clone->elapsed.nanoseconds &&
+                      g->elapsed.remainder == clone->elapsed.remainder &&
+                      memcmp(&g->frame_time, &clone->frame_time, sizeof(g->frame_time)) == 0,
+                      "restored frame cadence is deterministic");
+            }
+            CHECK(g->elapsed.nanoseconds >= 1000000000u && g->elapsed.nanoseconds < 1000000100u,
+                  "sixty frames remain one second without accumulating cycle overshoot");
+        }
+        free(state);
+        gp32_destroy(clone);
+        CHECK(gp32_run_cycles(g, 3u) == GP32_OK && !g->frame_time.valid,
+              "explicit CPU stepping rebases frame pacing");
+        gp32_destroy(g);
+    }
+}
+
+static void check_frame_callback_debt(int jit) {
+    gp32_t *g = gp32_create(NULL), *clone = gp32_create(NULL);
+    CHECK(g && clone, "create callback frame cores");
+    if (!g || !clone) { gp32_destroy(g); gp32_destroy(clone); return; }
+    g->direct_fxe_mode = 1;
+    direct_install_stubs(g);
+    gp32_set_jit(g, jit);
+    s3c2400_write32(g->soc, 0x14800004u, 0x3000u);
+    s3c2400_write32(g->soc, 0x14800014u, 0u);
+    const uint32_t callback = GP32_RAM_BASE + 0x2000u;
+    const uint32_t code[] = {0xe3a00801u, 0xe2500001u, 0x1afffffdu, 0xe12fff1eu};
+    for (unsigned i = 0; i < GP32_ARRAY_COUNT(code); ++i)
+        s3c2400_write32(g->soc, callback + i * 4u, code[i]);
+    g->direct_hle_gpos_timers_enabled = 1u;
+    g->direct_hle_gpos_timer[0].configured = 1u;
+    g->direct_hle_gpos_timer[0].enabled = 1u;
+    g->direct_hle_gpos_timer[0].callback = callback;
+    g->direct_hle_gpos_timer[0].tps = 60u;
+    g->direct_vblank_wait_cycles = 6600000u;
+    CHECK(gp32_run_frame(g) == GP32_OK, "run callback at frame deadline");
+    CHECK(g->elapsed.nanoseconds > 18000000u && g->elapsed.nanoseconds < 24000000u,
+          "real guest callback crosses frame deadline");
+    g->direct_hle_gpos_timer[0].enabled = 0u;
+    size_t size = gp32_state_size(g);
+    uint8_t *state = malloc(size);
+    CHECK(state && gp32_save_state_data(g, state, size) == GP32_OK, "save callback overshoot");
+    if (state) {
+        CHECK(gp32_load_state_data(clone, state, size) == GP32_OK, "load callback overshoot");
+        CHECK(gp32_run_frame(g) == GP32_OK && gp32_run_frame(clone) == GP32_OK,
+              "repay callback time in next frame");
+        CHECK(g->elapsed.nanoseconds >= 33333333u && g->elapsed.nanoseconds < 33333400u &&
+              g->elapsed.nanoseconds == clone->elapsed.nanoseconds &&
+              gp32_get_cycles(g) == gp32_get_cycles(clone),
+              "callback time is not added again after state restore");
+        free(state);
+    }
+    CHECK(gp32_reset(g) == GP32_OK && !g->frame_time.valid, "reset clears frame deadline");
+    gp32_destroy(g);
+    gp32_destroy(clone);
+}
+
 int main(void) {
     check_scheduler_catchup();
     for (int jit = 0; jit <= 1; ++jit) {
+        check_frame_clock_change(jit);
+        check_frame_callback_debt(jit);
         check_peripheral_clock_boundary(jit);
         check_elapsed_clock_change(jit);
         check_timer(jit, 0, 0);

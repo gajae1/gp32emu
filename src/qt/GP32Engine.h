@@ -70,7 +70,6 @@ private:
     QString m_program;
     QString m_kind;
     uint32_t m_buttons;
-    uint32_t m_cycleRemainder;
     qint64 m_nextFrameUnits;
     uint64_t m_frameIndex;
     int m_renderFrames;

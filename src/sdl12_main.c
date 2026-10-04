@@ -211,7 +211,6 @@ int main(int argc, char **argv) {
     uint64_t last_tick_us = (uint64_t)SDL_GetTicks() * 1000u;
     uint64_t emu_accum_units = 1000000ull; /* run the first emulated frame immediately; units are microseconds * 60 */
     uint32_t fps_tick = (uint32_t)(last_tick_us / 1000u);
-    uint64_t dynamic_cycle_accum = 0;
     uint32_t fps_frames = 0;
     uint32_t emu_fps_frames = 0;
     const char *game_label = args.fpk ? args.fpk : (args.fxe ? args.fxe : (args.smc ? args.smc : "BIOS"));
@@ -230,7 +229,6 @@ int main(int argc, char **argv) {
             gp32_status_t lst = gp32_load_state(g, args.state_path);
             fprintf(stderr, "%s state: %s\n", lst == GP32_OK ? "loaded" : "load", lst == GP32_OK ? args.state_path : gp32_get_error(g));
             if (lst == GP32_OK) {
-                dynamic_cycle_accum = 0;
                 emu_accum_units = 1000000ull;
             }
         }
@@ -247,16 +245,8 @@ int main(int argc, char **argv) {
             buttons = input_script ? gp32_input_script_frame(input_script, frame_index) : physical_buttons;
             gp32_set_buttons(g, buttons);
             gp32_input_recorder_sample(recorder, frame_index, buttons);
-            uint32_t frame_cycles = args.cycles_per_frame;
-            if (!args.cycles_per_frame_set) {
-                uint32_t run_hz = gp32_get_run_clock_hz(g);
-                if (!run_hz) run_hz = 66000000u;
-                dynamic_cycle_accum += (uint64_t)run_hz;
-                frame_cycles = (uint32_t)(dynamic_cycle_accum / 60u);
-                dynamic_cycle_accum -= (uint64_t)frame_cycles * 60u;
-                if (!frame_cycles) frame_cycles = args.cycles_per_frame;
-            }
-            gp32_status_t st = gp32_run_cycles(g, frame_cycles);
+            gp32_status_t st = args.cycles_per_frame_set
+                ? gp32_run_cycles(g, args.cycles_per_frame) : gp32_run_frame(g);
             if (st != GP32_OK) {
                 fprintf(stderr, "run failed: %s\n", gp32_get_error(g));
                 quit = 1;

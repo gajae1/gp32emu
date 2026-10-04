@@ -10,7 +10,7 @@ static FILE *counted_fopen(const char *path, const char *mode) {
     return fopen(path, mode);
 }
 #define fopen counted_fopen
-#define gp32_run_cycles test_run_cycles
+#define gp32_run_frame test_run_frame
 #define gp32_get_audio test_get_audio
 #define gp32_consume_audio test_consume_audio
 #define gp32_clear_audio test_clear_audio
@@ -20,13 +20,13 @@ static FILE *counted_fopen(const char *path, const char *mode) {
 #endif
 #include LIBRETRO_SOURCE
 #undef fopen
-#undef gp32_run_cycles
+#undef gp32_run_frame
 #undef gp32_get_audio
 #undef gp32_consume_audio
 #undef gp32_clear_audio
 #undef gp32_get_framebuffer
 
-gp32_status_t gp32_run_cycles(gp32_t *, uint32_t);
+gp32_status_t gp32_run_frame(gp32_t *);
 gp32_status_t gp32_get_audio(gp32_t *, gp32_audio_desc_t *);
 gp32_status_t gp32_consume_audio(gp32_t *, uint64_t);
 gp32_status_t gp32_clear_audio(gp32_t *);
@@ -50,8 +50,8 @@ static int failures;
     } \
 } while (0)
 
-gp32_status_t test_run_cycles(gp32_t *g, uint32_t cycles) {
-    return scripted ? GP32_OK : gp32_run_cycles(g, cycles);
+gp32_status_t test_run_frame(gp32_t *g) {
+    return scripted ? GP32_OK : gp32_run_frame(g);
 }
 
 gp32_status_t test_get_audio(gp32_t *g, gp32_audio_desc_t *out) {

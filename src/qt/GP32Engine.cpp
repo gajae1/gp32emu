@@ -13,7 +13,7 @@ static constexpr qint64 GP32_QT_UNITS_PER_NS = 60ll;
 static constexpr int GP32_QT_MAX_CATCHUP_FRAMES = 1;
 
 GP32Engine::GP32Engine(QObject *parent)
-    : QObject(parent), m_gp32(nullptr), m_audio(nullptr), m_buttons(0), m_cycleRemainder(0),
+    : QObject(parent), m_gp32(nullptr), m_audio(nullptr), m_buttons(0),
       m_nextFrameUnits(0), m_frameIndex(0), m_renderFrames(0), m_emuFrames(0),
       m_fpsNs(0), m_running(false), m_jit(true), m_useHle(false), m_recorder(nullptr) {
     connect(&m_timer, &QTimer::timeout, this, &GP32Engine::frameTick);
@@ -27,7 +27,6 @@ GP32Engine::~GP32Engine() { stopRecording(); destroyMachine(); }
 void GP32Engine::destroyMachine() {
     if (m_audio) { gp32_audio_destroy(m_audio); m_audio = nullptr; }
     if (m_gp32) { gp32_destroy(m_gp32); m_gp32 = nullptr; }
-    m_cycleRemainder = 0;
     m_nextFrameUnits = 0;
     m_frameIndex = 0;
 }
@@ -182,7 +181,7 @@ void GP32Engine::setJitEnabled(bool enabled) {
 void GP32Engine::reset() {
     if (!m_gp32) return;
     gp32_status_t st = gp32_reset(m_gp32);
-    if (st == GP32_OK) { m_cycleRemainder = 0; m_nextFrameUnits = m_clock.nsecsElapsed() * GP32_QT_UNITS_PER_NS; emit statusChanged("Reset"); }
+    if (st == GP32_OK) { m_nextFrameUnits = m_clock.nsecsElapsed() * GP32_QT_UNITS_PER_NS; emit statusChanged("Reset"); }
     else emit statusChanged(QString::fromUtf8(gp32_get_error(m_gp32)));
 }
 
@@ -201,7 +200,6 @@ bool GP32Engine::loadState(const QString &path) {
     if (st == GP32_OK) {
         gp32_clear_audio(m_gp32);
         resetAudio();
-        m_cycleRemainder = 0;
         m_nextFrameUnits = m_clock.nsecsElapsed() * GP32_QT_UNITS_PER_NS;
         emit statusChanged("State loaded");
     }
@@ -255,12 +253,7 @@ void GP32Engine::submitAudio() {
 bool GP32Engine::runOneFrame() {
     if (!m_gp32) return false;
     gp32_set_buttons(m_gp32, m_buttons);
-    uint32_t hz = gp32_get_run_clock_hz(m_gp32);
-    if (!hz) hz = 66000000u;
-    uint32_t cycles = hz / 60u;
-    m_cycleRemainder += hz % 60u;
-    if (m_cycleRemainder >= 60u) { cycles++; m_cycleRemainder -= 60u; }
-    gp32_status_t st = gp32_run_cycles(m_gp32, cycles);
+    gp32_status_t st = gp32_run_frame(m_gp32);
     if (st != GP32_OK) { emit statusChanged(QString::fromUtf8(gp32_get_error(m_gp32))); stop(); return false; }
     submitAudio();
     m_frameIndex++;
