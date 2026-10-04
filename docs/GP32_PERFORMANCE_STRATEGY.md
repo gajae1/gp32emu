@@ -2804,3 +2804,58 @@ not implemented: current execution-weighted eligible coverage and successor
 run lengths are needed before its additional guards can justify their cost.
 The private design and correctness boundaries are retained in
 `results/resume111-frame-tails/native-chain-design.md`.
+
+### Execution-weighted native chaining screen (2026-10-04)
+
+A private AArch64 diagnostic, based on be53e2a, counted actual native calls
+and successor gates during Princess slot-0 replay (600 warmup, 1,200 measured
+frames). It only annotated the compiled marker and collected counters; it did
+not execute a burst thunk or change installed code. Native calls totaled
+44,911,820; 7,694,980 (17.13%) met the callback-free, register-only eligibility
+predicate. The 5,058,259 possible bursts averaged 1.521 calls: 2,426,100 of
+length one, 2,627,597 of length two and 4,562 of length three; none was longer.
+Of the burst exits, 5,054,640 encountered memory/helper/uncompiled successors.
+All predicted continuations matched actual execution, with no PC-counter
+overflow. Conditional early returns were counted by actual retirement.
+
+An unmodified profiling build replayed identical arguments. All seven
+CPU/video/PCM result fields and the complete existing CPU profile matched.
+Instrumented timings are not speed evidence. Protected installed hashes were
+unchanged and no mixer setting was touched. The bounded register-only burst
+prototype is rejected for this workload: short runs and low coverage do not
+justify its extra gate and entry cost. This does not reject memory-capable
+chaining in principle, but that would require a different correctness proof.
+Evidence: `results/resume112-chain-coverage/analysis.json`, private probe
+sources/build script, native logs and paired profiling output.
+
+### Rejected volatile leaf CPU-base candidate (2026-10-04)
+
+A separate candidate used caller-saved x15 for the existing helper-free A64
+leaf traces, removing their x19 stack save/restore. It retained nonleaf x19,
+loop x22..x25 frames, checked-helper refusal, budgets and guest state commits.
+Native H700 JIT differential, polling equivalence and arena-recycle tests all
+passed; H700 release and Android ARM64 builds also passed. The first full
+test invocation returned no SSH exit status under a 55-second bound. The
+device remained healthy and the focused leaf case passed; a subsequent
+bounded full run with explicit shell status reporting completed successfully.
+No assertions were changed.
+
+Primed release ABBA at 1512 MHz, with all seven CPU/video/PCM fields identical:
+
+| Replay | Baseline core fps | Candidate core fps | Median change |
+| --- | --- | --- | --- |
+| Princess slot 0, 600 warmup / 600 measured | 77.481 / 77.469 | 77.961 / 77.867 | +0.57% |
+| Her Knights combat, 1200 / 1200 | 143.484 / 144.091 | 144.113 / 143.368 | -0.03% |
+
+Each comparison had 32 measured clock samples, all 1512 MHz. Her Knights is
+effectively neutral; Princess shows only a small gain in this window. The
+candidate was restored rather than presented as a broad performance win.
+Its patch, test evidence and ABBA logs remain in
+`results/resume112-chain-coverage/`. The installed fbcddc4 audio-fixed core
+was never replaced, and volume, governor and frontend settings were untouched.
+
+Parallel audits found no justified new renderer change. An idle-audio
+memcpy-to-memset special case was also deferred: saving roughly 172 KiB/s of
+zero-source reads does not justify another branch in normal delivery without
+measured benefit. Existing source-lifetime and per-run batch semantics remain
+intact. Private `video-audit.md` and `audio-audit.md` retain the bounded findings.
