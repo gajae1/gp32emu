@@ -683,9 +683,9 @@ static void a64_block_dt_exit(a64_emit_t *e, const arm_jit_op_t *op,
  * Runtime, before the first guest-visible mutation: addr0 must be word
  * aligned, each touched virtual page must resolve to a full RAM page (a 1 KiB
  * tiny page could remap mid-fragment), and a loaded PC must be an
- * even (ARM) target -
- * write_pc_x sends odd values into Thumb state, which native blocks cannot
- * represent, so those re-execute on the helper with unmodified guest state.
+ * even target. Odd targets conservatively re-execute on the helper with
+ * unmodified guest state. ARMv4T LDM uses write_r, not BX/write_pc_x, so the
+ * helper masks both low bits without exchanging into Thumb state.
  * Every rejection jumps to the classified helper before any mutation;
  * writeback commits last, except that a load containing Rn intentionally
  * leaves Rn at its memory-loaded value. */
@@ -797,7 +797,7 @@ static void a64_block_dt_transfer(a64_emit_t *e, const arm_jit_op_t *op,
         a64_u32(e, 0xb9400000u | ((count - 1u) << 10) | (base << 5) | 14u);
         a64_mask(e, 6, 14, 1u);
         slow[(*nslow)++] = e->pos;
-        a64_u32(e, 0x35000000u | 6u); /* cbnz w6 -> helper on Thumb target */
+        a64_u32(e, 0x35000000u | 6u); /* cbnz w6 -> conservative odd-target helper */
     }
     unsigned idx = 0;
     for (unsigned r = 0; r < 16u; ++r) {
@@ -846,9 +846,7 @@ static void a64_block_dt_transfer(a64_emit_t *e, const arm_jit_op_t *op,
         }
         if (load) {
             if (r == 15u) {
-                /* Even target: write_pc_x stores r15 = v & ~3 and clears T.
-                 * The clear is a no-op because native blocks only run in ARM
-                 * state. */
+                /* ARM-state write_r masks both low bits and preserves CPSR. */
                 a64_mask(e, 14, 14, ~3u);
                 a64_put_guest(e, 15u, 14);
             } else {
