@@ -1981,3 +1981,16 @@ Stock RetroArch, launcher and protected configuration hashes are unchanged.
 No frontend was launched and no volume or mixer command was issued. Installation
 readback and preserved-setting hashes are in `resume89-counted-lazy/installed.json`;
 interactive menu/audio acceptance of this particular build remains untested.
+
+A follow-up limits generation/epoch snapshots and lazy-compilation eligibility
+checks to counted blocks, leaving ordinary dispatch without that bookkeeping.
+H700 paired replays against `3c5fe05` recover a small amount of throughput:
+Princess 67.822 -> 68.670 (+1.25%), Astonishia title 171.606 -> 174.446 (+1.65%),
+and Blue Angelo 71.378 -> 72.395 (+1.43%) core fps. One Princess baseline sample
+with a changing endpoint clock was excluded (one valid before, two after);
+the other scenes have two samples per variant at 1512-MHz endpoints. The same
+frequency-sampling limits apply. All seven replay fields match both the new
+Windows build and prior reference exactly. Existing PC poll/progress fixtures
+and Windows/H700/Android builds pass; no new synthetic tests were added for
+this control-flow-equivalent bookkeeping change. Evidence:
+`resume90-dispatch/{manifest,device,summary,pc-parity,build-artifacts}.json`.

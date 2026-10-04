@@ -3368,15 +3368,18 @@ static uint32_t arm_jit_run(arm920t_t *c, uint32_t run_done) {
         /* Fetch/translation callbacks may also shorten the current run. */
         if (total >= c->run_limit) break;
         int counted = (b->poll_backedge >> 1) != 0;
-        uint32_t generation = c->jit_generation, epoch = c->jit_cache_epoch;
+        /* Only counted observations need invalidation snapshots across the
+         * execution call. Keep that bookkeeping off ordinary native blocks. */
+        uint32_t generation = counted ? c->jit_generation : 0;
+        uint32_t epoch = counted ? c->jit_cache_epoch : 0;
         /* Use the existing per-read portable observation, not a second
          * speculative stability preflight. A missing contract rejects at
          * once; otherwise observe a full real repetition in this run first.
          * Native self-chains still execute every instruction and load. */
         int native_allowed = !counted || !c->bus.is_stable_read32 ||
             (rejected_pc == pc && rejected_generation == generation && rejected_epoch == epoch);
-        if (ARM920T_NATIVE_BACKEND && c->jit_enabled && native_allowed &&
-            (c->run_limit - total) >= b->count && counted && !b->native_ok) {
+        if (counted && ARM920T_NATIVE_BACKEND && c->jit_enabled && native_allowed &&
+            (c->run_limit - total) >= b->count && !b->native_ok) {
             if (arm_counted_poll_compile(c, b)) {
                 poll_pc = rejected_pc = UINT32_MAX;
                 continue;
