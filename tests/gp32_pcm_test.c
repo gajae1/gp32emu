@@ -502,7 +502,42 @@ static int check_timed_idle_audio(void) {
     return ok;
 }
 
+static int check_sdk_buffer_ownership(void) {
+    gp32_t *g = gp32_create(NULL);
+    if (!g) return 0;
+    const uint32_t table = GP32_RAM_BASE + 0x2000u;
+    const uint32_t guard = table + 0x400u;
+    const uint32_t lcd = direct_default_surface_addr(0);
+    g->direct_fxe_image_end = GP32_RAM_BASE + 0x10000u;
+    for (unsigned i = 0; i < 0x1000u; i += 4u)
+        s3c2400_write32(g->soc, guard + i, 0x12345678u);
+    s3c2400_write32(g->soc, lcd, 0x87654321u);
+    int ok = 1;
+    const uint32_t sizes[] = {192u, 0x10000u};
+    for (unsigned n = 0; n < GP32_ARRAY_COUNT(sizes); ++n) {
+        uint32_t bytes = sizes[n];
+        direct_sdk_sound_alloc_buffers(g, table, bytes, 0u);
+        uint32_t a = direct_read32_if_ram(g, table), b = direct_read32_if_ram(g, table + 4u);
+        ok &= a >= g->direct_fxe_image_end && b >= a + bytes && b + bytes <= lcd &&
+            (a & 255u) == 0u && (b & 255u) == 0u;
+        /* Model writes from the guest mixer, including both buffer endpoints. */
+        if (ok) {
+            s3c2400_write16(g->soc, a, 0x8000u);
+            s3c2400_write16(g->soc, b + bytes - 2u, 0x8000u);
+        }
+        for (unsigned i = 0; i < 0x1000u; i += 4u)
+            ok &= direct_read32_if_ram(g, guard + i) == 0x12345678u;
+        ok &= direct_read32_if_ram(g, lcd) == 0x87654321u;
+    }
+    g->direct_fxe_image_end = lcd;
+    ok &= direct_sdk_sound_buffer_base(g, 192u) == 0u;
+    gp32_destroy(g);
+    if (!ok) fputs("FAIL: SDK sound buffers overlap application or LCD memory\n", stderr);
+    return ok;
+}
+
 int main(void) {
+    if (!check_sdk_buffer_ownership()) return 1;
     if (!check_timed_idle_audio()) return 1;
     if (!check_mixed_rate_queue()) return 1;
     int queued_rate_ok = check_iis_queued_rate();

@@ -58,7 +58,33 @@ static int check_open(uint32_t code) {
     return ok;
 }
 
+static int check_card_query(void) {
+    gp32_t *g = gp32_create(NULL);
+    if (!g) return 0;
+    const uint32_t surface = GP32_RAM_BASE + 0x1000u;
+    direct_set_fxe_mode(g, 1u);
+    direct_install_stubs(g);
+    direct_fill_lcd_surface(g, surface, 1u);
+    int ok = 1;
+    for (unsigned present = 0; present < 2; ++present) {
+        g->direct_fpk_asset_count = present;
+        arm920t_set_reg(g->cpu, 0, surface);
+        arm920t_set_reg(g->cpu, 1, 0x1234u);
+        ok &= direct_fxe_swi(g, g->cpu, 0x11u, GP32_RAM_BASE + 0x200u, 0);
+        ok &= arm920t_get_reg(g->cpu, 0) == present && arm920t_get_reg(g->cpu, 1) == 0x1234u &&
+            g->direct_fxe_fb_addr == 0u && !g->direct_vblank_wait_requested;
+    }
+    g->direct_fpk_asset_count = 0u;
+    arm920t_set_reg(g->cpu, 0, surface);
+    ok &= direct_fxe_swi(g, g->cpu, 0x11u, direct_stub_addr(g), 0);
+    ok &= g->direct_fxe_fb_addr == direct_default_surface_addr(1) && g->direct_vblank_wait_requested;
+    gp32_destroy(g);
+    if (!ok) fputs("FAIL: card query aliases display callback\n", stderr);
+    return ok;
+}
+
 int main(void) {
+    if (!check_card_query()) return 1;
     if (!check_open(GP32_RAM_BASE + 0x200u) || !check_open(GP32_RAM_BASE + 0x2400u)) {
         fprintf(stderr, "FAIL: relocated SDK file open/read\n");
         return 1;
