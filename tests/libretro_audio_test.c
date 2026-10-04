@@ -581,9 +581,12 @@ static void test_sustained_backpressure(void) {
         for (size_t frame = 0; frame < 735u; ++frame) {
             int16_t sample = (int16_t)(10500 + block * 100u + frame);
             size_t at = (block * 735u + frame) * 2u;
-            if (captured[at] != sample || captured[at + 1u] != -sample) ordered = 0;
+            if (block == 0u && frame < 44u) {
+                if (captured[at] <= 0 || captured[at] > sample ||
+                    captured[at + 1u] != -captured[at]) ordered = 0;
+            } else if (captured[at] != sample || captured[at + 1u] != -sample) ordered = 0;
         }
-    CHECK(ordered, "all retained stereo PCM must survive a recovered frontend in order");
+    CHECK(ordered, "retained PCM stays exact after the one-millisecond recovery prefix");
     CHECK(audio_pending_frames == 0 && audio_resample_cap <= 11025,
           "draining and appending in one run must retain the bounded queue");
 }
@@ -608,6 +611,65 @@ static void test_oversized_block_recovery(void) {
           "oversized source is discarded without retaining excessive latency");
 }
 
+static void test_discard_gap_recovery(void) {
+    static const int16_t oversized[12000u * 2u] = {0};
+    for (unsigned scenario = 0; scenario < 4u; ++scenario) {
+        unsigned oversized_case = scenario & 1u, rediscard = scenario >= 2u;
+        start_case();
+        feed(1u, 44100u, 16000);
+        allowance = 0;
+        if (oversized_case) {
+            scripted_audio = (gp32_audio_desc_t){oversized, 12000u, 44100u};
+            retro_run();
+            feed(96u, 44100u, -16000);
+        } else {
+            for (unsigned i = 0; i < 16u; ++i) feed(735u, 44100u, -16000);
+        }
+        size_t retained = oversized_case ? 96u : 11025u;
+        CHECK(captured_frames == 1u && audio_pending_frames == retained,
+              "gap fixture discards source without delivering blocked PCM");
+        /* Advance across partial acceptances with zero-acceptance retries.
+         * A retry must not advance or apply the recovery transition twice. */
+        allowance = 7u;
+        per_call = 3u;
+        flush_audio();
+        CHECK(captured_frames == 8u, "partial gap recovery accepts exactly seven frames");
+        flush_audio();
+        CHECK(captured_frames == 8u, "zero acceptance leaves the gap pending");
+        if (rediscard) {
+            if (oversized_case) {
+                scripted_audio = (gp32_audio_desc_t){oversized, 12000u, 44100u};
+                retro_run();
+                feed(96u, 44100u, -16000);
+            } else feed(735u, 44100u, -16000);
+            CHECK(captured_frames == 8u && audio_pending_frames == retained,
+                  "another discard restarts from the partially accepted recovery endpoint");
+        }
+        allowance = SIZE_MAX;
+        if (scenario == 3u) retro_set_audio_sample_batch(NULL);
+        flush_audio();
+        size_t gap_start = rediscard ? 8u : 1u;
+        CHECK(captured_frames == retained + gap_start && !audio_pending_frames,
+              "gap recovery preserves the retained frame count");
+        int bounded = 1, exact_tail = 1;
+        for (size_t i = 1; i < captured_frames; ++i) {
+            for (unsigned ch = 0; ch < 2u; ++ch) {
+                int step = (int)captured[i * 2u + ch] - captured[(i - 1u) * 2u + ch];
+                if (step < -1000 || step > 1000) bounded = 0;
+                if (i >= gap_start + 44u) {
+                    int raw = -16000 + (int)((i - gap_start) % 735u);
+                    if (captured[i * 2u + ch] != (ch ? -raw : raw)) exact_tail = 0;
+                }
+            }
+        }
+        CHECK(bounded, "forced-discard recovery must not emit the 32000-step discontinuity");
+        CHECK(exact_tail, "only the short recovery prefix may change retained PCM");
+        CHECK(captured[(captured_frames - 1u) * 2u] ==
+                  -16000 + (int)((retained - 1u) % 735u),
+              "recovery reaches the original waveform");
+    }
+}
+
 static void test_partial_overflow_recovery(void) {
     /* After accepting 300 frames, a full queue can retain only the last
      * 14 old blocks plus the incoming block. Capture that stream independently. */
@@ -627,8 +689,17 @@ static void test_partial_overflow_recovery(void) {
           "partial recovery must drain accepted PCM and bound the remainder");
     allowance = SIZE_MAX;
     feed(1, 44100, 13000);
-    CHECK(captured_frames == count && !memcmp(expected, captured, count * 2u * sizeof(int16_t)),
-          "partial recovery must not repeat accepted PCM or drop extra retained frames");
+    int exact = captured_frames == count;
+    for (size_t i = 0; i < count && exact; ++i) {
+        int recovery = i < 44u || (i >= 300u && i < 344u);
+        for (unsigned ch = 0; ch < 2u; ++ch) {
+            int actual = captured[i * 2u + ch], raw = expected[i * 2u + ch];
+            int from = i < 44u ? 0 : expected[299u * 2u + ch];
+            int low = from < raw ? from : raw, high = from > raw ? from : raw;
+            if (recovery ? (actual < low || actual > high) : actual != raw) exact = 0;
+        }
+    }
+    CHECK(exact, "partial recovery preserves every retained frame outside the two gap prefixes");
 }
 
 int main(int argc, char **argv) {
@@ -642,6 +713,7 @@ int main(int argc, char **argv) {
     test_sustained_backpressure();
     test_partial_overflow_recovery();
     test_oversized_block_recovery();
+    test_discard_gap_recovery();
     test_video_dupe();
     test_portrait_video();
     test_lifecycle(argc > 1 ? argv[1] : "libretro_audio_test.tmp");

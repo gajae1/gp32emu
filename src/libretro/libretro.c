@@ -19,6 +19,7 @@
 #define GP32_AUDIO_RATE 44100u
 #define GP32_AUDIO_FRAMES_PER_VIDEO 735u
 #define GP32_AUDIO_QUEUE_LIMIT (GP32_AUDIO_RATE / 4u)
+#define GP32_AUDIO_GAP_FRAMES (GP32_AUDIO_RATE / 1000u)
 
 /* The bundled libretro.h only declares the environment commands this core
  * uses. GET_CAN_DUPE is standard ABI value 3: the frontend sets the boolean to
@@ -43,6 +44,8 @@ static gp32_audio_resampler_t audio_resampler;
 static int16_t *audio_resample_buf;
 static size_t audio_resample_cap;
 static size_t audio_pending_frames;
+static int16_t audio_last_sent[2], audio_gap_from[2];
+static unsigned audio_gap_left;
 static uint64_t last_video_frame = UINT64_MAX;
 static const uint32_t *last_video_ptr;
 static int have_last_video;
@@ -350,6 +353,9 @@ static void reset_audio(void) {
     audio_pending_frames = 0;
     audio_idle_fraction = 0;
     audio_idle_rate = 0;
+    memset(audio_last_sent, 0, sizeof(audio_last_sent));
+    memset(audio_gap_from, 0, sizeof(audio_gap_from));
+    audio_gap_left = 0;
     gp32_audio_resampler_init(&audio_resampler);
 }
 
@@ -509,6 +515,13 @@ static int stage_frame_320x240(const gp32_framebuffer_desc_t *fb, uint32_t *dst)
 
 static void flush_audio(void);
 
+static void mark_audio_output_gap(void) {
+    /* Queue eviction breaks continuity at the retained head, not at the
+     * resampler's generated tail. Anchor recovery to actual acceptance. */
+    memcpy(audio_gap_from, audio_last_sent, sizeof(audio_gap_from));
+    audio_gap_left = GP32_AUDIO_GAP_FRAMES;
+}
+
 static int submit_audio_resampled(const gp32_audio_desc_t *aud) {
     if (!aud || !aud->samples_s16_interleaved || !aud->frame_count) return 0;
     if (!audio_batch_cb && !audio_cb) return 1;
@@ -532,6 +545,7 @@ static int submit_audio_resampled(const gp32_audio_desc_t *aud) {
         flush_audio();
         audio_pending_frames = 0;
         gp32_audio_resampler_reset(&audio_resampler);
+        mark_audio_output_gap();
         return 1;
     }
     /* A recovered frontend may consume the backlog before any PCM needs to
@@ -542,6 +556,7 @@ static int submit_audio_resampled(const gp32_audio_desc_t *aud) {
         audio_pending_frames -= drop;
         memmove(audio_resample_buf, audio_resample_buf + drop * 2u,
                 audio_pending_frames * 2u * sizeof(int16_t));
+        mark_audio_output_gap();
     }
     size_t total = audio_pending_frames + need;
     if (total > audio_resample_cap) {
@@ -606,23 +621,39 @@ static void submit_idle_silence(uint32_t rate) {
 }
 
 static void flush_audio(void) {
+    if (!audio_batch_cb && !audio_cb) { audio_pending_frames = 0; return; }
     size_t sent = 0;
-    if (audio_batch_cb) {
-        while (sent < audio_pending_frames) {
-            size_t remaining = audio_pending_frames - sent;
-            size_t accepted = audio_batch_cb(audio_resample_buf + sent * 2u, remaining);
-            /* A frontend may stop accepting audio until the next retro_run. */
-            if (!accepted) break;
-            if (accepted > remaining) accepted = remaining;
-            sent += accepted;
+    int16_t recovery[GP32_AUDIO_GAP_FRAMES * 2u];
+    while (sent < audio_pending_frames) {
+        size_t frames = audio_pending_frames - sent;
+        const int16_t *data = audio_resample_buf + sent * 2u;
+        if (audio_gap_left) {
+            if (frames > audio_gap_left) frames = audio_gap_left;
+            unsigned progress = GP32_AUDIO_GAP_FRAMES - audio_gap_left;
+            /* Scratch output leaves queued PCM unchanged when a callback
+             * refuses or partially accepts this prefix. Advance only by the
+             * frames it actually takes, including across later retro_run calls. */
+            for (size_t i = 0; i < frames; ++i)
+                for (unsigned ch = 0; ch < 2u; ++ch) {
+                    int32_t from = audio_gap_from[ch];
+                    int32_t delta = (int32_t)data[i * 2u + ch] - from;
+                    recovery[i * 2u + ch] = (int16_t)(from +
+                        delta * (int32_t)(progress + i + 1u) / (int32_t)GP32_AUDIO_GAP_FRAMES);
+                }
+            data = recovery;
         }
-    } else {
-        if (audio_cb) {
-            for (size_t i = 0; i < audio_pending_frames; ++i) {
-                audio_cb(audio_resample_buf[i * 2u], audio_resample_buf[i * 2u + 1u]);
-            }
+        size_t accepted;
+        if (audio_batch_cb) accepted = audio_batch_cb(data, frames);
+        else {
+            for (size_t i = 0; i < frames; ++i) audio_cb(data[i * 2u], data[i * 2u + 1u]);
+            accepted = frames;
         }
-        sent = audio_pending_frames;
+        if (!accepted) break;
+        if (accepted > frames) accepted = frames;
+        audio_last_sent[0] = data[(accepted - 1u) * 2u];
+        audio_last_sent[1] = data[(accepted - 1u) * 2u + 1u];
+        if (audio_gap_left) audio_gap_left -= (unsigned)accepted;
+        sent += accepted;
     }
     audio_pending_frames -= sent;
     if (sent && audio_pending_frames) {
