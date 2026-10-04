@@ -89,7 +89,7 @@ void gp32_codec_data(gp32_codec_t *codec, uint8_t address, uint8_t data) {
             break;
         }
     } else if (address == GP32_CODEC_ADDR_STATUS) {
-        /* Status register latch (reset, system clock, data format). */
+        /* Status register latch (system clock and data format). */
         codec->status = data;
     }
     /* Unknown addresses are ignored. */
