@@ -419,12 +419,22 @@ static void a64_shift(a64_emit_t *e, unsigned type, unsigned amount, int carry) 
     }
 }
 
+static void a64_exception_return(a64_emit_t *e, unsigned result, uint32_t done) {
+    a64_mov(e, 1, result); /* unaligned result, from the old register bank */
+    a64_rr(e, 0xaa000000u, 0, 31, 19); /* x0 = CPU */
+    a64_ptr(e, 16, (uintptr_t)arm_jit_exception_return_helper);
+    a64_u32(e, 0xd63f0200u); /* blr x16 */
+    e->nzcv_valid = 0;
+    a64_return(e, done); /* restored mode/IRQ/Thumb state reaches dispatch */
+}
+
 static int a64_data(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
     unsigned code = op->a;
     int test = code >= 8u && code <= 11u;
     int flags = test || (op->d & ARM_BC_DATA_S);
     int logical = code < 2u || code == 8u || code == 9u || code >= 12u;
-    if ((op->d & ARM_BC_DATA_REGSHIFT) || (!test && op->c == 15u && flags)) return 0;
+    if (op->d & ARM_BC_DATA_REGSHIFT) return 0;
+    if (!test && op->c == 15u && flags && e->leaf) return 0;
     int arith_imm = (op->d & ARM_BC_DATA_IMM) &&
         (code == 2u || code == 4u || code == 10u || code == 11u) &&
         (op->imm <= 0xfffu || (!(op->imm & 0xfffu) && (op->imm >> 12) <= 0xfffu));
@@ -493,6 +503,11 @@ static int a64_data(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
         e->nzcv_valid = !logical;
     }
     if (!test) {
+        if (op->c == 15u && flags) {
+            /* Keep ALU flags for bankless USER/SYS before restoring SPSR. */
+            a64_exception_return(e, 2, done);
+            return 1;
+        }
         if (op->c == 15u) a64_mask(e, 2, 2, ~3u);
         a64_put_guest(e, op->c, 2);
         if (op->c == 15u) {
@@ -1247,15 +1262,15 @@ static void a64_regshift_op2(a64_emit_t *e, unsigned type, int carry) {
 
 /* ARM_JIT_OP_DATA with a register-shifted operand2.  The opcode, flag and
  * PC-write structure is a64_data's; that emitter refuses this subset outright.
- * The two shape guards are identical: a flag-setting write to PC keeps the
- * helper's SPSR restore, and Rm/Rs == 15 keeps the helper's pipeline-PC read. */
+ * Rm/Rs == 15 keeps the classified helper's pipeline-PC read. Flag-setting
+ * PC writes use the dedicated restore helper after native ALU/flags. */
 static int a64_data_regshift(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
     unsigned code = op->a;
     int test = code >= 8u && code <= 11u;
     int flags = test || (op->d & ARM_BC_DATA_S);
     int logical = code < 2u || code == 8u || code == 9u || code >= 12u;
     if (!(op->d & ARM_BC_DATA_REGSHIFT) || op->e == 15u || op->f == 15u) return 0;
-    if (!test && op->c == 15u && flags) return 0;
+    if (!test && op->c == 15u && flags && e->leaf) return 0;
     a64_guest(e, 0, op->b, op->pc);                        /* w0 = Rn */
     a64_guest(e, 6, op->e, op->pc);                        /* w6 = Rm */
     a64_guest(e, 7, op->f, op->pc);                        /* w7 = Rs */
@@ -1291,6 +1306,10 @@ static int a64_data_regshift(a64_emit_t *e, const arm_jit_op_t *op, uint32_t don
         a64_store(e, 5, offsetof(arm920t_t, cpsr));
     }
     if (!test) {
+        if (op->c == 15u && flags) {
+            a64_exception_return(e, 2, done);
+            return 1;
+        }
         if (op->c == 15u) a64_mask(e, 2, 2, ~3u);
         a64_put_guest(e, op->c, 2);
         if (op->c == 15u) a64_return(e, done);

@@ -2156,11 +2156,8 @@ static void arm_profile_helper_reason(arm920t_t *c, const arm_jit_op_t *op) {
     if (op->cond != 14u && !cond_pass_cpsr(c->cpsr, op->cond)) return;
     switch ((arm_jit_kind_t)op->kind) {
     case ARM_JIT_OP_DATA: {
-        int test = op->a >= 8u && op->a <= 11u;
-        int flags = test || (op->d & ARM_BC_DATA_S);
         if ((op->d & ARM_BC_DATA_REGSHIFT) && (op->e == 15u || op->f == 15u))
             c->prof.slow_gate_data_regshift++;
-        else if (!test && op->c == 15u && flags) c->prof.slow_gate_data_r15flags++;
         else c->prof.slow_bail_other++;
         return;
     }
@@ -2265,6 +2262,15 @@ ARM_FORCE_INLINE void arm_jit_exec_classified(arm920t_t *c, const arm_jit_op_t *
 
 
 static void arm_jit_write_pc_x_helper(arm920t_t *c, uint32_t v) { ARM_PROF_INC(c, helper_write_pc); write_pc_x(c, v); }
+
+/* Native ALU and flags are already committed. USER/SYS have no SPSR, so
+ * their ALU flags survive; exception modes restore the shared banked state.
+ * Align only after restoring CPSR, using its ARM/Thumb state. */
+static void arm_jit_exception_return_helper(arm920t_t *c, uint32_t result) {
+    ARM_PROF_INC(c, helper_write_pc);
+    restore_cpsr_from_spsr(c);
+    write_r(c, 15u, result);
+}
 
 #if defined(__x86_64__) || defined(_M_X64)
 /* Read-only status access has no bus callback or active-mode side effect.
@@ -2563,6 +2569,24 @@ static void x64_emit_return_pc_reg(x64_emit_t *e, int src, uint32_t done) {
     x64_emit_return_imm(e, done);
 }
 
+static void x64_emit_data_result(x64_emit_t *e, unsigned opc, unsigned s,
+                                 unsigned rd, uint32_t done) {
+    /* Flag emitters clobber EAX/ECX/EDX/ESI. Preserve the unaligned PC
+     * result in R10D until the helper arguments are set up. */
+    if (rd == 15u) x64_mov_r32_r32(e, X64_R10D, X64_EAX);
+    else x64_emit_store_arm_reg(e, rd, X64_EAX);
+    if (s && (opc == 0x2u || opc == 0x4u))
+        x64_emit_nzcv_from_x86_flags(e, opc == 0x2u);
+    else if (s)
+        x64_emit_set_nz_no_carry(e, X64_EAX);
+    if (rd == 15u) {
+        x64_emit_arg0_cpu(e);
+        x64_mov_r32_r32(e, X64_HOST_ARG1, X64_R10D);
+        x64_call_abs(e, (uintptr_t)arm_jit_exception_return_helper);
+        x64_emit_return_imm(e, done);
+    }
+}
+
 static int x64_emit_data_proc(x64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
     const uint32_t insn = op->insn;
     unsigned opc = (insn >> 21) & 0xfu;
@@ -2570,8 +2594,8 @@ static int x64_emit_data_proc(x64_emit_t *e, const arm_jit_op_t *op, uint32_t do
     if (rd == 15u) {
         /* Common ARM return sequence: MOV pc,lr / MOV pc,Rm.  Keep the exact
            write_r(pc) alignment semantics and return immediately after the
-           control-flow change.  Flag-setting PC writes still use the precise
-           helper path so SPSR restore behaviour remains intact. */
+           control-flow change. Flag-setting writes reuse the supported ALU
+           and flag paths below before the dedicated SPSR/PC helper. */
         if (!s && opc == 0xdu && !(insn & (1u << 25)) && !(insn & (1u << 4)) && (((insn >> 5) & 3u) == 0u) && (((insn >> 7) & 0x1fu) == 0u)) {
             unsigned rm = insn & 0xfu;
             x64_emit_load_arm_reg(e, X64_EAX, rm, op->pc);
@@ -2585,7 +2609,7 @@ static int x64_emit_data_proc(x64_emit_t *e, const arm_jit_op_t *op, uint32_t do
             } else x64_emit_return_pc_reg(e, X64_EAX, done);
             return 1;
         }
-        return 0;
+        if (!s || (opc >= 0x8u && opc <= 0xbu)) return 0;
     }
     if (s && !(opc == 0x2u || opc == 0x4u || opc == 0x8u || opc == 0x9u || opc == 0xau || opc == 0xbu || opc == 0xcu || opc == 0xdu || opc == 0xeu || opc == 0xfu)) return 0;
     if (s && !(opc == 0x2u || opc == 0x4u || opc == 0xau || opc == 0xbu) && !x64_op2_preserves_carry(insn)) return 0;
@@ -2628,15 +2652,7 @@ static int x64_emit_data_proc(x64_emit_t *e, const arm_jit_op_t *op, uint32_t do
         case 0xf: x64_mov_r32_imm(e, X64_EAX, ~imm); break;
         default: return 0;
         }
-        if (s && (opc == 0x2u || opc == 0x4u)) {
-            x64_emit_store_arm_reg(e, rd, X64_EAX);
-            x64_emit_nzcv_from_x86_flags(e, opc == 0x2u);
-        } else if (s && (opc == 0x0u || opc == 0x1u || opc == 0xcu || opc == 0xdu || opc == 0xeu || opc == 0xfu)) {
-            x64_emit_store_arm_reg(e, rd, X64_EAX);
-            x64_emit_set_nz_no_carry(e, X64_EAX);
-        } else {
-            x64_emit_store_arm_reg(e, rd, X64_EAX);
-        }
+        x64_emit_data_result(e, opc, s, rd, done);
         return 1;
     }
     if (!x64_emit_op2_to_ecx(e, insn, op->pc)) return 0;
@@ -2686,17 +2702,7 @@ static int x64_emit_data_proc(x64_emit_t *e, const arm_jit_op_t *op, uint32_t do
     case 0xf: x64_mov_r32_r32(e, X64_EAX, X64_ECX); x64_not_r32(e, X64_EAX); break; /* MVN */
     default: return 0;
     }
-    if (s && (opc == 0x2u || opc == 0x4u)) {
-        if (rd != 15u) x64_emit_store_arm_reg(e, rd, X64_EAX);
-        x64_emit_nzcv_from_x86_flags(e, opc == 0x2u);
-    } else if (s && (opc == 0x0u || opc == 0x1u || opc == 0xcu || opc == 0xdu || opc == 0xeu || opc == 0xfu)) {
-        if (rd != 15u) x64_emit_store_arm_reg(e, rd, X64_EAX);
-        x64_emit_set_nz_no_carry(e, X64_EAX);
-    } else if (rd != 15u) {
-        x64_emit_store_arm_reg(e, rd, X64_EAX);
-    } else {
-        x64_emit_return_pc_reg(e, X64_EAX, done);
-    }
+    x64_emit_data_result(e, opc, s, rd, done);
     return 1;
 }
 

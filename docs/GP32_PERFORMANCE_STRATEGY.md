@@ -2352,3 +2352,44 @@ with JIT on/off, bitmask and individual-button protocols, analog subclasses,
 press/release, disconnect and reconnect. Windows, H700 and Android ARM64/ARMv7
 libretro builds pass. No full suite or throughput benchmark was repeated for
 this small input-only change. Evidence: private `results/resume99-stock-runtime/`.
+
+### Native ALU calculation for exception returns (2026-10-04)
+
+Flag-setting ALU writes to PC previously invoked the general decoded-opcode
+helper even when the backend could calculate their result and flags directly.
+Both x64 and AArch64 now reuse their supported native ALU paths and call a
+small shared helper for SPSR/CPSR bank restoration and PC alignment. The helper
+uses the existing architectural routines, aligns according to the restored
+ARM/Thumb state, and returns to dispatch immediately. Sources are evaluated
+in the old register bank. Existing USER/SYS behavior without an SPSR retains
+the computed ALU flags. Unsupported x64 carry/shift forms and AArch64
+register-shift pipeline-PC cases retain their old fallback. AArch64 unframed
+leaves cannot enter the new call path.
+
+This replaces general helper work, not all C calls: dedicated returns are
+counted by `helper_write_pc`. Windows Princess's 300-frame replay moves
+662,608 calls to that helper, reducing classified DATA calls from 671,808 to
+9,200. The same three PC replays retain every compared CPU, clock, audio-count,
+video and PCM field; native instruction counts also remain identical. No PC
+throughput improvement is claimed from those diagnostic runs.
+
+The focused fixture first failed only the five common-return native-coverage
+checks. It covers MOVS/SUBS PC returns from SVC/IRQ/FIQ, ARM/Thumb low-bit
+alignment, USER/SYS flags, a failed condition, full register-bank comparison,
+and a pending IRQ before target execution. A FIQ register-shift return also
+checks the AArch64 path. The focused and complete existing JIT differential
+test pass on Windows and H700; the separate Windows exception test passes.
+The first H700 full-test attempt exceeded a 60-second deadline; a captured
+run with a sufficient deadline completed in 85.29 seconds with exit zero.
+This was not an assertion change. Windows GUI/libretro, H700 and Android
+ARM64/ARMv7 builds succeed. Evidence: private `results/resume100-exception-return/`.
+
+H700 ABBA measurements used two samples per variant with every sampled clock
+endpoint at 1,512 MHz. Princess core throughput was 74.7435 -> 75.8745 fps
+(+1.51%). Astonishia title was 176.394 -> 176.9265 (+0.30%) and Blue was
+73.6775 -> 73.9375 (+0.35%); those small control differences do not establish
+a general speedup. These are uncapped core rates, not displayed game fps.
+All seven compared guest CPU/video/PCM fields remain exact in each replay.
+The H700 Princess profile moves all 662,608 classified DATA calls to the
+dedicated PC helper without changing native instruction counts. Volume,
+mixer, governor, stock frontend and user settings were not changed.
