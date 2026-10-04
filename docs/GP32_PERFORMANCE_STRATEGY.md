@@ -1891,3 +1891,26 @@ callback and live-deadline coverage. Android ARM64 builds. The x86 backend is
 unchanged. Private evidence: `resume85-ldr/{device,summary,source-manifest}.json`.
 The candidate is not installed; volume/frontend settings remain untouched.
 Princess is still below 60 core fps, so the performance goal remains open.
+
+### Silent Dooly source-audio follow-up (2026-10-04)
+
+A fresh 3000-frame libretro capture against the PC core at `d16a8b0` reaches the
+match-introduction graphic. It delivers 2,202,108 stereo frames in 3000 callbacks
+with zero pending-delivery backlog. All 186,504 guest PCM frames are at 11035 Hz
+with identical left/right samples. The five active/idle transition boundary
+deltas are 0, 0, 18, 249 and 581 sample units. These are digital measurements,
+not an audibility threshold or proof of a speaker-pop fix.
+
+Large changes remain inside source PCM (maximum adjacent difference 65,312).
+A private instrumented SoC build logs eight large changes directly from the RAM
+halfwords used by the DMA memcpy path, including -31,923 after +32,446 and
++32,536 after -32,385. Both source and delivered PCM hashes match the
+uninstrumented capture exactly. This locates those changes before host
+resampling/queueing; it does not prove their game-side origin, mixer correctness,
+or behavior on original hardware. No guessed filter or unsigned-audio conversion
+was added. Further diagnosis should follow the guest buffer producer or codec
+model, rather than attributing these samples to a host delivery gap.
+
+Evidence: `resume86-audio/{manifest,analysis,dma-trace-parity}.json`,
+`dma-source.txt`, and `run.txt` under the private results directory. Capture uses
+silent callbacks on PC; no device volume or frontend settings were changed.
