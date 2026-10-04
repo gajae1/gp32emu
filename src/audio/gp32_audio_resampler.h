@@ -30,6 +30,13 @@ size_t gp32_audio_resampler_max_output_frames(const gp32_audio_resampler_t *r,
                                               uint32_t src_rate_hz,
                                               uint32_t dst_rate_hz,
                                               int32_t rate_adjust_ppm);
+/* Exact output count without changing state; SIZE_MAX if Q32 arithmetic
+ * cannot represent it. Zero output can still consume input and update carry. */
+size_t gp32_audio_resampler_output_frames(const gp32_audio_resampler_t *r,
+                                          size_t input_frames,
+                                          uint32_t src_rate_hz,
+                                          uint32_t dst_rate_hz,
+                                          int32_t rate_adjust_ppm);
 size_t gp32_audio_resampler_process(gp32_audio_resampler_t *r,
                                     const int16_t *src_s16_stereo,
                                     size_t input_frames,

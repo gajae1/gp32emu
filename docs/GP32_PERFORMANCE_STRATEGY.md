@@ -2745,3 +2745,49 @@ native instructions in the measured window, so the old profile must not be
 used to assume that later polling changes missed this workload. Historical
 timing and profiling modes differ; no cross-version speed ratio is claimed.
 Evidence: `results/resume110-palette/wizard-{pc,h700,parity}.json`.
+
+### Current Princess frame tails and audio delivery (2026-10-04)
+
+The existing private timing wrapper was updated from `gp32_run_cycles` to the
+current `gp32_run_frame` entry point and linked with the 721b477 core. Stock
+Spruce RetroArch replayed a private copy of Princess Maker 2 Korea slot 0 for
+1,800 `retro_run` calls. Source counts describe only the first uniform-rate
+PCM span. The screenshot overlay counted 1,801 display frames; that is not the
+number of core calls. State loading occurred after call 1 and accounts for an
+initial 238-ms interval, which is excluded from the steady-play window.
+
+In the last 1,200 calls, every sampled clock was 1512 MHz. Core execution was
+11.482 ms mean / 12.567 ms p99 / 15.138 ms maximum; none exceeded 16.667 ms.
+Frontend call intervals were 16.787 / 17.227 / 19.266 ms, with none above 20 ms.
+Audio callback time was 0.234 ms mean / 0.548 ms maximum. All 1,323,000 offered
+stereo frames were accepted, with zero partial/zero returns or retained queue
+backlog. ALSA reported zero write errors or recovery calls. PCM zeros alone
+do not identify padding. This is one instrumented short scene, not physical
+listening/input latency, whole-game acceptance or an old/new performance test.
+The run exited normally, MainUI returned and protected files/original states
+were unchanged. Evidence: `results/resume111-frame-tails/`.
+
+### Prevent conservative resampler bounds from discarding valid audio (2026-10-04)
+
+A SWE audit identified queue eviction based on the resampler's conservative
+allocation estimate rather than actual output. With a fractional rate-change
+phase, 10,200 queued plus 800 new output frames fit the 11,025-frame limit,
+but the extra allocation slack discarded nine old frames and armed a fade.
+A fitting upsampled span could also be discarded entirely as oversized.
+
+Near the queue limit only, libretro now queries the actual output count before
+eviction. The query uses the same rate/phase preparation as processing and
+does not mutate the live resampler. A zero-output block still advances source
+carry without evicting queued samples. The 250-ms limit, bounded allocation,
+real-overflow policy and normal delivery path remain unchanged. This benefits
+all libretro platforms during backpressure; it is not a claim that the above
+zero-backlog playback exercised the bug.
+
+Three meaningful cases (near-full fractional stream, fitting upsampled block,
+zero-output rate transition with a full queue) failed four assertions before
+the fix and pass afterward on Windows, alongside existing partial callback,
+overflow recovery, sample callback, rate-change and lifecycle regressions.
+The same audio fixture passes natively on H700. Windows standalone/libretro,
+H700 and Android ARM64/ARMv7 builds pass; Android execution is still untested.
+The instrumented stock playback above predates this boundary fix and is not
+presented as evidence of audible improvement after it.

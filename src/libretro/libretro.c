@@ -540,6 +540,17 @@ static int submit_audio_resampled(const gp32_audio_desc_t *aud) {
     int resample = src_rate != dst_rate || (audio_resampler.have_prev && !copy_aligned);
     if (resample) {
         need = gp32_audio_resampler_max_output_frames(&audio_resampler, in_frames, src_rate, dst_rate, 0);
+        if (need > GP32_AUDIO_QUEUE_LIMIT - audio_pending_frames) {
+            /* Allocation slack is not generated PCM. Only pay for an exact
+             * count near the limit, before evicting any retained samples. */
+            need = gp32_audio_resampler_output_frames(&audio_resampler, in_frames, src_rate, dst_rate, 0);
+            if (!need) {
+                int16_t unused[2];
+                (void)gp32_audio_resampler_process(&audio_resampler, aud->samples_s16_interleaved,
+                                                    in_frames, src_rate, dst_rate, 0, unused, 1u);
+                return 1;
+            }
+        }
     }
     if (!need) return 0;
     /* Bound memory and latency if the frontend stops consuming audio. Short
