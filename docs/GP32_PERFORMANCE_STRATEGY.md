@@ -3143,3 +3143,35 @@ Focused PC timing/LCD/PCM/timer/state checks and H700 timing/LCD checks pass;
 Windows, H700 and Android arm64/armv7 builds pass. Private evidence is under
 `resume121-common`: `pc-combined.json`, `title-combined-h700.json`,
 `tick-h700.json`, `checks.json`. No governor or audio-device settings changed.
+
+### Rejected specialized AArch64 SWI helper (2026-10-05)
+
+A candidate replaced the generic classified helper for native SWI with a
+predecoded immediate/PC helper. It retained the existing callback and shared
+exception entry, and passed H700 terminal-helper and exception regressions.
+On Princess slot0 (600 warmup / 1200 measured), a primed release ABBA retained
+all seven CPU/video/PCM fields with 44 measured clock samples at 1512 MHz.
+Baseline fps was 103.582 / 104.159; candidate was 105.014 / 104.096, for medians
+103.8705 -> 104.555 (+0.66%). That small difference overlaps run variability.
+The extra specialized path was removed rather than accepted as a useful gain.
+The baseline archive used the same concurrent device-ID HLE object as the
+candidate, with only the original ARM backend object retained. The installed
+core and protected settings were unchanged. Private evidence and rejected
+patch: `results/resume128-native-swi/`.
+
+### Active IIS without DMA: reproduced duration boundary (2026-10-05)
+
+A public-SoC-API probe finishes a one-shot stereo DMA transfer, leaves IIS
+enabled, and advances another 10 ms: no PCM is captured during that interval.
+Stopping IIS for the same interval instead captures 441 silent frames under
+the BIOS idle policy. The active path currently deducts elapsed sample periods
+but produces PCM only when DMA/FIFO writes provide samples. The model has a
+two-halfword staging pair rather than the hardware's eight-entry FIFO.
+
+This demonstrates a duration-accounting boundary, not the cause of a specific
+game's crackle. Correct empty-FIFO serial output still needs evidence; neither
+repeating the last sample nor inserting zero is selected by this probe. The
+next useful measurement is active-IIS missing periods in real saved scenes,
+separate from intentional stopped-IIS silence. No production audio behavior
+changes here. Evidence: `results/resume128-audio/starvation.{c,log}` and
+`parent-reproduction.md`; the earlier IIS-format manual extracts remain valid.

@@ -30,6 +30,32 @@ This does not add a separate EEPROM persistence file between emulator sessions.
 IIC register side effects and firmware transfer latency are not simulated by
 the direct HLE service.
 
+## Device ID service (0x104)
+
+The direct-FXE hook also implements SDK `_gp_dev_id_get` (ARM SWI `0x104`).
+The firmware body at 0x51f4 takes a single argument, r0 = pointer to a 16-byte
+output buffer (r1 is not read), reads EEPROM offset 0x10 for 16 bytes through
+its own read body, and XORs byte i with the repeating firmware key
+"SANGHYUK" (constant at 0x7d00). Success returns r0=0; a failed read would be
+propagated, but offset 0x10/count 16 always fits the 4096-byte window, so the
+HLE path cannot leave r0 nonzero. r1 and CPSR are preserved: unlike 0x105,
+the 0x104 dispatcher returns with `movs pc,lr`, restoring SPSR.
+
+On an erased chip the buffer becomes `ac be b1 b8 b7 a6 aa b4` repeated. After
+seeding EEPROM[0x10..0x1f] with `i ^ 0x5a` through 0x105 it becomes
+`09 1a 16 1e 16 06 09 16 01 12 1e 16 1e 0e 01 1e`. The regression test seeds
+through 0x105 and calls the real SWI 0x104 in interpreter and JIT modes,
+checking r0, r1, both fixed 16-byte results and guard bytes around the buffer.
+
+Runtime evidence is narrower here than for 0x105. A raw SWI 0x104 from an
+IRQ-enabled caller stalled in a wait at 0x4930 in the parent's firmware
+harness: the SWI entry masks IRQs, unlike 0x105, which restores the caller's
+CPSR before its transfer. So raw-SWI 0x104 runtime parity is not claimed; the
+comparison executes the firmware body at 0x51f4 directly with IRQs enabled.
+That comparison matches status and 64 destination/guard bytes for both erased
+and seeded EEPROM. The body clobbers r1; the SWI dispatcher, modeled by HLE,
+restores it. No fix to the raw firmware IRQ wait is inferred from this test.
+
 ## Shared hardware correction
 
 The firmware random-read helper switches IICSTAT from master transmit `0xf0`
@@ -62,5 +88,5 @@ it has no game-specific conditions. An erased all-0xff chip concealed the bug.
   installed core/config hashes are unchanged and physical volume is untouched.
 
 This is a compatibility/data-integrity correction, not measured FPS improvement.
-Extended device/card ID services 0x104/0x103 still need implementation; static
-presence of their SDK stubs does not prove a title calls them at runtime.
+Extended card ID service 0x103 still needs implementation; static presence of
+its SDK stub does not prove a title calls it at runtime.
