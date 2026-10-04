@@ -262,9 +262,10 @@ int main(int argc, char **argv) {
             gp32_framebuffer_desc_t fb;
             if (gp32_get_framebuffer(g, &fb) == GP32_OK) video_hash = hash_framebuffer(video_hash, &fb);
             gp32_audio_desc_t aud;
-            if (gp32_get_audio(g, &aud) == GP32_OK) {
+            while (gp32_get_audio(g, &aud) == GP32_OK && aud.frame_count) {
                 audio_hash = hash_audio(audio_hash, &aud);
                 audio_frames += aud.frame_count;
+                if (gp32_consume_audio(g, aud.frame_count) != GP32_OK) break;
             }
             ++measured;
         }

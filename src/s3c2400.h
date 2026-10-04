@@ -30,6 +30,7 @@ const uint32_t *s3c2400_framebuffer(s3c2400_t *soc, uint32_t *w, uint32_t *h, ui
 const int16_t *s3c2400_audio_samples(s3c2400_t *soc, uint64_t *frames, uint32_t *sample_rate_hz);
 void s3c2400_audio_append_u8_mono(s3c2400_t *soc, const uint8_t *samples, uint32_t sample_count, uint32_t sample_rate_hz);
 void s3c2400_audio_append_s16_stereo(s3c2400_t *soc, int16_t left, int16_t right, uint32_t sample_rate_hz);
+int s3c2400_audio_consume(s3c2400_t *soc, uint64_t frames);
 void s3c2400_audio_clear(s3c2400_t *soc);
 void s3c2400_render_lcd(s3c2400_t *soc);
 void s3c2400_tick(s3c2400_t *soc, uint32_t cpu_cycles);
@@ -42,7 +43,7 @@ uint32_t s3c2400_run_clock_hz(const s3c2400_t *soc);
 int s3c2400_state_save(const s3c2400_t *soc, FILE *f);
 int s3c2400_state_load(s3c2400_t *soc, FILE *f);
 int s3c2400_state_save_io(const s3c2400_t *soc, state_io_t *io);
-int s3c2400_state_load_io(s3c2400_t *soc, state_io_t *io);
+int s3c2400_state_load_io(s3c2400_t *soc, state_io_t *io, int has_audio_spans);
 
 uint8_t s3c2400_read8(void *user, uint32_t addr);
 uint16_t s3c2400_read16(void *user, uint32_t addr);

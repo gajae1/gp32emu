@@ -512,7 +512,8 @@ static int submit_audio_resampled(const gp32_audio_desc_t *aud) {
 
     size_t in_frames = (size_t)aud->frame_count;
     size_t need = in_frames;
-    if (src_rate != dst_rate) {
+    int resample = src_rate != dst_rate || audio_resampler.have_prev;
+    if (resample) {
         need = gp32_audio_resampler_max_output_frames(&audio_resampler, in_frames, src_rate, dst_rate, 0);
     }
     if (!need) return 0;
@@ -549,7 +550,7 @@ static int submit_audio_resampled(const gp32_audio_desc_t *aud) {
     int16_t *out = audio_resample_buf + audio_pending_frames * 2u;
     size_t out_frames = in_frames;
 
-    if (src_rate != dst_rate) {
+    if (resample) {
         out_frames = gp32_audio_resampler_process(&audio_resampler,
                                                   aud->samples_s16_interleaved,
                                                   in_frames,
@@ -656,13 +657,18 @@ void retro_run(void) {
     gp32_audio_desc_t aud;
     if (gp32_get_audio(emu, &aud) == GP32_OK) {
         if (aud.frame_count) {
-            /* Clear the core's borrowed PCM only after retaining all output. */
-            if (submit_audio_resampled(&aud)) gp32_clear_audio(emu);
+            /* Each span has its own source rate. Release it only after the
+             * delivery queue retains its output, even under backpressure. */
+            do {
+                if (!submit_audio_resampled(&aud)) break;
+                if (gp32_consume_audio(emu, aud.frame_count) != GP32_OK) break;
+            } while (gp32_get_audio(emu, &aud) == GP32_OK && aud.frame_count);
         } else {
             /* Keep audio-driven frontend pacing alive while emulated audio is
              * idle. Never pad short active blocks or alter their sample rate. */
             static const int16_t silence[GP32_AUDIO_FRAMES_PER_VIDEO * 2u] = {0};
             gp32_audio_desc_t silent = {silence, GP32_AUDIO_FRAMES_PER_VIDEO, GP32_AUDIO_RATE};
+            gp32_audio_resampler_reset(&audio_resampler);
             submit_audio_resampled(&silent);
         }
     }

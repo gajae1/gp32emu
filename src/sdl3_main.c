@@ -264,9 +264,9 @@ int main(int argc, char **argv) {
             }
             if (audio) {
                 gp32_audio_desc_t aud;
-                if (gp32_get_audio(g, &aud) == GP32_OK && aud.frame_count > 0) {
+                while (gp32_get_audio(g, &aud) == GP32_OK && aud.frame_count > 0) {
                     gp32_audio_submit(audio, &aud);
-                    gp32_clear_audio(g);
+                    if (gp32_consume_audio(g, aud.frame_count) != GP32_OK) break;
                 }
             }
             frame_index++;

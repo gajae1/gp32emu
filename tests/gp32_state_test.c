@@ -1,7 +1,7 @@
 /* Transactional savestate regression: a truncated or otherwise rejected load
  * must leave the live machine byte-identical, including CPU, RAM, SmartMedia
- * and queued PCM. The v0003 stream is
- * magic | gp32 image | elapsed time | arm920t image | s3c2400 image | ram | smc | audio, and
+ * and queued PCM. The v0004 stream is
+ * magic | gp32 image | elapsed time | arm920t image | s3c2400 image | ram | smc | audio | spans, and
  * a cut past the CPU image used to rewind the CPU while the caller still saw
  * GP32_ERR_IO, with the mounted SmartMedia committed before the trailing PCM
  * had been read. Synthetic fixture, no ROM needed; GP32_SOURCE can select a
@@ -130,7 +130,7 @@ int main(int argc, char **argv) {
     size_t ref_size = 0;
     uint8_t *ref = capture_state(source, &ref_size);
     CHECK(ref != NULL, "capture reference state");
-    CHECK(src_size > ref_size && src_size - ref_size == audio_bytes, "audio is the trailing region");
+    CHECK(src_size > ref_size && src_size - ref_size == audio_bytes, "uniform PCM adds no rate boundaries");
     if (!src || !ref) {
         printf("gp32_state: FAIL\n");
         return 2;
@@ -144,8 +144,9 @@ int main(int argc, char **argv) {
     const size_t ram_len = s3c2400_ram_size(target->soc);
     const size_t cpu_cut = soc_off + cpu_len / 2u;
     const size_t ram_cut = soc_off + cpu_len + ram_len / 2u;
-    const size_t smc_cut = src_size - audio_bytes - 1u;
-    const size_t gap_cut = src_size - audio_bytes;
+    const size_t span_bytes = sizeof(uint32_t); /* no closed spans in this fixture */
+    const size_t smc_cut = src_size - span_bytes - audio_bytes - 1u;
+    const size_t gap_cut = src_size - span_bytes - audio_bytes;
     CHECK(cpu_len > 0, "cpu wire image length");
     CHECK(cpu_cut > soc_off && cpu_cut < soc_off + cpu_len, "cpu cut lands inside the cpu image");
     /* The SoC header holds a 512 KiB BIOS mirror plus a 300 KiB framebuffer,
@@ -177,6 +178,12 @@ int main(int argc, char **argv) {
     if (path)
         expect_rejected_load(target, live, live_size, src, gap_cut, path, "file path cut rejected with byte-identical state");
 
+    uint32_t bad_count = UINT32_MAX;
+    memcpy(src + src_size - span_bytes, &bad_count, sizeof(bad_count));
+    expect_rejected_load(target, live, live_size, src, src_size, NULL, "invalid span count rejected without mutation");
+    bad_count = 0;
+    memcpy(src + src_size - span_bytes, &bad_count, sizeof(bad_count));
+
     /* A complete image still loads through both entry points and lands on the
      * reference bytes. */
     CHECK(gp32_load_state_data(target, src, src_size) == GP32_OK, "valid memory load");
@@ -195,14 +202,16 @@ int main(int argc, char **argv) {
         free(got);
     }
 
-    /* v2 has the same component payloads without the elapsed-time extension. */
-    size_t legacy_size = src_size - sizeof(gp32_elapsed_time_t);
+    /* v3 predates span metadata; v2 also predates elapsed-time metadata. */
+    memcpy(src, gp32_state_magic_v3, sizeof(gp32_state_magic_v3));
+    CHECK(gp32_load_state_data(target, src, src_size - span_bytes) == GP32_OK, "v3 state remains readable");
+    size_t legacy_size = src_size - sizeof(gp32_elapsed_time_t) - span_bytes;
     uint8_t *legacy = malloc(legacy_size);
     CHECK(legacy != NULL, "allocate legacy state");
     if (legacy) {
         memcpy(legacy, src, time_off);
         memcpy(legacy, gp32_state_magic_v2, sizeof(gp32_state_magic_v2));
-        memcpy(legacy + time_off, src + soc_off, src_size - soc_off);
+        memcpy(legacy + time_off, src + soc_off, src_size - soc_off - span_bytes);
         CHECK(gp32_load_state_data(target, legacy, legacy_size) == GP32_OK, "v2 state remains readable");
         uint32_t old_ms = (uint32_t)(gp32_get_cycles(source) * 1000u / direct_run_clock_hz(source));
         CHECK(direct_elapsed_ms(target) == old_ms, "v2 migration starts at former observable time");

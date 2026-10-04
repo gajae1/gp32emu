@@ -242,13 +242,13 @@ void GP32Engine::stopRecording() {
 void GP32Engine::submitAudio() {
     if (!m_gp32) return;
     gp32_audio_desc_t aud;
-    if (gp32_get_audio(m_gp32, &aud) == GP32_OK && aud.frame_count > 0) {
+    while (gp32_get_audio(m_gp32, &aud) == GP32_OK && aud.frame_count > 0) {
         if (m_audio) gp32_audio_submit(m_audio, &aud);
         if (m_recorder && !gp32_media_recorder_add_audio(m_recorder, &aud)) {
             emit statusChanged(QStringLiteral("Recording audio failed: %1").arg(QString::fromUtf8(gp32_media_recorder_error(m_recorder))));
             stopRecording();
         }
-        gp32_clear_audio(m_gp32);
+        if (gp32_consume_audio(m_gp32, aud.frame_count) != GP32_OK) break;
     }
 }
 

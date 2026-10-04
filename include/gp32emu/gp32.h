@@ -100,7 +100,10 @@ gp32_status_t gp32_set_hle_sef_rate(gp32_t *gp32, uint32_t sample_rate_hz);
 
 gp32_status_t gp32_set_buttons(gp32_t *gp32, uint32_t gp32_button_mask);
 gp32_status_t gp32_get_framebuffer(gp32_t *gp32, gp32_framebuffer_desc_t *out_desc);
+/* Borrow the first uniform-rate span. Consume it before requesting the next.
+ * Mutating the emulator invalidates borrowed pointers; clear discards all spans. */
 gp32_status_t gp32_get_audio(gp32_t *gp32, gp32_audio_desc_t *out_desc);
+gp32_status_t gp32_consume_audio(gp32_t *gp32, uint64_t frames);
 gp32_status_t gp32_clear_audio(gp32_t *gp32);
 
 uint32_t gp32_get_pc(const gp32_t *gp32);
