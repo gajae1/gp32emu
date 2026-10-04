@@ -3185,3 +3185,30 @@ it adds no replacement samples. Fine/coarse scheduling parity passes for five
 DMA scenarios in interpreter and JIT modes, including on H700. See
 [IIS DMA interrupt scheduling](IIS_DMA_TIMING.md) for measurements, build
 coverage and the still-unresolved hardware FIFO and idle-wait boundaries.
+
+### PWM event deadlines and deferred timer writes (2026-10-05)
+
+CPU slices now stop at the nearest active PWM timer expiry, including timers
+that request DMA instead of IRQ. Timer register writes also end the slice and
+apply after the old interval is settled. This prevents a late enable/reload
+from retroactively changing elapsed time. Existing counter/clock formulas are
+unchanged; no game identification or replacement audio is involved.
+
+A 5000-cycle ARM-loop probe with a periodic timer services four IRQs with
+one-cycle scheduling but none with a single large request before the fix.
+The regression now compares CPU registers, CPSR, timer count, pending bits and
+control for timer 0/4, one-shot/reload, immediate/delayed guest enable, and both
+interpreter/JIT modes. All schedules agree after the fix. Six focused PC tests
+and H700 PWM/IIS-IRQ/PCM tests pass; Windows/H700/Android arm64/armv7 cores build.
+Android runtime remains unverified.
+
+Three 30-second PC scene replays (ASR title, Princess slot0, Blue slot0 with
+left input) exit successfully. IRQ timing changes some CPU/video/audio results;
+their host timings are not used for a speedup claim. A single H700 Princess
+run measures 95.127 headless fps with observed clock variation 1200–1512 MHz,
+not a fixed-clock comparison or game animation rate. Protected device hashes
+remain unchanged and no SD deployment occurred. Private evidence:
+`results/resume130-compat/{pc-scenes,h700-current,checks,protected}.json`.
+
+The separate direct-HLE display wait still suppresses hardware interrupt
+execution: [reproduction and required execution boundary](HLE_WAIT_INTERRUPTS.md).

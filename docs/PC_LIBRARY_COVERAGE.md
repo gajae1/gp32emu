@@ -307,3 +307,19 @@ to identify what the gray screen lands on.
 
 Evidence: `resume127-compat/gp-fight/run/cont2-loading-3600/` console.txt,
 png/frame-000600.png, png/frame-003300.png and end.state.
+
+## GP Fight gray-screen destination (2026-10-05, resume130-compat)
+
+A 600-frame no-input continuation from that exact end state reaches GAME OVER
+at frame 300 and the title/PUSH ANY BUTTON screen at frame 600. Both captures
+were inspected; the gray screen was a progressing post-KO transition in this
+bounded sequence. This resolves the destination question above without an
+emulator fix, not full-game or input acceptance.
+
+The probe is binary-identical to the preceding resume127 run (SHA-256
+`055643f3eca09e9edb7e0f7a07d09cac442762492fc238f2e05ddc6da8410348`).
+It predates `a61da73`; its exact source working-tree revision is not embedded
+or proven by file timestamps. This is a historical-binary follow-up, not a
+current-core regression result. Evidence: private
+`resume130-compat/gpfight/report.md` and `run/cont3-gray-600/` captures,
+console, command and end state. No further gameplay is claimed.
