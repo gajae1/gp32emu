@@ -2310,3 +2310,45 @@ not low framerate itself, source-generated clipping or every audible artifact.
 Android runtime and hardware listening acceptance remain open. Evidence:
 private `results/resume98-audio-gap/` (red/green logs, native result, real-game
 PCM capture, manifest). Volume, mixer and RetroArch settings were untouched.
+
+### Stock frontend playback and analog RetroPad compatibility (2026-10-04)
+
+The installed `af8bb85` core was exercised with the original Spruce RetroArch
+1.22.2 / `69a4f0e` binary, not the retired custom frontend. A copy of Princess
+Maker 2 Korea slot 0 ran for 1,800 requested frames. The final statistics
+overlay showed 59.57 fps, 1,801 frames and zero reported dropped frames;
+this is a final display reading, not a frame-time percentile or proof that
+all cutscene frames are rendered at 60 fps. State loading succeeded, exit
+status was zero and MainUI returned. The run used a private copy of the current
+platform config with the current GP32 override merged in, private save/state
+paths, no automatic saves and diagnostic overlays. It did not invoke the
+launcher's configuration/governor preparation. Audio/video pacing settings,
+the installed frontend and launcher were preserved.
+
+The overlay's 22.96% audio underrun indicator is a low-water statistic: the
+matching upstream `audio_compute_buffer_statistics` counts observations with
+at least 75% free buffer space. It does not count hardware underruns. A second
+bounded run used the existing ALSA interposer with the same stock frontend
+and installed core. All 1,989 write calls succeeded, accepting 1,527,552
+48-kHz stereo frames; EPIPE, suspend, other errors and recovery calls were all
+zero. Zero-valued frames occurred mainly at startup/shutdown. Zero detection
+alone cannot separate intentional silence from software padding, and this
+does not establish glitch-free playback for every scene. Both runs preserved
+the hashes of the stock binaries, launcher, protected configs, and original
+manual/automatic saves. Volume and mixer were not changed.
+
+A separate input review exposed a compatibility defect: selecting an analog
+RetroPad caused the core to ignore even its digital buttons. Libretro defines
+that device as an extension of RetroPad, and the same frontend can select it
+through `--dualanalog`. The core now accepts JOYPAD and ANALOG base devices
+while continuing to query their digital buttons through JOYPAD. Device
+subclasses retain the existing base-type mask; NONE and unrelated device
+types stay inactive. This adds no analog-axis mapping or game-specific input
+logic and does not change the normal H700 pad configuration.
+
+The real ARM GPIO input fixture failed before the fix when all digital
+buttons were held on an analog pad. It now passes on Windows and native H700
+with JIT on/off, bitmask and individual-button protocols, analog subclasses,
+press/release, disconnect and reconnect. Windows, H700 and Android ARM64/ARMv7
+libretro builds pass. No full suite or throughput benchmark was repeated for
+this small input-only change. Evidence: private `results/resume99-stock-runtime/`.
