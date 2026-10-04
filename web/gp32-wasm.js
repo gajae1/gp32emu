@@ -157,6 +157,7 @@ let audioQueue = [];
 let audioQueuedFrames = 0;
 let audioUnderruns = 0;
 let audioStarted = false;
+let audioGen = 0;
 let pseudoFullscreen = false;
 let hiddenPauseWasRunning = false;
 let resumePending = false;
@@ -440,13 +441,17 @@ async function ensureAudio(resume = true) {
         audioWorkletNode.port.onmessage = ev => {
           const m = ev.data || {};
           if (m.type === 'stat') {
-            audioQueuedFrames = Math.max(0, audioQueuedFrames - (m.consumed || 0));
+            /* Drop snapshots posted before the latest resetAudioQueues();
+             * otherwise an in-flight stat resurrects phantom queued frames
+             * and a stale 'started' flag after a pause/resume or state load. */
+            if (typeof m.gen === 'number' && m.gen !== audioGen) return;
             if (typeof m.queued === 'number') audioQueuedFrames = Math.max(0, m.queued | 0);
             audioUnderruns += m.underruns || 0;
             audioStarted = !!m.started;
             refreshAudioStatus(false);
           }
         };
+        audioWorkletNode.port.postMessage({ type: 'reset', gen: audioGen });
         audioWorkletNode.port.postMessage({ type: 'config', preroll: Math.floor(sr * 0.12), lowWater: Math.floor(sr * 0.05), maxQueue: Math.floor(sr * 0.45) });
         audioWorkletNode.connect(audioCtx.destination);
       }
@@ -492,7 +497,8 @@ function resetAudioQueues() {
   audioQueuedFrames = 0;
   audioUnderruns = 0;
   audioStarted = false;
-  if (audioWorkletNode) audioWorkletNode.port.postMessage({ type: 'reset' });
+  audioGen++;
+  if (audioWorkletNode) audioWorkletNode.port.postMessage({ type: 'reset', gen: audioGen });
   refreshAudioStatus(true);
 }
 function pushAudio() {

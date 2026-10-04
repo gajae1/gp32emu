@@ -7,6 +7,7 @@
 #include "gp32emu/gp32.h"
 #include "zip.h"
 #include <stdatomic.h>
+#include <assert.h>
 #if defined(__aarch64__) && defined(__ARM_NEON) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
 #include <arm_neon.h>
 #define GP32_LCD_NEON 1
@@ -102,6 +103,10 @@ struct s3c2400 {
     /* Transient CPU-run transaction; never part of the saved peripheral image. */
     uint32_t clkpow_before_run[0x18/4];
     uint8_t cpu_run_active, cpu_run_clock_written;
+    /* STM issues at most 16 stores; the bus can split an unaligned word into
+     * four byte lanes. Commit after ticking the elapsed prefix, in order. */
+    struct { uint32_t addr, value, mask; } cpu_io_writes[16 * 4];
+    unsigned cpu_io_write_count;
     uint32_t uart0[0x2c/4];
     uint32_t uart1[0x2c/4];
     uint32_t pwm[0x44/4];
@@ -201,6 +206,7 @@ void s3c2400_reset(s3c2400_t *s) {
     memset(s->dma, 0, sizeof(s->dma));
     memset(s->clkpow, 0, sizeof(s->clkpow));
     s->cpu_run_active = s->cpu_run_clock_written = 0;
+    s->cpu_io_write_count = 0;
     memset(s->uart0, 0, sizeof(s->uart0));
     memset(s->uart1, 0, sizeof(s->uart1));
     memset(s->pwm, 0, sizeof(s->pwm));
@@ -901,6 +907,20 @@ static void io_write32(s3c2400_t *s, uint32_t addr, uint32_t value, uint32_t mas
         case 0x24: s->smc_lines.do_read=((s->gpio[off>>2]&0x100u)==0); s->smc_lines.chip=((s->gpio[off>>2]&0x80u)==0); s->smc_lines.wp=((s->gpio[off>>2]&0x40u)==0); gp32_smc_update(s); break;
         case 0x30: s->smc_lines.cmd_latch=((s->gpio[off>>2]&0x20u)!=0); s->smc_lines.add_latch=((s->gpio[off>>2]&0x10u)!=0); s->smc_lines.do_write=((s->gpio[off>>2]&0x08u)==0); gp32_smc_update(s); break;
         }
+        return;
+    }
+    if (s->cpu_run_active && ((addr >= 0x14600000u && addr <= 0x1460007bu) ||
+                              (addr >= 0x15508000u && addr <= 0x15508013u))) {
+        /* A register change near the end of a CPU batch must not replace the
+         * DMA source, sample rate or enable state of its already elapsed time.
+         * Finish the current instruction, tick the old peripheral state, then
+         * apply its stores. Reads in SWP/LDM precede any deferred store. */
+        assert(s->cpu_io_write_count < GP32_ARRAY_COUNT(s->cpu_io_writes));
+        unsigned i = s->cpu_io_write_count++;
+        s->cpu_io_writes[i].addr = addr;
+        s->cpu_io_writes[i].value = value;
+        s->cpu_io_writes[i].mask = mask;
+        arm920t_stop_run(s->cpu_irq_sink);
         return;
     }
     if (addr >= 0x14000000u && addr <= 0x1400003bu) { reg_array_write(s->memcon,sizeof(s->memcon),addr-0x14000000u,value,mask); return; }
@@ -1719,6 +1739,7 @@ uint32_t s3c2400_run_cpu(s3c2400_t *s, uint32_t cpu_cycles) {
     if (!s || !s->cpu_irq_sink || !cpu_cycles) return 0;
     s->cpu_run_active = 1;
     s->cpu_run_clock_written = 0;
+    s->cpu_io_write_count = 0;
     uint32_t done = arm920t_run(s->cpu_irq_sink, cpu_cycles);
     s->cpu_run_active = 0;
     if (s->cpu_run_clock_written) {
@@ -1732,6 +1753,9 @@ uint32_t s3c2400_run_cpu(s3c2400_t *s, uint32_t cpu_cycles) {
     } else {
         s3c2400_tick(s, done);
     }
+    for (unsigned i = 0; i < s->cpu_io_write_count; ++i)
+        io_write32(s, s->cpu_io_writes[i].addr, s->cpu_io_writes[i].value, s->cpu_io_writes[i].mask);
+    s->cpu_io_write_count = 0;
     return done;
 }
 

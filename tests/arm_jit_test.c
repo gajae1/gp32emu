@@ -112,6 +112,7 @@ static uint32_t tb_block_io(test_bus_t *b, uint32_t a, uint32_t value) {
     }
     if (b->block_count == b->block_at) {
         if (b->block_effect == 1u) arm920t_set_irq(b->observe_cpu, 1);
+        else if (b->block_effect == 4u) arm920t_stop_run(b->observe_cpu);
         else {
             gp32_st32le(b->bios + CODE_ADDR + 4u, 0xe3a06077u);
             if (b->block_effect == 2u) arm920t_flush_jit(b->observe_cpu);
@@ -824,6 +825,64 @@ static void case_ldm_pc(void) {
         CHECK(ref_reg(2) == 0u && ref_reg(7) == 0x77u, "changed return continued stale trace");
         CHECK(ref_reg(13) == RAM_BASE + 0x2000u, "changed return SP");
         teardown_pair();
+    }
+}
+
+/* Hot memcpy list: contiguous r3/r4 plus sparse r12/r14. Exercise both
+ * four-byte (not eight-byte) alignment and a final pair ending at a page edge.
+ * Rn is transferred as well, so store-old-base/load-suppressed-writeback and
+ * an odd leftover register are checked alongside the pair path. */
+static void case_block_pairs(void) {
+    const uint32_t lists[] = {0x5018u, 0x5019u};
+    for (unsigned shape = 0; shape < GP32_ARRAY_COUNT(lists); ++shape) {
+        unsigned count = shape ? 5u : 4u;
+        const uint32_t starts[] = {DATA_ADDR + 4u, RAM_BASE + 0x2000u - 4u * count};
+        for (unsigned edge = 0; edge < GP32_ARRAY_COUNT(starts); ++edge) {
+            for (unsigned load = 0; load < 2u; ++load) {
+                current_case = load ? "block-pairs-load" : "block-pairs-store";
+                setup_pair();
+                const uint32_t program[] = {
+                    block_insn(0, 1, 0, 1, (int)load, 0, lists[shape]),
+                    0xe1a0f001u, /* MOV pc,r1: fixed two-op block, then idle */
+                };
+                load_both(program, GP32_ARRAY_COUNT(program));
+                for (unsigned r = 0; r < 15u; ++r)
+                    set_reg_both(r, 0x11220000u + r);
+                set_reg_both(0u, starts[edge]);
+                set_reg_both(1u, CODE_ADDR + 4u);
+                unsigned lane = 0;
+                for (unsigned r = 0; r < 15u; ++r) {
+                    if (!(lists[shape] & (1u << r))) continue;
+                    set_mem_both(starts[edge] + 4u * lane++, 0xaabb0000u + r);
+                }
+                /* Warm a complete native block, then revisit it with a
+                 * one-instruction remainder and with a full-block budget. */
+                const uint32_t budgets[] = {2u, 1u, 2u};
+                for (unsigned step = 0; step < GP32_ARRAY_COUNT(budgets); ++step) {
+                    set_reg_both(0u, starts[edge]);
+                    set_reg_both(15u, CODE_ADDR);
+                    CHECK(arm920t_run(cpu_jit, budgets[step]) ==
+                          arm920t_run(cpu_ref, budgets[step]), "paired transfer budget");
+                    compare_state();
+                    CHECK(ref_reg(0u) == (load && shape ? 0xaabb0000u :
+                          starts[edge] + 4u * count), "paired base-in-list/writeback");
+                    lane = 0;
+                    for (unsigned r = 0; r < 15u; ++r) {
+                        if (!(lists[shape] & (1u << r))) continue;
+                        uint32_t word = gp32_ld32le(bus_ptr(&bus_ref,
+                            starts[edge] + 4u * lane++, 4u));
+                        CHECK(load ? ref_reg(r) == 0xaabb0000u + r :
+                              word == (r ? 0x11220000u + r : starts[edge]),
+                              "paired transfer lane order");
+                    }
+                }
+                gp32_cpu_profile_t profile;
+                arm920t_get_cpu_profile(cpu_jit, &profile);
+                if (profile.supported && profile.native_backend)
+                    CHECK(profile.native_block_calls != 0u, "paired case requires native code");
+                teardown_pair();
+            }
+        }
     }
 }
 
@@ -2102,6 +2161,45 @@ static void case_callback_irq_commit(void) {
     }
 }
 
+/* A deferred MMIO bus can yield on any store lane. Complete this ARM
+ * instruction's ordered stores and writeback, then return exactly its prefix
+ * so the SoC can tick before committing the queued device writes. */
+static void case_block_callback_yield(void) {
+    for (unsigned at = 1u; at <= 3u; at += 2u) {
+        current_case = "block-callback-yield";
+        setup_pair();
+        const uint32_t program[] = {0xe8a40007u, 0xe3a06001u, 0xeafffffeu};
+        load_both(program, GP32_ARRAY_COUNT(program));
+        for (unsigned r = 0; r < 3u; ++r) set_reg_both(r, 0x22220000u + r);
+        set_reg_both(4u, IO_ADDR);
+        bus_jit.observe_cpu = cpu_jit; bus_ref.observe_cpu = cpu_ref;
+        bus_jit.block_io = bus_ref.block_io = 1u;
+        bus_jit.block_effect = bus_ref.block_effect = 4u;
+        bus_jit.block_at = bus_ref.block_at = at;
+        CHECK(arm920t_run(cpu_jit, 128u) == 1u && arm920t_run(cpu_ref, 128u) == 1u,
+              "MMIO yield returns one completed instruction");
+        compare_state();
+        CHECK(bus_jit.block_count == 3u && bus_ref.block_count == 3u,
+              "MMIO yield completes every store lane");
+        for (unsigned i = 0; i < 3u; ++i) {
+            CHECK(bus_jit.block_addr[i] == IO_ADDR + 4u * i &&
+                  bus_jit.block_value[i] == 0x22220000u + i &&
+                  bus_jit.block_base[i] == IO_ADDR, "yield lane order/value/base");
+        }
+        CHECK(ref_reg(4u) == IO_ADDR + 12u && ref_reg(6u) == 0u &&
+              arm920t_get_pc(cpu_jit) == CODE_ADDR + 4u, "yield commits WB before next MOV");
+        gp32_cpu_profile_t profile;
+        arm920t_get_cpu_profile(cpu_jit, &profile);
+        if (profile.supported && profile.native_backend)
+            CHECK(profile.native_block_calls == 1u, "yield exercises native helper exit");
+        CHECK(arm920t_run(cpu_jit, 1u) == 1u && arm920t_run(cpu_ref, 1u) == 1u,
+              "yield resumes next instruction");
+        compare_state();
+        CHECK(ref_reg(6u) == 1u && bus_jit.block_count == 3u, "yield does not replay stores");
+        teardown_pair();
+    }
+}
+
 /* Whole BLOCK completion precedes IRQ or code invalidation exits. Trace on
  * the oracle forces instruction boundaries; jit=0 alone can batch portable ops. */
 static void case_block_callback_exit(void) {
@@ -2221,7 +2319,15 @@ int main(int argc, char **argv) {
     int irq_only = argc == 2 && !strcmp(argv[1], "--callback-irq");
     int block_only = argc == 2 && !strcmp(argv[1], "--block-callback");
     int portable_only = argc == 2 && !strcmp(argv[1], "--portable-callback");
-    if (argc == 2 && !strcmp(argv[1], "--cache-maintenance")) {
+    int pairs_only = argc == 2 && !strcmp(argv[1], "--block-pairs");
+    if (pairs_only) {
+        case_block_pairs();
+        case_native_mapped_block();
+        case_ldm_pc();
+        case_block_callback_exit();
+        case_loop_smc_epoch();
+        case_block_callback_yield();
+    } else if (argc == 2 && !strcmp(argv[1], "--cache-maintenance")) {
         case_cache_maintenance_native();
         case_cache_unchanged();
         case_cache_modified(0);
@@ -2279,6 +2385,7 @@ int main(int argc, char **argv) {
     case_callback_pc();
     case_callback_irq_commit();
     case_block_callback_exit();
+    case_block_callback_yield();
     portable_callbacks = 1;
     case_callback_irq_commit();
     case_block_callback_exit();
@@ -2293,6 +2400,7 @@ int main(int argc, char **argv) {
     case_mem();
     case_half_modes();
     case_block_modes();
+    case_block_pairs();
     case_ldm_pc();
     case_mul();
     case_seeded();
@@ -2313,7 +2421,7 @@ int main(int argc, char **argv) {
         return 1;
     }
     printf("PASS: arm jit differential (%s), jit events=%" PRIu64 " fallbacks=%" PRIu64 "\n",
-           portable_only ? "portable-callback" : block_only ? "block-callback" : irq_only ? "callback-IRQ" : chain_only ? "branch-chain" : forward_only ? "forward-loop" : callback_only ? "callback-PC" : (leaf_only ? "unframed-leaf" : (ram_end_only ? "mapped-page-RAM-end" : (loops_only ? "loop-fences" : "flags/shift/branch/mem/half/block/mul/seeded/budget/loop-fences"))),
+           pairs_only ? "block-pairs/fences" : portable_only ? "portable-callback" : block_only ? "block-callback" : irq_only ? "callback-IRQ" : chain_only ? "branch-chain" : forward_only ? "forward-loop" : callback_only ? "callback-PC" : (leaf_only ? "unframed-leaf" : (ram_end_only ? "mapped-page-RAM-end" : (loops_only ? "loop-fences" : "flags/shift/branch/mem/half/block/mul/seeded/budget/loop-fences"))),
            jit_events, jit_fallbacks);
     return 0;
 }

@@ -450,8 +450,11 @@ static int wasapi_pump(gp32_win64_audio_t *a) {
     UINT32 avail = a->wasapi_buffer_frames > padding ? a->wasapi_buffer_frames - padding : 0;
     if (avail < 256u) return 0;
     if (avail > 4096u) avail = 4096u;
-    if (!started && avail > queued) avail = queued;
-    if (avail < 256u) return 0;
+    /* The endpoint buffers producer batches. A short ring does not mean the
+     * endpoint underruns: submit only real frames, leaving space for the next
+     * batch instead of inserting a fade/silence gap and resetting the resampler. */
+    if (avail > queued) avail = queued;
+    if (!avail) return 0;
 
     BYTE *dst = NULL;
     hr = IAudioRenderClient_GetBuffer(a->render, avail, &dst);

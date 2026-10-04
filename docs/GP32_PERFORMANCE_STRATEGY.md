@@ -1531,3 +1531,105 @@ to CPU throughput. Favor usable sound, frame delivery and input over speculative
 cycle-perfect ARM920T pipeline/wait-state modeling. Greater timing fidelity
 can fix scheduling errors but is not itself a host-performance optimization.
 No new investigation was started after the user's pause request.
+
+## resume79: audio boundaries, frontend lifecycle and paired A64 transfers
+
+Development resumed with nine bounded agent assignments across CommandCode,
+OpenCode DeepSeek, SWE and Sol. Sol handled the native A64 emitter; the parent
+handled peripheral timing, integration and device validation. No title-specific
+conditions or guest clock changes were introduced.
+
+### Common peripheral audio fix
+
+IIS/DMA register writes during a CPU batch previously changed the state used to
+tick the entire elapsed batch. A stop at instruction 600 could discard a sample
+due at cycle 500; splitting the same execution into single instructions kept it.
+The SoC now stops after the writing instruction, ticks its elapsed prefix using
+the previous peripheral state, then commits the stores in order. The transient
+queue covers 16 STM stores including four-byte bus decomposition of each
+unaligned word. Saved-state format is unchanged.
+
+Regression coverage compares batched and instruction-stepped start/stop,
+DMA-stop and divider writes, PCM/rate/count, plus aligned/unaligned full STM
+against immediate bus writes. Windows timing/PWM/PCM/timer/state checks pass;
+H700 timer and PCM checks also pass. The same timing fix applies to every
+frontend. It fixes a reproduced sample-loss defect, but does not establish that
+the user's BIOS click or opening-video crackle has disappeared.
+
+### A64 transfer optimization and measured limits
+
+The already-validated single-page RAM path now pairs LDM/STM word transfers.
+Contiguous guest registers use paired context accesses too; sparse registers
+retain individual context accesses. PC, cross-page and MMIO paths keep their
+existing checks. The hot four-register transfer body falls from eight to five
+host instructions. H700 differential tests cover register lists, partial
+budgets, writeback, page boundaries, MMIO IRQ/invalidation, self-modifying code
+and completion of an STM before a requested CPU yield.
+
+A first 180-frame title comparison at 1512 MHz measured old HEAD 212.428 fps
+versus combined changes 198.458 fps. Longer isolation was needed before drawing
+a performance conclusion. In a 600-frame sequence, the SoC fix with the previous
+JIT measured 194.322 and 193.265 fps; the paired JIT measured 195.074 fps, all
+starting/ending at 1512 MHz. The old HEAD run measured 195.506 fps while ramping
+1320 to 1512 MHz. Other short runs also changed frequency. These results show
+only a small paired-JIT benefit in this workload, not a large overall speedup
+or a reliable old-HEAD speedup. No governor setting was changed.
+
+Title and Blue Angelo NPC H700 replays match the current PC core on all seven
+CPU/video/PCM fields. The title's PCM and video match the old version as well;
+its final PC differs because register writes now end the CPU batch. These are
+core throughput measurements, not stock RetroArch presentation or all-game
+frame-rate guarantees. PC startup/intro captures reached the Sonnori logo and
+the opening text; speaker listening remains unverified.
+
+### Frontend fixes
+
+- WASAPI now submits only real queued frames. A short producer ring while the
+  endpoint still has buffered audio previously inserted a fade/silence hole
+  and raised a spurious underrun. A fake-endpoint regression fails before the
+  patch and passes after it. Existing prebuffer settings stay unchanged.
+- SDL3 reopens its audio backend with the same options after a successful
+  state load, discarding sound queued before the load. Failed loads and
+  `--no-audio` keep their existing behavior. This uses the existing lifecycle
+  pattern; the normal startup buffering delay still applies. C23 compilation
+  with the actual SDL3 headers succeeds; real device listening is unverified.
+- Web Audio status messages carry the reset generation. The main thread
+  rejects pre-reset snapshots that previously resurrected stale queue depth.
+  The caller supplies the generation explicitly, including resets before node
+  creation. A harness using the actual initialization/reset/message handlers
+  verifies early and live reset cases; JS syntax checks pass. Browser playback
+  is not newly verified.
+
+The libretro delivery audit found no unintended loss/reordering under healthy
+or partial consumption; forced overflow followed its documented bounded-drop
+policy. The resampler audit found no deviation from its current phase model.
+SDL1 needed no demonstrated backend fix. Android ARM64/ARMv7 C23 builds pass;
+the ARM64 ELF already uses 16 KiB LOAD alignment, so no extra build change was
+needed. Android physical-device execution remains unverified.
+
+### Remaining audio lead and cleanup
+
+The libretro probe captured a large discontinuity already present in source
+PCM: a low-amplitude tail ends in one `0x8000` sample. Delivery preserved it.
+Whether the guest supplied that value, a DMA boundary emitted it, or another
+source-side error generated it still needs tracing. Do not hide it with a
+title check or an arbitrary fade. SDL1 probes also expose rate-transition
+interpolation steps; matching the current resampler model is not an acoustic
+quality guarantee. Physical BIOS/menu/opening sound acceptance remains open.
+
+Removed five orphan debug-symbol files (8,708,096 bytes). An inventory wrongly
+classified the active resume75 profiling build as disposable; it was retained.
+The executor rejected recursive deletion of four completed-worker Zig cache
+directories (106,499,291 bytes), so those remain. ROMs, BIOS, saves, worktrees,
+active builds and diagnostic evidence were preserved.
+
+Private evidence: `F:/GP32/results/resume79-source-audio/` and sibling
+`resume79-jit`, `resume79-win-audio`, `resume79-sdl-audio`, `resume79-wasm-audio`,
+`resume79-libretro`, `resume79-resampler`, `resume79-sdl12`, `resume79-android`
+and `resume79-cleanup` directories.
+
+Installed H700 core SHA-256:
+`f8ade8cb42a845b5b85aa3518151eaf08aeafd211fcd1c2f2c3d97ed4703a44d`.
+Backup: `gp32-dev/resume79-installed-core-before.so`. Stock RetroArch,
+launcher and protected configuration hashes are unchanged. Reopen a game
+to load this core; no settings adjustment is required.

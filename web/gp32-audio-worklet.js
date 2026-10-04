@@ -10,11 +10,14 @@ class GP32AudioProcessor extends AudioWorkletProcessor {
     this.lastL = 0;
     this.lastR = 0;
     this.fade = 0;
+    this.gen = 0;
     this.consumedSincePost = 0;
     this.underruns = 0;
     this.port.onmessage = (ev) => {
       const m = ev.data || {};
       if (m.type === 'reset') {
+        /* Echo the caller's generation, including resets before node creation. */
+        this.gen = typeof m.gen === 'number' ? m.gen : this.gen + 1;
         this.queue.length = 0;
         this.queued = 0;
         this.started = false;
@@ -67,7 +70,7 @@ class GP32AudioProcessor extends AudioWorkletProcessor {
       else {
         l.fill(0); if (r !== l) r.fill(0);
         if (this.consumedSincePost || this.underruns) {
-          this.port.postMessage({ type: 'stat', queued: this.queued, consumed: this.consumedSincePost, underruns: this.underruns, started: this.started });
+          this.port.postMessage({ type: 'stat', gen: this.gen, queued: this.queued, consumed: this.consumedSincePost, underruns: this.underruns, started: this.started });
           this.consumedSincePost = 0;
           this.underruns = 0;
         }
@@ -93,7 +96,7 @@ class GP32AudioProcessor extends AudioWorkletProcessor {
     }
 
     if (this.consumedSincePost >= 1024 || this.underruns) {
-      this.port.postMessage({ type: 'stat', queued: this.queued, consumed: this.consumedSincePost, underruns: this.underruns, started: this.started });
+      this.port.postMessage({ type: 'stat', gen: this.gen, queued: this.queued, consumed: this.consumedSincePost, underruns: this.underruns, started: this.started });
       this.consumedSincePost = 0;
       this.underruns = 0;
     }

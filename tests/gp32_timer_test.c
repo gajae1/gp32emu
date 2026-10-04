@@ -491,9 +491,80 @@ static void check_frame_callback_debt(int jit) {
     gp32_destroy(clone);
 }
 
+/* Peripheral writes must not retroactively change the elapsed part of a
+ * CPU slice. Compare a single run against instruction-sized boundaries. */
+static void check_audio_write_boundary(int jit) {
+    for (unsigned mode = 0; mode < 4u; ++mode) {
+        gp32_t *g[2] = {gp32_create(NULL), gp32_create(NULL)};
+        CHECK(g[0] && g[1], "create audio write boundary cores");
+        if (!g[0] || !g[1]) { gp32_destroy(g[0]); gp32_destroy(g[1]); return; }
+        for (unsigned split = 0; split < 2u; ++split) {
+            gp32_t *m = g[split];
+            gp32_set_jit(m, jit);
+            s3c2400_write32(m->soc, 0x14800004u, 0u); /* 48 MHz, 500 cycles/sample */
+            s3c2400_write32(m->soc, 0x14800014u, 0u);
+            const uint32_t code = GP32_RAM_BASE + 0x4000u;
+            for (unsigned i = 0; i < 600u; ++i)
+                s3c2400_write32(m->soc, code + i * 4u, i == 599u ? 0xe5801000u : 0xe1a00000u);
+            s3c2400_write32(m->soc, GP32_RAM_BASE, 0x12345678u);
+            s3c2400_write32(m->soc, 0x14600040u, GP32_RAM_BASE);
+            s3c2400_write32(m->soc, 0x14600044u, 0x35508010u);
+            s3c2400_write32(m->soc, 0x14600048u, 0x10800008u);
+            s3c2400_write32(m->soc, 0x14600058u, 2u);
+            s3c2400_write32(m->soc, 0x15508000u, mode == 1u ? 0u : 1u);
+            const uint32_t addr[] = {0x15508000u, 0x15508000u, 0x14600058u, 0x15508008u};
+            const uint32_t value[] = {0u, 1u, 4u, 32u}; /* stop/start IIS, stop DMA, divider */
+            arm920t_set_reg(m->cpu, 0, addr[mode]);
+            arm920t_set_reg(m->cpu, 1, value[mode]);
+            arm920t_set_reg(m->cpu, 15, code);
+            if (split) for (unsigned i = 0; i < 600u; ++i) gp32_run_cycles(m, 1u);
+            else gp32_run_cycles(m, 600u);
+        }
+        gp32_audio_desc_t a, b;
+        gp32_get_audio(g[0], &a); gp32_get_audio(g[1], &b);
+        CHECK(a.frame_count == b.frame_count && a.sample_rate_hz == b.sample_rate_hz,
+              "audio control write preserves pre-write samples/rate");
+        CHECK(b.frame_count == (mode == 1u ? 0u : 1u), "instruction-step audio boundary oracle");
+        if (a.frame_count == b.frame_count && a.frame_count)
+            CHECK(memcmp(a.samples_s16_interleaved, b.samples_s16_interleaved,
+                         (size_t)a.frame_count * 4u) == 0, "audio boundary PCM exact");
+        CHECK(s3c2400_read32(g[0]->soc, 0x1460004cu) == s3c2400_read32(g[1]->soc, 0x1460004cu),
+              "DMA count independent of CPU slice size");
+        gp32_destroy(g[0]); gp32_destroy(g[1]);
+    }
+}
+
+/* Exercise the largest store instruction, including the bus's byte-lane
+ * fallback, against immediate writes with the audio clock disabled. */
+static void check_dma_store_lanes(int jit) {
+    for (unsigned unaligned = 0; unaligned <= 1u; ++unaligned) {
+        gp32_t *g[2] = {gp32_create(NULL), gp32_create(NULL)};
+        CHECK(g[0] && g[1], "create DMA store lane cores");
+        if (!g[0] || !g[1]) { gp32_destroy(g[0]); gp32_destroy(g[1]); return; }
+        for (unsigned direct = 0; direct < 2u; ++direct) {
+            gp32_t *m = g[direct];
+            gp32_set_jit(m, jit);
+            const uint32_t code = GP32_RAM_BASE + 0x4000u;
+            s3c2400_write32(m->soc, code, 0xe880ffffu); /* STMIA r0,{r0-r15} */
+            for (unsigned r = 0; r < 15u; ++r) arm920t_set_reg(m->cpu, r, 0u);
+            arm920t_set_reg(m->cpu, 0, 0x14600000u + unaligned);
+            arm920t_set_reg(m->cpu, 15, code);
+            if (direct) arm920t_run(m->cpu, 1u);
+            else s3c2400_run_cpu(m->soc, 1u);
+        }
+        for (unsigned off = 0; off <= 64u; off += 4u)
+            CHECK(s3c2400_read32(g[0]->soc, 0x14600000u + off) ==
+                  s3c2400_read32(g[1]->soc, 0x14600000u + off),
+                  "deferred STM preserves every DMA store lane");
+        gp32_destroy(g[0]); gp32_destroy(g[1]);
+    }
+}
+
 int main(void) {
     check_scheduler_catchup();
     for (int jit = 0; jit <= 1; ++jit) {
+        check_audio_write_boundary(jit);
+        check_dma_store_lanes(jit);
         check_frame_clock_change(jit);
         check_frame_callback_debt(jit);
         check_peripheral_clock_boundary(jit);
