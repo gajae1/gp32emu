@@ -1,5 +1,31 @@
 # GP32 catalog and heavy-title targets (resume12 research)
 
+## Counting correction (resume72, 2026-10-04)
+
+The original supplied library has 28 game ZIPs, but only 21 distinct titles:
+20 Korea-labelled titles and Blue Angelo, plus seven regional/revision
+duplicates. This is not the same as the commonly cited 28-commercial-title
+list. The previous phrase "six missing Korean releases" incorrectly implied
+confirmed retail status for every missing MAME entry.
+
+Funny Soccer, Story of Bug Eyed Monster and Winter Is appear in the commercial
+list. Holeman Battle Race and Tales of Windy Land have disputed/unreleased
+status. Tears - Another Story has unresolved demo/final status in MAME's own
+notes and its [developer discussion](https://forums.bannister.org/ubbthreads.php?Number=56755&page=all&ubb=showflat).
+These six entries are not six ordinary homebrew additions. MAME dump coverage,
+retail release counts and regional ZIP counts must be reported separately.
+
+All six missing SMC payloads have now been downloaded and match the SHA-1s in
+the official [MAME GP32 list](https://github.com/mamedev/mame/blob/master/hash/gp32.xml).
+The download manifest is `F:/GP32/downloads/verified/missing-six-manifest.json`.
+Hash identity establishes the catalogued dump, not full-game compatibility or
+whether an unreleased/demo-labelled product became a retail release. Blue
+Angelo has also been restored to the device library and remains a priority
+heavy-game target even though the supplied edition is European.
+
+The research snapshot below remains historical; its earlier missing-file
+statements do not describe the newly downloaded library.
+
 Research pass 2026-10-03. Scope: MAME's official GP32 software list
 (hash/gp32.xml, master) with region variants counted separately, cross-checked
 against the commercial release list and the undumped-title notes in historical

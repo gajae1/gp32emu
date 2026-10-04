@@ -3372,3 +3372,56 @@ Cleanup removed 42 obsolete standalone object/debug files (32,700,379 bytes)
 from the results root, preserving build directories, executables, ROMs, saves
 and evidence. The manifest is in `resume69-audio-spans/cleanup-manifest.json`.
 Mixed-rate audio development is deferred while the menu incident is resolved.
+
+
+### Restore the original RetroArch frontend (resume71, 2026-10-04)
+
+The user reported that the RG SP physical menu still did not open Spruce's
+menu for GP32 after the process-list correction, while other systems worked.
+This contradicts treating the resume70 routing checks as sufficient user-flow
+acceptance. The optional GP32-specific frontend is no longer selected.
+Removing only its selector restored `ra_functions.sh` byte-for-byte to its
+pre-integration SHA-256
+`c843c915201f3179aa8d8cf1071e9deae47b466ddb7efc9b5cd1c5a4f779be8f`.
+
+Subsequent GP32 launches use the existing original `RetroArch/ra64.h700`
+(SHA-256 `daa4fd17f848004565cb97a0de99d2c28ca9eaf5f6c3758a721e84d2799b0dfd`).
+The optimized core remains installed, SHA-256
+`7c4efb6f92702f603f35568676ae3356a37c4d3a4d6bd925ad0ae2ca9c25a5da`.
+The prior selector is backed up in
+`/mnt/SDCARD/gp32-dev/resume71-stock-frontend/ra_functions.before.sh`.
+No emulator was running at preflight, no game was launched or terminated,
+and no ROM, save or RetroArch setting was changed for this rollback. Shell
+syntax and installed bytes passed. The user confirmed that the physical menu works again on the stock frontend. The ALSA experiment's
+previous pacing measurements do not transfer to this restored frontend.
+Evidence: `F:/GP32/results/resume71-stock-frontend/`.
+
+
+### Restore Blue Angelo and acquire missing dump entries (resume72)
+
+Blue Angelo Europe was restored from its earlier device backup to Roms/GP32,
+with its locally supplied payload and MAME SHA-1 verified. The user clarified
+that Korean versions are preferred but Europe-only games must not be removed
+from the library or performance targets. The original 28 ZIPs comprise only
+21 distinct titles because seven are regional/revision duplicates.
+
+Funny Soccer 2002, Holeman Battle Race 2002, Story of Bug Eyed Monster, Winter
+Is, Tales of Windy Land and Tears - Another Story were downloaded from the
+public MAME 0.202 software-list archive. Each extracted SMC exactly matches
+its official MAME SHA-1. All six were installed with matching device SHA-256,
+bringing the device to 27 SMC titles. No game, save or existing ROM was
+replaced. A separate original TearsAnother FPK archive was retained locally.
+Its existence does not settle demo/final release status. Retail-versus-dump
+classification corrections are in GP32_GAME_CATALOG.md.
+
+An SFTP pipelined upload stalled after 13,238,272 bytes of Story of Bug Eyed
+Monster. The incomplete file remained under a non-game staging extension.
+After confirming its prefix hash, bounded synchronous writes resumed from
+that exact offset; full-file hashing passed before the atomic final rename.
+No partial image was presented as an installed game. Download manifests live
+in `F:/GP32/downloads/verified/`; installed records in
+`F:/GP32/results/resume72-library/`. No new gameplay performance claim is made.
+Three requested cheap-model workers (CommandCode, SWE, OpenCode) each failed
+with HTTP 429 before work and were closed; the parent completed the downloads.
+The four remaining MAME titles are documented as missing, not silently counted
+as present. ROM/FPK files are outside the Git repository.

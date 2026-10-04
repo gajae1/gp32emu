@@ -1,6 +1,27 @@
 # GP32 local game matrix (owned files, deduplicated)
 
-## Current Korean device library (2026-10-04)
+## Current device library (2026-10-04)
+
+Blue Angelo (Europe) was restored at the user's request in resume72, initially bringing
+the installed library to 21 distinct games: 20 Korea-labelled titles plus
+Blue Angelo. Its payload matches MAME SHA-1
+`369f96bb41378ab4108d0dc8866148b328cbd75e`; no save file was moved.
+Korean variants remain preferred where available, but Europe-only games must
+not be excluded from the library or performance work.
+
+The six missing Korea-labelled MAME payloads were subsequently downloaded,
+matched against MAME SHA-1s and added using verified temporary uploads. The
+current device total is **27 distinct SMC games: 26 Korea-labelled entries
+and Blue Angelo Europe**. This is not a claim of 27 retail releases or of
+full-game compatibility. Device SHA-256 records:
+`F:/GP32/results/resume72-library/missing-six-installed.json`.
+
+The four other MAME catalog titles not present in this device library are
+GlooP Deluxe, Pinball Dreams, Super Plusha and Topy Topy Gogo (Europe entries).
+Thus neither the original 28 ZIPs nor the current 27 installed titles prove
+complete commercial or MAME-catalog coverage.
+
+### Previous Korean-only verification (resume65)
 
 The installed `Roms/GP32` contains exactly the 20 unique Korea-labelled game
 payloads supplied locally. Fresh SHA-256 comparison found no missing, extra or
@@ -21,10 +42,12 @@ evidence in resume13/resume16. Similarly, GP Fight's resume28 black capture
 does not supersede the resume17 match capture with Korean player names. Those
 older images were reopened during this audit; no new gameplay run is implied.
 
-The six catalogued Korean releases still missing from the supplied files are
+The six Korea-labelled MAME entries absent from the original supplied files were
 Funny Soccer 2002, Holeman Battle Race 2002, Story of Bug eyed Monster, Winter
-Is, Tales of Windy Land, and Tears - Another Story. They require additional
-owned dumps; the installed 20 are not the complete GP32 catalog.
+Is, Tales of Windy Land, and Tears - Another Story. This was a dump-catalog
+comparison, not evidence of six additional released commercial games.
+Holeman and Tales have disputed/unreleased status; Tears - Another Story
+has unresolved demo/final status. Do not label all six as retail releases.
 
 Latest device verification (resume65):
 `F:/GP32/results/resume65-soc-phase/library.json` freshly matches all 20
