@@ -37,6 +37,12 @@ arm920t_t *arm920t_create(const arm_bus_t *bus);
 void arm920t_destroy(arm920t_t *cpu);
 void arm920t_reset(arm920t_t *cpu, uint32_t vector);
 uint32_t arm920t_run(arm920t_t *cpu, uint32_t cycles);
+/* From a synchronous bus/SWI callback: shrink this run's total cycle budget,
+ * measured from its start, never from the callback. Outside a run: no-op.
+ * The in-flight instruction completes; an already-passed deadline cannot
+ * undo elapsed cycles. No following instruction runs beyond the new limit.
+ * The limit is transient, reset by every arm920t_run, and never serialized. */
+void arm920t_limit_run(arm920t_t *cpu, uint32_t max_cycles_from_run_start);
 /* From a bus/SWI handler: end the current run after this instruction. The
  * following run resumes normally; this does not request a guest CPU halt. */
 void arm920t_stop_run(arm920t_t *cpu);

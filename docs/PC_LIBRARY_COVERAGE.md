@@ -67,3 +67,23 @@ Private evidence: `resume84-firmware/{inventory,gloop-results,more-results}.json
 per-run states/screenshots and `resume83-loading-parent/gloop-cold-parity.json`.
 Existing homebrew samples remain useful diagnostics; further homebrew game
 downloads are outside the user's requested collection scope.
+
+The original BIOS's captured loading loop formats a string from `0x00080000`,
+just beyond the mapped 512-KiB image. Reading unmapped `0xff` bytes until the
+first RAM zero explains the observed `0x0bf80001` string length. The corrupt
+pointer's upstream cause remains unresolved; matching interpreter/JIT behavior
+does not exclude a shared CPU or peripheral defect. ROM mirroring was proposed
+as a way to shorten this scan, but is not adopted without evidence of actual
+address decoding and a correction to the originating bad state. Private trace:
+`resume84-bios-diff/FINDINGS.md`.
+
+The subsequent LCD scheduling correction addresses a separate Pinball wait:
+its guest loop waits for `LINECNT == 8`, which frame-aligned coarse CPU slices
+could miss indefinitely. The development core limits a run at the next visible
+line transition only after an actual LCD status read. The captured Pinball state
+now reaches a background/copyright screen after 120 frames. This establishes
+progress past that wait, not gameplay compatibility. The candidate is not
+installed on H700 because its measured scheduling cost still needs optimization.
+Private evidence: `resume84-lcd/demand-120frames/`, `device-demand.json`, and
+`demand-parity.json` (matching PC/AArch64 CPU, video and PCM results in three
+existing replay scenes). The installed FIFO fix remains unchanged.

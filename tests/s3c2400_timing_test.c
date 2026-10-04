@@ -97,6 +97,53 @@ static int check_iis_fifo_restart(s3c2400_t *s) {
     return 1;
 }
 
+static int check_lcd_scanline_poll(s3c2400_t *s) {
+    /* Wait for an exact scanline, as opposed to merely checking vblank.
+     * Frame-aligned large slices must not repeatedly skip the target. */
+    const uint32_t code[] = {
+        0xe5902000u, 0xe1a02922u, 0xe1520001u, 0x1afffffbu,
+        0xe3a04001u, 0xeafffffeu,
+    }; /* LDR; LSR #18; CMP r2,r1; BNE; MOV r4,#1; B . */
+    const uint32_t phases[] = {0u, 10000u, 799999u};
+    arm_bus_t bus = s3c2400_get_bus(s);
+    arm920t_t *cpu = arm920t_create(&bus);
+    if (!cpu) return 0;
+    s3c2400_set_irq_sink(s, cpu);
+    int ok = 1;
+    for (unsigned jit = 0; jit < 2u && ok; ++jit) {
+        for (unsigned k = 0; k < GP32_ARRAY_COUNT(phases) && ok; ++k) {
+            s3c2400_reset(s);
+            arm920t_reset(cpu, 0x0c000000u);
+            arm920t_set_jit(cpu, (int)jit);
+            for (unsigned i = 0; i < GP32_ARRAY_COUNT(code); ++i)
+                s3c2400_write32(s, 0x0c000000u + i * 4u, code[i]);
+            arm920t_set_reg(cpu, 0, 0x14a00000u);
+            arm920t_set_reg(cpu, 1, 8u);
+            s3c2400_write32(s, 0x14800004u, 0u); /* 48 MHz. */
+            s3c2400_write32(s, 0x14800014u, 0u);
+            s3c2400_write32(s, 0x14a00004u, 319u << 14);
+            s3c2400_write32(s, 0x14a00000u, 1u);
+            s3c2400_tick(s, phases[k]);
+            for (unsigned frame = 0; frame < 2u && ok; ++frame) {
+                uint32_t remaining = 800000u;
+                while (remaining) {
+                    uint32_t budget = remaining > 32768u ? 32768u : remaining;
+                    uint32_t done = s3c2400_run_cpu(s, budget);
+                    if (!done || done > budget) { ok = 0; break; }
+                    remaining -= done;
+                }
+            }
+            if (arm920t_get_reg(cpu, 4) != 1u) {
+                fprintf(stderr, "FAIL: missed LCD scanline (jit=%u phase=%u)\n", jit, phases[k]);
+                ok = 0;
+            }
+        }
+    }
+    s3c2400_set_irq_sink(s, NULL);
+    arm920t_destroy(cpu);
+    return ok;
+}
+
 static int check_lcd_clock_phase(s3c2400_t *s, FILE *state) {
     s3c2400_reset(s);
     s3c2400_write32(s, 0x14800004u, 0u); /* 48 MHz, 800,000 cycles per frame. */
@@ -152,7 +199,7 @@ int main(void) {
         if ((k % 3u) == 0u) { s3c2400_reset(s); observe(s, 31u); }
     }
     int phase_ok = check_lcd_clock_phase(s, state) && check_iis_clock_phase(s, state) &&
-                   check_iis_fifo_restart(s);
+                   check_iis_fifo_restart(s) && check_lcd_scanline_poll(s);
     fclose(state);
     if (!phase_ok) { s3c2400_destroy(s); return 1; }
     printf("lcd_timing_trace=%016" PRIx64 "\n", hash);

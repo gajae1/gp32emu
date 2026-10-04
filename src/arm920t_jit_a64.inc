@@ -31,9 +31,13 @@ typedef struct a64_emit {
 
 ARM_FORCE_INLINE int arm_a64_can_continue(const arm920t_t *c, int stop,
                                          uint32_t expected_next, uint32_t generation,
-                                         uint32_t status, uint32_t epoch,
+                                         uint32_t status, uint32_t epoch, uint32_t run_limit,
                                          const uint8_t *ram_base) {
-    return !stop && !c->halted && !thumb(c) && !c->trace && c->jit_enabled &&
+    /* All native bus/SWI callbacks pass these checked helpers. A reduced
+     * deadline leaves after this instruction, before any native backedge can
+     * reuse w22's old budget. Dispatch resumes with the new remaining budget;
+     * callback-free chains retain their existing fast guards. */
+    return !stop && c->run_limit == run_limit && !c->halted && !thumb(c) && !c->trace && c->jit_enabled &&
            c->jit_generation == generation && c->jit_cache_epoch == epoch &&
            c->jit_ram_base == ram_base &&
            (c->cpsr & 0xffu) == status &&
@@ -45,21 +49,21 @@ ARM_FORCE_INLINE int arm_a64_can_continue(const arm920t_t *c, int stop,
 static int arm_a64_exec_checked(arm920t_t *c, const arm_jit_op_t *op,
                                 uint32_t expected_next, uint32_t generation) {
     int stop = op->stop;
-    uint32_t status = c->cpsr & 0xffu, epoch = c->jit_cache_epoch;
+    uint32_t status = c->cpsr & 0xffu, epoch = c->jit_cache_epoch, run_limit = c->run_limit;
     uint8_t *ram_base = c->jit_ram_base;
     arm_jit_exec_classified(c, op);
-    return arm_a64_can_continue(c, stop, expected_next, generation, status, epoch, ram_base);
+    return arm_a64_can_continue(c, stop, expected_next, generation, status, epoch, run_limit, ram_base);
 }
 
 static int arm_a64_mem_checked(arm920t_t *c, const arm_jit_op_t *op,
                                uint32_t addr, uint32_t writeback, uint32_t value,
                                uint32_t expected_next, uint32_t generation) {
     int stop = op->stop;
-    uint32_t status = c->cpsr & 0xffu, epoch = c->jit_cache_epoch;
+    uint32_t status = c->cpsr & 0xffu, epoch = c->jit_cache_epoch, run_limit = c->run_limit;
     uint8_t *ram_base = c->jit_ram_base;
     c->r[15] = op->pc + 4u; /* callback-visible PC, exactly as classified */
     arm_jit_mem_access(c, op, addr, writeback, value);
-    return arm_a64_can_continue(c, stop, expected_next, generation, status, epoch, ram_base);
+    return arm_a64_can_continue(c, stop, expected_next, generation, status, epoch, run_limit, ram_base);
 }
 
 static void a64_u32(a64_emit_t *e, uint32_t v) {
