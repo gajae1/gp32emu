@@ -4215,7 +4215,8 @@ static void gp32_direct_state_apply(gp32_t *g, const gp32_state_image_t *st) {
 static const uint8_t gp32_state_magic_v2[16] = { 'G','P','3','2','S','T','A','T','E','v','0','0','0','2',0,0 };
 static const uint8_t gp32_state_magic_v3[16] = { 'G','P','3','2','S','T','A','T','E','v','0','0','0','3',0,0 };
 static const uint8_t gp32_state_magic_v4[16] = { 'G','P','3','2','S','T','A','T','E','v','0','0','0','4',0,0 };
-static const uint8_t gp32_state_magic[16] = { 'G','P','3','2','S','T','A','T','E','v','0','0','0','5',0,0 };
+static const uint8_t gp32_state_magic_v5[16] = { 'G','P','3','2','S','T','A','T','E','v','0','0','0','5',0,0 };
+static const uint8_t gp32_state_magic[16] = { 'G','P','3','2','S','T','A','T','E','v','0','0','0','6',0,0 };
 static_assert(sizeof(gp32_frame_time_t) == 16u, "fixed frame-time wire extension");
 static_assert(sizeof(gp32_elapsed_time_t) == 16u, "fixed elapsed-time wire extension");
 
@@ -4234,7 +4235,8 @@ static int gp32_state_read(gp32_t *g, state_io_t *io, gp32_state_image_t *direct
     uint8_t got[sizeof(gp32_state_magic)];
     if (!state_io_read(io, got, sizeof(got))) return 0;
     int legacy = memcmp(got, gp32_state_magic_v2, sizeof(got)) == 0;
-    int has_frame_time = memcmp(got, gp32_state_magic, sizeof(got)) == 0;
+    int has_iis_phase = memcmp(got, gp32_state_magic, sizeof(got)) == 0;
+    int has_frame_time = has_iis_phase || memcmp(got, gp32_state_magic_v5, sizeof(got)) == 0;
     int has_spans = has_frame_time || memcmp(got, gp32_state_magic_v4, sizeof(got)) == 0;
     if ((!legacy && !has_spans && memcmp(got, gp32_state_magic_v3, sizeof(got)) != 0) ||
         !state_io_read(io, direct, sizeof(*direct))) return 0;
@@ -4257,7 +4259,7 @@ static int gp32_state_read(gp32_t *g, state_io_t *io, gp32_state_image_t *direct
      * the CPU image must not remain on that stack during the SoC call. */
     arm920t_state_image_t *cpu = malloc(sizeof(*cpu));
     if (!cpu) return 0;
-    int ok = state_io_read(io, cpu, sizeof(*cpu)) && s3c2400_state_load_io(g->soc, io, has_spans);
+    int ok = state_io_read(io, cpu, sizeof(*cpu)) && s3c2400_state_load_io(g->soc, io, has_spans, has_iis_phase);
     if (ok) {
         if (legacy) {
             /* v2 has no clock history. Continue from its former observable

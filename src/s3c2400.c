@@ -126,7 +126,8 @@ struct s3c2400 {
     uint32_t iis[0x14/4];
     uint16_t iis_fifo[2];
     unsigned iis_fifo_index;
-    uint64_t iis_accum;
+    uint64_t iis_accum; /* sample phase: CPU cycles * advertised sample rate */
+    uint32_t iis_cached_run_hz; /* derived; not serialized */
     int16_t *audio;
     uint64_t audio_frames;
     uint64_t audio_cap_frames;
@@ -1022,6 +1023,7 @@ static void io_write32(s3c2400_t *s, uint32_t addr, uint32_t value, uint32_t mas
     }
     if (addr >= 0x15508000u && addr <= 0x15508013u) {
         off = addr - 0x15508000u;
+        uint32_t old_rate = (off == 0x04u || off == 0x08u) ? iis_frame_rate_hz(s) : 0u;
         uint32_t old = reg_array_read(s->iis, sizeof(s->iis), off);
         reg_array_write(s->iis, sizeof(s->iis), off, value, mask);
         if (off == 0x00u && ((old ^ s->iis[0]) & 1u)) s->iis_accum = 0;
@@ -1033,6 +1035,11 @@ static void io_write32(s3c2400_t *s, uint32_t addr, uint32_t value, uint32_t mas
             memset(s->iis_fifo, 0, sizeof(s->iis_fifo));
         }
         if (off == 0x04u || off == 0x08u) {
+            /* Retain elapsed CPU-cycle progress on live divider writes, as
+             * before, but express it in the new rate's numerator units. */
+            uint32_t rate = iis_frame_rate_hz(s);
+            s->iis_accum = (s->iis_accum / old_rate) * rate +
+                           (s->iis_accum % old_rate) * rate / old_rate;
             s->iis_clock_dirty = 1;
         }
         if (off == 0x10u) {
@@ -1605,6 +1612,7 @@ static uint32_t iis_frame_rate_hz(const s3c2400_t *s) {
 }
 
 static uint64_t iis_period_cpu_cycles(const s3c2400_t *s) {
+    /* Legacy wire-cache value only; the running scheduler carries fractions. */
     uint32_t runclk = clk_run(s, MPLLCON);
     uint32_t rate = iis_frame_rate_hz(s);
     if (!runclk) runclk = 40000000u;
@@ -1632,7 +1640,7 @@ static void clock_invalidate(s3c2400_t *s) {
 
 static void clock_apply(s3c2400_t *s, const uint32_t *registers) {
     uint64_t old_lcd_period = lcd_panel_frame_cycles(s);
-    uint64_t old_iis_period = iis_period_cpu_cycles(s);
+    uint64_t old_iis_clock = s3c2400_run_clock_hz(s);
     uint64_t old_pwm_period[5];
     pwm_refresh_clock_cache(s);
     memcpy(old_pwm_period, s->pwm_period_cycles, sizeof(old_pwm_period));
@@ -1641,7 +1649,7 @@ static void clock_apply(s3c2400_t *s, const uint32_t *registers) {
     pwm_refresh_clock_cache(s);
     for (unsigned t = 0; t < 5u; ++t)
         s->pwm_accum[t] = rescale_period_progress(s->pwm_accum[t], old_pwm_period[t], s->pwm_period_cycles[t]);
-    s->iis_accum = rescale_period_progress(s->iis_accum, old_iis_period, iis_period_cpu_cycles(s));
+    s->iis_accum = rescale_period_progress(s->iis_accum, old_iis_clock, s3c2400_run_clock_hz(s));
     uint64_t new_lcd_period = lcd_panel_frame_cycles(s);
     if (old_lcd_period != new_lcd_period) {
         /* Completed scanouts are already counted separately. Only translate
@@ -1693,6 +1701,7 @@ static uint32_t iis_dma_transfers_per_frame(const s3c2400_t *s) {
 static void iis_refresh_clock_cache(s3c2400_t *s) {
     if (!s || !s->iis_clock_dirty) return;
     s->iis_cached_rate_hz = iis_frame_rate_hz(s);
+    s->iis_cached_run_hz = s3c2400_run_clock_hz(s);
     s->iis_cached_period_cycles = iis_period_cpu_cycles(s);
     if (!s->iis_cached_period_cycles) s->iis_cached_period_cycles = 1u;
     s->iis_clock_dirty = 0;
@@ -1737,8 +1746,11 @@ void s3c2400_tick(s3c2400_t *s, uint32_t cpu_cycles) {
     }
     if (s->iis[0] & 1u) {
         iis_refresh_clock_cache(s);
-        uint64_t period = s->iis_cached_period_cycles ? s->iis_cached_period_cycles : 1u;
-        s->iis_accum += cpu_cycles;
+        /* Carry fractional CPU periods instead of rounding each sample's
+         * deadline up. Over one emulated second this emits exactly the rate
+         * advertised to every frontend, independent of tick partitioning. */
+        uint64_t period = s->iis_cached_run_hz;
+        s->iis_accum += (uint64_t)cpu_cycles * s->iis_cached_rate_hz;
         if (s->iis_accum >= period) {
             uint64_t periods64 = s->iis_accum / period;
             uint32_t transfers_per_frame = iis_dma_transfers_per_frame(s);
@@ -1941,7 +1953,8 @@ int s3c2400_state_save_io(const s3c2400_t *s, state_io_t *io) {
     memcpy(st->iis, s->iis, sizeof(st->iis));
     memcpy(st->iis_fifo, s->iis_fifo, sizeof(st->iis_fifo));
     st->iis_fifo_index = s->iis_fifo_index;
-    st->iis_accum = s->iis_accum;
+    /* Keep the legacy body in CPU-cycle units. v6 appends the exact phase. */
+    st->iis_accum = s->iis_accum / iis_frame_rate_hz(s);
     st->audio_frames = s->audio_frames - s->audio_read_frames;
     st->audio_sample_rate_hz = s->audio_sample_rate_hz;
     st->iis_cached_rate_hz = s->iis_cached_rate_hz;
@@ -1966,10 +1979,10 @@ int s3c2400_state_save_io(const s3c2400_t *s, state_io_t *io) {
         span.end_frame -= s->audio_read_frames;
         if (!state_io_write(io, &span, sizeof(span))) return 0;
     }
-    return 1;
+    return state_io_write(io, &s->iis_accum, sizeof(s->iis_accum));
 }
 
-int s3c2400_state_load_io(s3c2400_t *s, state_io_t *io, int has_audio_spans) {
+int s3c2400_state_load_io(s3c2400_t *s, state_io_t *io, int has_audio_spans, int has_iis_phase) {
     if (!s || !io) return 0;
 #ifdef GP32EMU_WASM
     static s3c2400_state_image_t st_storage;
@@ -2013,6 +2026,11 @@ int s3c2400_state_load_io(s3c2400_t *s, state_io_t *io, int has_audio_spans) {
             }
         }
     }
+    uint64_t phase = 0;
+    if (has_iis_phase && !state_io_read(io, &phase, sizeof(phase))) goto bad_audio;
+    /* Leave room for a maximum-width tick before committing any state. */
+    if (phase > UINT64_MAX - (uint64_t)UINT32_MAX * 96000u ||
+        st->iis_accum > UINT64_MAX / 96000u - UINT32_MAX) goto bad_audio;
     smc_destroy(s->smc);
     s->smc = new_smc;
     free(s->ram);
@@ -2057,7 +2075,8 @@ int s3c2400_state_load_io(s3c2400_t *s, state_io_t *io, int has_audio_spans) {
     memcpy(s->iis, st->iis, sizeof(s->iis));
     memcpy(s->iis_fifo, st->iis_fifo, sizeof(s->iis_fifo));
     s->iis_fifo_index = st->iis_fifo_index;
-    s->iis_accum = st->iis_accum;
+    s->iis_accum = has_iis_phase ? phase : st->iis_accum * iis_frame_rate_hz(s);
+    s->iis_cached_run_hz = s3c2400_run_clock_hz(s);
     s->audio_frames = st->audio_frames;
     s->audio_sample_rate_hz = st->audio_sample_rate_hz ? st->audio_sample_rate_hz : 44100u;
     s->iis_cached_rate_hz = st->iis_cached_rate_hz;
@@ -2082,10 +2101,14 @@ bad_audio:
 
 int s3c2400_state_save(const s3c2400_t *s, FILE *f) {
     state_io_t io = state_io_file(f);
-    return s3c2400_state_save_io(s, &io);
+    return state_io_write(&io, "GP32SOC6", 8u) && s3c2400_state_save_io(s, &io);
 }
 
 int s3c2400_state_load(s3c2400_t *s, FILE *f) {
+    uint8_t magic[8];
+    if (!f || fread(magic, 1, sizeof(magic), f) != sizeof(magic)) return 0;
+    int has_phase = !memcmp(magic, "GP32SOC6", sizeof(magic));
+    if (!has_phase && fseek(f, -(long)sizeof(magic), SEEK_CUR)) return 0;
     state_io_t io = state_io_file(f);
-    return s3c2400_state_load_io(s, &io, 1);
+    return s3c2400_state_load_io(s, &io, 1, has_phase);
 }
