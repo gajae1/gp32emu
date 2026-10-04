@@ -1368,3 +1368,52 @@ The installed H700 core SHA-256 is
 The previous core is backed up at `gp32-dev/resume75-installed-core-before.so`.
 Deployment verified the stock frontend, launcher and settings hashes unchanged;
 it did not modify ROMs or saves. Reopen the game to load the updated core.
+
+## resume76: copy contiguous IIS PCM and retain batching across DMA reloads
+
+The active Astonishia title DMA descriptor (`0x50900060`) uses 16-bit units
+and a 96-unit repeating source buffer. Its PCM was still appended one unit
+at a time even when the whole source was known to be contiguous RAM.
+For little-endian hosts, complete pairs can now use `memcpy`; an odd final
+halfword remains in the FIFO. Fixed sources, a pre-existing FIFO halfword,
+RAM-boundary spans and other transfer widths keep their existing path.
+
+An IIS tick that crossed the DMA transfer-count boundary previously batched
+only its first source span, then issued every remaining request separately.
+It now rechecks the ordinary fast-path conditions after auto-reload and can
+batch the next span as well. IRQ requests, stop/reload state and whole-service
+request accounting are retained. Unsupported transfers keep the prior fallback.
+There is no new state format, instruction-timing or sample-rate change.
+
+In a DMA-only H700 workload of two million 32-frame ticks, baseline elapsed
+times were 10.878546 and 6.083164 seconds; candidate times were 0.910186 and
+0.910585 seconds. This synthetic workload omits guest CPU execution. Frequency
+ramped from 480 to 1104 MHz in the first baseline and from 1104 to 1320 MHz in
+the last baseline; both candidate runs started and ended at 1104 MHz. No exact
+matched-clock ratio or whole-game FPS gain is claimed. PCM count/rate/hash and
+the final DMA source pointer agree across all four runs.
+
+Ordinary channel-0 FIFO writes provide an independent reference for the
+16-bit copy path: odd/even counts, unaligned RAM, fixed addresses, pending
+halfwords and the end of RAM are covered. Whole-tick versus single-period
+execution agrees across odd and ordinary reload sizes, single/whole service,
+auto-reload/stop, fractional-period carry, FIFO pairing and IRQ/DMA registers.
+Windows and H700 PCM checks pass. Windows libretro audio, SoC timing, PWM and
+state checks pass; Android ARM64/ARMv7 builds pass. Short Blue NPC and
+Astonishia title replays preserve all seven CPU/video/PCM fields; the final
+H700 title replay also matches the pre-change Windows reference.
+
+Evidence: `F:/GP32/results/resume76-dma-pcm/`. The final review retained the
+previous per-unit fallback after an unsupported transfer, avoiding a repeated
+fast-gate check there; final PCM/device checks cover that adjustment. The
+microbenchmark's supported RAM path is unchanged by that adjustment.
+
+The separate IIS prescaler phase question remains open. The Samsung manual
+defines the register fields, but does not establish live-divider-write phase
+behavior; this optimization does not guess new hardware timing semantics.
+
+Installed H700 core SHA-256:
+`3f9ebb779eb3e063f042fa5a30a719d995a8466a502189935162fd4621188239`.
+Backup: `gp32-dev/resume76-installed-core-before.so`. Stock RetroArch, its
+launcher and protected configuration hashes are unchanged. Physical speaker
+quality and whole-game performance remain separate acceptance work.

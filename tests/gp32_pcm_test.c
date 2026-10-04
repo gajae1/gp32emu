@@ -290,6 +290,97 @@ static int check_iis_dma_word_order(void) {
     return ok;
 }
 
+/* Channel 0 uses ordinary FIFO writes; channel 2 may bulk-copy PCM. Compare
+ * their output and DMA cursors, including the next FIFO write's pairing. */
+static int check_iis_dma_halfword_copy(void) {
+    const uint32_t counts[] = {2u, 3u, 31u, 32u};
+    gp32_t *g = gp32_create(NULL);
+    if (!g) return 0;
+    int ok = 1;
+    for (unsigned shape = 0; ok && shape < 8u; ++shape)
+        for (unsigned n = 0; ok && n < GP32_ARRAY_COUNT(counts); ++n) {
+            unsigned pending = shape & 1u, fixed = (shape >> 1) & 1u;
+            uint32_t source = GP32_RAM_BASE + ((shape & 4u) ? 0x7ffffbu : 0x1001u);
+            int16_t reference[36u * 2u];
+            uint32_t cursor[4];
+            for (unsigned fast = 0; ok && fast < 2u; ++fast) {
+                s3c2400_t *s = g->soc;
+                s3c2400_reset(s);
+                s3c2400_write32(s, 0x14800004u, 0u);
+                s3c2400_write32(s, 0x14800014u, 0u);
+                s3c2400_write32(s, 0x15508008u, 3u << 5);
+                for (uint32_t i = 0; i < 70u && source + i < GP32_RAM_BASE + 0x800000u; ++i)
+                    s3c2400_write8(s, source + i, (uint8_t)(i * 71u + 29u));
+                if (pending) s3c2400_write16(s, 0x15508010u, 0x8123u);
+                uint32_t dma = 0x14600000u + (fast ? 0x40u : 0u);
+                s3c2400_write32(s, dma, source | (fixed ? 1u << 29 : 0u));
+                s3c2400_write32(s, dma + 4u, 0x35508010u);
+                s3c2400_write32(s, dma + 8u, 0x04500000u | counts[n]);
+                s3c2400_write32(s, dma + 24u, 3u);
+                s3c2400_write16(s, 0x15508010u, 0x3456u);
+                s3c2400_write16(s, 0x15508010u, 0xa987u);
+                uint64_t frames;
+                uint32_t rate;
+                const int16_t *pcm = s3c2400_audio_samples(s, &frames, &rate);
+                ok = frames == (counts[n] + pending + 2u) / 2u && rate == 46875u;
+                for (unsigned r = 0; ok && r < 4u; ++r) {
+                    uint32_t v = s3c2400_read32(s, dma + 12u + r * 4u);
+                    if (!fast) cursor[r] = v;
+                    else ok = cursor[r] == v;
+                }
+                if (ok && !fast) memcpy(reference, pcm, (size_t)frames * 2u * sizeof(*pcm));
+                else if (ok) ok = !memcmp(reference, pcm, (size_t)frames * 2u * sizeof(*pcm));
+            }
+        }
+    gp32_destroy(g);
+    if (!ok) fputs("FAIL: IIS halfword DMA differs from ordinary FIFO writes\n", stderr);
+    return ok;
+}
+
+static int check_iis_dma_reload_slicing(void) {
+    const uint32_t counts[] = {3u, 96u};
+    int ok = 1;
+    for (unsigned mode = 0; ok && mode < 4u; ++mode)
+        for (unsigned n = 0; ok && n < GP32_ARRAY_COUNT(counts); ++n) {
+            s3c2400_t *s[2] = {s3c2400_create(0x800000u), s3c2400_create(0x800000u)};
+            if (!s[0] || !s[1]) { s3c2400_destroy(s[0]); s3c2400_destroy(s[1]); return 0; }
+            for (unsigned split = 0; split < 2u; ++split) {
+                s3c2400_t *soc = s[split];
+                s3c2400_write32(soc, 0x14800004u, 0u);
+                s3c2400_write32(soc, 0x14800014u, 0u);
+                s3c2400_write32(soc, 0x15508008u, 3u << 5);
+                for (uint32_t i = 0; i < 96u; ++i)
+                    s3c2400_write16(soc, GP32_RAM_BASE + i * 2u, (uint16_t)(i * 1537u));
+                s3c2400_write32(soc, 0x14600040u, GP32_RAM_BASE);
+                s3c2400_write32(soc, 0x14600044u, 0x35508010u);
+                /* IRQ enabled; single/whole service and auto-reload/stop. */
+                s3c2400_write32(soc, 0x14600048u, 0x10900000u | counts[n] |
+                    ((mode & 1u) ? 1u << 26 : 0u) | ((mode & 2u) ? 1u << 22 : 0u));
+                s3c2400_write32(soc, 0x14600058u, 2u);
+                s3c2400_write32(soc, 0x15508000u, 1u);
+                if (!split) s3c2400_tick(soc, 211u * 1024u + 511u);
+                else {
+                    for (unsigned i = 0; i < 211u; ++i) s3c2400_tick(soc, 1024u);
+                    s3c2400_tick(soc, 511u);
+                }
+                s3c2400_tick(soc, 513u); /* carry the partial final period */
+                s3c2400_write16(soc, 0x15508010u, 0x4567u);
+                s3c2400_write16(soc, 0x15508010u, 0x89abu);
+            }
+            uint64_t frames[2]; uint32_t rates[2];
+            const int16_t *a = s3c2400_audio_samples(s[0], &frames[0], &rates[0]);
+            const int16_t *b = s3c2400_audio_samples(s[1], &frames[1], &rates[1]);
+            ok = frames[0] && frames[0] == frames[1] && rates[0] == rates[1] &&
+                !memcmp(a, b, (size_t)frames[0] * 2u * sizeof(*a));
+            for (uint32_t off = 12u; ok && off <= 24u; off += 4u)
+                ok = s3c2400_read32(s[0], 0x14600040u + off) == s3c2400_read32(s[1], 0x14600040u + off);
+            ok &= s3c2400_read32(s[0], 0x14400000u) == s3c2400_read32(s[1], 0x14400000u);
+            s3c2400_destroy(s[0]); s3c2400_destroy(s[1]);
+        }
+    if (!ok) fputs("FAIL: IIS reload batching changes PCM, DMA or IRQ state\n", stderr);
+    return ok;
+}
+
 static int check_mixed_rate_queue(void) {
     gp32_t *mixed = gp32_create(NULL);
     if (!mixed) return 0;
@@ -348,7 +439,8 @@ int main(void) {
     if (!check_mixed_rate_queue()) return 1;
     int queued_rate_ok = check_iis_queued_rate();
     int dma_order_ok = check_iis_dma_word_order();
-    if (!queued_rate_ok || !dma_order_ok) return 1;
+    if (!queued_rate_ok || !dma_order_ok || !check_iis_dma_halfword_copy() ||
+        !check_iis_dma_reload_slicing()) return 1;
     if (!check_callback_clock_audio(0) || !check_callback_clock_audio(1)) return 1;
     if (!check_sdk_channel_mix()) return 1;
     if (!check_hle_pcm_clock_domains()) return 1;
