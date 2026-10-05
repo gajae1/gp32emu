@@ -55,6 +55,17 @@ performance, audio and input correctness across the library, not boot-only tests
   H700 (LGM 60.95 -> 60.79, Blue 75.42 -> 75.96, Princess 110.63 -> 110.68);
   not merged. The guest's own instruction stream dominates; remaining lever is
   dispatch/helper overhead per access.
+- Rejected (round 154): predicted-successor slot for register-derived exits
+  (LDR/LDM/MOV pc, BX) hopping straight into the next native block from the
+  chain stub, validated by target PC plus a monotonic code version. On PC it
+  halved dispatcher entries for LGM (81.1M -> 40.0M, 97.7% hits) but was not
+  faster; native H700 tests passed after fixing an A64 retired-count bug, yet
+  H700 ABBA lost LGM 60.87 -> 55.04, Blue 75.66 -> 69.31, Princess 110.44 ->
+  106.03 fps. Nested native calls deepen the call stack and the A53 return
+  predictor plus stub guards cost more than the C dispatcher round trip.
+  Together with the deferred-superblock result this argues against further
+  dispatch-stub work on A53. Evidence `F:/GP32/results/round153/w-indirect/`,
+  `F:/GP32/results/round154/abba-ic/`.
 - Audio pops (round 150): the BIOS boot pop, the Dooly Soccer start pop and
   the BIOS sound-menu tick are guest PCM. The menu tick is three 335-sample
   plateaus of exactly 0x8000 that the Europe v1.6.6 BIOS reads from its own
