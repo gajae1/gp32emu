@@ -1033,6 +1033,141 @@ static void case_ldm_pc(void) {
  * four-byte (not eight-byte) alignment and a final pair ending at a page edge.
  * Rn is transferred as well, so store-old-base/load-suppressed-writeback and
  * an odd leftover register are checked alongside the pair path. */
+/* A word load into PC ends the trace: the x64 emitter proves the RAM span,
+ * commits write_r's masked result and retires with the loaded target. A
+ * rejected span re-executes the whole instruction through the checked helper
+ * and still retires; byte loads and unusual shapes keep their old paths.
+ * One instruction of budget proves the load itself ran natively, not the
+ * target it reaches. */
+static void case_native_ldr_pc(void) {
+    for (unsigned mmu = 0; mmu < 2u; ++mmu) {
+        for (unsigned variant = 0; variant < 7u; ++variant) {
+            current_case = "native-ldr-pc";
+            setup_pair();
+            const uint32_t ttb = RAM_BASE + 0x4000u;
+            const uint32_t base = mmu ? 0x10001000u : DATA_ADDR;
+            const uint32_t target = CODE_ADDR + 0x80u;
+            const uint32_t low = variant == 0u ? 0u : variant == 1u ? 2u : variant == 2u ? 3u : 0u;
+            const uint32_t insn =
+                variant == 2u ? 0xe491f004u : /* LDR  pc,[r1],#4  (post-index)  */
+                variant == 3u ? 0xe791f103u : /* LDR  pc,[r1,r3,LSL #2]         */
+                variant == 4u ? 0xe5d1f000u : /* LDRB pc,[r1]  (byte: helper)   */
+                variant == 5u ? 0x0591f000u : /* LDREQ pc,[r1] with Z=0         */
+                variant == 6u ? 0xe591f000u : /* LDR  pc,[r1] out of window     */
+                                0xe591f000u;  /* LDR  pc,[r1]                   */
+            const uint32_t program[] = {
+                0xee02af10u, /* MCR p15,0,r10,c2,c0,0 */
+                0xee01bf10u, /* MCR p15,0,r11,c1,c0,0 */
+                0xe5912000u, /* LDR r2,[r1]: prime the mapping, excluded */
+                insn,
+                0xe3a090eeu, /* must not execute in this budget */
+                0xe1a0f00eu
+            };
+            load_both(program, GP32_ARRAY_COUNT(program));
+            arm920t_set_cpsr(cpu_jit, 0x200000d3u);
+            arm920t_set_cpsr(cpu_ref, 0x200000d3u);
+            set_reg_both(1u, variant == 6u ? IO_ADDR : base);
+            set_reg_both(3u, 1u); /* register-offset variant reads the second word */
+            set_reg_both(10u, ttb);
+            set_reg_both(11u, mmu);
+            set_mem_both(ttb, 2u);                    /* identity BIOS section */
+            set_mem_both(ttb + 0x400u, RAM_BASE | 2u);
+            set_mem_both(DATA_ADDR, target | low);
+            set_mem_both(DATA_ADDR + 4u, target | low);
+            CHECK(arm920t_run(cpu_jit, 3u) == arm920t_run(cpu_ref, 3u), "LDR pc setup budget");
+            compare_state();
+            arm920t_reset_cpu_profile(cpu_jit);
+            CHECK(arm920t_run(cpu_jit, 1u) == arm920t_run(cpu_ref, 1u), "LDR pc load budget");
+            compare_state();
+            CHECK(ref_reg(2u) == (variant == 6u ? 0xffffffffu : (target | low)),
+                  "primed load observed the data word");
+            CHECK(ref_reg(9u) == 0u, "load budget cannot reach the successor");
+            if (variant == 4u) {
+                CHECK(arm920t_get_pc(cpu_ref) == ((target & 0xffu) & ~3u),
+                      "LDRB pc masks the low byte");
+            } else if (variant == 5u) {
+                CHECK(arm920t_get_pc(cpu_ref) == CODE_ADDR + 16u, "failed condition keeps PC sequential");
+            } else if (variant == 6u) {
+                CHECK(arm920t_get_pc(cpu_ref) == 0xfffffffcu, "out-of-window load masks the bus value");
+            } else {
+                CHECK(arm920t_get_pc(cpu_ref) == target, "LDR pc target word alignment");
+            }
+            CHECK((arm920t_get_cpsr(cpu_ref) & 0x20u) == 0u, "LDR pc must retain ARM state");
+            gp32_cpu_profile_t profile;
+            arm920t_get_cpu_profile(cpu_jit, &profile);
+            if (profile.supported && profile.native_backend) {
+                CHECK(profile.native_block_calls == 1u && profile.native_arm_insns == 1u,
+                      "PC load must retire as one native instruction");
+            }
+            if (profile.supported && profile.native_backend == 1u) {
+                int helper = variant == 4u || variant == 6u;
+                CHECK(profile.helper_op_kinds[6] == (uint64_t)helper,
+                      "only byte/out-of-window PC loads need the checked helper");
+            }
+            teardown_pair();
+        }
+    }
+}
+
+/* Seeded chained PC loads: the RAM table holds a seeded permutation of the
+ * load slots, so one program exercises many native commits and dispatch
+ * hand-offs over unpredictable targets. Every load stays inside the proved
+ * RAM window, so no SINGLE_DT helper may run on the x64 direct path. */
+static void case_native_ldr_pc_chain(void) {
+    enum { CHAIN = 20u };
+    uint32_t rng = 0x2545f491u;
+    for (unsigned seed = 0; seed < 8u; ++seed) {
+        for (unsigned mmu = 0; mmu < 2u; ++mmu) {
+            current_case = "native-ldr-pc-chain";
+            setup_pair();
+            const uint32_t ttb = RAM_BASE + 0x8000u;
+            const uint32_t table = DATA_ADDR + 0x100u;
+            const uint32_t low = seed & 3u;
+            uint8_t perm[CHAIN];
+            for (unsigned i = 0; i < CHAIN; ++i) perm[i] = (uint8_t)i;
+            for (unsigned i = CHAIN; i > 1u; --i) {
+                rng ^= rng << 13; rng ^= rng >> 17; rng ^= rng << 5;
+                unsigned j = (rng >> 7) % i;
+                uint8_t t = perm[i - 1u]; perm[i - 1u] = perm[j]; perm[j] = t;
+            }
+            uint32_t program[8u + CHAIN];
+            unsigned n = 0;
+            program[n++] = 0xee02af10u; /* MCR p15,0,r10,c2,c0,0 */
+            program[n++] = 0xee01bf10u; /* MCR p15,0,r11,c1,c0,0 */
+            program[n++] = mmu ? 0xe3a04201u : 0xe3a0440cu; /* MOV r4, table VA */
+            program[n++] = 0xe2844a01u; /* ADD r4,r4,#0x1000 */
+            program[n++] = 0xe2844c01u; /* ADD r4,r4,#0x100  */
+            program[n++] = 0xe5942000u; /* LDR r2,[r4]: prime the mapping */
+            const unsigned first = n;
+            for (unsigned i = 0; i < CHAIN; ++i) program[n++] = 0xe494f004u; /* LDR pc,[r4],#4 */
+            program[n++] = 0xeafffffeu; /* B . */
+            load_both(program, n);
+            arm920t_set_cpsr(cpu_jit, 0x200000d3u);
+            arm920t_set_cpsr(cpu_ref, 0x200000d3u);
+            set_reg_both(10u, ttb);
+            set_reg_both(11u, mmu);
+            set_mem_both(ttb, 2u);
+            set_mem_both(ttb + 0x400u, RAM_BASE | 2u);
+            for (unsigned i = 0; i < CHAIN; ++i)
+                set_mem_both(table + 4u * i, (CODE_ADDR + 4u * (first + perm[i])) | low);
+            /* Run the setup and the mapping prime before the profile reset so
+             * only the chained loads are attributed. */
+            CHECK(arm920t_run(cpu_jit, 6u) == arm920t_run(cpu_ref, 6u), "chain setup budget");
+            compare_state();
+            arm920t_reset_cpu_profile(cpu_jit);
+            run_chunks();
+            gp32_cpu_profile_t profile;
+            arm920t_get_cpu_profile(cpu_jit, &profile);
+            if (profile.supported && profile.native_backend == 1u) {
+                CHECK(profile.helper_op_kinds[6] == 0u,
+                      "chained PC loads must not use SINGLE_DT helpers");
+                CHECK(profile.native_arm_insns > 0u, "chained PC loads must run natively");
+            }
+            teardown_pair();
+        }
+    }
+}
+
 static void case_block_pairs(void) {
     const uint32_t lists[] = {0x5018u, 0x5019u};
     for (unsigned shape = 0; shape < GP32_ARRAY_COUNT(lists); ++shape) {
@@ -3535,6 +3670,9 @@ int main(int argc, char **argv) {
         case_native_ldm_pc();
         case_ldm_pc();
         case_native_mapped_block();
+    } else if (argc == 2 && !strcmp(argv[1], "--ldr-pc-native")) {
+        case_native_ldr_pc();
+        case_native_ldr_pc_chain();
     } else if (argc == 2 && !strcmp(argv[1], "--psr-blocks")) {
         case_native_psr_continuation();
     } else if (argc == 2 && !strcmp(argv[1], "--cpsr")) {
@@ -3596,6 +3734,8 @@ int main(int argc, char **argv) {
     case_live_read32();
     case_terminal_swi_yield();
     case_native_ldm_pc();
+    case_native_ldr_pc();
+    case_native_ldr_pc_chain();
     case_poll_progress();
     case_native_mapped_pages();
     case_native_literal_addresses();
