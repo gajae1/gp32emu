@@ -6,6 +6,24 @@ performance, audio and input correctness across the library, not boot-only tests
 
 ## Current accepted work
 
+- Measurement note (round 150): `build-h700-resume2-profile` sets
+  `GP32EMU_CPU_PROFILE=ON`; its counters cost real time in IO-heavy scenes.
+  Little Girl Mill gameplay (cold BIOS boot, warmup 2400, 1200 frames, H700
+  1.512 GHz, `9934560`) runs 30.98 fps in that build but **45.6 fps** in a
+  plain release bench (`GP32EMU_CPU_PROFILE=OFF`, what the installed core
+  uses). Profile-build ABBA still ranks candidates; absolute device fps must
+  come from a non-profile build. Bisect 69fe388/e728b9b/9934560 showed no
+  regression (30.2/30.1/31.0 profile-build fps, identical output).
+- `9934560`: direct dispatch fast path for plain native blocks (A64 hot path
+  80 -> 64 instructions); H700 ABBA Princess +4.5%, Blue +3.0%, LGM +2.9%.
+- Round 140-149 commits: libretro-only ELF exports; SDK task switch inside
+  direct-HLE callbacks (state v12); x64 JIT natives for leaf frames, logic and
+  carry arithmetic with flags, LDR pc, MSR/MRS, PC-writing data ops; predicate
+  -failed terminal ops commit PC (homebrew JIT divergence); non-cacheable PCs
+  interpreted; big.LITTLE-safe A64 cache maintenance; AArch64 8bpp scanout STP
+  (H700 ASR +2.6%, Her +2.3%); SWI 5 image placement and SWI 0x1FF in
+  direct-HLE; parked SDK scan prefilter. Library sweep: 26 commercial SMC run
+  3600 frames with byte-identical JIT/interpreter state at frame 1200.
 - AArch64 address materialization uses shifted ADD immediates for CPU fields,
   reducing generated instructions while native H700 differential/recycle
   checks pass. See `A64_ADDRESS_MATERIALIZATION.md`; no FPS gain is claimed.
