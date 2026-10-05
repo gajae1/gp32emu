@@ -4011,8 +4011,16 @@ static int direct_try_resume_sdk_task(gp32_t *g) {
      * whose PC points back into RAM.
      */
     uint32_t ram_end = GP32_RAM_BASE + (uint32_t)s3c2400_ram_size(g->soc);
+    const uint8_t *ram = s3c2400_ram_data(g->soc);
+    if (!ram) return 0;
     for (uint32_t t = GP32_RAM_BASE; t + 0x34u < ram_end; t += 4u) {
-        uint32_t state = s3c2400_debug_read32(g->soc, t + 0x14u);
+        uint32_t state = gp32_ld32le(ram + (t - GP32_RAM_BASE) + 0x14u);
+        /* Every other state word fails direct_task_record_plausible() inside
+         * direct_task_state_can_run() below, so the candidate can be neither
+         * resumed nor ticked. Rejecting it here leaves the pass, its side
+         * effects and its cadence identical while skipping the expensive
+         * checks for the bulk of the 8 MiB sweep. */
+        if (state != 1u && state != 2u && state != 4u && state != 8u) continue;
         if (direct_gpos_task_is_internal_timer(g, t)) continue;
         if (state == 4u && direct_task_record_plausible(g, t)) {
             /*
