@@ -1421,7 +1421,10 @@ static GP32_IO_COLD void io_write32_rare(s3c2400_t *s, uint32_t addr, uint32_t v
     if (addr >= 0x15800000u && addr <= 0x15800007u) { reg_array_write(s->adc,sizeof(s->adc),addr-0x15800000u,value,mask); return; }
     if (addr >= 0x15900000u && addr <= 0x15900017u) { reg_array_write(s->spi,sizeof(s->spi),addr-0x15900000u,value,mask); return; }
     if (addr >= 0x15a00000u && addr <= 0x15a0003fu) { reg_array_write(s->mmc,sizeof(s->mmc),addr-0x15a00000u,value,mask); return; }
-    slog(s, "unmapped write32 %08" PRIx32 "=%08" PRIx32, addr, value);
+    /* Attribute the dropped store: the writer PC separates guest code from the
+     * BIOS/HLE paths when a sweep is chasing an unimplemented-I/O report. */
+    slog(s, "unmapped write32 %08" PRIx32 "=%08" PRIx32 " pc=%08" PRIx32,
+         addr, value, s->cpu_irq_sink ? arm920t_get_pc(s->cpu_irq_sink) : 0u);
 }
 
 uint8_t s3c2400_read8(void *user, uint32_t addr) {

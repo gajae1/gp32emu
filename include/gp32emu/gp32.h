@@ -42,6 +42,11 @@ typedef enum gp32_button {
 } gp32_button_t;
 
 typedef void (*gp32_log_fn)(void *user, const char *message);
+/* Opt-in diagnostic sink for exception vector entries a compatibility sweep
+ * needs (undefined instruction, aborts). Independent of the trace callback,
+ * so it can be enabled without a per-instruction trace; a NULL sink keeps the
+ * default behaviour identical. Install with gp32_set_diag_log after create. */
+typedef void (*gp32_diag_fn)(void *user, const char *message);
 
 typedef struct gp32_options {
     const char *bios_path;         /* optional; can be loaded later */
@@ -118,6 +123,7 @@ gp32_status_t gp32_run_cycles(gp32_t *gp32, uint32_t cycles);
  * Pacing carry, callbacks and guest display waits are restored by savestates. */
 gp32_status_t gp32_run_frame(gp32_t *gp32);
 gp32_status_t gp32_set_jit(gp32_t *gp32, int enabled);
+void gp32_set_diag_log(gp32_t *gp32, gp32_diag_fn fn, void *user);
 /* Optional guest CPU speed, 50..400 percent of the clock the game programs
  * (default 100). Only instruction throughput changes; audio pitch, timers and
  * LCD refresh keep real time. Savestates are portable between speeds. */
