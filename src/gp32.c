@@ -2330,11 +2330,52 @@ static int direct_file_helper_looks_seek(gp32_t *g, uint32_t target) {
     return 0;
 }
 
-static void direct_scan_file_hle(gp32_t *g) {
+/*
+ * Samsung/Mirko SMFS SmartMedia library (gp_smc.a, built from the SDK's
+ * lib.src/smfs plus the closed smf_*.o objects).  Homebrew that links this
+ * prebuilt library reaches the card through its own wrapper family instead of
+ * the GPSDK file API: every wrapper opens with "mov ip,sp" and a register-save
+ * prologue, calls the card gate (a function that is exactly
+ * "push {lr}; swi 0x11; pop {pc}"), then calls the closed Samsung driver entry
+ * for its operation.  The emulator's card gate already answers "card present",
+ * but the driver has no FAT volume to resolve, so every open/read/seek fails and
+ * the title can never load its assets.  Matching the wrapper family
+ * structurally - prologue, card gate call, driver entry shape - lets the
+ * existing asset-backed HLE serve these entries too.  No link address or title
+ * address is involved, so any gp_smc.a build is treated the same way.
+ */
+static int direct_smfs_card_gate(gp32_t *g, uint32_t target) {
+    if (!direct_ram_range(g, target, 12u)) return 0;
+    return s3c2400_debug_read32(g->soc, target + 0u) == 0xe92d4000u &&
+           s3c2400_debug_read32(g->soc, target + 4u) == 0xef000011u &&
+           s3c2400_debug_read32(g->soc, target + 8u) == 0xe8bd8000u;
+}
+
+/* Classify a Samsung driver entry as the HLE id of the wrapper that calls it.
+   The heads are the compiled prologues of smOpenFile (read mode), smReadFile,
+   smSeekFile and smCloseFile; the write-side entries keep distinct heads and
+   are deliberately left alone because the HLE has no write service. */
+static uint32_t direct_smfs_driver_hle_id(gp32_t *g, uint32_t target) {
+    if (!direct_ram_range(g, target, 0x14u)) return 0u;
+    uint32_t h0 = s3c2400_debug_read32(g->soc, target + 0x00u);
+    uint32_t h1 = s3c2400_debug_read32(g->soc, target + 0x04u);
+    uint32_t h2 = s3c2400_debug_read32(g->soc, target + 0x08u);
+    uint32_t h3 = s3c2400_debug_read32(g->soc, target + 0x0cu);
+    uint32_t h4 = s3c2400_debug_read32(g->soc, target + 0x10u);
+    if (h0 != 0xe1a0c00du) return 0u;
+    if (h1 == 0xe92dddf0u && h2 == 0xe24cb004u && h3 == 0xe24dd04cu && h4 == 0xe1a08001u) return 1u; /* open */
+    if (h1 == 0xe92ddff0u && h2 == 0xe24cb004u && h3 == 0xe1a0c000u && h4 == 0xe1a00c4cu) return 2u; /* read */
+    if (h1 == 0xe92ddff0u && h2 == 0xe1a0e000u && h3 == 0xe1a00c4eu && h4 == 0xe24cb004u) return 5u; /* seek */
+    if (h1 == 0xe92dddf0u && h2 == 0xe1a01000u && h3 == 0xe1a03c41u && h4 == 0xe24cb004u) return 3u; /* close */
+    return 0u;
+}
+
+static void direct_scan_file_hle_range(gp32_t *g, uint32_t start, uint32_t end) {
     if (!g || !g->direct_fpk_asset_count || !g->direct_fxe_mode) return;
-    uint32_t start = GP32_RAM_BASE;
-    uint32_t end = g->direct_fxe_image_end;
-    if (end <= start || end > GP32_RAM_BASE + (uint32_t)s3c2400_ram_size(g->soc)) end = GP32_RAM_BASE + (uint32_t)s3c2400_ram_size(g->soc);
+    uint32_t ram_end = GP32_RAM_BASE + (uint32_t)s3c2400_ram_size(g->soc);
+    if (start < GP32_RAM_BASE) start = GP32_RAM_BASE;
+    if (end > ram_end) end = ram_end;
+    if (end <= start) return;
     for (uint32_t a = start; a + 0x90u < end; a += 4u) {
         uint32_t w0 = s3c2400_debug_read32(g->soc, a + 0u);
         uint32_t w1 = s3c2400_debug_read32(g->soc, a + 4u);
@@ -2522,7 +2563,51 @@ static void direct_scan_file_hle(gp32_t *g) {
                instead of going through the small sample-index dispatcher above. */
             if (!g->direct_hle_sound_dispatch_addr) s3c2400_write32(g->soc, a, 0xef070007u);
         }
+        /* Samsung/Mirko SMFS wrapper discovery: prologue shape, then a BL to
+           the SWI-0x11 card gate, then a BL to the closed Samsung driver entry.
+           Patch the wrapper entry to the asset-backed HLE SWI for that op. */
+        if (w0 == 0xe1a0c00du) {
+            int prologue_like = 0;
+            if (w1 == 0xe92dd870u)
+                prologue_like = w2 == 0xe1a06002u && w3 == 0xe1a04000u && w4 == 0xe24cb004u &&
+                    s3c2400_debug_read32(g->soc, a + 0x14u) == 0xe1a05001u;
+            else if (w1 == 0xe92dd8f0u)
+                prologue_like = w2 == 0xe1a06002u && w3 == 0xe1a07003u && w4 == 0xe24cb004u &&
+                    s3c2400_debug_read32(g->soc, a + 0x14u) == 0xe1a04000u &&
+                    s3c2400_debug_read32(g->soc, a + 0x18u) == 0xe1a05001u;
+            else if (w1 == 0xe92dd810u)
+                prologue_like = w2 == 0xe24cb004u && w3 == 0xe1a04000u;
+            if (prologue_like) {
+                int saw_gate = 0;
+                uint32_t hle_id = 0u;
+                for (uint32_t off = 0x10u; off <= 0x84u; off += 4u) {
+                    uint32_t pc = a + off;
+                    uint32_t insn = s3c2400_debug_read32(g->soc, pc);
+                    if (!direct_arm_is_bl(insn)) continue;
+                    uint32_t t = direct_arm_branch_target(pc, insn);
+                    if (!saw_gate) {
+                        if (direct_smfs_card_gate(g, t)) saw_gate = 1;
+                        continue;
+                    }
+                    hle_id = direct_smfs_driver_hle_id(g, t);
+                    if (hle_id) break;
+                }
+                if (saw_gate && hle_id) s3c2400_write32(g->soc, a, 0xef070000u | hle_id);
+            }
+        }
     }
+}
+
+/* Fingerprint the image extent the loader currently knows about.  A staged
+   placement hands its own range to direct_scan_file_hle_range because that
+   code did not exist in RAM when the load-time scan ran. */
+static void direct_scan_file_hle(gp32_t *g) {
+    if (!g) return;
+    uint32_t start = GP32_RAM_BASE;
+    uint32_t end = g->direct_fxe_image_end;
+    uint32_t ram_end = GP32_RAM_BASE + (uint32_t)s3c2400_ram_size(g->soc);
+    if (end <= start || end > ram_end) end = ram_end;
+    direct_scan_file_hle_range(g, start, end);
 }
 
 
@@ -3155,8 +3240,9 @@ static int direct_resume_ready_sdk_task(gp32_t *g, uint32_t pc, uint32_t first_t
  * corpus, where hdr[+16] and hdr[+24] are always equal.  Returns 0 when the
  * header is absent or the declared window is not usable, in which case the
  * caller keeps the unrelocated image. */
-static int direct_gxb_place_image(gp32_t *g, uint32_t hdr, uint32_t *out_hdr) {
+static int direct_gxb_place_image(gp32_t *g, uint32_t hdr, uint32_t *out_hdr, uint32_t *out_end) {
     uint32_t ram_end = GP32_RAM_BASE + (uint32_t)s3c2400_ram_size(g->soc);
+    if (out_end) *out_end = 0u;
     if (!direct_ram_range(g, hdr, 0x20u)) return 0;
     uint32_t rom_start = s3c2400_debug_read32(g->soc, hdr + 4u);
     uint32_t rom_end = s3c2400_debug_read32(g->soc, hdr + 8u);
@@ -3184,6 +3270,7 @@ static int direct_gxb_place_image(gp32_t *g, uint32_t hdr, uint32_t *out_hdr) {
     }
     if (zi_limit > rw_limit) direct_zero_if_ram(g, rw_limit, zi_limit - rw_limit);
     *out_hdr = rom_start;
+    if (out_end) *out_end = rom_end;
     return 1;
 }
 
@@ -3610,10 +3697,15 @@ static int direct_fxe_swi(void *user, arm920t_t *cpu, uint32_t imm, uint32_t pc,
             if (w0_branch || w1_branch) {
                 if (!w0_branch) target += 4u;
                 uint32_t placed = target;
-                if (direct_gxb_place_image(g, target, &placed)) {
+                uint32_t placed_end = 0u;
+                if (direct_gxb_place_image(g, target, &placed, &placed_end)) {
                     /* The declared windows (ROM, RW and ZI) were just rewritten
                        under the block cache, so drop every translated block. */
                     arm920t_flush_jit(cpu);
+                    /* A staged image carries its own copy of the CRT and of any
+                       prebuilt libraries; the load-time fingerprint scan ran
+                       before that code existed, so scan the placed range now. */
+                    if (placed_end > placed) direct_scan_file_hle_range(g, placed, placed_end);
                     target = placed;
                 }
                 /* An image only inherits the caller's stack when that value can
