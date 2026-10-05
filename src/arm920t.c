@@ -327,6 +327,8 @@ struct arm920t {
 #if ARM920T_NATIVE_BACKEND == 1u
     arm_jit_io_word_t jit_io_word;
 #endif
+    /* A64 arena: lowest cold byte of the current chunk (0 = chunk end). */
+    size_t jit_cold_floor;
 };
 
 /* Native dispatch only needs the compact header. Decoded instructions live
@@ -1298,6 +1300,7 @@ static void arm920t_jit_invalidate_all(arm920t_t *c, unsigned cause) {
         if (c->jit_blocks) memset(c->jit_blocks, 0, ARM_JIT_BLOCK_COUNT * sizeof(c->jit_blocks[0]));
     }
     c->jit_code_used = 0;
+    c->jit_cold_floor = 0;
 }
 
 static int arm_jit_is_local_cp15_op(uint32_t insn);
