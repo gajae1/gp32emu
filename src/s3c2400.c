@@ -432,7 +432,7 @@ void s3c2400_install_hle_bios(s3c2400_t *s) {
         0xe24dd004u, /* sub sp, sp, #4 */
         0xe92d0380u, /* push {r7, r8, sb} */
         0xe3a08551u, /* mov r8, #0x14400000 */
-        0xe598b014u, /* ldr sb, [r8, #0x14]        INTOFFSET */
+        0xe5989014u, /* ldr sb, [r8, #0x14]        INTOFFSET (ROM 0x98) */
         0xe3a07001u, /* mov r7, #1 */
         0xe1a07917u, /* lsl r7, r7, sb */
         0xe5887000u, /* str r7, [r8]               clear SRCPND */

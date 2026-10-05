@@ -46,6 +46,18 @@ static void copy_zstr(char *dst, size_t dst_len, const uint8_t *src, size_t src_
     dst[n] = '\0';
 }
 
+/*
+ * The container magic is not case-stable across FXE producers: the GP32 SDK
+ * and b2fxec write "fxe ", while other toolchains (for example FireFly's GP32
+ * Game Patcher, gpcheat.fxe) write "FXE " with the same header layout.  Match
+ * the magic case-insensitively; everything after the four magic bytes is
+ * unchanged, so a file is either a real FXE container or it is not.
+ */
+static int fxe_container_magic(const uint8_t *p) {
+    return (p[0] == 'f' || p[0] == 'F') && (p[1] == 'x' || p[1] == 'X') &&
+           (p[2] == 'e' || p[2] == 'E') && p[3] == ' ';
+}
+
 
 static int parse_gxb_header(fxe_image_t *img, char *err, size_t err_len);
 
@@ -617,7 +629,7 @@ int fxe_load_buffer(const uint8_t *data, size_t size, const char *label, fxe_ima
     if (!file) { ferr(err, err_len, "out of memory copying %s", label ? label : "FXE buffer"); return 0; }
     if (size) memcpy(file, data, size);
 
-    if (size >= FXE_FIXED_PREFIX_SIZE + 8u && file[0] == FXE_MAGIC0 && file[1] == FXE_MAGIC1 && file[2] == FXE_MAGIC2 && file[3] == FXE_MAGIC3) {
+    if (size >= FXE_FIXED_PREFIX_SIZE + 8u && fxe_container_magic(file)) {
         uint32_t legacy_file_size = gp32_ld32le(&file[4]);
         uint32_t info_size = gp32_ld32le(&file[8]);
         uint32_t payload_size = gp32_ld32le(&file[FXE_FIXED_PREFIX_SIZE]);
