@@ -3355,13 +3355,20 @@ static void arm_jit_compile_native(arm920t_t *c, arm_jit_block_t *b) {
             continue;
         }
         if (arm_jit_is_side_effect_free_nop(op->insn)) continue;
-        if (op->stop) x64_mov_mem_cpu_imm(&e, arm_reg_off(15), op->pc + 4u);
+        /* Every op the block leaves on returns to the dispatcher without the
+         * fall-through epilogue. A failed condition therefore still has to
+         * commit the architectural PC that arm_jit_exec_classified_bc
+         * installs before its condition check; otherwise the dispatcher
+         * re-enters this same PC and no guest instruction ever retires. */
+        int leaves_block = op->stop || op->kind == ARM_JIT_OP_UNDEFINED || op->kind == ARM_JIT_OP_SWI ||
+                           (op->kind == ARM_JIT_OP_COPROC && op->reserved != 6u);
+        if (leaves_block) x64_mov_mem_cpu_imm(&e, arm_reg_off(15), op->pc + 4u);
         x64_emit_cond_skip(&e, op->cond, patches, &npatch);
         if (!x64_emit_one(&e, op, (uint32_t)i + 1u)) {
             x64_emit_call_helper_op(&e, op);
-            if (op->stop || op->kind == ARM_JIT_OP_UNDEFINED || op->kind == ARM_JIT_OP_SWI || (op->kind == ARM_JIT_OP_COPROC && op->reserved != 6u)) x64_emit_return_imm(&e, (uint32_t)i + 1u);
+            if (leaves_block) x64_emit_return_imm(&e, (uint32_t)i + 1u);
         }
-        if (op->stop || op->kind == ARM_JIT_OP_UNDEFINED || op->kind == ARM_JIT_OP_SWI || (op->kind == ARM_JIT_OP_COPROC && op->reserved != 6u)) {
+        if (leaves_block) {
             for (unsigned j = 0; j < npatch; ++j) x64_patch32(&e, patches[j], e.pos);
             if (npatch || e.pos < 2 || e.b[e.pos - 1u] != 0xc3u) x64_emit_return_imm(&e, (uint32_t)i + 1u);
             break;
