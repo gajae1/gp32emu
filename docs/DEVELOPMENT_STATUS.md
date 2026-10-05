@@ -79,6 +79,21 @@ performance, audio and input correctness across the library, not boot-only tests
   with gains at or under 1%; the IO cost is dominated by the native-to-C
   transition itself. Evidence `F:/GP32/results/round155/w-a64io/`,
   `F:/GP32/results/round155/abba-io2/`.
+- Rejected (round 155): direct block linking with tail jumps (four link
+  slots per block, lazy fill from the exit fallback, guards re-checked in the
+  exit stub, A64 `br` into the successor body). PC: native block calls LGM
+  -42%, Blue -84%, identical output, x64 ctest pass. The first A64 build
+  crashed on device (leaf blocks do not save x30 and the fill `blr` clobbered
+  it; found with Unicorn, fixed). After the fix all native H700 tests passed,
+  but ABBA lost LGM 60.91 -> 52.96, Blue 75.46 -> 67.37, Princess 110.87 ->
+  100.80 fps. H700 SIGPROF: `arm_jit_link_fill` alone is 2.1% and JIT code
+  grew from ~50% to ~53%, so slots are refilled repeatedly (static successor
+  PCs that miss guards, e.g. budget/IRQ, fall back every time) and the per-exit
+  guard sequence costs more than the C fast path it replaces. Three
+  dispatch-avoidance designs (predicted successor, deferred superblock, tail
+  linking) all lost 4-13% on the A53. Evidence
+  `F:/GP32/results/round155/w-link2/`, `F:/GP32/results/round155/abba-link/`,
+  `F:/GP32/results/round155/sampler-link/`.
 - Audio pops (round 150): the BIOS boot pop, the Dooly Soccer start pop and
   the BIOS sound-menu tick are guest PCM. The menu tick is three 335-sample
   plateaus of exactly 0x8000 that the Europe v1.6.6 BIOS reads from its own
