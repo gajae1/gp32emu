@@ -234,6 +234,11 @@ if (GP32EMU_BUILD_BENCHMARK)
     add_executable(gp32_smc_inspect scripts/smc_inspect.c)
     target_include_directories(gp32_smc_inspect PRIVATE src)
     target_link_libraries(gp32_smc_inspect PRIVATE gp32emu)
+    # Compatibility sweep probe: same drive and identity JSON as gp32_bench
+    # plus frame-stamped core log lines and a per-frame PC/video trace.
+    add_executable(gp32_compat scripts/compat_probe.c)
+    target_include_directories(gp32_compat PRIVATE src)
+    target_link_libraries(gp32_compat PRIVATE gp32emu)
 endif()
 
 if (GP32EMU_BUILD_LIBRETRO)

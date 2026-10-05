@@ -15,6 +15,10 @@ typedef void (*arm_write16_fn)(void *user, uint32_t addr, uint16_t value);
 typedef void (*arm_write32_fn)(void *user, uint32_t addr, uint32_t value);
 typedef uint8_t *(*arm_fastmem_fn)(void *user, uint32_t addr, size_t bytes, int write);
 typedef void (*arm_log_fn)(void *user, const char *line);
+/* Opt-in diagnostic sink for exception vector entries that a compatibility
+ * sweep needs to see (undefined instruction, aborts). Separate from the
+ * instruction trace so it can be enabled without tracing every instruction. */
+typedef void (*arm_diag_fn)(void *user, const char *line);
 typedef int (*arm_swi_fn)(void *user, arm920t_t *cpu, uint32_t imm, uint32_t pc, int thumb);
 
 typedef struct arm_bus {
@@ -75,6 +79,7 @@ void arm920t_flush_jit(arm920t_t *cpu);
 void arm920t_set_irq(arm920t_t *cpu, int state);
 void arm920t_set_fiq(arm920t_t *cpu, int state);
 void arm920t_set_trace(arm920t_t *cpu, int enabled, arm_log_fn log, void *user);
+void arm920t_set_diag(arm920t_t *cpu, arm_diag_fn fn, void *user);
 void arm920t_set_swi_handler(arm920t_t *cpu, arm_swi_fn fn, void *user);
 void arm920t_set_reg(arm920t_t *cpu, unsigned reg, uint32_t value);
 void arm920t_set_cpsr(arm920t_t *cpu, uint32_t value);

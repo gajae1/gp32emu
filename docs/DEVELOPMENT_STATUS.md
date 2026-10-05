@@ -6,6 +6,16 @@ performance, audio and input correctness across the library, not boot-only tests
 
 ## Current accepted work
 
+- Accepted (round 163): input-driven commercial-library sweep and its opt-in
+  diagnostics. gp32_compat now records frame-stamped core logs and per-frame
+  PC/video hashes; an opt-in diag sink reports undefined-instruction/abort
+  vector entries without changing state, and dropped IO stores include the
+  writer PC. All 28 commercial cards ran 3,600 measured frames per engine with
+  menu/first-screen input: zero non-zero exits, undefined instructions or
+  aborts; no hang (worst temporary static stretch 808 frames, then it resumed);
+  JIT and interpreter identity fields matched on every card. The 5,516 dropped
+  stores are all BIOS ROM-window writes and match between engines. Evidence
+  F:/GP32/results/round163/w-compat-input/.
 - Accepted (round 163): libretro output declick plus an audio underrun-risk
   counter. Guest PCM remains bit-identical; the frontend delivery stream now
   replaces single-sample swings >= 25% full scale with the same 44-frame

@@ -304,6 +304,8 @@ struct arm920t {
     int trace;
     arm_log_fn log;
     void *log_user;
+    arm_diag_fn diag;
+    void *diag_user;
     arm_swi_fn swi;
     void *swi_user;
     arm_jit_block_t *jit_blocks;
@@ -585,6 +587,17 @@ ARM_FORCE_INLINE int cond_pass(const arm920t_t *c, unsigned cond) {
 
 static void exception_enter(arm920t_t *c, uint32_t m, uint32_t vector, uint32_t lr, uint32_t extra_flags) {
     uint32_t old = c->cpsr;
+    /* Compatibility-sweep diagnostics: report undefined-instruction and abort
+     * vector entries through the opt-in sink. The faulting address is the
+     * return address minus the pre-exception instruction size. The machine
+     * state below is untouched, so an installed sink cannot change the run. */
+    if (c->diag && (vector == 0x04u || vector == 0x0cu || vector == 0x10u)) {
+        char b[128];
+        snprintf(b, sizeof(b), "%s fault=%08" PRIx32 " lr=%08" PRIx32 " cpsr=%08" PRIx32,
+                 vector == 0x04u ? "undefined-instruction" : (vector == 0x0cu ? "prefetch-abort" : "data-abort"),
+                 lr - ((old & T_FLAG) ? 2u : 4u), lr, old);
+        c->diag(c->diag_user, b);
+    }
     switch_mode(c, m);
     uint32_t *spsr = spsr_ptr(c, m);
     if (spsr) *spsr = old;
@@ -683,6 +696,7 @@ void arm920t_destroy(arm920t_t *c) {
     free(c);
 }
 void arm920t_set_trace(arm920t_t *c, int en, arm_log_fn log, void *user) { if (c) { c->trace = en; c->log = log; c->log_user = user; } }
+void arm920t_set_diag(arm920t_t *c, arm_diag_fn fn, void *user) { if (c) { c->diag = fn; c->diag_user = user; } }
 void arm920t_set_swi_handler(arm920t_t *c, arm_swi_fn fn, void *user) { if (c) { c->swi = fn; c->swi_user = user; } }
 void arm920t_set_reg(arm920t_t *c, unsigned reg, uint32_t value) {
     if (c && reg < 16u) {

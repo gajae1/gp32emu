@@ -4546,6 +4546,12 @@ gp32_status_t gp32_set_jit(gp32_t *g, int enabled) {
     return GP32_OK;
 }
 
+/* Opt-in sweep diagnostics: undefined-instruction and abort vector entries.
+ * Not part of the machine state; a NULL sink leaves the run unchanged. */
+void gp32_set_diag_log(gp32_t *g, gp32_diag_fn fn, void *user) {
+    if (g && g->cpu) arm920t_set_diag(g->cpu, fn, user);
+}
+
 gp32_status_t gp32_set_cpu_speed_percent(gp32_t *g, uint32_t percent) {
     if (!g || !g->soc || g->direct_cpu_running) return GP32_ERR_INVALID_ARGUMENT;
     if (!s3c2400_set_cpu_speed_percent(g->soc, percent)) {
