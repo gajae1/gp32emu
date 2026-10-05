@@ -139,7 +139,7 @@ static int arm_a64_io_word_checked(arm920t_t *c, const arm_jit_op_t *op,
         write_r(c, rd, v);
     } else {
         /* Same callback selection as arm_bc_st_word_phys' identity-I/O arm. */
-        c->bus.write32(c->bus.user, pa, value);
+        (c->bus.write32_io ? c->bus.write32_io : c->bus.write32)(c->bus.user, pa, value);
     }
     if (wb) write_r(c, rn, writeback);
     return arm_a64_can_continue(c, stop, expected_next, generation, status, epoch, run_limit, ram_base);

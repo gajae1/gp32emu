@@ -2058,7 +2058,10 @@ ARM_FORCE_INLINE uint32_t arm_bc_ld_half_phys(arm920t_t *c, uint32_t addr) {
 ARM_FORCE_INLINE void arm_bc_st_word_phys(arm920t_t *c, uint32_t addr, uint32_t v) {
     uint32_t a = addr & ~3u;
     if (c->jit_ram_base && arm_jit_addr_in_ram(a, 4u)) { gp32_st32le(c->jit_ram_base + (a - ARM_JIT_RAM_BASE_ADDR), v); return; }
-    if (arm_jit_addr_in_identity_io(a, 4u)) { c->bus.write32(c->bus.user, a, v); return; }
+    if (arm_jit_addr_in_identity_io(a, 4u)) {
+        (c->bus.write32_io ? c->bus.write32_io : c->bus.write32)(c->bus.user, a, v);
+        return;
+    }
     uint8_t *p = fastmem(c, a, 4u, 1);
     if (p) gp32_st32le(p, v);
     else c->bus.write32(c->bus.user, a, v);

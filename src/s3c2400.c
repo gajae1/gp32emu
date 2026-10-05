@@ -167,6 +167,8 @@ struct s3c2400 {
 
 static uint8_t *s3c2400_fastmem(void *user, uint32_t addr, size_t bytes, int write);
 static uint32_t s3c2400_read32_io(void *user, uint32_t addr);
+static void s3c2400_write32_io(void *user, uint32_t addr, uint32_t value);
+static void io_write32(s3c2400_t *s, uint32_t addr, uint32_t value, uint32_t mask);
 static uint32_t lcd_current_line_count(s3c2400_t *s);
 static uint32_t lcd_current_status(s3c2400_t *s);
 static int lcd_is_tft(const uint32_t *regs);
@@ -352,6 +354,7 @@ arm_bus_t s3c2400_get_bus(s3c2400_t *s) {
     b.write8 = s3c2400_write8;
     b.write16 = s3c2400_write16;
     b.write32 = s3c2400_write32;
+    b.write32_io = s3c2400_write32_io;
     b.fastmem = s3c2400_fastmem;
     b.user = s;
     b.is_stable_read32 = s3c2400_is_stable_read32;
@@ -545,6 +548,20 @@ static void gp32_smc_update(s3c2400_t *s) {
     if (!m->chip) { smc_lines_reset(m); return; }
     if (m->do_write && !m->read) gp32_smc_write(s, m->datatx);
     else if (!m->do_write && m->do_read && m->read && !m->cmd_latch && !m->add_latch) m->datarx = gp32_smc_read(s);
+}
+
+/* The GPIO bit-bang driver rewrites the same latched lines millions of times
+ * per frame, and gp32_smc_update is called on every one of those writes.  It
+ * has an observable effect only when the card is selected and either a data
+ * write is pending or a whole data-read window is open; that test is exact
+ * (every other combination leaves the latched lines and the card untouched),
+ * so callers may skip the call whenever it is false.  Unlike "the latched
+ * bits did not change" this keeps the NAND read/write side effects, which
+ * fire on every call that reaches them. */
+static int gp32_smc_update_does_work(const gp32_smc_lines_t *m) {
+    if (!m->chip) return 1; /* the call resets every latched line */
+    if (m->do_write) return !m->read;
+    return m->do_read && m->read && !m->cmd_latch && !m->add_latch;
 }
 
 static void check_irq(s3c2400_t *s) {
@@ -994,6 +1011,15 @@ static uint32_t s3c2400_read32_io(void *user, uint32_t addr) {
     }
 }
 
+/* Identity-IO word store: the JIT proves the address is 4-byte aligned and
+ * inside the device window before calling this, so the general entry's RAM
+ * probe (RAM lives at 0x0c000000, never in 0x14000000..0x16000000) and its
+ * width-alignment re-check are both already known. Everything else matches
+ * s3c2400_write32 for a full-word store. */
+static void s3c2400_write32_io(void *user, uint32_t addr, uint32_t value) {
+    io_write32((s3c2400_t *)user, addr, value, 0xffffffffu);
+}
+
 uint8_t s3c2400_eeprom_read8(const s3c2400_t *s, uint32_t addr) {
     return s->eeprom[addr & 0x1fffu];
 }
@@ -1052,25 +1078,38 @@ static void io_write32(s3c2400_t *s, uint32_t addr, uint32_t value, uint32_t mas
     /* GPIO dominates SmartMedia bit-banging; preserve every signal update
      * while avoiding the unrelated peripheral range checks on each edge. */
     if (addr >= 0x15600000u && addr <= 0x1560005bu) {
-        uint32_t old_gpe = s->gpio[0x30u >> 2];
-        /* Only codec pin transitions split execution; unchanged upper pins
-           on ordinary SmartMedia writes retain the GPIO fast path. */
-        int codec_output = (s->gpio[0x2cu >> 2] & 0xfc0000u) == 0x540000u;
-        if (s->cpu_run_active && codec_output && addr == 0x15600030u &&
-            ((old_gpe ^ value) & mask & 0xe00u)) {
-            defer_io_write(s, addr, value, mask);
-            return;
-        }
-        off=addr-0x15600000u; reg_array_write(s->gpio,sizeof(s->gpio),off,value,mask);
-        switch(off){
-        case 0x08: s->smc_lines.read = ((s->gpio[off>>2] & 1u) == 0); gp32_smc_update(s); break;
-        case 0x0c: s->smc_lines.datatx = (uint8_t)(s->gpio[off>>2] & 0xffu); break;
-        case 0x24: s->smc_lines.do_read=((s->gpio[off>>2]&0x100u)==0); s->smc_lines.chip=((s->gpio[off>>2]&0x80u)==0); s->smc_lines.wp=((s->gpio[off>>2]&0x40u)==0); gp32_smc_update(s); break;
-        case 0x30: s->smc_lines.cmd_latch=((s->gpio[off>>2]&0x20u)!=0); s->smc_lines.add_latch=((s->gpio[off>>2]&0x10u)!=0); s->smc_lines.do_write=((s->gpio[off>>2]&0x08u)==0); gp32_smc_update(s); break;
-        }
-        if (codec_output && off == 0x30u && ((old_gpe ^ s->gpio[off >> 2]) & 0xe00u)) {
-            gp32_codec_gpio(&s->codec, old_gpe, s->gpio[off >> 2]);
-            s->codec_gain_q16 = gp32_codec_gain_q16(&s->codec);
+        /* Every GPIO caller funnels aligned word offsets through here, so the
+         * register word is addressed directly; the range check above already
+         * keeps off inside gpio[]. */
+        off = addr - 0x15600000u;
+        uint32_t *reg = &s->gpio[off >> 2];
+        /* Only GPEDAT carries the codec pins: take the pin snapshot, the
+         * deferred-write split and the codec update on that one register so
+         * ordinary SmartMedia GPBDAT/GPC/GPE writes skip all codec work. */
+        if (off == 0x30u) {
+            uint32_t old_gpe = *reg;
+            int codec_output = (s->gpio[0x2cu >> 2] & 0xfc0000u) == 0x540000u;
+            if (s->cpu_run_active && codec_output &&
+                ((old_gpe ^ value) & mask & 0xe00u)) {
+                defer_io_write(s, addr, value, mask);
+                return;
+            }
+            *reg = (old_gpe & ~mask) | (value & mask);
+            s->smc_lines.cmd_latch=((*reg&0x20u)!=0);
+            s->smc_lines.add_latch=((*reg&0x10u)!=0);
+            s->smc_lines.do_write=((*reg&0x08u)==0);
+            if (gp32_smc_update_does_work(&s->smc_lines)) gp32_smc_update(s);
+            if (codec_output && ((old_gpe ^ *reg) & 0xe00u)) {
+                gp32_codec_gpio(&s->codec, old_gpe, *reg);
+                s->codec_gain_q16 = gp32_codec_gain_q16(&s->codec);
+            }
+        } else {
+            *reg = (*reg & ~mask) | (value & mask);
+            switch(off){
+            case 0x08: s->smc_lines.read = ((*reg & 1u) == 0); if (gp32_smc_update_does_work(&s->smc_lines)) gp32_smc_update(s); break;
+            case 0x0c: s->smc_lines.datatx = (uint8_t)(*reg & 0xffu); break;
+            case 0x24: s->smc_lines.do_read=((*reg&0x100u)==0); s->smc_lines.chip=((*reg&0x80u)==0); s->smc_lines.wp=((*reg&0x40u)==0); if (gp32_smc_update_does_work(&s->smc_lines)) gp32_smc_update(s); break;
+            }
         }
         /* Every GPIO width/offset funnels here: register, NAND and latch
          * effects are already applied, so refresh both live words last. */
