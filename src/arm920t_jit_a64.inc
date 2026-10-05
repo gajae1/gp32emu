@@ -106,6 +106,45 @@ static int arm_a64_ldword_checked(arm920t_t *c, const arm_jit_op_t *op,
     return arm_a64_can_continue(c, stop, expected_next, generation, status, epoch, run_limit, ram_base);
 }
 
+/* Direct word access into the identity-mapped device window, entered only
+ * after the emitted RAM guard rejected the address and the emitted probe
+ * proved the current TLB entry and the physical 0x14000000..0x16000000
+ * window the checked helpers route straight to the bus callbacks.  It repeats
+ * the observable steps of arm_a64_mem_checked/arm_jit_mem_access - the
+ * callback-visible PC, one bus access, destination then writeback, then the
+ * same continuation snapshot - while skipping the second mmu_translate, the
+ * transfer decode and the physical-window probes that the emitter already
+ * performed.  Cycle and timing state stay untouched exactly as there, and an
+ * I/O write keeps the identical exit condition (interrupts, timers, halt,
+ * trace, epoch/generation, RAM rebase).  Address and value are handed over
+ * already computed: pa is 4-byte aligned and inside that window, rotation is
+ * (VA & 3) * 8, writeback is base +/- offset (used only when the decoded
+ * shape writes back).  No profiling counter is advanced: like the RAM
+ * fast path this is a native fast path, not a checked-helper invocation. */
+static int arm_a64_io_word_checked(arm920t_t *c, const arm_jit_op_t *op,
+                                   uint32_t pa, uint32_t value, uint32_t writeback,
+                                   uint32_t rotation, uint32_t expected_next,
+                                   uint32_t generation) {
+    int stop = op->stop;
+    unsigned rd = op->b, rn = op->a; /* callbacks can invalidate decoded-op storage */
+    int load = !!(op->d & ARM_BC_SD_L);
+    int wb = !(op->d & ARM_BC_SD_P) || (op->d & ARM_BC_SD_W);
+    uint32_t status = c->cpsr & 0xffu, epoch = c->jit_cache_epoch, run_limit = c->run_limit;
+    uint8_t *ram_base = c->jit_ram_base;
+    c->r[15] = op->pc + 4u; /* callback-visible PC, exactly as classified */
+    if (load) {
+        /* Same callback selection as arm_bc_ld_word_phys' identity-I/O arm. */
+        uint32_t v = (c->bus.read32_io ? c->bus.read32_io : c->bus.read32)(c->bus.user, pa);
+        if (rotation) v = gp32_ror32(v, rotation);
+        write_r(c, rd, v);
+    } else {
+        /* Same callback selection as arm_bc_st_word_phys' identity-I/O arm. */
+        c->bus.write32(c->bus.user, pa, value);
+    }
+    if (wb) write_r(c, rn, writeback);
+    return arm_a64_can_continue(c, stop, expected_next, generation, status, epoch, run_limit, ram_base);
+}
+
 static void a64_u32(a64_emit_t *e, uint32_t v) {
     if (e->pos < e->cap) e->code[e->pos++] = v;
     else e->fail = 1;
@@ -415,6 +454,66 @@ static void a64_mem_slow(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done,
     a64_patch(e, next, e->pos);
 }
 
+/* Direct word transfer into the identity-mapped device window, emitted after
+ * the RAM guard rejected the address.  w12 still holds the unaligned VA, w2 the
+ * base +/- offset the shape would write back and w11 the ARM unaligned word
+ * rotation amount.  Nothing is committed before the proof: the mapping must be
+ * the current full-mask TLB entry (MMU on) or the identity mapping (MMU off),
+ * and the aligned physical word must lie inside the device window
+ * 0x14000000..0x15ffffff, whose top seven address bits are 0b0001010.  The
+ * checked helper still owns
+ * every miss, tiny or unusual page, fault-tolerant identity fallback, byte
+ * access and any other target.  On success arm_a64_io_word_checked performs the
+ * bus callback with this physical address plus the same register commits and
+ * continuation check; *cont receives the continuation edge. */
+static void a64_io_word(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done,
+                        int load, int wb, size_t *cold, unsigned *ncold, size_t *cont) {
+    a64_mask(e, 3, 12, ~3u);  /* the checked path translates the aligned word */
+    if (e->mmu) {
+        _Static_assert(sizeof(arm_tlb_entry_t) == 16u &&
+                       offsetof(arm_tlb_entry_t, pa_base) == 4u &&
+                       offsetof(arm_tlb_entry_t, mask) == 8u &&
+                       offsetof(arm_tlb_entry_t, valid) == 12u,
+                       "direct I/O packed TLB layout");
+        /* Read the authoritative TLB; never fill it or widen a restored mask. */
+        a64_ubfx(e, 6, 3, 12, 12);
+        a64_cpu_addr(e, 8, offsetof(arm920t_t, tlb_entry));
+        a64_rr(e, 0x8b001000u, 8, 8, 6); /* add x8, x8, x6, lsl #4 */
+        a64_u32(e, 0x29400000u | (9u << 10) | (8u << 5) | 7u); /* ldp w7, w9, [x8]: VA, PA */
+        a64_u32(e, 0x29410000u | (6u << 10) | (8u << 5) | 5u); /* ldp w5, w6, [x8, #8]: mask, valid */
+        a64_u32(e, 0x34000000u | 6u); /* cbz w6, cold */
+        cold[(*ncold)++] = e->pos - 1u;
+        a64_rr(e, 0x0a200000u, 6, 3, 5); /* bic w6, w3, w5: outside the mapped page? */
+        a64_cmp(e, 6, 7);
+        cold[(*ncold)++] = a64_jump(e, 1); /* NE */
+        a64_rr(e, 0x0a000000u, 6, 3, 5); /* and w6, w3, w5 */
+        a64_rr(e, 0x2a000000u, 0, 6, 9); /* orr w0, w6, w9: physical word address */
+    } else a64_mov(e, 0, 3);
+    /* 0x14000000..0x15ffffff is exactly bit 31..25 == 0b0001010 == 0xA; the
+     * address is already word aligned, so the last word 0x15fffffc is the
+     * window's inclusive end and 0x16000000 is already outside. */
+    a64_ubfx(e, 6, 0, 25, 7);
+    a64_cmp_imm(e, 6, 0x0au);
+    /* Every rejection still leaves w12 (the original VA) and w2 (base +/- the
+     * decoded offset) exactly as the checked helper expects them. */
+    cold[(*ncold)++] = a64_jump(e, 1); /* NE: not identity I/O */
+    if (wb) a64_mov(e, 4, 2);             /* writeback value for this helper */
+    a64_mov(e, 2, 0);                     /* proven physical address */
+    if (load) a64_mov(e, 5, 11);          /* unaligned rotation the helper applies */
+    else a64_guest(e, 3, op->b, op->pc);  /* store source, read before the callback */
+    a64_imm(e, 6, e->expected_next);
+    a64_imm(e, 7, e->generation);
+    a64_rr(e, 0xaa000000u, 0, 31, 19);
+    a64_ptr(e, 1, (uintptr_t)op);
+    a64_ptr(e, 16, (uintptr_t)arm_a64_io_word_checked);
+    a64_u32(e, 0xd63f0200u); /* blr x16 */
+    size_t keep = e->pos;
+    a64_u32(e, 0x35000000u); /* cbnz w0: commits are done, may continue */
+    a64_return(e, done);
+    a64_patch(e, keep, e->pos);
+    *cont = a64_jump(e, 14);
+}
+
 /* Immediate ARM shifter: w1 is the value, w3 the old CPSR, w4 the
  * resulting carry at bit 29 when requested. Register shifts use the separate
  * a64_regshift_op2 path to retain ARMv4's amount >=32 semantics. */
@@ -712,8 +811,16 @@ static int a64_single_dt(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
     size_t next = a64_jump(e, 14);
     for (unsigned i = 0; i < nslow; ++i) a64_patch(e, slow[i], e->pos);
     if (access && load && !byte && !wb) a64_live_read32(e, op->b, next);
+    /* A word access whose mapping the RAM guard rejected gets one direct
+     * identity-I/O attempt with the address this instruction already computed;
+     * everything the probe rejects lands on the checked helper below. */
+    size_t io_cold[4], io_cont = 0;
+    unsigned nio = 0;
+    if (access && !byte) a64_io_word(e, op, done, load, wb, io_cold, &nio, &io_cont);
+    for (unsigned i = 0; i < nio; ++i) a64_patch(e, io_cold[i], e->pos);
     if (access) a64_mem_slow(e, op, done, load, wb);
     else a64_slow(e, op, done);
+    if (io_cont) a64_patch(e, io_cont, e->pos);
     a64_patch(e, next, e->pos);
     return 1;
 }
