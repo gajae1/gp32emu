@@ -6,6 +6,19 @@ performance, audio and input correctness across the library, not boot-only tests
 
 ## Current accepted work
 
+- `4043416`: SMFS card-library wrappers (Samsung/Mirko gp_smc.a, card gate
+  SWI 0x11 + closed FAT driver) are fingerprinted structurally in direct
+  FPK/FXE mode and routed to the asset-backed file HLE. WinterSports Eins
+  (both versions) and DynaMate v1/v2 now render instead of a black screen;
+  non-SMFS titles byte-identical; commercial SMC scenes identical.
+- Library census at `0f4b15f` (round 159, `F:/GP32/results/round159/w-libsweep/`):
+  40 unique SMC cards x {auto input, START script} x {JIT, interpreter},
+  3600 frames from BIOS boot: no crashes, JIT == interpreter in 80/80
+  configurations at frames 1200 and 3600. Five TOSEC freeware cards with the
+  GPMM/ layout (Dynamate, GlooP Deluxe, Pinball Dreams, SmashGP v0.4c, Tears)
+  stay on the BIOS "DATA LOADING" screen, as on hardware without the Free
+  Launcher; they run when loaded directly. LGM remains the heaviest card
+  (~582k native guest instructions and ~64.6k block calls per frame).
 - Round 158-159 (installed `308ebb5`, core sha256 `eaae9686…`):
   `526a937` LCD observations once per run window and IO dispatch by
   addr>>20 (LGM +1.1%); `4a00d54` LCDCON5 certified as a run-invariant poll
