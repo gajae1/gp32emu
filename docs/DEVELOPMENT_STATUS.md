@@ -6,6 +6,16 @@ performance, audio and input correctness across the library, not boot-only tests
 
 ## Current accepted work
 
+- Audio pops (round 150): the BIOS boot pop, the Dooly Soccer start pop and
+  the BIOS sound-menu tick are guest PCM. The menu tick is three 335-sample
+  plateaus of exactly 0x8000 that the Europe v1.6.6 BIOS reads from its own
+  ROM asset at 0x4bf04; the core inserts no step, fade, silence mismatch or
+  stale FIFO data. No emulator change; evidence `F:/GP32/results/round150/dooly-pop/`.
+- Savestates (round 150): serialize size is constant per game, rejected
+  loads never mutate live state, JIT restore is deterministic, per-frame
+  serialize has no side effects. States are 26.6-43.9 MB because the whole
+  SmartMedia image is stored; a delta format is being redesigned so states
+  from earlier sessions stay loadable after the card is rewritten.
 - Measurement note (round 150): `build-h700-resume2-profile` sets
   `GP32EMU_CPU_PROFILE=ON`; its counters cost real time in IO-heavy scenes.
   Little Girl Mill gameplay (cold BIOS boot, warmup 2400, 1200 frames, H700
