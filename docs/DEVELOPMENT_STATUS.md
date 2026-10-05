@@ -6,6 +6,11 @@ performance, audio and input correctness across the library, not boot-only tests
 
 ## Current accepted work
 
+- Round 159 dense A64 emission: no frame pointer, shape-specific frames,
+  forwarding the w2 operand, rotated-immediate logical ops, one load when
+  both operands name the same guest register, in-place self-loop budget.
+  Output identical; H700 ABBA LGM 71.81 -> 74.18 (+3.3%), Blue 83.78 ->
+  84.82, Princess 117.79 -> 116.51 (-1.1%, kept: LGM is the bottleneck).
 - Rejected (round 159): retrying soft poll refusals (TLB mapping miss,
   interrupt/epoch cut) instead of pinning a counted poll block to native.
   Recovered 1.6M skipped instructions in Princess slot 0 with identical
