@@ -47,6 +47,24 @@ static size_t audio_resample_cap;
 static size_t audio_pending_frames;
 static int16_t audio_last_sent[2], audio_gap_from[2];
 static unsigned audio_gap_left;
+
+/* Output declick state. Guest PCM can legitimately contain hard level jumps:
+ * the BIOS's own assets step to and from the -32768 rail (menu tick), IIS
+ * bursts start and stop at arbitrary DC levels, and queue eviction or a
+ * resampler reset can still rejoin the stream far from what the frontend
+ * last heard. A real output stage is AC-coupled; a single-sample swing this
+ * large is a click regardless of provenance. The pass below keeps content
+ * bit-exact and only rewrites steps larger than a quarter of full scale,
+ * spreading each across the same ~1 ms span the gap-recovery prefix already
+ * uses. All of it runs on already-produced samples in the delivery queue,
+ * so the guest stream (and audio_hash, which hashes the guest descriptor
+ * before this stage) is untouched. */
+#define GP32_AUDIO_DECLICK_STEP 8192u   /* 25% FS; measured content <= ~4027 */
+#define GP32_AUDIO_DECLICK_RAMP GP32_AUDIO_GAP_FRAMES   /* ~1 ms at 44.1 kHz */
+static int16_t audio_raw_tail[2];
+static int audio_have_raw_tail;
+static int32_t audio_declick_anchor[2];
+static uint32_t audio_declick_left[2];
 static uint64_t last_video_frame = UINT64_MAX;
 static const uint32_t *last_video_ptr;
 static int have_last_video;
@@ -437,6 +455,10 @@ static void reset_audio(void) {
     memset(audio_last_sent, 0, sizeof(audio_last_sent));
     memset(audio_gap_from, 0, sizeof(audio_gap_from));
     audio_gap_left = 0;
+    memset(audio_raw_tail, 0, sizeof(audio_raw_tail));
+    memset(audio_declick_anchor, 0, sizeof(audio_declick_anchor));
+    memset(audio_declick_left, 0, sizeof(audio_declick_left));
+    audio_have_raw_tail = 0;
     gp32_audio_resampler_init(&audio_resampler);
 }
 
@@ -606,6 +628,76 @@ static void mark_audio_output_gap(void) {
     audio_gap_left = GP32_AUDIO_GAP_FRAMES;
 }
 
+static int16_t audio_clamp16(int32_t v) {
+    if (v > 32767) return 32767;
+    if (v < -32768) return -32768;
+    return (int16_t)v;
+}
+
+/* Declick a freshly produced queue block in place, relative to the samples
+ * the frontend will actually hear. A single-sample input step of at least
+ * GP32_AUDIO_DECLICK_STEP is an output discontinuity whatever its origin
+ * (DC offset on IIS on/off, rail plateaus in BIOS assets, idle-fill edges,
+ * a resampler reset, an evicted queue). The step is replaced by the same
+ * linear interpolation the gap-recovery prefix uses: the output continues
+ * from the last delivered sample and converges linearly onto the raw
+ * stream over GP32_AUDIO_DECLICK_RAMP frames, reaching it exactly on the
+ * last one. A new step inside an active glide re-anchors from the current
+ * delivered value. Sub-threshold content and ordinary waveform edges pass
+ * through bitwise.
+ *
+ * The pass reads and writes only frames not yet sent to a callback; queued
+ * data that survived an earlier partial send is never revisited, and the
+ * flush-time gap recovery composes over the result unchanged. */
+static void smooth_audio_delivery(int16_t *out, size_t frames) {
+    if (!out || !frames) return;
+
+    /* prev_in tracks the raw input sample so blend changes never feed back
+     * into step detection. tail tracks the frame the frontend hears before
+     * this block: the queue tail, or the last accepted frame when empty. */
+    int32_t prev_in[2];
+    int32_t tail[2];
+    if (audio_pending_frames) {
+        const int16_t *t = audio_resample_buf + (audio_pending_frames - 1u) * 2u;
+        tail[0] = t[0]; tail[1] = t[1];
+    } else {
+        tail[0] = audio_last_sent[0]; tail[1] = audio_last_sent[1];
+    }
+    prev_in[0] = audio_have_raw_tail ? audio_raw_tail[0] : tail[0];
+    prev_in[1] = audio_have_raw_tail ? audio_raw_tail[1] : tail[1];
+
+    for (size_t i = 0; i < frames; ++i) {
+        for (unsigned ch = 0; ch < 2u; ++ch) {
+            int32_t x = out[i * 2u + ch];
+            int32_t step = x - prev_in[ch];
+            int32_t y_prev = i ? out[(i - 1u) * 2u + ch] : tail[ch];
+            prev_in[ch] = x;
+            if (step >= (int32_t)GP32_AUDIO_DECLICK_STEP ||
+                step <= -(int32_t)GP32_AUDIO_DECLICK_STEP) {
+                /* Re-anchor: the glide restarts from the still-blended
+                 * delivered value rather than the raw one, so stacked
+                 * steps stay continuous. */
+                audio_declick_anchor[ch] = y_prev;
+                audio_declick_left[ch] = GP32_AUDIO_DECLICK_RAMP;
+            }
+            if (audio_declick_left[ch]) {
+                unsigned progress = GP32_AUDIO_DECLICK_RAMP - audio_declick_left[ch] + 1u;
+                x = audio_declick_anchor[ch] +
+                    (int32_t)((int64_t)(x - audio_declick_anchor[ch]) *
+                              (int64_t)progress / (int64_t)GP32_AUDIO_DECLICK_RAMP);
+                --audio_declick_left[ch];
+            }
+            out[i * 2u + ch] = audio_clamp16(x);
+        }
+    }
+
+    /* prev_in ends as the last raw input sample; carry it across blocks so
+     * step detection never sees the blended value as content. */
+    audio_raw_tail[0] = (int16_t)prev_in[0];
+    audio_raw_tail[1] = (int16_t)prev_in[1];
+    audio_have_raw_tail = 1;
+}
+
 static int submit_audio_resampled(const gp32_audio_desc_t *aud) {
     if (!aud || !aud->samples_s16_interleaved || !aud->frame_count) return 0;
     if (!audio_batch_cb && !audio_cb) return 1;
@@ -693,6 +785,7 @@ static int submit_audio_resampled(const gp32_audio_desc_t *aud) {
         audio_resampler.last_out_r = audio_resampler.prev_r;
         audio_resampler.have_last_out = 1;
     }
+    smooth_audio_delivery(out, out_frames);
     audio_pending_frames += out_frames;
     return 1;
 }

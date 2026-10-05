@@ -451,6 +451,13 @@ int main(int argc, char **argv) {
     uint64_t cycle_accum = 0, script_frame = 0;
     uint64_t video_hash = FNV64_OFFSET, audio_hash = FNV64_OFFSET;
     uint64_t audio_frames = 0, measured = 0;
+    /* Playback-buffer model for a real-time frontend: each measured frame
+     * drains rate/60 source samples and produced PCM refills it. The credit
+     * uses 1/60-sample units so fractional rates accumulate exactly, starts
+     * with one frame of slack, and re-arms after a dry frame. */
+    uint64_t audio_underrun_risk = 0;
+    int64_t audio_credit_q = 0;
+    uint32_t audio_play_rate = 0;
     double t0 = 0.0, elapsed = 0.0;
     uint64_t frame_ticks0 = 0;
     frame_counters_t frame_ctr_before;
@@ -485,10 +492,24 @@ int main(int argc, char **argv) {
             gp32_framebuffer_desc_t fb;
             if (gp32_get_framebuffer(g, &fb) == GP32_OK) video_hash = hash_framebuffer(video_hash, &fb);
             gp32_audio_desc_t aud;
+            uint64_t produced = 0;
             while (gp32_get_audio(g, &aud) == GP32_OK && aud.frame_count) {
                 audio_hash = hash_audio(audio_hash, &aud);
                 audio_frames += aud.frame_count;
+                produced += aud.frame_count;
                 if (gp32_consume_audio(g, aud.frame_count) != GP32_OK) break;
+            }
+            if (aud.sample_rate_hz) {
+                if (!audio_play_rate) audio_credit_q = aud.sample_rate_hz;
+                audio_play_rate = aud.sample_rate_hz;
+            }
+            if (audio_play_rate) {
+                audio_credit_q += (int64_t)produced * 60;
+                audio_credit_q -= audio_play_rate;
+                if (audio_credit_q < 0) {
+                    ++audio_underrun_risk;
+                    audio_credit_q = audio_play_rate;
+                }
             }
             ++measured;
         }
@@ -513,11 +534,12 @@ int main(int argc, char **argv) {
            ",\"warmup\":%" PRIu64 ",\"cycles\":%" PRIu64
            ",\"pc\":\"0x%08" PRIx32 "\",\"cpsr\":\"0x%08" PRIx32 "\""
            ",\"clock\":%" PRIu32 ",\"audio_frames\":%" PRIu64
+           ",\"audio_underrun_risk\":%" PRIu64
            ",\"video_hash\":\"%016" PRIx64 "\",\"audio_hash\":\"%016" PRIx64 "\""
            ",\"jit\":%d",
            fps, elapsed, measured, warmup, gp32_get_cycles(g),
            gp32_get_pc(g), gp32_get_cpsr(g), gp32_get_run_clock_hz(g),
-           audio_frames, video_hash, audio_hash, jit);
+           audio_frames, audio_underrun_risk, video_hash, audio_hash, jit);
     printf(",\"frame_pacing\":\"%s\"", legacy_cycle_frames ? "legacy_cycles" : "time");
     if (frame_times && frame_times_raw) {
         printf(",\"frame_ms\":[");
