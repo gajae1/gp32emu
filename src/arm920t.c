@@ -3519,6 +3519,38 @@ static uint32_t arm_counted_poll_repeats(arm920t_t *c, const arm_jit_block_t *b,
     return repeats;
 }
 
+/* Code blocks are only fetched, revalidated and natively executed through the
+ * RAM/BIOS windows, so a PC that resolves to any other physical address has no
+ * usable cache entry: caching it would cost a translation (and, on a native
+ * backend, a compilation) on every execution, and runaway execution outside
+ * the code windows would re-translate once per instruction. The test is
+ * deliberately address-based rather than fastmem-based: a RAM/BIOS fetch
+ * stays cacheable even when a frontend refuses a direct pointer for the
+ * region. A PC without a usable TLB entry is reported cacheable so the normal
+ * translation path performs the walk and its fault/attribution handling. The
+ * dispatcher passes its already-aligned PC. */
+ARM_FORCE_INLINE int arm_jit_code_cacheable(arm920t_t *c, uint32_t pc) {
+    uint32_t pa = pc;
+    if (c->cp15[1] & 1u) {
+        const arm_tlb_entry_t *e = &c->tlb_entry[(pc >> 12) & 0xfffu];
+        if (!e->valid || (pc & ~e->mask) != e->va_base || e->mask < 3u ||
+            (pc & e->mask) > e->mask - 3u) return 1;
+        pa = e->pa_base | (pc & e->mask);
+    }
+    return arm_jit_addr_in_ram(pa, 4u) || arm_jit_addr_in_bios(pa, 4u);
+}
+
+/* Execute one instruction of a non-cacheable PC on the reference
+ * interpreter, exactly as the non-JIT path does. Returns nonzero when one
+ * instruction was interpreted. Noinline: keeping this out of the dispatch
+ * loop preserves its register allocation and code layout. */
+static ARM_NOINLINE uint32_t arm_jit_run_nonram(arm920t_t *c, uint32_t pc) {
+    if (arm_jit_code_cacheable(c, pc)) return 0;
+    ARM_PROF_INC(c, interp_arm_insns);
+    exec_arm(c);
+    return 1u;
+}
+
 static uint32_t arm_jit_run(arm920t_t *c, uint32_t run_done) {
     if (!c || run_done >= c->run_limit || thumb(c) || c->trace) return 0;
     if (!c->jit_ram_base) c->jit_ram_base = fastmem(c, ARM_JIT_RAM_BASE_ADDR, 1u, 0);
@@ -3560,6 +3592,10 @@ static uint32_t arm_jit_run(arm920t_t *c, uint32_t run_done) {
             } else {
                 c->jit_misses++;
                 ARM_PROF_INC(c, jit_misses);
+                if (arm_jit_run_nonram(c, pc)) {
+                    total += 1u;
+                    continue;
+                }
                 b = arm_jit_translate(c, pc);
                 if (!b) break;
             }
