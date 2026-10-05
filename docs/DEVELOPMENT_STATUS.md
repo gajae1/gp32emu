@@ -19,6 +19,13 @@ performance, audio and input correctness across the library, not boot-only tests
   and video pacing stops depending on the audio buffer. Princess 111.9 fps p99 9.4; ASR 198.6
   p99 14.4 (3 over); Her 172.5 p99 7.2; Blue 75.0 p99 21.9 (24 over, max
   30.6). Evidence `F:/GP32/results/round153/h700-frametimes.json`.
+- Rejected (round 153): LCDCON5 direct case in `s3c2400_read32_io` plus
+  compare-instead-of-modulo LCD phase. LGM reads LCDCON5 ~15k times/frame
+  and writes GPIO ~27k times/frame (27-game MMIO audit,
+  `F:/GP32/results/round153/w-io-audit/`), but H700 ABBA was within noise
+  (LGM 61.09 -> 61.17, Princess 110.71 -> 110.83, Blue +0.5%) with identical
+  output. The remaining IO cost is the checked-helper exit and dispatcher
+  re-entry, not register decode.
 - Audio pops (round 150): the BIOS boot pop, the Dooly Soccer start pop and
   the BIOS sound-menu tick are guest PCM. The menu tick is three 335-sample
   plateaus of exactly 0x8000 that the Europe v1.6.6 BIOS reads from its own
