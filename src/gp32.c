@@ -3237,6 +3237,19 @@ static int direct_handle_swi_reinit(gp32_t *g, arm920t_t *cpu) {
     return 1;
 }
 
+/*
+ * Retail ROM 0x1b48, the SWI 0x0b selector-5 literal, is 0x0c79c000: the top
+ * of the RAM the firmware hands to a title, below its own stacks and work
+ * areas.  Direct mode answered with the host's top-of-RAM (0x0c800000), which
+ * put a b2fxec stub's decrunch scratch and stack against the very top of the
+ * part instead of leaving the firmware's margin.
+ */
+static uint32_t direct_fw_usable_ram_top(gp32_t *g) {
+    uint32_t top = GP32_RAM_BASE + 0x0079c000u;
+    uint32_t ram_end = GP32_RAM_BASE + (uint32_t)s3c2400_ram_size(g->soc);
+    return top < ram_end ? top : ram_end;
+}
+
 static int direct_fxe_swi(void *user, arm920t_t *cpu, uint32_t imm, uint32_t pc, int thumb) {
     GP32_UNUSED(thumb);
     gp32_t *g = (gp32_t *)user;
@@ -3435,7 +3448,7 @@ static int direct_fxe_swi(void *user, arm920t_t *cpu, uint32_t imm, uint32_t pc,
             value = direct_fwinfo_addr(g);
             break;
         case 5u:
-            value = g->direct_fxe_stack;
+            value = direct_fw_usable_ram_top(g);
             break;
         case 6u:
             direct_update_fw_tick(g);
@@ -3855,6 +3868,28 @@ static gp32_status_t gp32_load_fxe_image_internal(gp32_t *g, fxe_image_t *img, i
     arm920t_set_reg(g->cpu, 13, g->direct_fxe_stack - 16u);
     arm920t_set_reg(g->cpu, 0, img->load_addr);
     arm920t_set_reg(g->cpu, 1, g->direct_fxe_stack - 16u);
+    /*
+     * The retail firmware installs every exception-mode stack from its ROM
+     * table (ROM 0x1058 through the installer at 0x2390) before it launches an
+     * image: undefined 0x0C7AC800, abort 0x0C7ACC00, FIQ 0x0C7AD400, IRQ
+     * 0x0C7AE800, supervisor 0x0C7AFF00.  GPSDK code takes interrupts during
+     * its own startup (the EEPROM/IIC driver raises INT_IIC before the
+     * application would install a stack), so on hardware those banks are never
+     * empty.  Direct mode has no firmware, and a zero IRQ bank makes the IRQ
+     * dispatcher push the handler address to unmapped space and pop garbage
+     * back into PC.  Publish the firmware's banks with the firmware's values.
+     * The supervisor stack keeps the host's top-of-RAM choice because the
+     * image entry already runs on it.
+     */
+    {
+        arm920t_register_context_t ctx;
+        arm920t_get_register_context(g->cpu, &ctx);
+        ctx.bank_und[0] = GP32_RAM_BASE + 0x007ac800u;
+        ctx.bank_abt[0] = GP32_RAM_BASE + 0x007acc00u;
+        ctx.bank_fiq[0] = GP32_RAM_BASE + 0x007ad400u;
+        ctx.bank_irq[0] = GP32_RAM_BASE + 0x007ae800u;
+        arm920t_set_register_context(g->cpu, &ctx);
+    }
     if (update_reset_image && !direct_store_reset_image(g, img, scan_file_hle, init_smc_gpio)) {
         seterr(g, "out of memory storing direct-HLE reset image");
         return GP32_ERR_IO;
@@ -4035,6 +4070,20 @@ static int direct_task_record_plausible(gp32_t *g, uint32_t task_addr) {
     return direct_ram_range(g, entry & ~1u, 4u);
 }
 
+/*
+ * A saved GPSDK task context carries a CPSR the SDK itself built: only the
+ * condition flags, I/F/T and the mode field can be set.  RAM that merely looks
+ * like a task record can supply any 32-bit word, and restoring one like
+ * 0x0C215110 (IT/GE/reserved bits set) jumps the guest straight into data.
+ * Accept only mode words that a real ARM context could hold.
+ */
+static int direct_saved_cpsr_plausible(uint32_t cpsr) {
+    static const uint32_t legal = 0xf0000000u /* NZCV */ | 0x000000e0u /* I, F, T */ | 0x0000001fu /* mode */;
+    if (cpsr & ~legal) return 0;
+    uint32_t m = cpsr & 0x1fu;
+    return m == ARM_MODE_SVC || m == 0x10u;
+}
+
 static int direct_task_state_can_run(gp32_t *g, uint32_t task_addr) {
     if (!direct_task_record_plausible(g, task_addr)) return 0;
     if (direct_gpos_task_is_internal_timer(g, task_addr)) return 0;
@@ -4128,7 +4177,8 @@ static int direct_resume_ready_sdk_task(gp32_t *g, uint32_t pc, uint32_t first_t
             if ((saved_sp & 3u) || !direct_ram_range(g, saved_sp, 64u) ||
                 (saved_sp != sp && saved_sp + 64u != sp)) continue;
             uint32_t cpsr = s3c2400_debug_read32(g->soc, saved_sp);
-            if ((cpsr & 31u) != ARM_MODE_SVC || !direct_ram_range(g, direct_task_saved_pc(g, t) & ~1u, 4u)) continue;
+            if (!direct_saved_cpsr_plausible(cpsr) || (cpsr & 31u) != ARM_MODE_SVC ||
+                !direct_ram_range(g, direct_task_saved_pc(g, t) & ~1u, 4u)) continue;
             g->direct_callback.sdk_task = t;
             break;
         }
@@ -4143,7 +4193,7 @@ static int direct_resume_ready_sdk_task(gp32_t *g, uint32_t pc, uint32_t first_t
         if (!direct_ram_range(g, saved_sp, 64u)) continue;
         uint32_t saved_cpsr = s3c2400_debug_read32(g->soc, saved_sp + 0u);
         uint32_t saved_pc = s3c2400_debug_read32(g->soc, saved_sp + 60u);
-        if ((saved_cpsr & 0x1fu) != ARM_MODE_SVC && (saved_cpsr & 0x1fu) != 0x10u) continue;
+        if (!direct_saved_cpsr_plausible(saved_cpsr)) continue;
         if (!direct_ram_range(g, saved_pc & ~1u, 4u)) continue;
         uint32_t saved_insn = s3c2400_debug_read32(g->soc, saved_pc & ~1u);
         if (saved_insn == 0xeafffffeu || saved_insn == 0xeaffffffu) continue;
@@ -4264,7 +4314,7 @@ static int direct_try_resume_sdk_task(gp32_t *g) {
         if (!direct_ram_range(g, saved_sp, 64u)) continue;
         uint32_t saved_cpsr = s3c2400_debug_read32(g->soc, saved_sp + 0u);
         uint32_t saved_pc = s3c2400_debug_read32(g->soc, saved_sp + 60u);
-        if ((saved_cpsr & 0x1fu) != ARM_MODE_SVC && (saved_cpsr & 0x1fu) != 0x10u) continue;
+        if (!direct_saved_cpsr_plausible(saved_cpsr)) continue;
         if (!direct_ram_range(g, saved_pc & ~1u, 4u)) continue;
         if ((saved_pc & ~1u) == pc || ((saved_pc + 4u) & ~1u) == pc) continue;
         uint32_t saved_insn = s3c2400_debug_read32(g->soc, saved_pc & ~1u);
