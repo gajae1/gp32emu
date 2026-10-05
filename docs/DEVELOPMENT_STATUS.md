@@ -26,6 +26,18 @@ performance, audio and input correctness across the library, not boot-only tests
   (LGM 61.09 -> 61.17, Princess 110.71 -> 110.83, Blue +0.5%) with identical
   output. The remaining IO cost is the checked-helper exit and dispatcher
   re-entry, not register decode.
+- Rejected (round 154): deferring BL superblock continuation until the head
+  block is entered 64 times (dispatch fast-path hot counter plus one
+  retranslation). It cut Blue's extended code 3.13 MiB -> 0.36 MiB on PC with
+  identical output, but H700 ABBA lost Blue 75.07 -> 73.91, LGM 60.75 ->
+  57.81, Princess 110.49 -> 105.80 fps: the counter on the hottest dispatch
+  path costs more on the A53 than the larger code footprint. Blue's -1.1% from
+  `1962e10` stays. Evidence `F:/GP32/results/round153/w-blue/`,
+  `F:/GP32/results/round154/abba-hot/`.
+- `2f494c1`: direct-HLE SWI 4 and exception vectors park instead of running
+  into data (vba32 exit, gpmadmp3, fgen32, gpfrodo, race_ngp, handyport2 stop
+  executing unmapped memory; gplynx now updates its screen). Commercial scenes
+  identical; native H700 jit/exception/callback/wait/state tests pass.
 - Audio pops (round 150): the BIOS boot pop, the Dooly Soccer start pop and
   the BIOS sound-menu tick are guest PCM. The menu tick is three 335-sample
   plateaus of exactly 0x8000 that the Europe v1.6.6 BIOS reads from its own
