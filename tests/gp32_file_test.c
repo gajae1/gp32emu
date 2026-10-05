@@ -111,6 +111,39 @@ static int check_raw_image_labels(void) {
     return ok;
 }
 
+/* Firmware SWI #5 hands over an image a packer decrunched into scratch RAM.
+ * The image carries its own GXB header, which states the rom_start the image
+ * belongs at, so the hand-off has to place it there before entering it.
+ * Entering the scratch copy instead leaves every absolute address inside the
+ * image pointing at packed bytes, and the guest runs off the end of RAM.
+ * The two windows overlap, so both copy directions have to survive. */
+static int check_swi5_place_image(uint32_t scratch, uint32_t rom_start) {
+    gp32_t *g = gp32_create(NULL);
+    if (!g) return 0;
+    direct_set_fxe_mode(g, 1u);
+    const uint32_t size_word = scratch;
+    const uint32_t hdr = scratch + 4u;
+    const uint32_t image_end = rom_start + 0x100u;
+    const uint32_t payload = 0xe1a00000u;
+    s3c2400_write32(g->soc, size_word, 0x100u);
+    s3c2400_write32(g->soc, hdr + 0x00u, 0xea000006u); /* b hdr+0x20 */
+    s3c2400_write32(g->soc, hdr + 0x04u, rom_start);
+    s3c2400_write32(g->soc, hdr + 0x08u, image_end);
+    s3c2400_write32(g->soc, hdr + 0x0cu, image_end);
+    s3c2400_write32(g->soc, hdr + 0x10u, image_end);
+    for (uint32_t i = 0; i < 8u; ++i) s3c2400_write32(g->soc, hdr + 0x20u + i * 4u, payload + i);
+    arm920t_set_reg(g->cpu, 0, size_word);      /* image behind a four-byte length word */
+    arm920t_set_reg(g->cpu, 1, rom_start | 1u); /* packer scratch value, not a stack */
+    int ok = direct_fxe_swi(g, g->cpu, 0x05u, rom_start + 0x400u, 0) &&
+             arm920t_get_reg(g->cpu, 15) == rom_start &&
+             s3c2400_debug_read32(g->soc, rom_start) == 0xea000006u &&
+             s3c2400_debug_read32(g->soc, rom_start + 0x24u) == payload + 1u &&
+             arm920t_get_reg(g->cpu, 13) != (rom_start | 1u);
+    gp32_destroy(g);
+    if (!ok) fputs("FAIL: SWI #5 hand-off leaves the image at its scratch address\n", stderr);
+    return ok;
+}
+
 static int check_zip_entry_name(const char *path) {
     const uint8_t payload[] = {0x12, 0x34, 0x56, 0x78};
     const char *name = "a.../game.gxb";
@@ -128,6 +161,9 @@ static int check_zip_entry_name(const char *path) {
 
 int main(int argc, char **argv) {
     if (!check_raw_image_labels()) return 1;
+    /* Overlapping copy in both directions: destination below and above source. */
+    if (!check_swi5_place_image(GP32_RAM_BASE + 0x100u, GP32_RAM_BASE + 0x80u)) return 1;
+    if (!check_swi5_place_image(GP32_RAM_BASE + 0x100u, GP32_RAM_BASE + 0x140u)) return 1;
     if (argc > 1 && !check_zip_entry_name(argv[1])) return 1;
     if (!check_card_query()) return 1;
     if (!check_open(GP32_RAM_BASE + 0x200u) || !check_open(GP32_RAM_BASE + 0x2400u)) {
