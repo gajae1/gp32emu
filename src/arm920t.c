@@ -29,11 +29,12 @@
 #else
 #define ARM920T_NATIVE_BACKEND 0u
 #endif
-#if ARM920T_NATIVE_BACKEND == 2u
+/* Per-block emit budget for the native backends. The live-read and
+ * identity-I/O probes cost about 150 bytes per eligible word access, so the
+ * x64 backend needs the room the AArch64 backend always had; at 16 KiB Blue
+ * Angelo's largest superblocks fall out of the native cache and run on the
+ * portable block interpreter instead (443 instead of 53 failed emits). */
 #define ARM_JIT_NATIVE_MAX_BYTES 65536u
-#else
-#define ARM_JIT_NATIVE_MAX_BYTES 16384u
-#endif
 #if ARM920T_PROFILING
 #define ARM_PROF_INC(c, field) do { (c)->prof.field++; } while (0)
 #else
@@ -255,6 +256,21 @@ typedef struct arm_jit_tlb_page {
 } arm_jit_tlb_page_t;
 #endif
 
+#if ARM920T_NATIVE_BACKEND == 1u
+/* x64 identity-I/O handover. The generated word access has already proved the
+ * mapping and the physical window, but the host ABI passes only four register
+ * arguments to the helper; the proven operands (physical address, store value,
+ * writeback value, unaligned rotation) are handed over here instead. Written
+ * and consumed by that single call pair, never serialized and never visible to
+ * the guest, the bus or a callback. */
+typedef struct arm_jit_io_word {
+    uint32_t pa;
+    uint32_t value;
+    uint32_t writeback;
+    uint32_t rotation;
+} arm_jit_io_word_t;
+#endif
+
 struct arm920t {
     uint32_t r[16];
     uint32_t cpsr;
@@ -308,6 +324,9 @@ struct arm920t {
     size_t live_read32_count;
     /* Poll-path state, parallel to jit_blocks; appended for the same reason. */
     arm_jit_poll_state_t *jit_poll;
+#if ARM920T_NATIVE_BACKEND == 1u
+    arm_jit_io_word_t jit_io_word;
+#endif
 };
 
 /* Native dispatch only needs the compact header. Decoded instructions live
@@ -2528,6 +2547,8 @@ typedef struct x64_emit {
     size_t pos;
     int fail, mmu, ram_read, ram_write;
     uint32_t expected_next, generation, done, guest_pc;
+    const arm_live_read32_t *live_read32;
+    size_t live_read32_count;
 } x64_emit_t;
 
 static int arm_x64_exec_checked(arm920t_t *c, const arm_jit_op_t *op,
@@ -2537,6 +2558,52 @@ static int arm_x64_exec_checked(arm920t_t *c, const arm_jit_op_t *op,
     uint32_t epoch = c->jit_cache_epoch, run_limit = c->run_limit;
     uint8_t *ram_base = c->jit_ram_base, *bios_base = c->jit_bios_base;
     arm_jit_exec_classified(c, op);
+    return !stop && c->run_limit == run_limit && !c->halted && !thumb(c) && !c->trace && c->jit_enabled &&
+           c->jit_generation == generation && c->jit_cache_epoch == epoch &&
+           c->jit_ram_base == ram_base &&
+           c->jit_bios_base == bios_base && (c->cpsr & 0xffu) == status &&
+           (c->r[15] & ~3u) == expected_next &&
+           !(c->irq_line && !(c->cpsr & I_FLAG)) &&
+           !(c->fiq_line && !(c->cpsr & F_FLAG));
+}
+
+/* Direct word transfer into the identity-mapped device window, entered only
+ * after the emitted RAM guard rejected the address and the emitted probe
+ * proved the current packed TLB entry (MMU on) or the identity mapping (MMU
+ * off) plus the physical 0x14000000..0x16000000 window the checked helpers
+ * route straight to the bus callbacks.  It repeats the observable steps of
+ * arm_x64_exec_checked - the callback-visible PC, one bus access, destination
+ * then writeback, then the same continuation snapshot - while skipping the
+ * second mmu_translate, the transfer decode and the physical-window probes
+ * that the emitter already performed.  Cycle and timing state stay untouched
+ * exactly as there, and a store keeps the identical exit condition (interrupts,
+ * timers, halt, trace, epoch/generation, RAM/BIOS rebase).  The proven operands
+ * arrive in the CPU handover words: pa is 4-byte aligned and inside that window,
+ * rotation is (VA & 3) * 8 and writeback is base +/- offset (committed only
+ * when the decoded shape writes back).  No profiling counter is advanced: like
+ * the RAM fast path this is a native fast path, not a checked-helper call. */
+static int arm_x64_io_word_checked(arm920t_t *c, const arm_jit_op_t *op,
+                                   uint32_t expected_next, uint32_t generation) {
+    int stop = op->stop;
+    unsigned rd = op->b, rn = op->a; /* callbacks can invalidate decoded-op storage */
+    uint32_t pa = c->jit_io_word.pa, value = c->jit_io_word.value;
+    uint32_t writeback = c->jit_io_word.writeback, rotation = c->jit_io_word.rotation;
+    int load = !!(op->d & ARM_BC_SD_L);
+    int wb = !(op->d & ARM_BC_SD_P) || (op->d & ARM_BC_SD_W);
+    uint32_t status = c->cpsr & 0xffu;
+    uint32_t epoch = c->jit_cache_epoch, run_limit = c->run_limit;
+    uint8_t *ram_base = c->jit_ram_base, *bios_base = c->jit_bios_base;
+    c->r[15] = op->pc + 4u; /* callback-visible PC, exactly as classified */
+    if (load) {
+        /* Same callback selection as arm_bc_ld_word_phys' identity-I/O arm. */
+        uint32_t v = (c->bus.read32_io ? c->bus.read32_io : c->bus.read32)(c->bus.user, pa);
+        if (rotation) v = gp32_ror32(v, rotation);
+        write_r(c, rd, v);
+    } else {
+        /* Same callback selection as arm_bc_st_word_phys' identity-I/O arm. */
+        (c->bus.write32_io ? c->bus.write32_io : c->bus.write32)(c->bus.user, pa, value);
+    }
+    if (wb) write_r(c, rn, writeback);
     return !stop && c->run_limit == run_limit && !c->halted && !thumb(c) && !c->trace && c->jit_enabled &&
            c->jit_generation == generation && c->jit_cache_epoch == epoch &&
            c->jit_ram_base == ram_base &&
@@ -3165,6 +3232,153 @@ static int x64_emit_addrmode2_offset_to_ecx(x64_emit_t *e, uint32_t insn, uint32
     }
 }
 
+/* Forward fixups for the cold path of one emitted single transfer: `cold`
+ * lands on the checked whole-op helper, `next` on this instruction's
+ * fall-through continuation.  The bounds are the worst case of the two probes
+ * below; overflowing one fails the block instead of corrupting the layout. */
+typedef struct x64_dt_fixup {
+    size_t cold[8];
+    size_t next[16];
+    unsigned ncold, nnext;
+} x64_dt_fixup_t;
+
+static void x64_dt_reject(x64_dt_fixup_t *f, x64_emit_t *e, uint8_t cc) {
+    if (f->ncold >= GP32_ARRAY_COUNT(f->cold)) { e->fail = 1; return; }
+    f->cold[f->ncold++] = x64_jcc32(e, cc);
+}
+static void x64_dt_continue(x64_dt_fixup_t *f, x64_emit_t *e) {
+    if (f->nnext >= GP32_ARRAY_COUNT(f->next)) { e->fail = 1; return; }
+    f->next[f->nnext++] = x64_jmp32(e);
+}
+
+/* Load the packed TLB field at field_off for the entry whose byte offset from
+ * tlb_entry[0] is already in r8d (layout as in x64_emit_mmu_ram_offset). */
+static void x64_tlb_load_indexed(x64_emit_t *e, int dst, size_t field_off) {
+    x64_rex(e, 0, dst, X64_R8D, X64_EBX);
+    x64_u8(e, 0x8b);
+    x64_modrm(e, 2, dst, X64_ESP);
+    x64_sib(e, 0, X64_R8D, X64_EBX);
+    x64_u32(e, (uint32_t)(offsetof(arm920t_t, tlb_entry) + field_off));
+}
+static void x64_emit_tlb_index(x64_emit_t *e, int va_reg) {
+    x64_mov_r32_r32(e, X64_R8D, va_reg);
+    x64_shift_r32_imm(e, 5, X64_R8D, 12);
+    x64_alu_r32_imm(e, 4, X64_R8D, 0xfffu);
+    x64_shift_r32_imm(e, 4, X64_R8D, 4); /* 16-byte packed entry */
+}
+static void x64_mov_r32_mem_regptr(x64_emit_t *e, int dst, int base) {
+    x64_rex(e, 0, dst, 0, base);
+    x64_u8(e, 0x8b);
+    x64_modrm(e, 0, dst, base);
+}
+
+/* Cold path only: serve an aligned word load without writeback from a
+ * certified live readback word when the current packed TLB entry (MMU on) or
+ * the identity mapping (MMU off) proves the registered physical address,
+ * mirroring a64_live_read32.  Every rejection falls through to the identity-I/O
+ * probe and then to the checked helper; the word is loaded fresh per access and
+ * the guest register is committed before the continuation.  No callback can
+ * observe this path, so it needs no exit check. */
+static void x64_emit_live_read32(x64_emit_t *e, unsigned rd, x64_dt_fixup_t *fx) {
+    if (!e->live_read32_count) return;
+    x64_mov_r32_r32(e, X64_EAX, X64_R10D);
+    x64_alu_r32_imm(e, 4, X64_EAX, 3u);
+    x64_alu_r32_r32(e, 0x85, X64_EAX, X64_EAX);
+    x64_dt_reject(fx, e, 0x5); /* unaligned keeps the rotated word result */
+    if (e->mmu) {
+        x64_emit_tlb_index(e, X64_R10D);
+        x64_tlb_load_indexed(e, X64_ECX, offsetof(arm_tlb_entry_t, valid));
+        x64_alu_r32_r32(e, 0x85, X64_ECX, X64_ECX);
+        x64_dt_reject(fx, e, 0x4); /* no such entry: page walk stays checked */
+        x64_tlb_load_indexed(e, X64_EAX, offsetof(arm_tlb_entry_t, va_base));
+        x64_tlb_load_indexed(e, X64_EDX, offsetof(arm_tlb_entry_t, mask));
+        x64_mov_r32_r32(e, X64_ECX, X64_EDX);
+        x64_not_r32(e, X64_ECX);
+        x64_alu_r32_r32(e, 0x21, X64_ECX, X64_R10D); /* VA & ~mask */
+        x64_alu_r32_r32(e, 0x39, X64_ECX, X64_EAX);  /* == entry va_base? */
+        x64_dt_reject(fx, e, 0x5);
+        x64_alu_r32_r32(e, 0x21, X64_EDX, X64_R10D); /* VA & mask */
+        x64_tlb_load_indexed(e, X64_ECX, offsetof(arm_tlb_entry_t, pa_base));
+        x64_alu_r32_r32(e, 0x09, X64_EDX, X64_ECX);  /* | pa_base */
+        x64_alu_r32_imm(e, 4, X64_EDX, ~3u);
+    } else x64_mov_r32_r32(e, X64_EDX, X64_R10D);
+    for (size_t i = 0; i < e->live_read32_count && !e->fail; ++i) {
+        x64_alu_r32_imm(e, 7, X64_EDX, e->live_read32[i].pa);
+        size_t miss = x64_jcc32(e, 0x5);
+        x64_mov_r64_imm(e, X64_R11D, (uint64_t)(uintptr_t)e->live_read32[i].word);
+        x64_mov_r32_mem_regptr(e, X64_ECX, X64_R11D);
+        x64_emit_store_arm_reg(e, rd, X64_ECX);
+        x64_dt_continue(fx, e);
+        x64_patch32(e, miss, e->pos);
+    }
+}
+
+/* Cold path only: direct word transfer into the identity-mapped device window
+ * 0x14000000..0x15ffffff, entered after the RAM guard rejected the address.
+ * The current packed TLB entry must be valid and cover the whole aligned word
+ * (MMU on) or the mapping must be the identity (MMU off), exactly as in
+ * a64_io_word.  The proven operands go to the CPU handover words and the
+ * dedicated helper performs the bus callback with the same selection, the same
+ * register commits and the same continuation check as the checked path.
+ * Everything the probe rejects lands on the checked whole-op helper below. */
+static void x64_emit_io_word(x64_emit_t *e, const arm_jit_op_t *op, uint32_t done,
+                             x64_dt_fixup_t *fx) {
+    unsigned rd = (op->insn >> 12) & 15u;
+    x64_mov_r32_r32(e, X64_EAX, X64_R10D);
+    x64_alu_r32_imm(e, 4, X64_EAX, ~3u); /* the checked path translates the aligned word */
+    if (e->mmu) {
+        x64_emit_tlb_index(e, X64_EAX);
+        x64_tlb_load_indexed(e, X64_ECX, offsetof(arm_tlb_entry_t, valid));
+        x64_alu_r32_r32(e, 0x85, X64_ECX, X64_ECX);
+        x64_dt_reject(fx, e, 0x4);
+        x64_tlb_load_indexed(e, X64_EDX, offsetof(arm_tlb_entry_t, va_base));
+        x64_tlb_load_indexed(e, X64_ECX, offsetof(arm_tlb_entry_t, mask));
+        x64_mov_r32_r32(e, X64_R11D, X64_ECX);
+        x64_not_r32(e, X64_R11D);
+        x64_alu_r32_r32(e, 0x21, X64_R11D, X64_EAX);
+        x64_alu_r32_r32(e, 0x39, X64_R11D, X64_EDX);
+        x64_dt_reject(fx, e, 0x5);
+        x64_alu_r32_r32(e, 0x21, X64_ECX, X64_EAX);
+        x64_tlb_load_indexed(e, X64_EDX, offsetof(arm_tlb_entry_t, pa_base));
+        x64_alu_r32_r32(e, 0x09, X64_ECX, X64_EDX);
+        x64_mov_r32_r32(e, X64_EAX, X64_ECX); /* eax = proven physical word */
+    }
+    /* 0x14000000..0x15ffffff is exactly bits 31..25 == 0b0001010; the address
+     * is already word aligned, so 0x16000000 is the first word outside. */
+    x64_mov_r32_r32(e, X64_ECX, X64_EAX);
+    x64_shift_r32_imm(e, 5, X64_ECX, 25);
+    x64_alu_r32_imm(e, 7, X64_ECX, 0x0au);
+    x64_dt_reject(fx, e, 0x5);
+    /* Nothing is committed before this point.  The handover carries the proven
+     * physical address, the store source (read before the callback, like the
+     * classified path) and, exactly as in a64_io_word, the base +/- offset the
+     * shape would write back plus the rotation the callback result needs. */
+    x64_mov_r32_r32(e, X64_ECX, X64_R10D);
+    x64_alu_r32_imm(e, 4, X64_ECX, 3u);
+    x64_shift_r32_imm(e, 4, X64_ECX, 3);
+    x64_mov_mem_cpu_r32(e, (uint32_t)(offsetof(arm920t_t, jit_io_word) +
+                                      offsetof(arm_jit_io_word_t, rotation)), X64_ECX);
+    x64_mov_mem_cpu_r32(e, (uint32_t)(offsetof(arm920t_t, jit_io_word) +
+                                      offsetof(arm_jit_io_word_t, pa)), X64_EAX);
+    x64_mov_mem_cpu_r32(e, (uint32_t)(offsetof(arm920t_t, jit_io_word) +
+                                      offsetof(arm_jit_io_word_t, writeback)), X64_R9D);
+    if (!(op->d & ARM_BC_SD_L)) {
+        x64_emit_load_arm_reg(e, X64_ECX, rd, op->pc);
+        x64_mov_mem_cpu_r32(e, (uint32_t)(offsetof(arm920t_t, jit_io_word) +
+                                          offsetof(arm_jit_io_word_t, value)), X64_ECX);
+    }
+    x64_emit_arg0_cpu(e);
+    x64_emit_arg1_ptr_imm(e, (uintptr_t)op);
+    x64_mov_r32_imm(e, X64_HOST_ARG2, e->expected_next);
+    x64_mov_r32_imm(e, X64_HOST_ARG3, e->generation);
+    x64_call_abs(e, (uintptr_t)arm_x64_io_word_checked);
+    x64_alu_r32_r32(e, 0x85, X64_EAX, X64_EAX);
+    size_t cont = x64_jcc32(e, 0x5); /* can_continue: commit is complete */
+    x64_emit_return_imm(e, done);
+    x64_patch32(e, cont, e->pos);
+    x64_dt_continue(fx, e);
+}
+
 /* Single/half transfers commit only after a proved RAM hit. BIOS,
  * devices, cold misses and rejected spans retain the whole-op helper. Word
  * translation aligns the VA before lookup and rotates by the original VA;
@@ -3262,7 +3476,26 @@ static int x64_emit_ram_dt(x64_emit_t *e, const arm_jit_op_t *op, uint32_t done)
         x64_patch32(e, matched, e->pos);
         leaf_continue = x64_jmp32(e);
     }
-    x64_emit_memory_slow(e, op, slow, nslow);
+    /* Cold path: the RAM guard's rejections land here.  A decoded word
+     * transfer with a data destination first gets the same two direct attempts
+     * the AArch64 backend has: the certified live word for an aligned load
+     * without writeback, then the identity-I/O window.  Both prove the same
+     * TLB/mapping and physical-window conditions there and hand every
+     * rejection to the checked whole-op helper below, which also owns bytes,
+     * halfwords, PC destinations and block-exit ops. */
+    int wb = !p || w;
+    size_t next = x64_jmp32(e);
+    for (unsigned i = 0; i < nslow; ++i) x64_patch32(e, slow[i], e->pos);
+    x64_dt_fixup_t fx;
+    fx.ncold = fx.nnext = 0;
+    if (!half && bytes == 4u && rd != 15u && !op->stop) {
+        if (l && !wb && e->live_read32_count <= 8u) x64_emit_live_read32(e, rd, &fx);
+        x64_emit_io_word(e, op, done, &fx);
+    }
+    for (unsigned i = 0; i < fx.ncold; ++i) x64_patch32(e, fx.cold[i], e->pos);
+    x64_emit_call_helper_op(e, op);
+    for (unsigned i = 0; i < fx.nnext; ++i) x64_patch32(e, fx.next[i], e->pos);
+    x64_patch32(e, next, e->pos);
     if (leaf_continue) x64_patch32(e, leaf_continue, e->pos);
     return 1;
 }
@@ -3495,6 +3728,8 @@ static void arm_jit_compile_native(arm920t_t *c, arm_jit_block_t *b) {
     e.cap = sizeof(tmp);
     e.mmu = !!(c->cp15[1] & 1u);
     e.generation = b->generation;
+    e.live_read32 = c->live_read32;
+    e.live_read32_count = c->live_read32_count;
     /* A read pointer alone does not authorize stores or a complete window. */
     e.ram_read = c->jit_ram_base && fastmem(c, ARM_JIT_RAM_BASE_ADDR, ARM_JIT_RAM_SIZE_BYTES, 0) == c->jit_ram_base;
     e.ram_write = c->jit_ram_base && fastmem(c, ARM_JIT_RAM_BASE_ADDR, ARM_JIT_RAM_SIZE_BYTES, 1) == c->jit_ram_base;

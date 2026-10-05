@@ -4273,7 +4273,7 @@ static void case_live_read32(void) {
               "writes remain callbacks; in-flight registration changes are rejected");
         gp32_cpu_profile_t profile;
         arm920t_get_cpu_profile(cpu_jit, &profile);
-        if (profile.supported && profile.native_backend == 2u) {
+        if (profile.supported && profile.native_backend != 0u) {
             CHECK(profile.native_arm_insns >= 6u, "live word path uses native instructions");
             CHECK(bus_jit.live_reads == 2u && bus_ref.live_reads == 4u,
                   "only two aligned word reads bypass the bus callback");
