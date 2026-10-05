@@ -6,6 +6,18 @@ performance, audio and input correctness across the library, not boot-only tests
 
 ## Current accepted work
 
+- Round 152-153 (`783a6a2`, `53d7619`, installed on H700, core sha256
+  `437fc417…`): slimmer GPIO/identity IO writes (H700 ABBA 1.512 GHz, identical
+  output: Blue 75.47 -> 75.94, LGM 60.12 -> 60.94, Princess 109.56 -> 110.54 fps)
+  and SmartMedia savestate deltas against the loaded .smc (state v0014, about
+  10.4 MB instead of 26.6-43.9 MB, save+load 1.7 ms instead of 6-12 ms; v0002+
+  still load). Non-profile H700 frame times at `53d7619` (`--frame-times`):
+  LGM 60.7 fps, p50 24.3 / p99 25.6 / max 51.1 ms, 715/1200 frames over
+  16.67 ms; the distribution is bimodal (heavy ~24 ms guest logic frame, light
+  ~9 ms wait frame), so each pair fits 33.3 ms with little margin and LGM
+  still needs roughly 20% more speed. Princess 111.9 fps p99 9.4; ASR 198.6
+  p99 14.4 (3 over); Her 172.5 p99 7.2; Blue 75.0 p99 21.9 (24 over, max
+  30.6). Evidence `F:/GP32/results/round153/h700-frametimes.json`.
 - Audio pops (round 150): the BIOS boot pop, the Dooly Soccer start pop and
   the BIOS sound-menu tick are guest PCM. The menu tick is three 335-sample
   plateaus of exactly 0x8000 that the Europe v1.6.6 BIOS reads from its own
