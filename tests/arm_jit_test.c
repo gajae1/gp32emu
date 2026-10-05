@@ -1563,6 +1563,46 @@ static void case_terminal_swi_yield(void) {
     teardown_pair();
 }
 
+/* A predicate-failed coprocessor load ends its native block. The classified
+ * executor commits PC+4 before it tests the predicate, so the block's failed
+ * path must commit the same PC; otherwise the dispatcher re-enters this PC
+ * forever and no further guest instruction ever retires. ARM920T has no p8
+ * coprocessor and this model keeps the unallocated access a no-op, so a failed
+ * predicate has exactly one architectural effect: the PC advances and no
+ * writeback happens. */
+static void case_terminal_coproc_predicate(void) {
+    static const struct { const char *name; uint32_t insn, cpsr; int failed; } cases[] = {
+        {"ldc-cs-predicate-failed", 0x2cb358a5u, 0x80000053u, 1}, /* C=0 -> CS fails */
+        {"ldc-ne-predicate-failed", 0x1cb358a5u, 0x40000053u, 1}, /* Z=1 -> NE fails */
+        {"ldc-passing-predicate", 0xecb358a5u, 0x60000053u, 0}     /* control: executes */
+    };
+    for (unsigned k = 0; k < GP32_ARRAY_COUNT(cases); ++k) {
+        current_case = cases[k].name;
+        setup_pair();
+        arm920t_set_trace(cpu_ref, 1, NULL, NULL);
+        const uint32_t program[] = {
+            0xe3a03000u, /* MOV r3,#0: LDC base and writeback target */
+            cases[k].insn,
+            0xe3a02011u, /* MOV r2,#0x11: reached only if the PC advanced */
+            0xeafffffeu, /* B . */
+        };
+        load_both(program, GP32_ARRAY_COUNT(program));
+        arm920t_set_cpsr(cpu_jit, cases[k].cpsr);
+        arm920t_set_cpsr(cpu_ref, cases[k].cpsr);
+        run_chunks();
+        CHECK(ref_reg(2u) == 0x11u, "terminal coprocessor load must advance the PC");
+        if (cases[k].failed)
+            CHECK(ref_reg(3u) == 0u, "failed predicate must suppress the writeback");
+        CHECK(arm920t_get_pc(cpu_ref) == CODE_ADDR + 12u && arm920t_get_pc(cpu_jit) == CODE_ADDR + 12u,
+              "both backends park after the terminal load");
+        gp32_cpu_profile_t profile;
+        arm920t_get_cpu_profile(cpu_jit, &profile);
+        if (profile.supported && profile.native_backend)
+            CHECK(profile.native_block_calls != 0u, "terminal coprocessor load must run natively");
+        teardown_pair();
+    }
+}
+
 static int alu_region_swi(void *user, arm920t_t *cpu, uint32_t imm,
                           uint32_t pc, int is_thumb) {
     const uint32_t expected[] = {
@@ -3810,6 +3850,7 @@ int main(int argc, char **argv) {
     int access_only = argc == 2 && !strcmp(argv[1], "--checked-access");
     int poll_only = argc == 2 && !strcmp(argv[1], "--poll-progress");
     int psr_only = argc == 2 && !strcmp(argv[1], "--psr");
+    int terminal_coproc_only = argc == 2 && !strcmp(argv[1], "--terminal-coproc");
     if (argc == 2 && !strcmp(argv[1], "--sflag-logic")) {
         case_native_sflag_logic();
     } else if (argc == 2 && !strcmp(argv[1], "--live-read32")) {
@@ -3843,6 +3884,8 @@ int main(int argc, char **argv) {
     } else if (psr_only) {
         case_native_spsr();
         case_native_longmul_psr();
+    } else if (terminal_coproc_only) {
+        case_terminal_coproc_predicate();
     } else if (poll_only) {
         case_poll_progress();
     } else if (access_only) {
@@ -3896,6 +3939,7 @@ int main(int argc, char **argv) {
     } else {
     case_live_read32();
     case_terminal_swi_yield();
+    case_terminal_coproc_predicate();
     case_native_ldm_pc();
     case_native_ldr_pc();
     case_native_ldr_pc_chain();
