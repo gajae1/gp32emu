@@ -2985,9 +2985,10 @@ static int x64_emit_addrmode2_offset_to_ecx(x64_emit_t *e, uint32_t insn, uint32
  * devices, cold misses and rejected spans retain the whole-op helper. Word
  * translation aligns the VA before lookup and rotates by the original VA;
  * halfwords instead access contiguous physical bytes, including page edges.
- * PC loads remain on the whole-op helper to commit their control-flow exit,
- * except a framed leaf return (markers 3/5), which continues only when the
- * loaded target is the decoded successor of this trace. */
+ * A word load into PC commits the architected write_r result and leaves the
+ * trace, since its target is not this trace's decoded successor; a framed
+ * leaf return (markers 3/5) instead continues when the loaded target is that
+ * successor. Byte loads into PC and unusual forms keep the whole-op helper. */
 static int x64_emit_ram_dt(x64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
     const uint32_t insn = op->insn;
     unsigned rn = (insn >> 16) & 15u, rd = (insn >> 12) & 15u;
@@ -3000,7 +3001,12 @@ static int x64_emit_ram_dt(x64_emit_t *e, const arm_jit_op_t *op, uint32_t done)
      * target is this trace's decoded successor. */
     int leaf_return = !half && l && rd == 15u &&
                       (op->reserved == 3u || op->reserved == 5u);
-    if (!(l ? e->ram_read : e->ram_write) || (l && rd == 15u && !leaf_return) ||
+    /* Ordinary word load into PC: same write_r commit, but the target is an
+     * unknown branch, so the block always leaves with the loaded address.
+     * Only the RAM span is proved here; every rejected span re-executes the
+     * whole instruction through the checked helper before the exit. */
+    int pc_store = !half && l && rd == 15u && !GP32_BIT(insn, 22);
+    if (!(l ? e->ram_read : e->ram_write) || (l && rd == 15u && !pc_store) ||
         ((!p || w) && rn == 15u) || (half && (rd == 15u || (l ? !sh : sh != 1u)))) return 0;
     if (half) {
         if (GP32_BIT(insn,22)) x64_mov_r32_imm(e, X64_ECX, op->imm);
@@ -3036,7 +3042,7 @@ static int x64_emit_ram_dt(x64_emit_t *e, const arm_jit_op_t *op, uint32_t done)
             else x64_movzx_r32_membase_index16(e, X64_EAX, X64_R14D, X64_EDX);
         } else if (half) x64_movsx_r32_membase_index8(e, X64_EAX, X64_R14D, X64_EDX);
         else x64_movzx_r32_membase_index8(e, X64_EAX, X64_R14D, X64_EDX);
-        if (!leaf_return) x64_emit_store_arm_reg(e, rd, X64_EAX);
+        if (!pc_store) x64_emit_store_arm_reg(e, rd, X64_EAX);
     } else {
         x64_emit_load_arm_reg(e, X64_ECX, rd, op->pc);
         if (bytes == 4u) x64_mov_membase_index_r32(e, X64_R14D, X64_EDX, X64_ECX);
@@ -3044,8 +3050,26 @@ static int x64_emit_ram_dt(x64_emit_t *e, const arm_jit_op_t *op, uint32_t done)
         else x64_mov_membase_index8_r32(e, X64_R14D, X64_EDX, X64_ECX);
     }
     if (!p || w) x64_emit_store_arm_reg(e, rn, X64_R9D);
+    if (pc_store && !leaf_return) {
+        /* The loaded target is an unknown branch, not this trace's decoded
+         * successor: commit it and retire here, exactly like the other
+         * PC-writing natives. A rejected span re-executes the whole
+         * instruction through the checked helper and still retires. Both
+         * arms end in an explicit return so the block never falls into the
+         * shared sequential epilogue. */
+        x64_alu_r32_imm(e, 4, X64_EAX, ~3u);
+        x64_mov_mem_cpu_r32(e, arm_reg_off(15), X64_EAX);
+        x64_emit_return_imm(e, done);
+        for (unsigned i = 0; i < nslow; ++i) x64_patch32(e, slow[i], e->pos);
+        x64_emit_call_helper_op(e, op);
+        x64_emit_return_imm(e, done);
+        return 1;
+    }
     size_t leaf_continue = 0;
     if (leaf_return) {
+        /* write_r(15) in ARM state: a framed leaf return commits the loaded
+         * word with its low bits masked and continues only on the decoded
+         * successor. */
         x64_alu_r32_imm(e, 4, X64_EAX, ~3u);
         x64_mov_mem_cpu_r32(e, arm_reg_off(15), X64_EAX);
         x64_alu_r32_imm(e, 7, X64_EAX, e->expected_next);
