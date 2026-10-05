@@ -6,6 +6,14 @@ performance, audio and input correctness across the library, not boot-only tests
 
 ## Current accepted work
 
+- Rejected (round 163): splitting the JIT dispatcher into a compact
+  `arm_jit_run` steady state plus ARM_NOINLINE `arm_jit_run_slow` (w-runloop).
+  The resident A64 dispatch loop shrank 308 -> 196 bytes and PC improved
+  ~3%, but H700 ABBA against the accepted page-crossing build was mixed:
+  LGM 79.29 -> 79.64, Princess 119.82 -> 119.90, Blue 85.60 -> 85.14 and the
+  ASR opening 95.58 -> 94.42. Outputs identical; the out-of-line slow-path
+  calls cost more on A53 than the saved loop lines in the return-heavy scenes.
+  Evidence `F:/GP32/results/round163/w-runloop/`, `abba-runloop/`.
 - Accepted (round 163): straight-line JIT traces may cross the 1 KiB collector
   page boundary when the next page is already mapped. The side-effect-free
   peek proves the fetch without a table walk, TLB refill, fault or MMIO read;
