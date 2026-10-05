@@ -426,7 +426,7 @@ unsigned retro_api_version(void) { return RETRO_API_VERSION; }
 void retro_get_system_info(struct retro_system_info *info) {
     memset(info, 0, sizeof(*info));
     info->library_name = "gp32emu";
-    info->library_version = "v102-libretro-av-fix";
+    info->library_version = "1.0.0";
     info->valid_extensions = "smc|fxe|fpk";
     info->need_fullpath = true;
     info->block_extract = false;
