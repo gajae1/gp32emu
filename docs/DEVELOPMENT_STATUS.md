@@ -38,6 +38,23 @@ performance, audio and input correctness across the library, not boot-only tests
   into data (vba32 exit, gpmadmp3, fgen32, gpfrodo, race_ngp, handyport2 stop
   executing unmapped memory; gplynx now updates its screen). Commercial scenes
   identical; native H700 jit/exception/callback/wait/state tests pass.
+- `4c8c3ee`: direct mode carries the retail IRQ dispatcher/FIQ clear, SWI
+  9/0x0a install/remove ISR-table handlers, SWI 4 and reset/fault vectors
+  restart the loaded image at a frame boundary. 425-image homebrew sweep
+  (FXE 384, FPK 12, GXB 29; 900 frames, JIT and interpreter): OK 329 -> 411,
+  parked 72 -> 0, runaway 21 -> 11, load failures 3, JIT mismatches 0, no
+  regressions. Remaining: acidwarp/gpcine2p static screens, 11 runaways,
+  gpcheat.fxe/ubook.fpk/slubFW.fxe load failures. Table:
+  `F:/GP32/results/round154/w-hb2/result.md`.
+- LGM workload anatomy (round 153, `F:/GP32/results/round153/w-smc/`):
+  every frame uses its whole guest budget; 23.8% of guest instructions are the
+  game's SmartMedia GPIO bit-bang driver (one NAND byte per command, re-reading
+  a few pages: page 16512 101k times), 4.6% the BIOS LCD sync-edge poll at
+  0x2740. ~46k SoC word accesses per frame, ~53 per NAND byte. Caching card
+  flags/readback words in the SoC kept output identical but was neutral on
+  H700 (LGM 60.95 -> 60.79, Blue 75.42 -> 75.96, Princess 110.63 -> 110.68);
+  not merged. The guest's own instruction stream dominates; remaining lever is
+  dispatch/helper overhead per access.
 - Audio pops (round 150): the BIOS boot pop, the Dooly Soccer start pop and
   the BIOS sound-menu tick are guest PCM. The menu tick is three 335-sample
   plateaus of exactly 0x8000 that the Europe v1.6.6 BIOS reads from its own
