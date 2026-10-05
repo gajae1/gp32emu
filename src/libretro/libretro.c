@@ -62,6 +62,7 @@ static size_t state_capacity;
 static int use_jit;
 static int use_lcd_persistence;
 static int use_frame_interpolation;
+static unsigned cpu_speed_percent = 100u;
 static int boot_mode; /* 0=auto BIOS if available, 1=require BIOS, 2=direct/HLE */
 
 static const char *path_basename(const char *p) {
@@ -170,6 +171,12 @@ static void refresh_variables(void) {
     var.key = "gp32emu_frame_interpolation";
     if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value) use_frame_interpolation = strcmp(var.value, "enabled") == 0;
     memset(&var, 0, sizeof(var));
+    var.key = "gp32emu_cpu_speed";
+    if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value) {
+        unsigned long value = strtoul(var.value, NULL, 10);
+        cpu_speed_percent = value >= 50u && value <= 400u ? (unsigned)value : 100u;
+    }
+    memset(&var, 0, sizeof(var));
     var.key = "gp32emu_boot_mode";
     if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value) {
         if (!strcmp(var.value, "require_bios")) boot_mode = 1;
@@ -182,6 +189,7 @@ static void refresh_variables(void) {
         if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value && !strcmp(var.value, "enabled")) boot_mode = 2;
     }
     if (emu) gp32_set_jit(emu, use_jit);
+    if (emu) gp32_set_cpu_speed_percent(emu, cpu_speed_percent);
     if (effects_ready) gp32_video_effects_set(&effects, use_lcd_persistence, use_frame_interpolation);
 }
 
@@ -295,6 +303,7 @@ void retro_set_environment(retro_environment_t cb) {
         { "gp32emu_boot_mode", "Boot mode; auto|require_bios|direct_hle" },
         { "gp32emu_lcd_persistence", "LCD persistence / GP32 FLU ghosting; disabled|enabled" },
         { "gp32emu_frame_interpolation", "Frame interpolation; disabled|enabled" },
+        { "gp32emu_cpu_speed", "CPU speed (guest overclock, may affect compatibility); 100%|125%|150%|175%|200%|250%|300%" },
         { NULL, NULL }
     };
     if (environ_cb) environ_cb(RETRO_ENVIRONMENT_SET_VARIABLES, (void*)vars);
@@ -821,6 +830,7 @@ bool retro_load_game(const struct retro_game_info *game) {
         emu = create_core_with_optional_bios(bios_path);
         if (emu && load_content(emu, game, 0)) {
             gp32_set_jit(emu, use_jit);
+            gp32_set_cpu_speed_percent(emu, cpu_speed_percent);
             gp32_video_effects_reset(&effects);
             return true;
         }
@@ -851,6 +861,7 @@ bool retro_load_game(const struct retro_game_info *game) {
         return false;
     }
     gp32_set_jit(emu, use_jit);
+    gp32_set_cpu_speed_percent(emu, cpu_speed_percent);
     if (!load_content(emu, game, use_direct)) {
         const char *err = gp32_get_error(emu);
         lr_log(RETRO_LOG_ERROR, "[gp32emu] content load failed: %s\n", (err && err[0]) ? err : "unknown or unsupported content");

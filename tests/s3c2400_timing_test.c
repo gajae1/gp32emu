@@ -108,6 +108,52 @@ static int check_iis_fractional_rate(s3c2400_t *s, FILE *state) {
     return 1;
 }
 
+static int check_cpu_speed_keeps_peripheral_time(s3c2400_t *s) {
+    /* The CPU-speed option grants more guest instructions per emulated second
+     * but must keep IIS pitch/duration and PWM timer periods in real time, also
+     * across a speed change in the middle of playback. */
+    const uint32_t rate = 42968u;
+    s3c2400_reset(s);
+    s3c2400_write32(s, 0x14800004u, 0xe000u);
+    s3c2400_write32(s, 0x14800014u, 2u);
+    s3c2400_write32(s, 0x15508008u, 5u << 5);
+    s3c2400_write32(s, 0x14600040u, 0x0c000000u);
+    s3c2400_write32(s, 0x14600044u, 0x35508010u);
+    s3c2400_write32(s, 0x14600048u, 0x10800008u);
+    s3c2400_write32(s, 0x14600058u, 2u);
+    s3c2400_write32(s, 0x15508000u, 1u);
+    /* PWM timer 4: prescaler 0, divider 1/2, count 33000 -> 1 kHz at 66 MHz PCLK. */
+    s3c2400_write32(s, 0x1510003cu, 33000u - 1u);
+    s3c2400_write32(s, 0x15100008u, 0x00600000u); /* timer 4: auto-reload + manual update */
+    s3c2400_write32(s, 0x15100008u, 0x00500000u); /* timer 4: auto-reload + start */
+    uint64_t total = 0;
+    unsigned timer_irqs = 0;
+    for (unsigned half = 0; half < 2u; ++half) {
+        if (!s3c2400_set_cpu_speed_percent(s, half ? 200u : 100u)) return 0;
+        uint32_t runclk = s3c2400_run_clock_hz(s);
+        if (runclk != (half ? 96000000u : 48000000u)) return 0;
+        for (uint32_t elapsed = 0; elapsed < runclk / 2u;) {
+            uint32_t n = 4000u;
+            s3c2400_tick(s, n);
+            elapsed += n;
+            uint64_t frames; uint32_t tag;
+            (void)s3c2400_audio_samples(s, &frames, &tag);
+            if (frames && tag != rate) return 0;
+            total += frames;
+            s3c2400_audio_clear(s);
+            if (s3c2400_read32(s, 0x14400000u) & (1u << 14)) {
+                ++timer_irqs;
+                s3c2400_write32(s, 0x14400000u, 1u << 14);
+            }
+        }
+    }
+    if (!s3c2400_set_cpu_speed_percent(s, 100u) || s3c2400_set_cpu_speed_percent(s, 10u)) return 0;
+    printf("cpu_speed frames=%" PRIu64 " rate=%u timer_irqs=%u\n", total, rate, timer_irqs);
+    if (total + 1u < rate || total > rate + 1u) { fputs("FAIL: CPU speed changed IIS duration\n", stderr); return 0; }
+    if (timer_irqs + 2u < 1000u || timer_irqs > 1000u + 2u) { fputs("FAIL: CPU speed changed PWM period\n", stderr); return 0; }
+    return 1;
+}
+
 static int check_iis_fifo_restart(s3c2400_t *s) {
     /* SDK stop disables TX FIFO to discard pending data. A completed stereo
      * frame stays available to the host, but a lone old channel must not be
@@ -243,7 +289,8 @@ int main(void) {
         if ((k % 3u) == 0u) { s3c2400_reset(s); observe(s, 31u); }
     }
     int phase_ok = check_lcd_clock_phase(s, state) && check_iis_clock_phase(s, state) &&
-                   check_iis_fifo_restart(s) && check_lcd_scanline_poll(s) && check_iis_fractional_rate(s, state);
+                   check_iis_fifo_restart(s) && check_lcd_scanline_poll(s) && check_iis_fractional_rate(s, state) &&
+                   check_cpu_speed_keeps_peripheral_time(s);
     fclose(state);
     if (!phase_ok) { s3c2400_destroy(s); return 1; }
     printf("lcd_timing_trace=%016" PRIx64 "\n", hash);

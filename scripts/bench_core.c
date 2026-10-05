@@ -197,6 +197,7 @@ int main(int argc, char **argv) {
     const char *bios = NULL, *smc = NULL, *state_path = NULL, *input_script_path = NULL;
     uint64_t warmup = 2400, frames = 600;
     int jit = 0, cpu_profile = 0, legacy_cycle_frames = 0;
+    unsigned cpu_speed = 100u;
 
     for (int i = 1; i < argc; ++i) {
         if (!strcmp(argv[i], "--bios") && i + 1 < argc) bios = argv[++i];
@@ -207,6 +208,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--jit")) jit = 1;
         else if (!strcmp(argv[i], "--legacy-cycle-frames")) legacy_cycle_frames = 1;
         else if (!strcmp(argv[i], "--cpu-profile")) cpu_profile = 1;
+        else if (!strcmp(argv[i], "--cpu-speed") && i + 1 < argc) cpu_speed = (unsigned)strtoul(argv[++i], NULL, 0);
         else if (!strcmp(argv[i], "--input-script") && i + 1 < argc) input_script_path = argv[++i];
         else if (!strcmp(argv[i], "--help") || !strcmp(argv[i], "-h")) { usage(argv[0]); return 0; }
         else { fprintf(stderr, "unknown or incomplete option: %s\n", argv[i]); return usage(argv[0]); }
@@ -234,6 +236,10 @@ int main(int argc, char **argv) {
     }
     if (state_path && gp32_load_state(g, state_path) != GP32_OK) {
         fprintf(stderr, "gp32_load_state failed: %s\n", gp32_get_error(g));
+        gp32_input_script_destroy(script); gp32_destroy(g); return 1;
+    }
+    if (cpu_speed != 100u && gp32_set_cpu_speed_percent(g, cpu_speed) != GP32_OK) {
+        fprintf(stderr, "gp32_set_cpu_speed_percent failed: %s\n", gp32_get_error(g));
         gp32_input_script_destroy(script); gp32_destroy(g); return 1;
     }
 

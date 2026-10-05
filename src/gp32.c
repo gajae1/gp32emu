@@ -4153,6 +4153,32 @@ gp32_status_t gp32_set_jit(gp32_t *g, int enabled) {
     return GP32_OK;
 }
 
+gp32_status_t gp32_set_cpu_speed_percent(gp32_t *g, uint32_t percent) {
+    if (!g || !g->soc || g->direct_cpu_running) return GP32_ERR_INVALID_ARGUMENT;
+    if (!s3c2400_set_cpu_speed_percent(g->soc, percent)) {
+        seterr(g, "CPU speed must be 50..400 percent: %u", (unsigned)percent);
+        return GP32_ERR_INVALID_ARGUMENT;
+    }
+    return GP32_OK;
+}
+
+uint32_t gp32_get_cpu_speed_percent(const gp32_t *g) {
+    return g ? s3c2400_cpu_speed_percent(g->soc) : 100u;
+}
+
+/* Savestates always describe the unmodified machine: phases are converted to
+ * the guest-programmed clock around a save or load, so a state written at any
+ * CPU speed loads at any other. */
+static uint32_t gp32_cpu_speed_to_nominal(gp32_t *g) {
+    uint32_t percent = s3c2400_cpu_speed_percent(g->soc);
+    if (percent != 100u) (void)s3c2400_set_cpu_speed_percent(g->soc, 100u);
+    return percent;
+}
+
+static void gp32_cpu_speed_restore(gp32_t *g, uint32_t percent) {
+    if (percent != 100u) (void)s3c2400_set_cpu_speed_percent(g->soc, percent);
+}
+
 gp32_status_t gp32_set_hle_sef_rate(gp32_t *g, uint32_t sample_rate_hz) {
     if (!g) return GP32_ERR_INVALID_ARGUMENT;
     if (sample_rate_hz && (sample_rate_hz < 4000u || sample_rate_hz > 192000u)) {
@@ -4826,7 +4852,10 @@ gp32_status_t gp32_save_state_data(gp32_t *g, void *data, size_t size) {
         return GP32_ERR_INVALID_ARGUMENT;
     }
     state_io_t io = state_io_writer(data, size);
-    if (!gp32_state_write(g, &io)) { seterr(g, "write savestate buffer failed"); return GP32_ERR_IO; }
+    uint32_t percent = gp32_cpu_speed_to_nominal(g);
+    int ok = gp32_state_write(g, &io);
+    gp32_cpu_speed_restore(g, percent);
+    if (!ok) { seterr(g, "write savestate buffer failed"); return GP32_ERR_IO; }
     if (io.pos < size) memset((uint8_t *)data + io.pos, 0, size - io.pos);
     return GP32_OK;
 }
@@ -4836,11 +4865,14 @@ gp32_status_t gp32_load_state_data(gp32_t *g, const void *data, size_t size) {
     state_io_t io = state_io_reader(data, size);
     gp32_state_image_t direct;
     gp32_resume_image_t resume;
+    uint32_t percent = gp32_cpu_speed_to_nominal(g);
     if (!gp32_state_read(g, &io, &direct, &resume)) {
+        gp32_cpu_speed_restore(g, percent);
         seterr(g, "load savestate buffer failed or unsupported version");
         return GP32_ERR_IO;
     }
     gp32_state_loaded(g, &direct, &resume);
+    gp32_cpu_speed_restore(g, percent);
     return GP32_OK;
 }
 
@@ -4849,7 +4881,9 @@ gp32_status_t gp32_save_state(gp32_t *g, const char *path) {
     FILE *f = fopen(path, "wb");
     if (!f) { seterr(g, "open savestate %s: %s", path, strerror(errno)); return GP32_ERR_IO; }
     state_io_t io = state_io_file(f);
+    uint32_t percent = gp32_cpu_speed_to_nominal(g);
     int ok = gp32_state_write(g, &io);
+    gp32_cpu_speed_restore(g, percent);
     if (fclose(f) != 0) ok = 0;
     if (!ok) { seterr(g, "write savestate %s failed", path); return GP32_ERR_IO; }
     return GP32_OK;
@@ -4862,11 +4896,17 @@ gp32_status_t gp32_load_state(gp32_t *g, const char *path) {
     state_io_t io = state_io_file(f);
     gp32_state_image_t direct;
     gp32_resume_image_t resume;
+    uint32_t percent = gp32_cpu_speed_to_nominal(g);
     int ok = gp32_state_read(g, &io, &direct, &resume);
     /* Read-only stream: the complete payload is already committed on success.
      * A close error must not report rejection of an applied state. */
     (void)fclose(f);
-    if (!ok) { seterr(g, "load savestate %s failed or unsupported version", path); return GP32_ERR_IO; }
+    if (!ok) {
+        gp32_cpu_speed_restore(g, percent);
+        seterr(g, "load savestate %s failed or unsupported version", path);
+        return GP32_ERR_IO;
+    }
     gp32_state_loaded(g, &direct, &resume);
+    gp32_cpu_speed_restore(g, percent);
     return GP32_OK;
 }

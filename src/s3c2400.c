@@ -160,6 +160,9 @@ struct s3c2400 {
     uint64_t audio_idle_phase; /* 44100-Hz silence fraction, denominator RUN */
     int audio_idle_enabled; /* host policy; direct HLE has its own PCM source */
     uint32_t cached_fclk_hz, cached_hclk_hz, cached_run_hz;
+    /* Host option: guest instructions per emulated second, in percent of the
+     * register-derived run clock. Peripheral clocks are unchanged. 0 = 100. */
+    uint32_t cpu_speed_percent;
 };
 
 static uint8_t *s3c2400_fastmem(void *user, uint32_t addr, size_t bytes, int write);
@@ -1606,7 +1609,13 @@ static uint32_t run_clock_values(uint32_t f, uint32_t h) {
 }
 
 static uint32_t clk_run(const s3c2400_t *s, int reg) {
-    return run_clock_values(clk_fclk(s, reg), clk_hclk(s, reg));
+    uint32_t run = run_clock_values(clk_fclk(s, reg), clk_hclk(s, reg));
+    uint32_t percent = s->cpu_speed_percent;
+    /* Scaling only the instruction clock keeps PCLK/HCLK-derived IIS rates,
+     * PWM periods and TFT timing at their real-time lengths: every peripheral
+     * converts its own period to CPU cycles through this value. */
+    if (percent && percent != 100u) run = (uint32_t)(((uint64_t)run * percent + 50u) / 100u);
+    return run;
 }
 
 static uint32_t clk_pclk(const s3c2400_t *s, int reg) {
@@ -1624,7 +1633,7 @@ static uint32_t clk_pclk(const s3c2400_t *s, int reg) {
 static void clock_refresh_values(s3c2400_t *s) {
     s->cached_fclk_hz = clk_fclk(s, MPLLCON);
     s->cached_hclk_hz = clk_hclk(s, MPLLCON);
-    s->cached_run_hz = run_clock_values(s->cached_fclk_hz, s->cached_hclk_hz);
+    s->cached_run_hz = clk_run(s, MPLLCON);
 }
 
 uint32_t s3c2400_fclk_hz(const s3c2400_t *s) {
@@ -1640,6 +1649,10 @@ uint32_t s3c2400_hclk_hz(const s3c2400_t *s) {
 uint32_t s3c2400_run_clock_hz(const s3c2400_t *s) {
     uint32_t h = s ? s->cached_run_hz : 0u;
     return h ? h : 66000000u;
+}
+
+uint32_t s3c2400_cpu_speed_percent(const s3c2400_t *s) {
+    return s && s->cpu_speed_percent ? s->cpu_speed_percent : 100u;
 }
 
 static void audio_append_stereo(s3c2400_t *s, int16_t left, int16_t right, uint32_t rate) {
@@ -1889,6 +1902,20 @@ static void clock_write(s3c2400_t *s, uint32_t addr, uint32_t value, uint32_t ma
     if ((old_run_clock != clk_run(s, MPLLCON) || old_pclk != clk_pclk(s, MPLLCON)) &&
         arm920t_is_running(s->cpu_irq_sink))
         arm920t_stop_run(s->cpu_irq_sink);
+}
+
+int s3c2400_set_cpu_speed_percent(s3c2400_t *s, uint32_t percent) {
+    if (!s || s->cpu_run_active || percent < 50u || percent > 400u) return 0;
+    if (s3c2400_cpu_speed_percent(s) == percent) return 1;
+    /* Settle every cached period at the old instruction rate first, then
+     * convert phases exactly as a guest clock write between slices would. */
+    pwm_refresh_clock_cache(s);
+    (void)lcd_panel_frame_cycles(s);
+    uint32_t registers[GP32_ARRAY_COUNT(s->clkpow)];
+    memcpy(registers, s->clkpow, sizeof(registers));
+    s->cpu_speed_percent = percent;
+    clock_apply(s, registers);
+    return 1;
 }
 
 static uint32_t iis_dma_transfers_per_frame(const s3c2400_t *s) {

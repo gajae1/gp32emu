@@ -103,6 +103,11 @@ gp32_status_t gp32_run_cycles(gp32_t *gp32, uint32_t cycles);
  * Pacing carry, callbacks and guest display waits are restored by savestates. */
 gp32_status_t gp32_run_frame(gp32_t *gp32);
 gp32_status_t gp32_set_jit(gp32_t *gp32, int enabled);
+/* Optional guest CPU speed, 50..400 percent of the clock the game programs
+ * (default 100). Only instruction throughput changes; audio pitch, timers and
+ * LCD refresh keep real time. Savestates are portable between speeds. */
+gp32_status_t gp32_set_cpu_speed_percent(gp32_t *gp32, uint32_t percent);
+uint32_t gp32_get_cpu_speed_percent(const gp32_t *gp32);
 /* Overrides HLE playback rate for raw SEF PCM. 0 restores SDK-derived auto rate. */
 gp32_status_t gp32_set_hle_sef_rate(gp32_t *gp32, uint32_t sample_rate_hz);
 
