@@ -2,11 +2,9 @@
 #define ARM_JIT_CODE_SIZE (128u * 1024u)
 #define GP32EMU_CPU_PROFILE 1
 #ifndef ARM_JIT_NATIVE_MAX_BYTES
-#if defined(__aarch64__)
+/* Mirror the source under test's per-block emit budget before it defines it;
+ * both native backends use 64 KiB. */
 #define ARM_JIT_NATIVE_MAX_BYTES 65536u
-#else
-#define ARM_JIT_NATIVE_MAX_BYTES 16384u
-#endif
 #endif
 #ifndef ARM_JIT_RECYCLE_SOURCE
 #define ARM_JIT_RECYCLE_SOURCE "../src/arm920t.c"
