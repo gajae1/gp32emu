@@ -6,6 +6,18 @@ performance, audio and input correctness across the library, not boot-only tests
 
 ## Current accepted work
 
+- H700 PMU (round 156, `perf_event_open` user-only, LGM 2400+1200 frames,
+  HEAD): cpu_cycles 58.57e9, inst_retired 44.49e9 (IPC 0.76), L1I refills
+  1.253e9 (one per 35 instructions), branch mispredicts 0.18e9, L1D refills
+  0.036e9, L2 refills 0.011e9. The A53 is I-cache bound, which explains why
+  every change that added emitted code lost 4-13% (tail linking raised L1I
+  refills +19%). L1I-refill PC sampling: 60% of refills in JIT code (2492
+  distinct 64-byte lines; the hottest 1024 lines = 64 KiB cover 95%), 40% in
+  C code (`arm920t_run` dispatcher 21.7% of all refills, A64 IO helper 5.4%,
+  `io_write32` 4.4%). -O2 equals -O3; -Os is 2.9% slower. Next levers: hot/cold
+  splitting of emitted blocks and a compact C dispatch loop. Tools:
+  `F:/GP32/results/round156/pmu/` (pmu.c counter wrapper, isamp.c refill
+  sampler, run.py, irun.py, jitdist.py).
 - Round 152-153 (`783a6a2`, `53d7619`, installed on H700, core sha256
   `437fc417…`): slimmer GPIO/identity IO writes (H700 ABBA 1.512 GHz, identical
   output: Blue 75.47 -> 75.94, LGM 60.12 -> 60.94, Princess 109.56 -> 110.54 fps)
