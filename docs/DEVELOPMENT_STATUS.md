@@ -6,6 +6,17 @@ performance, audio and input correctness across the library, not boot-only tests
 
 ## Current accepted work
 
+- Accepted (round 163): libretro output declick plus an audio underrun-risk
+  counter. Guest PCM remains bit-identical; the frontend delivery stream now
+  replaces single-sample swings >= 25% full scale with the same 44-frame
+  linear glide already used by gap recovery. Measured BIOS menu rail exits fell
+  from 10929-29652 per sample to 568-734, Dooly SFX edges from 15750-16186 to
+  <=1589, and ASR/Dooly captures outside those windows stayed byte-identical.
+  gp32_bench now reports audio_underrun_risk; PC scenes report zero except the
+  cold ASR-opening replay at one event, which is useful diagnostic state rather
+  than a guest mismatch. ctest 29/29, PC parity/parity5/boot identical, H700
+  core builds. Real speaker/codec acceptance remains unverified. Evidence
+  F:/GP32/results/round161/w-audio/.
 - Accepted (round 163): GPIO live-read mirrors refresh only the word the written
   register can affect. GPBCON/GPBDAT refresh GPBDAT (NAND datarx and upper data
   bits); GPEDAT refreshes GPEDAT; GPDDAT and unknown GPIO mutations remain
