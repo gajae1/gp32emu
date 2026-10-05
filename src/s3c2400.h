@@ -21,6 +21,11 @@ const arm_live_read32_t *s3c2400_live_read32(const s3c2400_t *soc, size_t *count
 
 int s3c2400_load_bios(s3c2400_t *soc, const char *path, char *err, size_t err_len);
 int s3c2400_load_bios_buffer(s3c2400_t *soc, const uint8_t *data, size_t size, char *err, size_t err_len);
+/* Fixed RAM table the retail firmware's IRQ dispatcher indexes by INTOFFSET.
+ * The firmware's "install IRQ handler" service (SWI 9) writes it and its
+ * dispatcher (ROM 0x8c) calls the entry; direct mode publishes the same
+ * contract so SDK software that installs handlers keeps working. */
+#define S3C2400_HLE_ISR_TABLE_ADDR 0x0c7ac000u
 void s3c2400_install_hle_bios(s3c2400_t *soc);
 int s3c2400_load_smartmedia(s3c2400_t *soc, const char *path, char *err, size_t err_len);
 int s3c2400_load_smartmedia_buffer(s3c2400_t *soc, const uint8_t *data, size_t size, char *err, size_t err_len);

@@ -416,6 +416,52 @@ void s3c2400_install_hle_bios(s3c2400_t *s) {
        entries the firmware would use to restart or fault stay parked
        (`b .`), and the SWI entry returns to the caller with the exception-return
        semantics the direct HLE declines to handle in C. */
+    /* The retail ROM answers an IRQ by clearing the acknowledged source and
+       calling the handler the firmware's own SWI 9 service stored in the fixed
+       ISR table (ROM 0x8c, table address ROM 0x2a4); FIQ only clears and
+       returns (ROM 0xd4). Direct mode has no firmware, so a guest that enables
+       an interrupt and installs its handler through SWI 9 previously trapped on
+       the parked vector and froze. Publish the ROM's own dispatchers at the top
+       of the HLE image, byte for byte, so a direct-loaded guest sees exactly
+       the interrupt path a real console runs; only the PC-relative table load
+       needs its literal at the offset the copied instruction expects. */
+    #define HLE_DISPATCH_IRQ_OFF 0x0007f000u
+    #define HLE_DISPATCH_FIQ_OFF 0x0007f100u
+    #define HLE_DISPATCH_LITERAL_OFF (HLE_DISPATCH_IRQ_OFF + 0x218u) /* 0xac's ldr r8,[pc,#0x1f0] */
+    static const uint32_t direct_irq_dispatch[18] = {
+        0xe24dd004u, /* sub sp, sp, #4 */
+        0xe92d0380u, /* push {r7, r8, sb} */
+        0xe3a08551u, /* mov r8, #0x14400000 */
+        0xe598b014u, /* ldr sb, [r8, #0x14]        INTOFFSET */
+        0xe3a07001u, /* mov r7, #1 */
+        0xe1a07917u, /* lsl r7, r7, sb */
+        0xe5887000u, /* str r7, [r8]               clear SRCPND */
+        0xe5887010u, /* str r7, [r8, #0x10]        clear INTPND */
+        0xe59f81f0u, /* ldr r8, [pc, #0x1f0]       ISR table base */
+        0xe0888109u, /* add r8, r8, sb, lsl #2 */
+        0xe5988000u, /* ldr r8, [r8]               handler */
+        0xe3580000u, /* cmp r8, #0 */
+        0x0a000001u, /* beq no-handler */
+        0xe58d800cu, /* str r8, [sp, #0xc]         run the handler on pop */
+        0xe8bd8380u, /* pop {r7, r8, sb, pc}       -> handler */
+        0xe8bd0380u, /* pop {r7, r8, sb}           no handler: unwind */
+        0xe28dd004u, /* add sp, sp, #4 */
+        0xe25ef004u  /* subs pc, lr, #4 */
+    };
+    static const uint32_t direct_fiq_clear[7] = {
+        0xe3a0a551u, /* mov sl, #0x14400000 */
+        0xe59ac014u, /* ldr ip, [sl, #0x14] */
+        0xe3a0b001u, /* mov fp, #1 */
+        0xe1a0bc1bu, /* lsl fp, fp, ip */
+        0xe58ab000u, /* str fp, [sl] */
+        0xe58ab010u, /* str fp, [sl, #0x10] */
+        0xe25ef004u  /* subs pc, lr, #4 */
+    };
+    for (unsigned i = 0; i < 18u; ++i) gp32_st32le(&s->bios[HLE_DISPATCH_IRQ_OFF + i * 4u], direct_irq_dispatch[i]);
+    for (unsigned i = 0; i < 7u; ++i) gp32_st32le(&s->bios[HLE_DISPATCH_FIQ_OFF + i * 4u], direct_fiq_clear[i]);
+    gp32_st32le(&s->bios[HLE_DISPATCH_LITERAL_OFF], S3C2400_HLE_ISR_TABLE_ADDR);
+    uint32_t irq_vector = 0xea000000u | (((HLE_DISPATCH_IRQ_OFF - (0x18u + 8u)) >> 2) & 0x00ffffffu);
+    uint32_t fiq_vector = 0xea000000u | (((HLE_DISPATCH_FIQ_OFF - (0x1cu + 8u)) >> 2) & 0x00ffffffu);
     static const uint32_t direct_vectors[8] = {
         0xeafffffeu, /* 0x00 reset: the ROM reboots the system; park in place */
         0xeafffffeu, /* 0x04 undefined instruction: ROM 0x04 branches to its fault/reboot path */
@@ -423,10 +469,12 @@ void s3c2400_install_hle_bios(s3c2400_t *s) {
         0xeafffffeu, /* 0x0c prefetch abort: ROM 0x0c branches to its fault/reboot path */
         0xeafffffeu, /* 0x10 data abort: same fault/reboot path */
         0xeafffffeu, /* 0x14 reserved: the retail ROM self-loops at 0x14 */
-        0xeafffffeu, /* 0x18 IRQ: direct mode has no firmware interrupt dispatcher */
-        0xeafffffeu  /* 0x1c FIQ: same */
+        0,           /* 0x18 IRQ: firmware dispatcher copied above */
+        0            /* 0x1c FIQ: firmware clear-and-return copied above */
     };
     for (unsigned i = 0; i < 8u; ++i) gp32_st32le(&s->bios[i * 4u], direct_vectors[i]);
+    gp32_st32le(&s->bios[0x18u], irq_vector);
+    gp32_st32le(&s->bios[0x1cu], fiq_vector);
 }
 int s3c2400_load_smartmedia(s3c2400_t *s, const char *path, char *err, size_t err_len) {
     if (!s) return 0;
