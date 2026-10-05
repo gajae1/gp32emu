@@ -444,13 +444,19 @@ static void a64_ret_flush(a64_emit_t *e, uint32_t done) {
 static void a64_selfloop(a64_emit_t *e, uint32_t done) {
     size_t exits[5];
     unsigned n = 0;
-    a64_load(e, 0, offsetof(arm920t_t, jit_generation));
-    a64_imm(e, 1, e->generation);
-    a64_cmp(e, 0, 1);
+    /* Generation and epoch are two adjacent words, read as one 64-bit pair
+     * and compared against the entry snapshot in x24. The dispatcher only
+     * enters a block whose generation still matches the one its code was
+     * built for, so the entry-time pair is exactly the {compiled generation,
+     * entry epoch} the two separate compares used: one load, one compare. */
+    _Static_assert(offsetof(arm920t_t, jit_cache_epoch) ==
+                   offsetof(arm920t_t, jit_generation) + 4u &&
+                   ((offsetof(arm920t_t, jit_generation) -
+                     offsetof(arm920t_t, irq_line)) & 7u) == 0u,
+                   "AArch64 generation/epoch fence pair layout");
+    a64_cpu_mem(e, 0xf9400000u, 0, offsetof(arm920t_t, jit_generation), 3);
+    a64_rr(e, 0xeb000000u, 31, 0, 24); /* cmp x0, x24 */
     exits[n++] = a64_jump(e, 1); /* NE */
-    a64_load(e, 0, offsetof(arm920t_t, jit_cache_epoch));
-    a64_cmp(e, 0, 24);
-    exits[n++] = a64_jump(e, 1);
     /* Allowed direct ops cannot change control state or RAM anchoring.
      * Every callback runs through the checked helper above, which exits on
      * halt/trace/JIT disable, mode/base/PC changes or pending interrupts.
@@ -749,13 +755,15 @@ static int a64_data(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
     return 1;
 }
 
-/* w0 = virtual address -> in-RAM offset; w2/w11 are preserved. The derived
- * page tag proves the exact current TLB mapping and an entire physical 4 KiB
- * RAM page. Misses, tiny pages, non-RAM and fault-tolerant identity mappings
- * still use the classified helper. MMU-off accesses retain the range guard.
- * Word/block callers align w0 first; only a halfword can straddle the end of
- * the prevalidated physical page, so it keeps a whole-window end check. */
-static void a64_ram_offset(a64_emit_t *e, size_t *slow, unsigned *nslow, unsigned bytes) {
+/* w0 = virtual address -> w9 = in-RAM offset; w0 keeps the original virtual
+ * address for the cold chains and w2/w11 are preserved. The derived page tag
+ * proves the exact current TLB mapping and an entire physical 4 KiB RAM page.
+ * Misses, tiny pages, non-RAM and fault-tolerant identity mappings still use
+ * the classified helper. MMU-off accesses retain the range guard. Word callers
+ * ask for a 4-byte-aligned offset; only a halfword can straddle the end of the
+ * prevalidated physical page, so it keeps a whole-window end check. */
+static void a64_ram_offset(a64_emit_t *e, size_t *slow, unsigned *nslow, unsigned bytes,
+                           int align4) {
     _Static_assert(sizeof(arm_jit_tlb_page_t) == 8u &&
                    offsetof(arm_jit_tlb_page_t, va_page) == 0u &&
                    offsetof(arm_jit_tlb_page_t, xor_offset) == 4u,
@@ -774,17 +782,22 @@ static void a64_ram_offset(a64_emit_t *e, size_t *slow, unsigned *nslow, unsigne
         a64_u32(e, 0xf8665a87u); /* ldr x7, [x20, w6, uxtw #3]: VA page, XOR offset */
         a64_u32(e, 0x6b4030ffu); /* cmp w7, w0, lsr #12: full VA page tag */
         slow[(*nslow)++] = a64_jump(e, 1);
-        a64_u32(e, 0xd360fce9u); /* lsr x9, x7, #32: XOR offset */
-        a64_rr(e, 0x4a000000u, 0, 0, 9); /* VA XOR offset -> direct RAM offset */
+        /* One shifted-register EOR lifts the loaded pair's second word (the
+         * XOR offset) and writes it next to the untouched VA: the mirror only
+         * publishes entries whose low 12 bits are zero (a published page keeps
+         * the VA's own offset bits), so aligning the result below is exactly
+         * the w0 alignment the old order applied before the XOR. */
+        a64_u32(e, 0xca478009u); /* eor x9, x0, x7, lsr #32: RAM offset */
     } else {
         a64_imm(e, 6, ARM_JIT_RAM_BASE_ADDR);
-        a64_rr(e, 0x4b000000u, 0, 0, 6);
+        a64_rr(e, 0x4b000000u, 9, 0, 6); /* sub w9, w0, w6 */
     }
+    if (align4) a64_mask(e, 9, 9, ~3u);
     /* A word-aligned start and same-page block span cannot overrun RAM,
      * whose start/end are both 4 KiB aligned. */
     if (!e->mmu || bytes == 2u) {
         a64_imm(e, 6, ARM_JIT_RAM_SIZE_BYTES - bytes);
-        a64_cmp(e, 0, 6);
+        a64_cmp(e, 9, 6);
         slow[(*nslow)++] = a64_jump(e, 8); /* HI also rejects identity below RAM */
     }
 }
@@ -847,8 +860,7 @@ static int a64_single_dt(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
     int literal = op->a == 15u && !(d & ARM_BC_SD_REGOFF);
     uint32_t literal_addr = op->pc + 8u + ((d & ARM_BC_SD_U) ? op->imm : 0u - op->imm);
     if (literal) {
-        a64_imm(e, 0, byte ? literal_addr : literal_addr & ~3u);
-        if (access) a64_imm(e, 12, literal_addr);
+        a64_imm(e, 0, literal_addr);
     } else {
         if (d & ARM_BC_SD_REGOFF) {
             a64_guest(e, 1, op->c, op->pc);
@@ -871,19 +883,19 @@ static int a64_single_dt(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
         else if (!folded)
             a64_mov(e, 2, 0); /* retain the original base for writeback */
         if ((d & ARM_BC_SD_P) && !folded) a64_mov(e, 0, 2);
-        if (access) a64_mov(e, 12, 0);
-        if (!byte) {
+        if (!byte && load) {
             /* Retain the ARM unaligned word rotation. Only a load consumes it, and
-             * UBFIZ w11, w0, #3, #2 builds ((addr & 3) << 3) in one instruction. */
-            if (load) a64_u32(e, 0x53000000u | (29u << 16) | (1u << 10) | 11u);
-            a64_mask(e, 0, 0, ~3u);
+             * UBFIZ w11, w0, #3, #2 builds ((addr & 3) << 3) in one instruction.
+             * The word alignment moves to the in-RAM offset, so w0 stays the
+             * untouched VA the cold chains and the checked helpers expect. */
+            a64_u32(e, 0x53000000u | (29u << 16) | (1u << 10) | 11u);
         }
     }
-    a64_ram_offset(e, slow, &nslow, byte ? 1u : 4u);
+    a64_ram_offset(e, slow, &nslow, byte ? 1u : 4u, !byte);
     if (load) {
-        /* w0 is already the in-RAM offset; register-offset addressing folds
+        /* w9 is already the in-RAM offset; register-offset addressing folds
          * the jit_ram_base add into the access itself. */
-        a64_u32(e, (byte ? 0x38606800u : 0xb8606800u) | (0u << 16) | (21u << 5) | 1u);
+        a64_u32(e, (byte ? 0x38606800u : 0xb8606800u) | (9u << 16) | (21u << 5) | 1u);
         if (!byte) {
             if (!literal) a64_rr(e, 0x1ac02c00u, 1, 1, 11); /* rorv w1, w1, w11 */
             else if (literal_addr & 3u)
@@ -894,7 +906,7 @@ static int a64_single_dt(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
         a64_put_guest(e, op->b, 1);
     } else {
         a64_guest(e, 1, op->b, op->pc);
-        a64_u32(e, (byte ? 0x38206800u : 0xb8206800u) | (0u << 16) | (21u << 5) | 1u);
+        a64_u32(e, (byte ? 0x38206800u : 0xb8206800u) | (9u << 16) | (21u << 5) | 1u);
     }
     if (wb) a64_put_guest(e, op->a, 2); /* includes the helper's Rn==Rd order */
     if (load && op->b == 15u) {
@@ -953,17 +965,16 @@ static int a64_half(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
     int folded_half = p && !wb;
     a64_rr(e, (d & ARM_BC_HALF_U) ? 0x0b000000u : 0x4b000000u, folded_half ? 0u : 2u, 0, 1);
     if (p && !folded_half) a64_mov(e, 0, 2); /* pre-indexed accesses target the offset address */
-    a64_mov(e, 12, 0);
-    a64_ram_offset(e, slow, &nslow, (load && sh == 2u) ? 1u : 2u);
+    a64_ram_offset(e, slow, &nslow, (load && sh == 2u) ? 1u : 2u, 0);
     if (load) {
-        /* ldrh/ldrsb/ldrsh w1, [x21, x0]: A64 already yields the exact
+        /* ldrh/ldrsb/ldrsh w1, [x21, w9]: A64 already yields the exact
          * zero/sign extension op_halfword_bc produces. */
         a64_u32(e, (sh == 1u ? 0x78606800u : sh == 2u ? 0x38e06800u : 0x78e06800u) |
-                 (0u << 16) | (21u << 5) | 1u);
+                 (9u << 16) | (21u << 5) | 1u);
         a64_put_guest(e, op->b, 1);
     } else {
         a64_guest(e, 1, op->b, op->pc);
-        a64_u32(e, 0x78206800u | (0u << 16) | (21u << 5) | 1u); /* strh w1, [x21, x0] */
+        a64_u32(e, 0x78206800u | (9u << 16) | (21u << 5) | 1u); /* strh w1, [x21, x9] */
     }
     if (wb) a64_put_guest(e, op->a, 2);
     /* As for a64_single_dt: the fast path is complete, and the guard
@@ -1038,8 +1049,8 @@ static int a64_block_dt(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
     }
     /* The span stays within this 4 KiB page, so proving its aligned first
      * word in a full RAM page also proves every transferred word. */
-    a64_ram_offset(e, slow, &nslow, 4u);
-    a64_rr(e, 0x8b000000u, 12, 21, 0); /* x12 = jit_ram_base + in-RAM offset */
+    a64_ram_offset(e, slow, &nslow, 4u, 0);
+    a64_rr(e, 0x8b000000u, 12, 21, 9); /* x12 = jit_ram_base + in-RAM offset */
     a64_block_dt_transfer(e, op, count, 0, slow, &nslow);
     if (w && (!load || !(list & (1u << rn))))
         a64_put_guest(e, rn, 2); /* a load containing Rn suppresses this */
@@ -1079,14 +1090,13 @@ static void a64_block_dt_xpage(a64_emit_t *e, const arm_jit_op_t *op, uint32_t d
      * a64_ram_offset call. w2's normal writeback value is reconstructed
      * after both translations, so using it as a preserved temporary is
      * safe. */
-    a64_mov(e, 11, 0);
-    a64_ram_offset(e, slow, nslow, 4u);
-    a64_mov(e, 2, 0);
-    a64_mov(e, 0, 11);
+    a64_mov(e, 11, 0); /* w11 = addr0 */
+    a64_ram_offset(e, slow, nslow, 4u, 0);
+    a64_mov(e, 2, 9); /* w2 = offset0 */
     a64_u32(e, 0x11000000u | (0xfffu << 10)); /* add w0, w0, #0xfff */
     a64_mask(e, 0, 0, ~0xfffu); /* w0 = next 4 KiB boundary */
-    a64_ram_offset(e, slow, nslow, 4u);
-    a64_mov(e, 4, 0); /* w4 = offset1 */
+    a64_ram_offset(e, slow, nslow, 4u, 0);
+    a64_mov(e, 4, 9); /* w4 = offset1 */
 
     /* w5 = number of words in the first page. */
     a64_mask(e, 5, 11, 0xfffu);
@@ -1369,7 +1379,11 @@ static void a64_cold_flush(a64_emit_t *e) {
         }
         case A64_COLD_SINGLE_DT: {
             /* The inline order: certificate, direct identity-I/O attempt,
-             * then the checked helper that every rejection lands on. */
+             * then the checked helper that every rejection lands on. The hot
+             * body keeps the VA in w0; the cold sequences work on the
+             * established w12 handover, which is restored here (cold bytes,
+             * never walked by the fast path). */
+            a64_mov(e, 12, 0);
             if (c->live) a64_live_read32(e, c->op->b, c->cont);
             size_t io_cold[4];
             unsigned nio = 0;
@@ -1381,6 +1395,7 @@ static void a64_cold_flush(a64_emit_t *e) {
             break;
         }
         case A64_COLD_HALF:
+            a64_mov(e, 12, 0); /* the hot body keeps the VA in w0 */
             a64_mem_slow(e, c->op, c->done, c->load, c->wb);
             break;
         default:
@@ -1451,7 +1466,8 @@ static void arm_jit_compile_native(arm920t_t *c, arm_jit_block_t *b) {
         a64_mov(&e, 22, 1);
         a64_mov(&e, 23, 31);
         a64_cpu_addr(&e, 25, offsetof(arm920t_t, irq_line));
-        a64_load(&e, 24, offsetof(arm920t_t, jit_cache_epoch));
+        /* x24 = the {generation, epoch} pair the self backedge verifies. */
+        a64_cpu_mem(&e, 0xf9400000u, 24, offsetof(arm920t_t, jit_generation), 3);
     }
     if (e.memory) {
         /* x20 = &c->jit_tlb_page[0] for the whole block. */
