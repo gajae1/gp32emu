@@ -117,3 +117,48 @@ Knights SMC scenes are identical to `ee3a2de` in JIT and interpreter (600
 frames). DynaMate v2.0 runs 60 frames identically on both backends. WinterSports
 Eins alpha still leaves RAM at `06cc4dec`, exactly as before. Raw evidence:
 `F:/GP32/results/round134-callback/` and `round139-callback/`.
+
+## SDK task suspension inside callbacks (2026-10-05, round140)
+
+SWI #0x14 no longer faults just because a direct-HLE callback is pending.
+Before transferring to a ready SDK task, it binds the callback to the task
+record whose saved 16-word frame matches the callback's live SVC stack (the
+frame base or top, including the inactive SVC bank when in IRQ). The guest
+scheduler must save that frame, as it does for an ordinary interrupted task;
+an unbound service call without a saved source frame cannot discard the
+callback by restoring some unrelated ready task. CPU mode or return PC alone
+is not used as task identity.
+
+The existing context restore yields immediately at a switch, so all cycles
+before it belong to the outgoing task. Other tasks execute within the same
+public budget while the callback, its foreground snapshot and its refill or
+timer consumer tail remain pending. Restoring its owning task resumes the
+guest-saved callback stack/registers. The private return trap is ineligible
+while another task owns the CPU. Only the resumed callback can acknowledge
+its refill and restore the foreground at that trap. SDK idle-task recovery is
+allowed while suspended so it can restore a ready callback task.
+
+The callback watchdog counts active emulated time. Its deadline advances by
+each outgoing suspended slice's elapsed nanoseconds, including clock changes
+and modular uint64 wrapping; unrelated task time cannot exhaust the callback
+watchdog. No guest context return or timer completion is fabricated. State
+v12 appends two LE words to v11: owning SDK task-record address and suspension
+flag. v2-v11 still load; v10/v11 callbacks start unbound and unsuspended.
+Previously saved sticky task-switch faults remain faults. This extension is
+needed because a v11 CPU image cannot tell whether its active task is the
+pending callback or an unrelated task using the same CPU mode.
+
+HLE mixing and software timer dispatch still pause while the callback's
+consumer tail is pending, including task suspension. Hardware LCD/IIS/PWM and
+firmware elapsed time continue normally. Recursive HLE callbacks/mixing are
+a separate change because they would reuse the pending callback's private
+stack and mix tail; their existing timing is intentionally retained here.
+
+The focused `gp32_callback` regression uses a real PWM IRQ and guest ARM
+scheduler code to save the callback frame, select another SDK task, suspend
+for more than one watchdog interval, save/load, select the callback again,
+and finish its tail once. It failed with the explicit task-switch fault on
+both PC backends before the change and passes after it. All 26 PC tests and
+the AArch64 C23 translation-unit cross-compile pass. Raw evidence and the
+600-frame Princess/ASR/Her comparisons are under
+`F:/GP32/results/round140/hle-taskswitch/`.

@@ -27,6 +27,7 @@ typedef struct direct_callback_tail {
     uint32_t ack_addr, ack_value;
     uint64_t deadline_ns;
     arm920t_register_context_t foreground;
+    uint32_t sdk_task, suspended;
 } direct_callback_tail_t;
 
 typedef struct direct_hle_tick_tail {
@@ -180,7 +181,7 @@ static void direct_callback_error(gp32_t *g) {
     const direct_callback_tail_t *cb = &g->direct_callback;
     const char *reason = cb->fault_reason == DIRECT_CB_TIMEOUT ? "emulated-time watchdog" :
         cb->fault_reason == DIRECT_CB_STALLED ? "halted or zero-progress CPU" :
-        cb->fault_reason == DIRECT_CB_TASK_SWITCH ? "unsupported SDK task switch" :
+        cb->fault_reason == DIRECT_CB_TASK_SWITCH ? "SDK task-switch fault retained from older continuation state" :
         "display-wait fault retained from older continuation state";
     seterr(g, "HLE callback fault: %s; owner=%u fn=%08x pc=%08x sp=%08x ns=%" PRIu64,
            reason, cb->fault_owner, cb->fn, arm920t_get_pc(g->cpu),
@@ -2883,7 +2884,8 @@ static int direct_file_hle_swi(gp32_t *g, arm920t_t *cpu, uint32_t id, uint32_t 
         /* Only our active callback's return stub may end the host call. A
          * matching guest SWI elsewhere must follow normal exception dispatch. */
         if ((g->direct_callback.owner != DIRECT_CB_REFILL && g->direct_callback.owner != DIRECT_CB_TIMER) ||
-            !g->direct_hle_callback_running || pc != direct_callback_return_stub_addr(g)) return 0;
+            !g->direct_hle_callback_running || g->direct_callback.suspended ||
+            pc != direct_callback_return_stub_addr(g)) return 0;
         g->direct_hle_callback_returned = 1u;
         arm920t_set_reg(cpu, 15, lr);
         arm920t_stop_run(cpu);
@@ -3272,10 +3274,6 @@ static int direct_fxe_swi(void *user, arm920t_t *cpu, uint32_t imm, uint32_t pc,
         uint32_t cmd = direct_read32_if_ram(g, cmdp);
         if (direct_ram_range(g, cmdp, 4u) &&
             (cmd == 0x20u || cmd == 0x80u || cmd == 0x1000u || cmd == 0x2000u || cmd == 0x4010u)) {
-            if (g->direct_hle_callback_running) {
-                direct_callback_fault(g, DIRECT_CB_TASK_SWITCH);
-                return 1;
-            }
             direct_tick_sdk_task_sleepers(g, arm920t_get_reg(cpu, 2), arm920t_get_reg(cpu, 3), 1u);
             if (direct_resume_ready_sdk_task(g, pc, arm920t_get_reg(cpu, 2), arm920t_get_reg(cpu, 3))) return 1;
         }
@@ -3906,6 +3904,27 @@ static int direct_resume_ready_sdk_task(gp32_t *g, uint32_t pc, uint32_t first_t
     if (!g || !g->direct_fxe_mode || !g->cpu) return 0;
     uint32_t start = GP32_RAM_BASE, end = GP32_RAM_BASE, step = 4u;
     direct_task_scan_bounds(g, first_task, last_task, &start, &end, &step);
+    if (g->direct_hle_callback_running && !g->direct_callback.sdk_task) {
+        /* Bind the callback to the SDK record that actually saved its stack.
+         * A scheduler may leave SVC SP at the frame base or at its top before
+         * returning to IRQ. Mode/PC alone cannot identify an interrupted task.
+         * Without a saved source frame, this service must not discard the
+         * callback by restoring an unrelated ready task. */
+        arm920t_register_context_t context;
+        arm920t_get_register_context(g->cpu, &context);
+        uint32_t sp = (context.cpsr & 31u) == ARM_MODE_SVC ? context.r[13] : context.bank_svc[0];
+        for (uint32_t t = start; t + 0x34u <= end; t += step) {
+            if (!direct_task_record_plausible(g, t) || direct_gpos_task_is_internal_timer(g, t)) continue;
+            uint32_t saved_sp = s3c2400_debug_read32(g->soc, t);
+            if ((saved_sp & 3u) || !direct_ram_range(g, saved_sp, 64u) ||
+                (saved_sp != sp && saved_sp + 64u != sp)) continue;
+            uint32_t cpsr = s3c2400_debug_read32(g->soc, saved_sp);
+            if ((cpsr & 31u) != ARM_MODE_SVC || !direct_ram_range(g, direct_task_saved_pc(g, t) & ~1u, 4u)) continue;
+            g->direct_callback.sdk_task = t;
+            break;
+        }
+        if (!g->direct_callback.sdk_task) return 0;
+    }
     for (uint32_t t = start; t + 0x34u <= end; t += step) {
         if (!direct_task_record_plausible(g, t)) continue;
         if (direct_gpos_task_is_internal_timer(g, t)) continue;
@@ -3943,6 +3962,12 @@ static int direct_restore_saved_context(gp32_t *g, uint32_t task_addr) {
     arm920t_set_reg(g->cpu, 15, new_pc);
     direct_write32_if_ram(g, task_addr + 0u, saved_sp + 64u);
     direct_write32_if_ram(g, task_addr + 0x14u, 1u);
+    if (g->direct_hle_callback_running) {
+        g->direct_callback.suspended = task_addr != g->direct_callback.sdk_task;
+        /* Settle the outgoing task's time before the incoming task executes,
+         * including a switch back to the callback within a large run budget. */
+        arm920t_stop_run(g->cpu);
+    }
     return 1;
 }
 
@@ -4072,9 +4097,12 @@ static gp32_status_t gp32_run(gp32_t *g, uint32_t cycles, int timed) {
             uint32_t slice = remaining > 4096u ? 4096u : remaining;
             direct_update_fw_tick(g);
             uint32_t clock = direct_run_clock_hz(g);
+            uint32_t suspended = g->direct_callback.suspended;
+            uint64_t before_ns = g->elapsed.nanoseconds;
             uint32_t done = direct_run_cpu(g, slice, clock);
             remaining = done >= remaining ? 0u : remaining - done;
             direct_update_fw_tick(g);
+            if (suspended) g->direct_callback.deadline_ns += g->elapsed.nanoseconds - before_ns;
             /* A valid trap wins over timeout in the same completed slice. */
             if (g->direct_hle_callback_returned) {
                 direct_callback_tail_t *cb = &g->direct_callback;
@@ -4085,12 +4113,18 @@ static gp32_status_t gp32_run(gp32_t *g, uint32_t cycles, int timed) {
                 g->direct_hle_callback_returned = 0u;
                 g->direct_hle_callback_running = 0u;
             } else if (g->direct_callback.owner != DIRECT_CB_FAULT) {
-                if (!done) direct_callback_fault(g, DIRECT_CB_STALLED);
+                if (!done && !g->direct_callback.suspended) direct_callback_fault(g, DIRECT_CB_STALLED);
                 else if (!direct_time_pending(g->direct_callback.deadline_ns, g->elapsed.nanoseconds))
                     direct_callback_fault(g, DIRECT_CB_TIMEOUT);
             }
-            /* No HLE mixing, timer preparation, idle wait or foreground task
-             * recovery while the callback owns the normal CPU/hardware. */
+            /* SDK idle recovery must be able to resume the saved callback
+             * task. Its consumer tail still owns HLE mixing/timer dispatch;
+             * executing another callback here would reuse its private stack. */
+            if (g->direct_callback.suspended && g->direct_callback.owner != DIRECT_CB_FAULT) {
+                int progressed = direct_try_file_hle(g);
+                progressed |= direct_try_resume_sdk_task(g);
+                if (!done && !progressed) break;
+            }
             continue;
         }
         uint32_t slice = remaining > 32768u ? 32768u : remaining;
@@ -4556,16 +4590,19 @@ static const uint8_t gp32_state_magic_v7[16] = { 'G','P','3','2','S','T','A','T'
 static const uint8_t gp32_state_magic_v8[16] = { 'G','P','3','2','S','T','A','T','E','v','0','0','0','8',0,0 };
 static const uint8_t gp32_state_magic_v9[16] = { 'G','P','3','2','S','T','A','T','E','v','0','0','0','9',0,0 };
 static const uint8_t gp32_state_magic_v10[16] = { 'G','P','3','2','S','T','A','T','E','v','0','0','1','0',0,0 };
-static const uint8_t gp32_state_magic[16] = { 'G','P','3','2','S','T','A','T','E','v','0','0','1','1',0,0 };
+static const uint8_t gp32_state_magic_v11[16] = { 'G','P','3','2','S','T','A','T','E','v','0','0','1','1',0,0 };
+static const uint8_t gp32_state_magic[16] = { 'G','P','3','2','S','T','A','T','E','v','0','0','1','2',0,0 };
 static_assert(sizeof(gp32_frame_time_t) == 16u, "fixed frame-time wire extension");
 static_assert(sizeof(gp32_elapsed_time_t) == 16u, "fixed elapsed-time wire extension");
 
-/* v10 has 81 LE words; v11 appends four display-cadence words.
+/* v10 has 81 LE words; v11 appends four display-cadence words; v12 adds
+ * the SDK callback task identity and its suspension flag.
  * No host pointers, padding or raw register-context layout.
  * RAM size/current clock bind these validations to the staged SoC body.
  * The suspended tick may still have a different fractional denominator. */
 #define GP32_CONTINUATION_V10_WORDS 81u
-#define GP32_CONTINUATION_WORDS 85u
+#define GP32_CONTINUATION_V11_WORDS 85u
+#define GP32_CONTINUATION_WORDS 87u
 #define GP32_CONTINUATION_BYTES (GP32_CONTINUATION_WORDS * 4u)
 typedef struct gp32_resume_image {
     uint32_t ram_size, run_clock;
@@ -4606,18 +4643,20 @@ static int gp32_resume_write(const gp32_t *g, state_io_t *io) {
     for (unsigned i = 0; i < GP32_DIRECT_GPOS_TIMER_COUNT; ++i) PUT(g->direct_hle_gpos_timer_epoch[i]);
     PUT((uint32_t)g->direct_vblank_time.deadline_ns); PUT((uint32_t)(g->direct_vblank_time.deadline_ns >> 32));
     PUT(g->direct_vblank_time.remainder); PUT(g->direct_vblank_time.valid);
+    PUT(cb->sdk_task); PUT(cb->suspended);
 #undef PUT
     assert(n == GP32_CONTINUATION_WORDS);
     for (size_t i = 0; i < n; ++i) gp32_st32le(bytes + i * 4u, w[i]);
     return state_io_write(io, bytes, sizeof(bytes));
 }
 
-static int gp32_resume_read(state_io_t *io, gp32_resume_image_t *resume, int has_wait) {
+static int gp32_resume_read(state_io_t *io, gp32_resume_image_t *resume, int has_wait, int has_tasks) {
     direct_callback_tail_t *cb = &resume->callback;
     direct_hle_tick_tail_t *tick = &resume->tick;
     arm920t_register_context_t *fg = &cb->foreground;
     uint8_t bytes[GP32_CONTINUATION_BYTES];
-    size_t words = has_wait ? GP32_CONTINUATION_WORDS : GP32_CONTINUATION_V10_WORDS;
+    size_t words = has_tasks ? GP32_CONTINUATION_WORDS :
+        has_wait ? GP32_CONTINUATION_V11_WORDS : GP32_CONTINUATION_V10_WORDS;
     if (!state_io_read(io, bytes, words * 4u)) return 0;
     size_t n = 0;
 #define GET() gp32_ld32le(bytes + 4u * n++)
@@ -4646,6 +4685,7 @@ static int gp32_resume_read(state_io_t *io, gp32_resume_image_t *resume, int has
         resume->vblank.deadline_ns = ((uint64_t)hi << 32) | lo;
         resume->vblank.remainder = GET(); resume->vblank.valid = GET();
     }
+    if (has_tasks) { cb->sdk_task = GET(); cb->suspended = GET(); }
 #undef GET
     assert(n == words);
     return 1;
@@ -4665,7 +4705,9 @@ static int gp32_resume_validate(const gp32_resume_image_t *r, const gp32_state_i
     const direct_callback_tail_t *cb = &r->callback;
     const direct_hle_tick_tail_t *tick = &r->tick;
     if (!r->ram_size || r->ram_size > 64u * 1024u * 1024u || !r->run_clock ||
-        cb->owner > DIRECT_CB_FAULT || tick->phase > DIRECT_TICK_TIMER_CALLS) return 0;
+        cb->owner > DIRECT_CB_FAULT || tick->phase > DIRECT_TICK_TIMER_CALLS ||
+        cb->suspended > 1u || (cb->suspended && !cb->sdk_task) ||
+        (cb->sdk_task && ((cb->sdk_task & 3u) || !gp32_resume_ram_range(r->ram_size, cb->sdk_task, 0x34u)))) return 0;
     if (r->vblank.valid > 1u || r->vblank.remainder >= 60u ||
         (!r->vblank.valid && (r->vblank.deadline_ns || r->vblank.remainder))) return 0;
     uint32_t clock = tick->clock ? tick->clock : r->run_clock;
@@ -4715,7 +4757,7 @@ static int gp32_resume_validate(const gp32_resume_image_t *r, const gp32_state_i
             direct->direct_hle_callback_running) return 0;
     } else if (cb->fault_owner || cb->fault_reason || !direct->direct_hle_callback_running ||
                !direct_time_pending(cb->deadline_ns, elapsed->nanoseconds) ||
-               cb->deadline_ns - elapsed->nanoseconds > 1000000000u || cpu->halted) return 0;
+               cb->deadline_ns - elapsed->nanoseconds > 1000000000u || (cpu->halted && !cb->suspended)) return 0;
     return 1;
 }
 
@@ -4735,7 +4777,8 @@ static int gp32_state_read(gp32_t *g, state_io_t *io, gp32_state_image_t *direct
     uint8_t got[sizeof(gp32_state_magic)];
     if (!state_io_read(io, got, sizeof(got))) return 0;
     int legacy = memcmp(got, gp32_state_magic_v2, sizeof(got)) == 0;
-    int has_wait = memcmp(got, gp32_state_magic, sizeof(got)) == 0;
+    int has_tasks = memcmp(got, gp32_state_magic, sizeof(got)) == 0;
+    int has_wait = has_tasks || memcmp(got, gp32_state_magic_v11, sizeof(got)) == 0;
     int has_resume = has_wait || memcmp(got, gp32_state_magic_v10, sizeof(got)) == 0;
     int has_codec = has_resume || memcmp(got, gp32_state_magic_v9, sizeof(got)) == 0;
     int has_idle_phase = has_codec || memcmp(got, gp32_state_magic_v8, sizeof(got)) == 0;
@@ -4766,7 +4809,7 @@ static int gp32_state_read(gp32_t *g, state_io_t *io, gp32_state_image_t *direct
      * the CPU image must not remain on that stack during the SoC call. */
     arm920t_state_image_t *cpu = malloc(sizeof(*cpu));
     if (!cpu) return 0;
-    int ok = (!has_resume || gp32_resume_read(io, resume, has_wait)) && state_io_read(io, cpu, sizeof(*cpu)) &&
+    int ok = (!has_resume || gp32_resume_read(io, resume, has_wait, has_tasks)) && state_io_read(io, cpu, sizeof(*cpu)) &&
         (!has_resume || gp32_resume_validate(resume, direct, cpu, &elapsed));
     uint32_t required_ram_size = 0u;
     if (ok && has_wait && (direct->direct_vblank_next_cycle || direct->direct_vblank_wait_cycles ||

@@ -83,7 +83,7 @@ static void check_callback_wait(int jit, uint64_t origin, int change_clock, cons
     }
     size_t size = 0; uint8_t *image = save(g, &size);
     if (image) {
-        CHECK(!memcmp(image, "GP32STATEv0011", 14u), "v11 combined state writer");
+        CHECK(!memcmp(image, "GP32STATEv0012", 14u), "v12 combined state writer");
         CHECK(gp32_load_state_data(clone, image, size) == GP32_OK, "restore pending display/callback");
         CHECK(gp32_save_state(g, path) == GP32_OK && gp32_load_state(clone, path) == GP32_OK, "file wait continuation roundtrip");
         CHECK(gp32_get_pc(g) == gp32_get_pc(clone) && call_deadline(clone) == deadline, "restore live guest deadline without rearming");
@@ -140,8 +140,9 @@ static void check_legacy(int jit) {
         if (v10) {
             memcpy(v10, image, size); memcpy(v10, gp32_state_magic_v10, 16u);
             size_t cut = off + GP32_CONTINUATION_V10_WORDS * 4u;
-            memmove(v10 + cut, v10 + cut + 16u, size - cut - 16u);
-            CHECK(gp32_load_state_data(clone, v10, size - 16u) == GP32_OK, "old callback v10 remains readable"); free(v10);
+            size_t drop = GP32_CONTINUATION_BYTES - GP32_CONTINUATION_V10_WORDS * 4u;
+            memmove(v10 + cut, v10 + cut + drop, size - cut - drop);
+            CHECK(gp32_load_state_data(clone, v10, size - drop) == GP32_OK, "old callback v10 remains readable"); free(v10);
         }
         memcpy(image, gp32_state_magic_v9, 16u);
         memmove(image + off, image + off + GP32_CONTINUATION_BYTES, size - off - GP32_CONTINUATION_BYTES);
@@ -276,11 +277,12 @@ static void check_state_reset_and_watchdog(int jit) {
             free(after);
         }
         /* Old callback-only v10 body: keep all 81 fields and live callback,
-         * remove only the later cadence extension. Its legacy stub is upgraded. */
+         * remove the later cadence/task extensions. Its legacy stub is upgraded. */
         memcpy(bad, image, size); memcpy(bad, gp32_state_magic_v10, 16u);
         size_t cut = off + GP32_CONTINUATION_V10_WORDS * 4u;
-        memmove(bad + cut, bad + cut + 16u, size - cut - 16u);
-        CHECK(gp32_load_state_data(clone, bad, size - 16u) == GP32_OK && finish(clone), "load/resume active v10 callback");
+        size_t drop = GP32_CONTINUATION_BYTES - GP32_CONTINUATION_V10_WORDS * 4u;
+        memmove(bad + cut, bad + cut + drop, size - cut - drop);
+        CHECK(gp32_load_state_data(clone, bad, size - drop) == GP32_OK && finish(clone), "load/resume active v10 callback");
         CHECK(gp32_reset(g) == GP32_OK && !g->direct_callback.owner && !g->direct_tick.clock &&
               !g->direct_vblank_time.valid && !g->direct_vblank_wait_requested, "reset cancels pending callback and wait");
         CHECK(gp32_load_state_data(g, image, size) == GP32_OK, "restore pending wait for image replacement");
