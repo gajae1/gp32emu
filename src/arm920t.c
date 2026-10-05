@@ -109,6 +109,19 @@ enum arm_jit_inv_cause {
 #ifndef ARM_JIT_MAX_INSNS
 #define ARM_JIT_MAX_INSNS   96u
 #endif
+/* Bounded BL nesting followed inside one superblock trace. Each level keeps
+ * its resume PC and page anchor, so the trace stays a straight-line recording
+ * of real instructions and never needs a runtime call stack. */
+#ifndef ARM_JIT_TRACE_CALLS
+#define ARM_JIT_TRACE_CALLS 3u
+#endif
+/* An extended trace duplicates the callee body at every call site, so the
+ * appended span stays short: small helpers (the common call shape) still close
+ * their frame inside the trace, while a deep callee stops at the bound instead
+ * of duplicating its whole body. */
+#ifndef ARM_JIT_TRACE_MAX_INSNS
+#define ARM_JIT_TRACE_MAX_INSNS 32u
+#endif
 #define ARM_JIT_PAGE_MASK   0x3ffu
 #define ARM_JIT_RAM_BASE_ADDR 0x0c000000u
 #define ARM_JIT_RAM_SIZE_BYTES 0x00800000u
@@ -1329,6 +1342,14 @@ static int arm_jit_is_leaf_pop_pc(uint32_t insn) {
     return insn == 0xe8bd8000u || insn == 0xe49df004u; /* LDM / LDR pc,[sp],#4 */
 }
 
+/* Any unconditional LDMIA SP!,{...,pc}: the ordinary function epilogue. Every
+ * register in the list, including PC, is still transferred for real; only the
+ * decoded successor may be continued in the same trace. S (user-bank) and
+ * non-AL conditions keep the instruction on its existing dispatch boundary. */
+static int arm_jit_is_plain_pop_pc(uint32_t insn) {
+    return (insn & 0xffbf0000u) == 0xe8bd0000u && (insn & 0x8000u) != 0u;
+}
+
 static int arm_jit_is_leaf_push_lr(uint32_t insn) {
     return insn == 0xe92d4000u || insn == 0xe52de004u; /* STM / STR lr,[sp,#-4]! */
 }
@@ -1475,6 +1496,32 @@ static void arm_bc_decode_op(arm_jit_op_t *op) {
     default:
         op->imm = 0; op->a = op->b = op->c = op->d = op->e = op->f = op->g = op->h = 0;
         break;
+    }
+}
+
+/* Conservative: report whether the decoded op may write r14. Outstanding BL
+ * links of an extended trace are dropped as soon as any candidate appears, so
+ * a MOV pc,lr / BX lr tail is only followed while the link is provably intact. */
+static int arm_jit_op_may_write_lr(const arm_jit_op_t *op) {
+    switch ((arm_jit_kind_t)op->kind) {
+    case ARM_JIT_OP_DATA: {
+        if (op->a >= 8u && op->a <= 11u) return 0;      /* TST/TEQ/CMP/CMN */
+        return op->c == 14u || op->c == 15u;
+    }
+    case ARM_JIT_OP_MUL: {
+        unsigned rd = (op->insn >> 16) & 0xfu;
+        return rd == 14u || rd == 15u;
+    }
+    case ARM_JIT_OP_SINGLE_DT:
+        return (op->d & ARM_BC_SD_L) && (op->b == 14u || op->b == 15u);
+    case ARM_JIT_OP_HALF:
+        return (op->d & ARM_BC_HALF_L) && (op->b == 14u || op->b == 15u);
+    case ARM_JIT_OP_BLOCK_DT:
+        return (op->d & 0x01u) && (op->imm & ((1u << 14) | (1u << 15)));
+    case ARM_JIT_OP_BRANCH:
+        return (op->insn & (1u << 24)) != 0u;           /* BL writes LR */
+    default:
+        return 1;
     }
 }
 
@@ -1727,8 +1774,19 @@ static ARM_NOINLINE arm_jit_block_t *arm_jit_translate(arm920t_t *c, uint32_t pc
     b->native = NULL;
     b->deferred_inline_pc = 0;
     uint32_t cur = pc & ~3u;
+    /* Superblock trace extension: an unconditional BL the leaf collectors
+     * above cannot flatten still continues this trace inside its callee, and
+     * the callee's return continues at the recorded call continuation. Each
+     * frame keeps the resume PC, the page anchor to restore, and whether the
+     * BL link is still provably in LR. */
+    uint32_t trace_resume[ARM_JIT_TRACE_CALLS];
+    uint32_t trace_anchor[ARM_JIT_TRACE_CALLS];
+    uint8_t trace_lr[ARM_JIT_TRACE_CALLS];
+    uint8_t trace_depth = 0;
+    uint8_t trace_extended = 0;
+    uint32_t page_anchor = cur;
     for (uint8_t i = 0; i < ARM_JIT_MAX_INSNS; ++i) {
-        if (i && ((cur ^ pc) & ~ARM_JIT_PAGE_MASK)) break;
+        if (i && ((cur ^ page_anchor) & ~ARM_JIT_PAGE_MASK)) break;
         uint32_t insn = rb32(c, cur);
         arm_jit_op_t *op = &arm_jit_ops(c, b)[i];
         op->pc = cur;
@@ -1755,6 +1813,7 @@ static ARM_NOINLINE arm_jit_block_t *arm_jit_translate(arm920t_t *c, uint32_t pc
                 if (nleaf && i + nleaf < ARM_JIT_MAX_INSNS) {
                     op->stop = 0;
                     op->reserved = 2u;
+                    for (uint8_t k = 0; k < trace_depth; ++k) trace_lr[k] = 0u;
                     memcpy(&arm_jit_ops(c, b)[i + 1u], leaf, nleaf * sizeof(leaf[0]));
                     i = (uint8_t)(i + nleaf);
                     b->count = (uint8_t)(i + 1u);
@@ -1777,6 +1836,7 @@ static ARM_NOINLINE arm_jit_block_t *arm_jit_translate(arm920t_t *c, uint32_t pc
                 if (ok && i + nleaf < ARM_JIT_MAX_INSNS) {
                     op->stop = 0;
                     op->reserved = 2u; /* retain the real BL link and callee PCs */
+                    for (uint8_t k = 0; k < trace_depth; ++k) trace_lr[k] = 0u;
                     for (uint8_t k = 0; k < nleaf; ++k) {
                         arm_jit_op_t *cop = &arm_jit_ops(c, b)[++i];
                         cop->pc = tpc + (uint32_t)k * 4u;
@@ -1795,6 +1855,70 @@ static ARM_NOINLINE arm_jit_block_t *arm_jit_translate(arm920t_t *c, uint32_t pc
                     continue;
                 }
             }
+        }
+
+        /* Superblock trace extension. The ordinary rules above already stop at
+         * every unsupported shape, so an unflattened callee body is decoded
+         * exactly like top-level code: conditional branches remain side exits
+         * with the real PC, unconditional B strands stay inside one page, and
+         * every appended instruction keeps its own PC and retires exactly
+         * once. ABI state is unchanged because the BL link and every stack
+         * transfer still happen. The dispatcher then re-enters once per call
+         * chain instead of once per call, while cycles, interrupts and the PC
+         * model stay exactly as for a trace that ends at its first
+         * unsupported instruction. */
+        if (op->stop && arm_jit_is_uncond_bl(insn) && trace_depth < ARM_JIT_TRACE_CALLS &&
+            i + 1u < ARM_JIT_MAX_INSNS) {
+            uint32_t tpc = arm_jit_branch_target(cur, insn);
+            uint32_t first;
+            if (i + 1u < ARM_JIT_TRACE_MAX_INSNS && tpc && arm_jit_peek_fetch(c, tpc, &first)) {
+                op->stop = 0;
+                op->reserved = 2u; /* real BL link, then the callee body */
+                trace_extended = 1u;
+                for (uint8_t k = 0; k < trace_depth; ++k) trace_lr[k] = 0u;
+                trace_resume[trace_depth] = cur + 4u;
+                trace_anchor[trace_depth] = page_anchor;
+                trace_lr[trace_depth] = 1u; /* the BL just wrote LR = cur + 4 */
+                ++trace_depth;
+                page_anchor = tpc & ~3u;
+                cur = tpc & ~3u;
+                continue;
+            }
+        }
+
+        /* The appended span is bounded; the trace then ends at this op like any
+         * other unsupported instruction, keeping the ordinary exit path. */
+        if (trace_extended && i + 1u >= ARM_JIT_TRACE_MAX_INSNS) break;
+
+        /* A callee return continues at the recorded continuation. The guarded
+         * forms load the real saved word and compare it with this trace's
+         * decoded successor, so an aliased or modified return still leaves at
+         * its actual PC; MOV pc,lr / BX lr are followed only while no decoded
+         * instruction since the BL could have replaced the link. */
+        if (trace_depth && i + 1u < ARM_JIT_MAX_INSNS) {
+            if (arm_jit_is_plain_pop_pc(insn)) {
+                op->stop = 0;
+                op->reserved = 3u;
+                --trace_depth;
+                page_anchor = trace_anchor[trace_depth];
+                cur = trace_resume[trace_depth];
+                continue;
+            }
+            if (trace_lr[trace_depth - 1u] &&
+                (insn == 0xe1a0f00eu || insn == 0xe12fff1eu)) {
+                op->stop = 0;
+                op->reserved = 7u;
+                --trace_depth;
+                page_anchor = trace_anchor[trace_depth];
+                cur = trace_resume[trace_depth];
+                continue;
+            }
+        }
+
+        /* The link is a single register: any op that may replace LR retires
+         * the outstanding BL link of every open frame. */
+        if (trace_depth && arm_jit_op_may_write_lr(op)) {
+            for (uint8_t k = 0; k < trace_depth; ++k) trace_lr[k] = 0u;
         }
 
         if (i + 1u < ARM_JIT_MAX_INSNS && arm_jit_forward_loop(c, pc, cur, insn)) {
@@ -1822,6 +1946,16 @@ static ARM_NOINLINE arm_jit_block_t *arm_jit_translate(arm920t_t *c, uint32_t pc
 
         if (op->stop || op->kind == ARM_JIT_OP_UNDEFINED || (op->kind == ARM_JIT_OP_COPROC && op->reserved != 6u) || op->kind == ARM_JIT_OP_SWI) break;
         cur += 4u;
+    }
+    /* A continuation marker on the final op would be read against a PC+4
+     * successor that this trace never appends. The decoded return still owns
+     * its real commit, so the boundary keeps the ordinary stop shape. */
+    if (b->count) {
+        arm_jit_op_t *tail = &arm_jit_ops(c, b)[b->count - 1u];
+        if (tail->reserved == 3u || tail->reserved == 5u || tail->reserved == 7u) {
+            tail->reserved = 0u;
+            tail->stop = 1u;
+        }
     }
     if (!b->count) { ARM_PROF_INC(c, jit_translate_failures); return NULL; }
     /* A polling candidate may only read stable words and change ordinary
