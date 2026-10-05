@@ -1,11 +1,19 @@
 # Development return point
 
-Updated 2026-10-05. Read this before repeating investigations; verify Git and
+Updated 2026-10-06. Read this before repeating investigations; verify Git and
 device state before using snapshots. Goal remains full low-end compatibility,
 performance, audio and input correctness across the library, not boot-only tests.
 
 ## Current accepted work
 
+- Guest audio audit (round 163, F:/GP32/results/round163/w-asrguest/): no
+  emulation defect. ASR's 238 large steps (max -15616) during the specification
+  boot are inside continuous guest PCM spans, not DMA start/reload/stop
+  boundaries. Emitted audio matches the expected 1,274,210.5 frames within
+  -0.01%, with no short-block gaps; derived IIS rates (11025/23144 Hz) match the
+  BIOS beep timing, and DMA stop emits true zero. Dooly/BIOS/ASR boot PCM
+  prefixes are byte-identical, confirming the remaining pops are guest assets.
+  No source change.
 - Accepted (round 163): input-driven commercial-library sweep and its opt-in
   diagnostics. gp32_compat now records frame-stamped core logs and per-frame
   PC/video hashes; an opt-in diag sink reports undefined-instruction/abort
