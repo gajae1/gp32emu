@@ -3671,6 +3671,34 @@ gp32_status_t gp32_load_smartmedia_data(gp32_t *g, const void *data, size_t size
     return GP32_OK;
 }
 
+gp32_status_t gp32_load_smartmedia_over_base(gp32_t *g, const char *path) {
+    if (!g || !path) return GP32_ERR_INVALID_ARGUMENT;
+    char e[256] = {0};
+    if (!s3c2400_load_smartmedia_over_base(g->soc, path, e, sizeof(e))) { seterr(g, "%s", e[0] ? e : "SmartMedia saved-image load failed"); return GP32_ERR_BAD_IMAGE; }
+    return GP32_OK;
+}
+
+gp32_status_t gp32_load_smartmedia_over_base_data(gp32_t *g, const void *data, size_t size) {
+    if (!g || !data || !size) return GP32_ERR_INVALID_ARGUMENT;
+    char e[256] = {0};
+    if (!s3c2400_load_smartmedia_buffer_over_base(g->soc, (const uint8_t *)data, size, e, sizeof(e))) { seterr(g, "%s", e[0] ? e : "SmartMedia saved-image load failed"); return GP32_ERR_BAD_IMAGE; }
+    return GP32_OK;
+}
+
+gp32_status_t gp32_set_smartmedia_state_base(gp32_t *g, const void *data, size_t size) {
+    if (!g || !data || !size) return GP32_ERR_INVALID_ARGUMENT;
+    char e[256] = {0};
+    if (!s3c2400_set_smartmedia_state_base(g->soc, (const uint8_t *)data, size, e, sizeof(e))) { seterr(g, "%s", e[0] ? e : "SmartMedia state base rejected"); return GP32_ERR_BAD_IMAGE; }
+    return GP32_OK;
+}
+
+gp32_status_t gp32_set_smartmedia_state_base_file(gp32_t *g, const char *path) {
+    if (!g || !path) return GP32_ERR_INVALID_ARGUMENT;
+    char e[256] = {0};
+    if (!s3c2400_set_smartmedia_state_base_file(g->soc, path, e, sizeof(e))) { seterr(g, "%s", e[0] ? e : "SmartMedia state base rejected"); return GP32_ERR_BAD_IMAGE; }
+    return GP32_OK;
+}
+
 static gp32_status_t gp32_load_fxe_image(gp32_t *g, fxe_image_t *img);
 
 static void direct_smc_set_launch_paths(gp32_t *g, const char *exe_path) {
@@ -4721,7 +4749,12 @@ static const uint8_t gp32_state_magic_v8[16] = { 'G','P','3','2','S','T','A','T'
 static const uint8_t gp32_state_magic_v9[16] = { 'G','P','3','2','S','T','A','T','E','v','0','0','0','9',0,0 };
 static const uint8_t gp32_state_magic_v10[16] = { 'G','P','3','2','S','T','A','T','E','v','0','0','1','0',0,0 };
 static const uint8_t gp32_state_magic_v11[16] = { 'G','P','3','2','S','T','A','T','E','v','0','0','1','1',0,0 };
-static const uint8_t gp32_state_magic[16] = { 'G','P','3','2','S','T','A','T','E','v','0','0','1','2',0,0 };
+static const uint8_t gp32_state_magic_v12[16] = { 'G','P','3','2','S','T','A','T','E','v','0','0','1','2',0,0 };
+/* v13 lets the SmartMedia section carry only the pages that differ from the
+ * image the frontend passed instead of the whole 17-34 MB card. The section is
+ * self-describing, so every older magic keeps loading through the full-image
+ * layout and an older build refuses this magic outright. */
+static const uint8_t gp32_state_magic[16] = { 'G','P','3','2','S','T','A','T','E','v','0','0','1','4',0,0 };
 static_assert(sizeof(gp32_frame_time_t) == 16u, "fixed frame-time wire extension");
 static_assert(sizeof(gp32_elapsed_time_t) == 16u, "fixed elapsed-time wire extension");
 
@@ -4907,7 +4940,8 @@ static int gp32_state_read(gp32_t *g, state_io_t *io, gp32_state_image_t *direct
     uint8_t got[sizeof(gp32_state_magic)];
     if (!state_io_read(io, got, sizeof(got))) return 0;
     int legacy = memcmp(got, gp32_state_magic_v2, sizeof(got)) == 0;
-    int has_tasks = memcmp(got, gp32_state_magic, sizeof(got)) == 0;
+    int has_tasks = memcmp(got, gp32_state_magic, sizeof(got)) == 0 ||
+                    memcmp(got, gp32_state_magic_v12, sizeof(got)) == 0;
     int has_wait = has_tasks || memcmp(got, gp32_state_magic_v11, sizeof(got)) == 0;
     int has_resume = has_wait || memcmp(got, gp32_state_magic_v10, sizeof(got)) == 0;
     int has_codec = has_resume || memcmp(got, gp32_state_magic_v9, sizeof(got)) == 0;
@@ -4963,7 +4997,9 @@ static int gp32_state_read(gp32_t *g, state_io_t *io, gp32_state_image_t *direct
         }
     }
     if (ok) ok = s3c2400_state_load_io_checked(g->soc, io, has_spans, has_iis_phase, has_lcd_phase, has_idle_phase, has_codec,
-                                               resume->ram_size, resume->run_clock, required_ram_size);
+                                               resume->ram_size, resume->run_clock, required_ram_size,
+                                               memcmp(got, gp32_state_magic, sizeof(got)) == 0 ? SMC_STATE_FORMAT_V14
+                                                                                                : SMC_STATE_FORMAT_PRE_V14);
     if (ok) {
         if (legacy) {
             /* v2 has no clock history. Continue from its former observable

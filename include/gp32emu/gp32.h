@@ -74,6 +74,21 @@ gp32_status_t gp32_load_smartmedia(gp32_t *gp32, const char *path);
 /* Buffer loaders are used by the WASM frontend and by hosts that do not expose a filesystem. */
 gp32_status_t gp32_load_bios_data(gp32_t *gp32, const void *data, size_t size);
 gp32_status_t gp32_load_smartmedia_data(gp32_t *gp32, const void *data, size_t size);
+/* Savestate SmartMedia base and the persisted card that supersedes it.
+ *
+ * A state saved by this core stores the NAND pages that differ from the image
+ * the frontend passes as content, not the whole card, so it is smaller but only
+ * reconstructs over that same image. A host that mounts a persisted card image
+ * over the content (as the libretro core does) must therefore set the base from
+ * the content and mount the persisted image with the over-base loaders: the
+ * state base then stays the content, which every later session passes again,
+ * and a state saved in one session loads in any later session of the same game.
+ * Without a base, or once the card no longer shares its shape, states carry the
+ * whole image (the pre-v0013 payload) and still load everywhere. */
+gp32_status_t gp32_set_smartmedia_state_base(gp32_t *gp32, const void *data, size_t size);
+gp32_status_t gp32_set_smartmedia_state_base_file(gp32_t *gp32, const char *path);
+gp32_status_t gp32_load_smartmedia_over_base(gp32_t *gp32, const char *path);
+gp32_status_t gp32_load_smartmedia_over_base_data(gp32_t *gp32, const void *data, size_t size);
 /* BIOSless direct loader for retail SmartMedia images: extracts the first commercial/homebrew executable from FAT and installs file HLE for sibling assets. */
 gp32_status_t gp32_load_smartmedia_direct(gp32_t *gp32, const char *path);
 gp32_status_t gp32_load_smartmedia_direct_data(gp32_t *gp32, const void *data, size_t size, const char *label);

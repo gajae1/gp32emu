@@ -83,7 +83,7 @@ static void check_callback_wait(int jit, uint64_t origin, int change_clock, cons
     }
     size_t size = 0; uint8_t *image = save(g, &size);
     if (image) {
-        CHECK(!memcmp(image, "GP32STATEv0012", 14u), "v12 combined state writer");
+        CHECK(!memcmp(image, "GP32STATEv0014", 14u), "v14 combined state writer");
         CHECK(gp32_load_state_data(clone, image, size) == GP32_OK, "restore pending display/callback");
         CHECK(gp32_save_state(g, path) == GP32_OK && gp32_load_state(clone, path) == GP32_OK, "file wait continuation roundtrip");
         CHECK(gp32_get_pc(g) == gp32_get_pc(clone) && call_deadline(clone) == deadline, "restore live guest deadline without rearming");

@@ -6,6 +6,41 @@
 #include "smartmedia.h"
 #include "zip.h"
 
+/* v0014 savestate delta.
+ *
+ * A state's SmartMedia section usually carries only the NAND pages that differ
+ * from the image the frontend passed, not the whole 17-34 MB card. That image
+ * is stable for the life of the content file: the libretro core persists guest
+ * writes to <save dir>/<rom>.gp32.smc and every later session mounts that file
+ * over the frontend content, so the base a state was saved against is still
+ * available when the state is loaded in a later session of the same game.
+ *
+ * The entry region is padded to a per-session budget, so one mounted card
+ * serializes to one size while the game runs. The budget holds what the mounted
+ * card already differs by plus room for the guest's own writes; a card the
+ * guest rewrites past that budget falls back to carrying the whole image (the
+ * pre-v0014 payload), which keeps every state loadable and never exceeds the
+ * size a frontend latched before this change. */
+#define SMC_STATE_DELTA_FLAG 0x2u        /* smc_state_image_t::dirty bit */
+#define SMC_STATE_DELTA_TAG 0x31444d53u  /* 'S','M','D','1' */
+#define SMC_STATE_DELTA_MIN_ENTRIES 2048u
+#define SMC_STATE_DELTA_HEADROOM 1024u
+#define SMC_STATE_MAX_IMAGE ((size_t)128u * 1024u * 1024u)
+#define SMC_STATE_MAX_PAGE_TOTAL 2112u
+
+/* Delta body, written after smc_state_image_t when SMC_STATE_DELTA_FLAG is set:
+ * this head, the differing pages in ascending page order, zero padding to the
+ * entry budget, then the page register. */
+typedef struct smc_state_delta_head {
+    uint32_t tag;
+    uint32_t capacity;    /* entry slots the zero padding fills to */
+    uint32_t entry_bytes; /* 4 + page_total_size */
+    uint32_t count;       /* entries present */
+    uint8_t base_digest[16];
+    uint64_t base_size;
+    uint64_t base_num_pages;
+} smc_state_delta_head_t;
+
 typedef enum sm_mode {
     SM_M_INIT,
     SM_M_READ,
@@ -51,6 +86,17 @@ struct smc {
     uint8_t accumulated_status;
     bool mode_3065;
     uint32_t program_byte_count;
+    /* v0014 state base: the NAND payload of the image the frontend passed and
+     * a 128-bit digest of that image, plus an exact map of the pages that
+     * currently differ from it. */
+    uint8_t *base;
+    size_t base_size;
+    uint32_t base_page_total_size;
+    uint32_t base_num_pages;
+    uint8_t base_digest[16];
+    uint8_t *page_diff;
+    uint32_t diff_pages;
+    uint32_t state_entries;
 };
 
 static unsigned log2_u32(uint32_t v) {
@@ -69,6 +115,8 @@ void smc_destroy(smc_t *s) {
     if (!s) return;
     free(s->data);
     free(s->page_reg);
+    free(s->base);
+    free(s->page_diff);
     free(s);
 }
 
@@ -130,69 +178,335 @@ static int smc_set_geometry_from_size(smc_t *s, size_t size, char *err, size_t e
     return 0;
 }
 
-int smc_load_buffer(smc_t *s, const uint8_t *src, size_t len, char *err, size_t err_len) {
-    if (!s || !src || len == 0) return 0;
-    uint8_t *buf = (uint8_t *)malloc(len);
-    if (!buf) return 0;
-    memcpy(buf, src, len);
-    free(s->data);
-    free(s->page_reg);
-    memset(s, 0, sizeof(*s));
+/* ---- v0014 state base, page-difference map and mount support ---- */
 
-    size_t payload_off = 0;
-    uint32_t pd = 0, pt = 0, np = 0, ppb = 0;
-    if (len > 1024u && smc_detect_small_geometry(buf[0], buf[1], &pd, &pt, &np, &ppb) &&
-        (len - 1024u) == (size_t)pt * np) {
-        payload_off = 1024u;
-        memcpy(s->header, buf, 1024u);
-        s->header_size = 1024u;
-        s->page_data_size = pd;
-        s->page_total_size = pt;
-        s->num_pages = np;
-        s->log2_pages_per_block = ppb;
-        s->col_address_cycles = 1;
-        s->row_address_cycles = (np > 0x10000u) ? 3u : 2u;
-        s->sequential_row_read = 1;
-        s->id_len = 3;
-        s->id[0] = buf[0];
-        s->id[1] = buf[1];
-        s->id[2] = buf[2];
-        for (int i = 0; i < 8; ++i) {
-            memcpy(s->data_uid + i * 32, buf + 256, 16);
-            for (int j = 0; j < 16; ++j) s->data_uid[i * 32 + 16 + j] = (uint8_t)(buf[256 + j] ^ 0xffu);
-        }
-        memcpy(s->data_uid + 256, buf + 272, 16);
-        s->data_uid_present = 1;
+static uint64_t smc_rotl64(uint64_t v, unsigned n) {
+    return (v << n) | (v >> (64u - n));
+}
+
+/* Two independent 64-bit word hashes bind a state to the exact frontend image
+ * it was saved against; the pair is stored in the delta body. */
+static void smc_image_digest(const uint8_t *data, size_t size, uint8_t out[16]) {
+    uint64_t h1 = UINT64_C(0xcbf29ce484222325);
+    uint64_t h2 = UINT64_C(0x9e3779b97f4a7c15);
+    size_t i = 0;
+    for (; i + 8u <= size; i += 8u) {
+        uint64_t w = 0;
+        memcpy(&w, data + i, 8u);
+        h1 = (h1 ^ w) * UINT64_C(0x100000001b3);
+        h2 = smc_rotl64(h2, 27u) ^ (w + UINT64_C(0x165667b19e3779f9)) * UINT64_C(0xc2b2ae3d27d4eb4f);
     }
+    for (; i < size; ++i) {
+        h1 = (h1 ^ data[i]) * UINT64_C(0x100000001b3);
+        h2 = smc_rotl64(h2, 27u) ^ (uint64_t)data[i] * UINT64_C(0x100000001b3);
+    }
+    for (unsigned k = 0; k < 8u; ++k) {
+        out[k] = (uint8_t)(h1 >> (k * 8u));
+        out[8u + k] = (uint8_t)(h2 >> (k * 8u));
+    }
+}
 
-    if (payload_off) {
-        s->data_size = len - payload_off;
-        s->data = (uint8_t *)malloc(s->data_size);
-        if (!s->data) { free(buf); return 0; }
-        memcpy(s->data, buf + payload_off, s->data_size);
-        free(buf);
+static void smc_base_release(smc_t *s) {
+    free(s->base);
+    free(s->page_diff);
+    s->base = NULL;
+    s->page_diff = NULL;
+    s->base_size = 0;
+    s->base_page_total_size = 0;
+    s->base_num_pages = 0;
+    s->diff_pages = 0;
+    s->state_entries = 0;
+    memset(s->base_digest, 0, sizeof(s->base_digest));
+}
+
+/* NAND payload shape of a frontend SmartMedia image. Mirrors the mount rules:
+ * the MAME header form keeps 1024 bytes in front of the pages, the raw form is
+ * pages only and carries its geometry in the size. */
+static int smc_image_payload(const uint8_t *image, size_t image_size,
+                             size_t *payload_off, uint32_t *page_total_size, uint32_t *num_pages) {
+    if (image_size == 0) return 0;
+    if (image_size > 1024u) {
+        uint32_t pd = 0, pt = 0, np = 0, ppb = 0;
+        if (smc_detect_small_geometry(image[0], image[1], &pd, &pt, &np, &ppb) &&
+            image_size - 1024u == (size_t)pt * np) {
+            *payload_off = 1024u;
+            *page_total_size = pt;
+            *num_pages = np;
+            return 1;
+        }
+    }
+    if ((image_size % 528u) == 0) {
+        *page_total_size = 528u;
+        *num_pages = (uint32_t)(image_size / 528u);
+    } else if ((image_size % 2112u) == 0) {
+        *page_total_size = 2112u;
+        *num_pages = (uint32_t)(image_size / 2112u);
     } else {
-        s->data = buf;
-        s->data_size = len;
-        if (!smc_set_geometry_from_size(s, s->data_size, err, err_len)) {
-            free(s->data);
-            s->data = NULL;
-            s->data_size = 0;
-            return 0;
-        }
-    }
-    s->page_reg = (uint8_t *)malloc(s->page_total_size);
-    if (!s->page_reg) {
-        free(s->data);
-        memset(s, 0, sizeof(*s));
         return 0;
     }
-    smc_reset(s);
+    *payload_off = 0;
     return 1;
 }
 
-int smc_load_file(smc_t *s, const char *path, char *err, size_t err_len) {
-    if (!s || !path) return 0;
+/* The base describes this card exactly: same image size, page size and page
+ * count. Any other shape means the state cannot express this card. */
+static int smc_base_geometry_ok(const smc_t *s) {
+    return s->base != NULL && s->page_total_size != 0 && s->num_pages != 0 &&
+           s->base_size == s->data_size &&
+           s->base_page_total_size == s->page_total_size &&
+           s->base_num_pages == s->num_pages;
+}
+
+static int smc_page_differs(const smc_t *s, uint32_t page) {
+    return memcmp(s->data + (size_t)page * s->page_total_size,
+                  s->base + (size_t)page * s->page_total_size, s->page_total_size) != 0;
+}
+
+static void smc_diff_bit(smc_t *s, uint32_t page, int differ) {
+    if (!s->page_diff || page >= s->base_num_pages) return;
+    uint8_t mask = (uint8_t)(1u << (page & 7u));
+    uint8_t *byte = &s->page_diff[page >> 3];
+    int was = (*byte & mask) != 0;
+    if (differ == was) return;
+    if (differ) {
+        *byte |= mask;
+        s->diff_pages++;
+    } else {
+        *byte &= (uint8_t)~mask;
+        s->diff_pages--;
+    }
+}
+
+/* Exact refresh of the pages an erase or a program actually touched. */
+static void smc_diff_refresh(smc_t *s, uint32_t first, uint32_t count) {
+    if (!smc_base_geometry_ok(s)) return;
+    for (uint32_t i = 0; i < count && first + i < s->num_pages; ++i)
+        smc_diff_bit(s, first + i, smc_page_differs(s, first + i));
+}
+
+static void smc_diff_rebuild(smc_t *s) {
+    if (s->page_diff && s->base_num_pages)
+        memset(s->page_diff, 0, ((size_t)s->base_num_pages + 7u) / 8u);
+    s->diff_pages = 0;
+    if (!smc_base_geometry_ok(s)) return;
+    for (uint32_t page = 0; page < s->num_pages; ++page) {
+        if (smc_page_differs(s, page)) {
+            s->page_diff[page >> 3] |= (uint8_t)(1u << (page & 7u));
+            s->diff_pages++;
+        }
+    }
+}
+
+/* Session entry budget: what the mounted card already differs by, plus room for
+ * the guest's own writes, never below the fixed minimum. A card that stays
+ * close to the frontend image therefore keeps one serialized size in every
+ * session, and a card an older full-image state replaced wholesale keeps the
+ * full-image form. */
+static void smc_state_plan(smc_t *s) {
+    if (!smc_base_geometry_ok(s)) {
+        s->state_entries = 0;
+        return;
+    }
+    uint64_t budget = (uint64_t)s->diff_pages + SMC_STATE_DELTA_HEADROOM;
+    if (budget < SMC_STATE_DELTA_MIN_ENTRIES) budget = SMC_STATE_DELTA_MIN_ENTRIES;
+    if (budget > s->num_pages) budget = s->num_pages;
+    s->state_entries = (uint32_t)budget;
+}
+
+/* Delta form decision, shared by the serializer and the size query. The entry
+ * region must stay smaller than the image it replaces and must hold every page
+ * that differs; otherwise the section carries the whole image, which loads in
+ * every session. */
+static int smc_state_delta_usable(const smc_t *s) {
+    if (s->state_entries == 0 || !smc_base_geometry_ok(s)) return 0;
+    if ((uint64_t)s->diff_pages > s->state_entries) return 0;
+    uint64_t region = sizeof(smc_state_delta_head_t) +
+                      (uint64_t)s->state_entries * (4u + (uint64_t)s->page_total_size);
+    return region < (uint64_t)s->data_size;
+}
+
+/* A mount result: everything a load computes before the live device is touched. */
+static int smc_base_adopt(smc_t *s, const uint8_t *image, size_t size, int identical, char *err, size_t err_len);
+
+typedef struct smc_mount_image {
+    uint8_t *data;
+    uint8_t *page_reg;
+    size_t data_size;
+    uint8_t header[1024];
+    size_t header_size;
+    uint32_t page_data_size;
+    uint32_t page_total_size;
+    uint32_t num_pages;
+    uint32_t log2_pages_per_block;
+    uint32_t col_address_cycles;
+    uint32_t row_address_cycles;
+    uint32_t sequential_row_read;
+    uint8_t id[5];
+    uint32_t id_len;
+    uint8_t data_uid[256 + 16];
+    int data_uid_present;
+} smc_mount_image_t;
+
+static void smc_mount_image_free(smc_mount_image_t *img) {
+    free(img->data);
+    free(img->page_reg);
+    memset(img, 0, sizeof(*img));
+}
+
+/* Parse a SmartMedia image exactly the way a mount does, into a fresh card
+ * image that is idle (reset command state) and ready to be installed. */
+static int smc_parse_image(const uint8_t *src, size_t len, smc_mount_image_t *out, char *err, size_t err_len) {
+    memset(out, 0, sizeof(*out));
+    size_t payload_off = 0;
+    uint32_t pd = 0, pt = 0, np = 0, ppb = 0;
+    if (len > 1024u && smc_detect_small_geometry(src[0], src[1], &pd, &pt, &np, &ppb) &&
+        (len - 1024u) == (size_t)pt * np) {
+        payload_off = 1024u;
+        memcpy(out->header, src, 1024u);
+        out->header_size = 1024u;
+        out->page_data_size = pd;
+        out->page_total_size = pt;
+        out->num_pages = np;
+        out->log2_pages_per_block = ppb;
+        out->col_address_cycles = 1;
+        out->row_address_cycles = (np > 0x10000u) ? 3u : 2u;
+        out->sequential_row_read = 1;
+        out->id_len = 3;
+        out->id[0] = src[0];
+        out->id[1] = src[1];
+        out->id[2] = src[2];
+        for (int i = 0; i < 8; ++i) {
+            memcpy(out->data_uid + i * 32, src + 256, 16);
+            for (int j = 0; j < 16; ++j) out->data_uid[i * 32 + 16 + j] = (uint8_t)(src[256 + j] ^ 0xffu);
+        }
+        memcpy(out->data_uid + 256, src + 272, 16);
+        out->data_uid_present = 1;
+    } else {
+        smc_t shape;
+        memset(&shape, 0, sizeof(shape));
+        if (!smc_set_geometry_from_size(&shape, len, err, err_len)) return 0;
+        out->page_data_size = shape.page_data_size;
+        out->page_total_size = shape.page_total_size;
+        out->num_pages = shape.num_pages;
+        out->log2_pages_per_block = shape.log2_pages_per_block;
+        out->col_address_cycles = shape.col_address_cycles;
+        out->row_address_cycles = shape.row_address_cycles;
+        out->sequential_row_read = shape.sequential_row_read;
+        memcpy(out->id, shape.id, sizeof(out->id));
+        out->id_len = shape.id_len;
+    }
+    out->data_size = len - payload_off;
+    out->data = (uint8_t *)malloc(out->data_size ? out->data_size : 1u);
+    out->page_reg = (uint8_t *)malloc(out->page_total_size);
+    if (!out->data || !out->page_reg) {
+        smc_mount_image_free(out);
+        return 0;
+    }
+    memcpy(out->data, src + payload_off, out->data_size);
+    /* A freshly mounted card starts with an idle command interface. */
+    memset(out->page_reg, 0xff, out->page_total_size);
+    return 1;
+}
+
+static void smc_apply_idle_command_state(smc_t *s) {
+    s->mode = SM_M_INIT;
+    s->pointer_mode = SM_PM_A;
+    s->page_addr = 0;
+    s->byte_addr = 0;
+    s->addr_load_ptr = 0;
+    s->status = 0xc0; /* ready, not protected */
+    s->accumulated_status = 0;
+    s->mode_3065 = false;
+    s->program_byte_count = 0;
+}
+
+/* Install a parsed card image. The state base survives when it still describes
+ * the new card shape; its exact page map is rebuilt. */
+static void smc_install_image(smc_t *s, smc_mount_image_t *img, int keep_base) {
+    uint8_t *base = s->base;
+    size_t base_size = s->base_size;
+    uint32_t base_page_total = s->base_page_total_size;
+    uint32_t base_num_pages = s->base_num_pages;
+    uint8_t digest[16];
+    uint8_t *map = s->page_diff;
+    uint32_t plan = s->state_entries;
+    memcpy(digest, s->base_digest, sizeof(digest));
+    s->base = NULL;
+    s->page_diff = NULL;
+    s->base_size = 0;
+    s->base_page_total_size = 0;
+    s->base_num_pages = 0;
+    s->diff_pages = 0;
+    s->state_entries = 0;
+    free(s->data);
+    free(s->page_reg);
+    s->data = img->data;
+    s->data_size = img->data_size;
+    memcpy(s->header, img->header, sizeof(s->header));
+    s->header_size = img->header_size;
+    s->dirty = 0;
+    s->page_data_size = img->page_data_size;
+    s->page_total_size = img->page_total_size;
+    s->num_pages = img->num_pages;
+    s->log2_pages_per_block = img->log2_pages_per_block;
+    s->col_address_cycles = img->col_address_cycles;
+    s->row_address_cycles = img->row_address_cycles;
+    s->sequential_row_read = img->sequential_row_read;
+    memcpy(s->id, img->id, sizeof(s->id));
+    s->id_len = img->id_len;
+    s->page_reg = img->page_reg;
+    memcpy(s->data_uid, img->data_uid, sizeof(s->data_uid));
+    s->data_uid_present = img->data_uid_present;
+    img->data = NULL;
+    img->page_reg = NULL;
+    smc_apply_idle_command_state(s);
+    s->base = base;
+    s->base_size = base_size;
+    s->base_page_total_size = base_page_total;
+    s->base_num_pages = base_num_pages;
+    memcpy(s->base_digest, digest, sizeof(digest));
+    s->page_diff = map;
+    if (!keep_base || !smc_base_geometry_ok(s)) {
+        smc_base_release(s);
+        return;
+    }
+    smc_diff_rebuild(s);
+    s->state_entries = plan;
+    smc_state_plan(s);
+}
+
+int smc_load_buffer(smc_t *s, const uint8_t *src, size_t len, char *err, size_t err_len) {
+    if (!s || !src || len == 0) return 0;
+    smc_mount_image_t img;
+    if (!smc_parse_image(src, len, &img, err, err_len)) {
+        /* A rejected buffer mount clears the card, as every build before v0014
+         * did: an invalid image must not leave a stale card for the guest. */
+        free(s->data);
+        free(s->page_reg);
+        free(s->base);
+        free(s->page_diff);
+        memset(s, 0, sizeof(*s));
+        return 0;
+    }
+    smc_install_image(s, &img, 0);
+    smc_mount_image_free(&img);
+    /* The image just mounted is the state base: the frontend passes it again in
+     * every later session of this game. */
+    return smc_base_adopt(s, src, len, 1, err, err_len);
+}
+
+int smc_load_buffer_over_base(smc_t *s, const uint8_t *src, size_t len, char *err, size_t err_len) {
+    if (!s || !src || len == 0) return 0;
+    smc_mount_image_t img;
+    if (!smc_parse_image(src, len, &img, err, err_len)) return 0;
+    smc_install_image(s, &img, 1);
+    smc_mount_image_free(&img);
+    return 1;
+}
+
+/* Read a SmartMedia image from a plain file or from the first .smc member of a
+ * zip archive. */
+static int smc_read_file_image(const char *path, uint8_t **out, size_t *out_len, char *err, size_t err_len) {
     uint8_t *buf = NULL;
     size_t len = 0;
     if (gp32_zip_path_maybe(path)) {
@@ -221,7 +535,86 @@ int smc_load_file(smc_t *s, const char *path, char *err, size_t err_len) {
         fclose(f);
         len = (size_t)n;
     }
+    *out = buf;
+    *out_len = len;
+    return 1;
+}
+
+int smc_load_file(smc_t *s, const char *path, char *err, size_t err_len) {
+    if (!s || !path) return 0;
+    uint8_t *buf = NULL;
+    size_t len = 0;
+    if (!smc_read_file_image(path, &buf, &len, err, err_len)) return 0;
     int ok = smc_load_buffer(s, buf, len, err, err_len);
+    free(buf);
+    return ok;
+}
+
+int smc_load_file_over_base(smc_t *s, const char *path, char *err, size_t err_len) {
+    if (!s || !path) return 0;
+    uint8_t *buf = NULL;
+    size_t len = 0;
+    if (!smc_read_file_image(path, &buf, &len, err, err_len)) return 0;
+    int ok = smc_load_buffer_over_base(s, buf, len, err, err_len);
+    free(buf);
+    return ok;
+}
+
+/* Adopt an image as the state base. The "identical" flag says the device
+ * already holds exactly this image, which skips a whole-card comparison that
+ * would find no difference at all (the common case: the frontend content is
+ * the card the session mounted). */
+static int smc_base_adopt(smc_t *s, const uint8_t *image, size_t size, int identical, char *err, size_t err_len) {
+    if (!s || !image || size == 0) return 0;
+    size_t payload_off = 0;
+    uint32_t page_total = 0, num_pages = 0;
+    if (!smc_image_payload(image, size, &payload_off, &page_total, &num_pages)) {
+        if (err && err_len)
+            snprintf(err, err_len, "unsupported state base image size %zu; expected MAME format-2 or raw 528-/2112-byte pages", size);
+        return 0;
+    }
+    size_t payload = size - payload_off;
+    size_t map_bytes = ((size_t)num_pages + 7u) / 8u;
+    uint8_t *copy = (uint8_t *)malloc(payload ? payload : 1u);
+    uint8_t *map = (uint8_t *)calloc(map_bytes ? map_bytes : 1u, 1u);
+    if (!copy || !map) {
+        free(copy);
+        free(map);
+        return 0;
+    }
+    memcpy(copy, image + payload_off, payload);
+    free(s->base);
+    free(s->page_diff);
+    s->base = copy;
+    s->base_size = payload;
+    s->base_page_total_size = page_total;
+    s->base_num_pages = num_pages;
+    s->page_diff = map;
+    s->diff_pages = 0;
+    s->state_entries = 0;
+    smc_image_digest(image, size, s->base_digest);
+    if (!smc_base_geometry_ok(s)) return 1;
+    if (identical && s->page_diff) {
+        memset(s->page_diff, 0, ((size_t)s->base_num_pages + 7u) / 8u);
+        s->diff_pages = 0;
+        smc_state_plan(s);
+    } else {
+        smc_diff_rebuild(s);
+        smc_state_plan(s);
+    }
+    return 1;
+}
+
+int smc_set_state_base(smc_t *s, const uint8_t *image, size_t size, char *err, size_t err_len) {
+    return smc_base_adopt(s, image, size, 0, err, err_len);
+}
+
+int smc_set_state_base_file(smc_t *s, const char *path, char *err, size_t err_len) {
+    if (!s || !path) return 0;
+    uint8_t *buf = NULL;
+    size_t len = 0;
+    if (!smc_read_file_image(path, &buf, &len, err, err_len)) return 0;
+    int ok = smc_set_state_base(s, buf, len, err, err_len);
     free(buf);
     return ok;
 }
@@ -313,6 +706,7 @@ void smc_command_w(smc_t *s, uint8_t data) {
                 uint8_t *dst = &s->data[(size_t)s->page_addr * s->page_total_size];
                 for (uint32_t i = 0; i < s->page_total_size; ++i) dst[i] &= s->page_reg[i];
                 s->dirty = 1;
+                smc_diff_refresh(s, s->page_addr, 1u);
             }
             s->status |= 0x40;
             s->accumulated_status = (data == 0x15) ? (uint8_t)(s->status & 0x1f) : 0;
@@ -335,6 +729,7 @@ void smc_command_w(smc_t *s, uint8_t data) {
                 if (off + len > s->data_size) len = s->data_size - off;
                 memset(s->data + off, 0xff, len);
                 s->dirty = 1;
+                smc_diff_refresh(s, first, (uint32_t)(len / s->page_total_size));
             }
             s->status |= 0x40;
             s->mode = SM_M_INIT;
@@ -502,6 +897,18 @@ typedef struct smc_state_image {
     uint32_t program_byte_count;
 } smc_state_image_t;
 
+/* Zero padding of the delta entry region; one shared buffer keeps the write
+ * loop bounded no matter how large the session budget is. */
+static int smc_state_write_zeros(state_io_t *io, uint64_t bytes) {
+    static const uint8_t zeros[256] = {0};
+    while (bytes) {
+        size_t chunk = bytes > sizeof(zeros) ? sizeof(zeros) : (size_t)bytes;
+        if (!state_io_write(io, zeros, chunk)) return 0;
+        bytes -= chunk;
+    }
+    return 1;
+}
+
 int smc_state_save_io(const smc_t *s, state_io_t *io) {
     if (!s || !io) return 0;
     smc_state_image_t st;
@@ -530,58 +937,198 @@ int smc_state_save_io(const smc_t *s, state_io_t *io) {
     st.accumulated_status = s->accumulated_status;
     st.mode_3065 = s->mode_3065;
     st.program_byte_count = s->program_byte_count;
+    /* The delta form only changes the section body; its scalar head keeps the
+     * dirty bit the older layout stored and marks the form in another bit. */
+    int delta = smc_state_delta_usable(s);
+    if (delta) st.dirty |= (int)SMC_STATE_DELTA_FLAG;
     if (!state_io_write(io, &st, sizeof(st))) return 0;
-    if (!state_io_write(io, s->data, s->data_size)) return 0;
-    if (!state_io_write(io, s->page_reg, s->page_total_size)) return 0;
-    return 1;
+    if (delta) {
+        smc_state_delta_head_t head;
+        memset(&head, 0, sizeof(head));
+        head.tag = SMC_STATE_DELTA_TAG;
+        head.capacity = s->state_entries;
+        head.entry_bytes = 4u + s->page_total_size;
+        head.count = s->diff_pages;
+        memcpy(head.base_digest, s->base_digest, sizeof(head.base_digest));
+        head.base_size = s->data_size;
+        head.base_num_pages = s->num_pages;
+        if (!state_io_write(io, &head, sizeof(head))) return 0;
+        for (uint32_t page = 0; page < s->num_pages; ++page) {
+            if (!(s->page_diff[page >> 3] & (uint8_t)(1u << (page & 7u)))) continue;
+            if (!state_io_write(io, &page, sizeof(page))) return 0;
+            if (!state_io_write(io, s->data + (size_t)page * s->page_total_size, s->page_total_size)) return 0;
+        }
+        /* Pad the entry region so one mounted card always serializes to the
+         * same size, whatever the guest has written to it. */
+        uint64_t pad = (uint64_t)(s->state_entries - s->diff_pages) * (4u + (uint64_t)s->page_total_size);
+        if (!smc_state_write_zeros(io, pad)) return 0;
+    } else if (!state_io_write(io, s->data, s->data_size)) {
+        return 0;
+    }
+    return state_io_write(io, s->page_reg, s->page_total_size);
 }
 
-int smc_state_load_io(smc_t *s, state_io_t *io) {
-    if (!s || !io) return 0;
+typedef struct smc_state_stage {
     smc_state_image_t st;
-    if (!state_io_read(io, &st, sizeof(st))) return 0;
-    if (st.data_size > (size_t)128u * 1024u * 1024u || st.page_total_size > 2112u) return 0;
-    uint8_t *data = NULL;
-    uint8_t *page = NULL;
-    if (st.data_size) {
-        data = (uint8_t *)malloc(st.data_size);
-        if (!data) return 0;
-        if (!state_io_read(io, data, st.data_size)) { free(data); return 0; }
+    int delta;
+    uint32_t capacity;
+    uint32_t count;
+    uint8_t *data;    /* full form: the new live image */
+    uint8_t *entries; /* delta form: count * (4 + page_total_size) */
+    uint8_t *page_reg;
+} smc_state_stage_t;
+
+static void *smc_alloc_bytes(size_t bytes) {
+    return malloc(bytes ? bytes : 1u);
+}
+
+/* Scalar fields every layout restores. The delta marker bit is stream syntax,
+ * not device state: only the dirty bit is restored. */
+static void smc_apply_state_fields(smc_t *s, const smc_state_image_t *st) {
+    memcpy(s->header, st->header, sizeof(s->header));
+    s->header_size = st->header_size <= sizeof(s->header) ? st->header_size : 0u;
+    s->dirty = st->dirty & 1;
+    s->page_data_size = st->page_data_size;
+    s->page_total_size = st->page_total_size;
+    s->num_pages = st->num_pages;
+    s->log2_pages_per_block = st->log2_pages_per_block;
+    s->col_address_cycles = st->col_address_cycles;
+    s->row_address_cycles = st->row_address_cycles;
+    s->sequential_row_read = st->sequential_row_read;
+    memcpy(s->id, st->id, sizeof(s->id));
+    s->id_len = st->id_len <= sizeof(s->id) ? st->id_len : 0u;
+    memcpy(s->data_uid, st->data_uid, sizeof(s->data_uid));
+    s->data_uid_present = st->data_uid_present;
+    s->mode = st->mode;
+    s->pointer_mode = st->pointer_mode;
+    s->page_addr = st->page_addr;
+    s->byte_addr = st->byte_addr;
+    s->addr_load_ptr = st->addr_load_ptr;
+    s->status = st->status;
+    s->accumulated_status = st->accumulated_status;
+    s->mode_3065 = st->mode_3065;
+    s->program_byte_count = st->program_byte_count;
+}
+
+smc_state_stage_t *smc_state_stage_begin(smc_t *s, state_io_t *io, smc_state_format_t format) {
+    if (!s || !io) return NULL;
+    smc_state_stage_t *stage = (smc_state_stage_t *)calloc(1, sizeof(*stage));
+    if (!stage) return NULL;
+    smc_state_image_t *st = &stage->st;
+    if (!state_io_read(io, st, sizeof(*st))) goto fail;
+    if (st->data_size > SMC_STATE_MAX_IMAGE || st->page_total_size > SMC_STATE_MAX_PAGE_TOTAL) goto fail;
+    if ((st->page_total_size == 0) != (st->num_pages == 0)) goto fail;
+    if (st->page_total_size ? st->data_size != (size_t)st->num_pages * st->page_total_size
+                            : st->data_size != 0) goto fail;
+    if (st->dirty & ~(int)(SMC_STATE_DELTA_FLAG | 1)) goto fail;
+    stage->delta = format == SMC_STATE_FORMAT_V14 && (st->dirty & (int)SMC_STATE_DELTA_FLAG) != 0;
+    if (stage->delta) {
+        smc_state_delta_head_t head;
+        if (!state_io_read(io, &head, sizeof(head))) goto fail;
+        if (head.tag != SMC_STATE_DELTA_TAG || head.entry_bytes != 4u + st->page_total_size) goto fail;
+        if (head.capacity == 0 || head.capacity > st->num_pages || head.count > head.capacity) goto fail;
+        if (head.base_size != st->data_size || head.base_num_pages != st->num_pages) goto fail;
+        /* The state carries only what differs from its base. A stream whose base
+         * is not the image this session holds cannot be reconstructed, so it is
+         * refused before the live card is touched. */
+        if (!smc_base_geometry_ok(s) || s->data_size != st->data_size ||
+            s->page_total_size != st->page_total_size || s->num_pages != st->num_pages ||
+            memcmp(s->base_digest, head.base_digest, sizeof(head.base_digest)) != 0) goto fail;
+        stage->capacity = head.capacity;
+        stage->count = head.count;
+        uint64_t bytes = (uint64_t)head.count * head.entry_bytes;
+        stage->entries = (uint8_t *)smc_alloc_bytes((size_t)bytes);
+        if (!stage->entries || !state_io_read(io, stage->entries, (size_t)bytes)) goto fail;
+        uint32_t previous = 0;
+        for (uint32_t i = 0; i < head.count; ++i) {
+            uint32_t page = 0;
+            memcpy(&page, stage->entries + (size_t)i * head.entry_bytes, sizeof(page));
+            if (page >= st->num_pages || (i && page <= previous)) goto fail;
+            previous = page;
+        }
+        if (!state_io_skip(io, (size_t)((uint64_t)(head.capacity - head.count) * head.entry_bytes))) goto fail;
+    } else {
+        stage->data = (uint8_t *)smc_alloc_bytes(st->data_size);
+        if (!stage->data || !state_io_read(io, stage->data, st->data_size)) goto fail;
     }
-    if (st.page_total_size) {
-        page = (uint8_t *)malloc(st.page_total_size);
-        if (!page) { free(data); return 0; }
-        if (!state_io_read(io, page, st.page_total_size)) { free(data); free(page); return 0; }
+    stage->page_reg = (uint8_t *)smc_alloc_bytes(st->page_total_size);
+    if (!stage->page_reg || !state_io_read(io, stage->page_reg, st->page_total_size)) goto fail;
+    return stage;
+fail:
+    smc_state_stage_destroy(stage);
+    return NULL;
+}
+
+void smc_state_stage_destroy(smc_state_stage_t *stage) {
+    if (!stage) return;
+    free(stage->data);
+    free(stage->entries);
+    free(stage->page_reg);
+    free(stage);
+}
+
+void smc_state_stage_commit(smc_t *s, smc_state_stage_t *stage) {
+    if (!s || !stage) return;
+    if (stage->delta) {
+        /* The live card is the image this session mounted. Every page that
+         * differs from the base and is not carried by the state returns to the
+         * base image, then the state's own pages are applied, so the card ends
+         * up exactly as it was when the state was saved. */
+        for (uint32_t page = 0; page < s->num_pages; ++page) {
+            if (s->page_diff && (s->page_diff[page >> 3] & (uint8_t)(1u << (page & 7u))))
+                memcpy(s->data + (size_t)page * s->page_total_size,
+                       s->base + (size_t)page * s->page_total_size, s->page_total_size);
+        }
+        if (s->page_diff && s->base_num_pages)
+            memset(s->page_diff, 0, ((size_t)s->base_num_pages + 7u) / 8u);
+        s->diff_pages = 0;
+        smc_apply_state_fields(s, &stage->st);
+        for (uint32_t i = 0; i < stage->count; ++i) {
+            const uint8_t *entry = stage->entries + (size_t)i * (4u + s->page_total_size);
+            uint32_t page = 0;
+            memcpy(&page, entry, sizeof(page));
+            memcpy(s->data + (size_t)page * s->page_total_size, entry + 4u, s->page_total_size);
+            smc_diff_bit(s, page, smc_page_differs(s, page));
+        }
+        free(s->page_reg);
+        s->page_reg = stage->page_reg;
+        stage->page_reg = NULL;
+    } else {
+        smc_mount_image_t img;
+        memset(&img, 0, sizeof(img));
+        img.data = stage->data;
+        img.page_reg = stage->page_reg;
+        img.data_size = stage->st.data_size;
+        memcpy(img.header, stage->st.header, sizeof(img.header));
+        img.header_size = stage->st.header_size;
+        img.page_data_size = stage->st.page_data_size;
+        img.page_total_size = stage->st.page_total_size;
+        img.num_pages = stage->st.num_pages;
+        img.log2_pages_per_block = stage->st.log2_pages_per_block;
+        img.col_address_cycles = stage->st.col_address_cycles;
+        img.row_address_cycles = stage->st.row_address_cycles;
+        img.sequential_row_read = stage->st.sequential_row_read;
+        memcpy(img.id, stage->st.id, sizeof(img.id));
+        img.id_len = stage->st.id_len;
+        memcpy(img.data_uid, stage->st.data_uid, sizeof(img.data_uid));
+        img.data_uid_present = stage->st.data_uid_present;
+        /* A full or older stream replaces the card. The base survives when the
+         * new card still has the shape it describes, so this session's own
+         * states keep the delta form; otherwise they carry the whole image. */
+        smc_install_image(s, &img, 1);
+        smc_mount_image_free(&img);
+        stage->data = NULL;
+        stage->page_reg = NULL;
+        smc_apply_state_fields(s, &stage->st);
     }
-    free(s->data);
-    free(s->page_reg);
-    memset(s, 0, sizeof(*s));
-    s->data = data;
-    s->data_size = st.data_size;
-    memcpy(s->header, st.header, sizeof(s->header));
-    s->header_size = st.header_size <= sizeof(s->header) ? st.header_size : 0u;
-    s->dirty = st.dirty;
-    s->page_data_size = st.page_data_size;
-    s->page_total_size = st.page_total_size;
-    s->num_pages = st.num_pages;
-    s->log2_pages_per_block = st.log2_pages_per_block;
-    s->col_address_cycles = st.col_address_cycles;
-    s->row_address_cycles = st.row_address_cycles;
-    s->sequential_row_read = st.sequential_row_read;
-    memcpy(s->id, st.id, sizeof(s->id));
-    s->id_len = st.id_len <= sizeof(s->id) ? st.id_len : 0u;
-    s->page_reg = page;
-    memcpy(s->data_uid, st.data_uid, sizeof(s->data_uid));
-    s->data_uid_present = st.data_uid_present;
-    s->mode = st.mode;
-    s->pointer_mode = st.pointer_mode;
-    s->page_addr = st.page_addr;
-    s->byte_addr = st.byte_addr;
-    s->addr_load_ptr = st.addr_load_ptr;
-    s->status = st.status;
-    s->accumulated_status = st.accumulated_status;
-    s->mode_3065 = st.mode_3065;
-    s->program_byte_count = st.program_byte_count;
+    smc_state_stage_destroy(stage);
+}
+
+int smc_state_load_io(smc_t *s, state_io_t *io, smc_state_format_t format) {
+    if (!s || !io) return 0;
+    smc_state_stage_t *stage = smc_state_stage_begin(s, io, format);
+    if (!stage) return 0;
+    smc_state_stage_commit(s, stage);
     return 1;
 }
 
@@ -592,5 +1139,5 @@ int smc_state_save(const smc_t *s, FILE *f) {
 
 int smc_state_load(smc_t *s, FILE *f) {
     state_io_t io = state_io_file(f);
-    return smc_state_load_io(s, &io);
+    return smc_state_load_io(s, &io, SMC_STATE_FORMAT_V14);
 }

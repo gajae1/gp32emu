@@ -98,7 +98,7 @@ static void check_refill(int jit, int final_probe, const char *path) {
     CHECK(gp32_run_cycles(g, 5u) == GP32_OK && g->direct_hle_callback_running, "suspend within real filler");
     size_t size = 0;
     uint8_t *image = save(g, &size);
-    CHECK(image && !memcmp(image, "GP32STATEv0012", 14u), "v12 writer");
+    CHECK(image && !memcmp(image, "GP32STATEv0014", 14u), "v14 writer");
     if (image) {
         CHECK(gp32_load_state_data(clone, image, size) == GP32_OK, "load active refill");
         CHECK(gp32_save_state(g, path) == GP32_OK && gp32_load_state(clone, path) == GP32_OK, "file continuation roundtrip");
