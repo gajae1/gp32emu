@@ -31,6 +31,12 @@ typedef struct arm_bus {
     /* Optional: aligned physical word reads which are side-effect-free and
      * constant until arm920t_run returns (no peripheral ticks within a run). */
     int (*is_stable_read32)(void *user, uint32_t addr);
+    /* Optional direct physical-I/O word write used for the identity-mapped
+     * S3C2400 MMIO window (0x14000000..0x16000000) once the address is proven
+     * aligned and outside every RAM/BIOS window. For such an address it must do
+     * exactly what write32 does; buses may leave it NULL. Kept last so every
+     * earlier bus entry keeps its offset. */
+    arm_write32_fn write32_io;
 } arm_bus_t;
 
 typedef struct arm_live_read32 {
