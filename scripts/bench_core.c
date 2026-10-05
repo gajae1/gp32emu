@@ -9,6 +9,9 @@
  * Output is a single JSON object on stdout. Exit 0 on success, 1 on runtime
  * failure, 2 on usage errors.
  *
+ * --frame-times adds a frame_times object describing the measured frames'
+ * host-time distribution (percentiles, tail counts, slowest frames).
+ *
  * Portable C11: QueryPerformanceCounter on Windows, CLOCK_MONOTONIC elsewhere.
  * Depends only on libgp32emu (gp32emu/gp32.h) and src/input_script.h.
  */
@@ -58,6 +61,31 @@ static double now_seconds(void) {
 #endif
 }
 
+/* Raw high-resolution ticks for per-frame sampling: QPC ticks on Windows,
+ * CLOCK_MONOTONIC nanoseconds elsewhere. Kept apart from now_seconds() so the
+ * default elapsed/fps reporting path stays exactly as it was. */
+static uint64_t now_ticks(void) {
+#ifdef _WIN32
+    LARGE_INTEGER counter;
+    QueryPerformanceCounter(&counter);
+    return (uint64_t)counter.QuadPart;
+#else
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec;
+#endif
+}
+
+static double ticks_per_ms(void) {
+#ifdef _WIN32
+    static LARGE_INTEGER freq;
+    if (!freq.QuadPart) QueryPerformanceFrequency(&freq);
+    return (double)freq.QuadPart / 1000.0;
+#else
+    return 1000000.0; /* CLOCK_MONOTONIC reports nanoseconds */
+#endif
+}
+
 /* Same confirm-pulse schedule as headless_main's BIOS auto-start. */
 static uint32_t bios_auto_start_buttons_for_frame(uint64_t frame) {
     return ((frame >= 620u && frame < 660u) ||
@@ -91,13 +119,150 @@ static uint64_t hash_audio(uint64_t h, const gp32_audio_desc_t *aud) {
                           (size_t)aud->frame_count * 2u * sizeof(int16_t));
 }
 
+/*
+ * Optional per-frame host-time distribution (--frame-times).
+ *
+ * frame_ms[] holds one host-time sample per measured frame. A sample covers the
+ * same work as the default elapsed timer: the guest frame plus this harness's
+ * own framebuffer/audio consumption, so the samples reproduce elapsed. The
+ * slowest list keeps the frames that matter for micro-stutter; when
+ * --cpu-profile is also set each entry carries that frame's counter deltas so
+ * an outlier can be attributed to JIT compile bursts, cache invalidation,
+ * media polling or plain guest work.
+ */
+#define FRAME_TIME_SLOWEST 10
+#define FRAME_TIME_OVER1_MS 16.67
+#define FRAME_TIME_OVER2_MS 33.3
+
+typedef struct frame_counters {
+    uint64_t cycles;
+    uint64_t jit_blocks_compiled;
+    uint64_t jit_native_compiled;
+    uint64_t jit_misses;
+    uint64_t jit_invalidations;
+    uint64_t jit_code_full_events;
+    uint64_t native_block_calls;
+    uint64_t helper_interp_ops;
+    uint64_t poll_skip_events;
+    uint64_t slow_bail_single_nonram;
+} frame_counters_t;
+
+static frame_counters_t frame_counters_snapshot(const gp32_t *g) {
+    gp32_cpu_profile_t p;
+    frame_counters_t c;
+    memset(&p, 0, sizeof(p));
+    gp32_get_cpu_profile(g, &p);
+    c.cycles = gp32_get_cycles(g);
+    c.jit_blocks_compiled = p.jit_blocks_compiled;
+    c.jit_native_compiled = p.jit_native_compiled;
+    c.jit_misses = p.jit_misses;
+    c.jit_invalidations = p.jit_invalidations;
+    c.jit_code_full_events = p.jit_code_full_events;
+    c.native_block_calls = p.native_block_calls;
+    c.helper_interp_ops = p.helper_interp_ops;
+    c.poll_skip_events = p.poll_skip_events;
+    c.slow_bail_single_nonram = p.slow_bail_single_nonram;
+    return c;
+}
+
+static frame_counters_t frame_counters_delta(frame_counters_t after, frame_counters_t before) {
+    frame_counters_t d;
+    d.cycles = after.cycles - before.cycles;
+    d.jit_blocks_compiled = after.jit_blocks_compiled - before.jit_blocks_compiled;
+    d.jit_native_compiled = after.jit_native_compiled - before.jit_native_compiled;
+    d.jit_misses = after.jit_misses - before.jit_misses;
+    d.jit_invalidations = after.jit_invalidations - before.jit_invalidations;
+    d.jit_code_full_events = after.jit_code_full_events - before.jit_code_full_events;
+    d.native_block_calls = after.native_block_calls - before.native_block_calls;
+    d.helper_interp_ops = after.helper_interp_ops - before.helper_interp_ops;
+    d.poll_skip_events = after.poll_skip_events - before.poll_skip_events;
+    d.slow_bail_single_nonram = after.slow_bail_single_nonram - before.slow_bail_single_nonram;
+    return d;
+}
+
+static int cmp_double_asc(const void *a, const void *b) {
+    double x = *(const double *)a, y = *(const double *)b;
+    return (x > y) - (x < y);
+}
+
+/* Nearest-rank percentile over an ascending array. */
+static double percentile_ms(const double *sorted, size_t count, uint64_t num, uint64_t den) {
+    if (!count) return 0.0;
+    uint64_t rank = ((uint64_t)count * num + den - 1u) / den;
+    if (rank < 1u) rank = 1u;
+    if (rank > count) rank = count;
+    return sorted[rank - 1u];
+}
+
+static void print_frame_counters_json(const frame_counters_t *c) {
+    printf(",\"cycles\":%" PRIu64
+           ",\"jit_blocks_compiled\":%" PRIu64
+           ",\"jit_native_compiled\":%" PRIu64
+           ",\"jit_misses\":%" PRIu64
+           ",\"jit_invalidations\":%" PRIu64
+           ",\"jit_code_full_events\":%" PRIu64
+           ",\"native_block_calls\":%" PRIu64
+           ",\"helper_interp_ops\":%" PRIu64
+           ",\"poll_skip_events\":%" PRIu64
+           ",\"slow_bail_single_nonram\":%" PRIu64,
+           c->cycles, c->jit_blocks_compiled, c->jit_native_compiled, c->jit_misses,
+           c->jit_invalidations, c->jit_code_full_events, c->native_block_calls,
+           c->helper_interp_ops, c->poll_skip_events, c->slow_bail_single_nonram);
+}
+
+static void print_frame_times_json(double *frame_ms, size_t count,
+                                   const frame_counters_t *counters) {
+    size_t over1 = 0, over2 = 0, top_n = 0;
+    size_t top_idx[FRAME_TIME_SLOWEST];
+    double top_ms[FRAME_TIME_SLOWEST];
+
+    for (size_t i = 0; i < count; ++i) {
+        double v = frame_ms[i];
+        if (v > FRAME_TIME_OVER1_MS) ++over1;
+        if (v > FRAME_TIME_OVER2_MS) ++over2;
+        if (top_n == FRAME_TIME_SLOWEST && !(v > top_ms[FRAME_TIME_SLOWEST - 1])) continue;
+        size_t pos = top_n < FRAME_TIME_SLOWEST ? top_n : FRAME_TIME_SLOWEST - 1;
+        while (pos > 0 && top_ms[pos - 1] < v) {
+            top_ms[pos] = top_ms[pos - 1];
+            top_idx[pos] = top_idx[pos - 1];
+            --pos;
+        }
+        top_ms[pos] = v;
+        top_idx[pos] = i;
+        if (top_n < FRAME_TIME_SLOWEST) ++top_n;
+    }
+    if (count > 1) qsort(frame_ms, count, sizeof *frame_ms, cmp_double_asc);
+
+    printf(",\"frame_times\":{\"count\":%zu"
+           ",\"p50_ms\":%.3f,\"p90_ms\":%.3f,\"p99_ms\":%.3f,\"p99_9_ms\":%.3f,\"max_ms\":%.3f"
+           ",\"over_16_67_ms\":%zu,\"over_33_3_ms\":%zu,\"slowest\":[",
+           count,
+           percentile_ms(frame_ms, count, 50, 100), percentile_ms(frame_ms, count, 90, 100),
+           percentile_ms(frame_ms, count, 99, 100), percentile_ms(frame_ms, count, 999, 1000),
+           count ? frame_ms[count - 1] : 0.0,
+           over1, over2);
+    for (size_t i = 0; i < top_n; ++i) {
+        printf("%s{\"index\":%zu,\"ms\":%.3f", i ? "," : "", top_idx[i], top_ms[i]);
+        if (counters) print_frame_counters_json(&counters[top_idx[i]]);
+        printf("}");
+    }
+    printf("]}");
+}
+
 static int usage(const char *argv0) {
     fprintf(stderr,
-        "usage: %s --bios bios.bin --smc game.smc [--state file] [--warmup N=2400] [--frames N=600] [--jit] [--input-script script.txt] [--cpu-profile] [--legacy-cycle-frames]\n"
+        "usage: %s --bios bios.bin --smc game.smc [--state file] [--warmup N=2400] [--frames N=600] [--jit] [--input-script script.txt] [--cpu-profile] [--frame-times] [--legacy-cycle-frames]\n"
         "Times --frames frames after --warmup warmup frames. BIOS+SMC runs without an input script get the same\n"
         "auto A pulses as headless_main. Prints one JSON object: fps, elapsed, cycles, pc, cpsr, clock,\n"
         "audio_frames, video/audio FNV-1a-64 hashes. --cpu-profile resets CPU workload counters at the\n"
         "warmup boundary and appends a cpu_profile object (requires a GP32EMU_CPU_PROFILE build).\n"
+        "--frame-times times each measured frame with the high-resolution host clock and appends a\n"
+        "frame_times object: count, p50/p90/p99/p99.9/max milliseconds (nearest rank), how many frames\n"
+        "exceeded 16.67 ms and 33.3 ms, and the 10 slowest frames. With --cpu-profile as well, every\n"
+        "slowest frame also carries that frame's delta of cycles, jit_blocks_compiled,\n"
+        "jit_native_compiled, jit_misses, jit_invalidations, jit_code_full_events, native_block_calls,\n"
+        "helper_interp_ops, poll_skip_events and slow_bail_single_nonram. Default output is unchanged\n"
+        "without the option.\n"
         "Default pacing matches frontends; --legacy-cycle-frames replays the former clock/60 budget.\n",
         argv0);
     return 2;
@@ -196,7 +361,7 @@ static void print_cpu_profile_json(const gp32_cpu_profile_t *p) {
 int main(int argc, char **argv) {
     const char *bios = NULL, *smc = NULL, *state_path = NULL, *input_script_path = NULL;
     uint64_t warmup = 2400, frames = 600;
-    int jit = 0, cpu_profile = 0, legacy_cycle_frames = 0;
+    int jit = 0, cpu_profile = 0, legacy_cycle_frames = 0, frame_times = 0;
     unsigned cpu_speed = 100u;
 
     for (int i = 1; i < argc; ++i) {
@@ -208,12 +373,30 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--jit")) jit = 1;
         else if (!strcmp(argv[i], "--legacy-cycle-frames")) legacy_cycle_frames = 1;
         else if (!strcmp(argv[i], "--cpu-profile")) cpu_profile = 1;
+        else if (!strcmp(argv[i], "--frame-times")) frame_times = 1;
         else if (!strcmp(argv[i], "--cpu-speed") && i + 1 < argc) cpu_speed = (unsigned)strtoul(argv[++i], NULL, 0);
         else if (!strcmp(argv[i], "--input-script") && i + 1 < argc) input_script_path = argv[++i];
         else if (!strcmp(argv[i], "--help") || !strcmp(argv[i], "-h")) { usage(argv[0]); return 0; }
         else { fprintf(stderr, "unknown or incomplete option: %s\n", argv[i]); return usage(argv[0]); }
     }
     if (!bios || !smc) { fprintf(stderr, "--bios and --smc are required\n"); return usage(argv[0]); }
+
+    double *frame_ms = NULL;
+    frame_counters_t *frame_ctr = NULL;
+    if (frame_times && frames) {
+        if (frames > (uint64_t)SIZE_MAX / sizeof(double)) {
+            fprintf(stderr, "--frame-times: frame count too large\n");
+            return 1;
+        }
+        frame_ms = (double *)calloc((size_t)frames, sizeof *frame_ms);
+        if (cpu_profile) frame_ctr = (frame_counters_t *)calloc((size_t)frames, sizeof *frame_ctr);
+        if (!frame_ms || (cpu_profile && !frame_ctr)) {
+            fprintf(stderr, "--frame-times: sample allocation failed\n");
+            free(frame_ms);
+            free(frame_ctr);
+            return 1;
+        }
+    }
 
     gp32_input_script_t *script = NULL;
     if (input_script_path) {
@@ -248,8 +431,12 @@ int main(int argc, char **argv) {
     uint64_t video_hash = FNV64_OFFSET, audio_hash = FNV64_OFFSET;
     uint64_t audio_frames = 0, measured = 0;
     double t0 = 0.0, elapsed = 0.0;
+    uint64_t frame_ticks0 = 0;
+    frame_counters_t frame_ctr_before;
     int timed = 0;
     gp32_status_t st = GP32_OK;
+
+    memset(&frame_ctr_before, 0, sizeof(frame_ctr_before));
 
     for (uint64_t frame = 0; frame < total; ++frame) {
         uint32_t buttons;
@@ -261,6 +448,10 @@ int main(int argc, char **argv) {
         gp32_set_buttons(g, buttons);
 
         if (!timed && frame >= warmup) { timed = 1; t0 = now_seconds(); if (cpu_profile) gp32_reset_cpu_profile(g); }
+        if (timed && frame_times) {
+            frame_ticks0 = now_ticks();
+            if (frame_ctr) frame_ctr_before = frame_counters_snapshot(g);
+        }
 
         st = legacy_cycle_frames ? gp32_run_cycles(g, frame_cycles_for(g, &cycle_accum))
                                  : gp32_run_frame(g);
@@ -279,6 +470,12 @@ int main(int argc, char **argv) {
         }
         /* Drain the audio queue every frame like a real frontend. */
         gp32_clear_audio(g);
+        if (timed && frame_ms) {
+            size_t slot = (size_t)measured - 1u;
+            frame_ms[slot] = (double)(now_ticks() - frame_ticks0) / ticks_per_ms();
+            if (frame_ctr)
+                frame_ctr[slot] = frame_counters_delta(frame_counters_snapshot(g), frame_ctr_before);
+        }
     }
     if (timed) elapsed = now_seconds() - t0;
 
@@ -298,6 +495,7 @@ int main(int argc, char **argv) {
            gp32_get_pc(g), gp32_get_cpsr(g), gp32_get_run_clock_hz(g),
            audio_frames, video_hash, audio_hash, jit);
     printf(",\"frame_pacing\":\"%s\"", legacy_cycle_frames ? "legacy_cycles" : "time");
+    if (frame_times) print_frame_times_json(frame_ms, (size_t)measured, frame_ctr);
     if (cpu_profile) {
         gp32_cpu_profile_t p;
         if (gp32_get_cpu_profile(g, &p) == GP32_OK) print_cpu_profile_json(&p);
@@ -305,6 +503,8 @@ int main(int argc, char **argv) {
     }
     printf("}\n");
 
+    free(frame_ms);
+    free(frame_ctr);
     gp32_input_script_destroy(script);
     gp32_destroy(g);
     return 0;
