@@ -1333,6 +1333,42 @@ static void case_budget(void) {
     teardown_pair();
 }
 
+/* A plain RAM loop is dispatched by the direct native entry once its PC is
+ * bound to the current epoch and generation: the block claims one whole call
+ * instead of the general per-block bookkeeping. Six budgets above the loop
+ * length retire thousands of such transitions, and short budgets then mix
+ * partial blocks, portable tails and the compiled path. Registers, PC, CPSR,
+ * the retired cycle count and the RAM image must stay identical to the
+ * interpreter after every run, and the workload must really have run natively
+ * rather than falling back to the portable blocks. */
+static void case_direct_dispatch(void) {
+    static const uint32_t program[] = {
+        0xE3A00000u, /* MOV r0, #0         */
+        0xE2800001u, /* loop: ADD r0,r0,#1 */
+        0xE3500DFAu, /*       CMP r0,#16000 */
+        0x1AFFFFFCu, /*       BNE loop      */
+        0xEAFFFFFEu, /* B .                */
+    };
+    current_case = "direct-dispatch";
+    setup_pair();
+    load_both(program, GP32_ARRAY_COUNT(program));
+    for (unsigned round = 0; round < 8u; ++round) {
+        uint32_t budget = round < 6u ? 8192u : 250u;
+        uint32_t dj = arm920t_run(cpu_jit, budget), dr = arm920t_run(cpu_ref, budget);
+        if (dj != dr) report("direct dispatch budget", dj, dr);
+        compare_state();
+    }
+    CHECK(ref_reg(0) == 16000u, "direct-dispatch loop did not run every iteration");
+    CHECK(arm920t_get_pc(cpu_ref) == CODE_ADDR + 16u,
+          "direct-dispatch loop did not park on B self");
+    gp32_cpu_profile_t profile;
+    arm920t_get_cpu_profile(cpu_jit, &profile);
+    if (profile.supported && profile.native_backend)
+        CHECK(profile.native_arm_insns != 0u && profile.native_block_calls != 0u,
+              "direct-dispatch loop never entered native code");
+    teardown_pair();
+}
+
 /* Start with enough budget to execute the actual native block. The ragged
  * harness alone can interpret a short program before ever entering its JIT. */
 static void run_native_case(void) {
@@ -4160,6 +4196,7 @@ int main(int argc, char **argv) {
     case_mul();
     case_seeded();
     case_budget();
+    case_direct_dispatch();
     case_loop_irq_fence();
     case_loop_smc_epoch();
     case_loop_callback_flush();

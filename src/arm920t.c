@@ -3625,6 +3625,34 @@ static uint32_t arm_jit_run(arm920t_t *c, uint32_t run_done) {
         } else {
             c->jit_hits++;
             ARM_PROF_INC(c, jit_hits);
+            /* Fast path for the common block transition: the first way
+             * already holds this PC's compiled block in the current epoch and
+             * generation, its remaining budget covers the whole block and it
+             * is not a counted-poll observation - the poll proof alone keeps
+             * the portable bookkeeping. The general path below would then only
+             * repeat these tests, skip the lazy-compile gate that counted
+             * blocks own, and reset the poll snapshot, so the call and that
+             * reset are done here. Every other shape - a short budget, a
+             * second-way or stale-epoch hit, a counted block or an uncompiled
+             * one - falls through to the general path, which repeats the tests
+             * and keeps the portable fallback for a native bail. The loop
+             * condition and the interrupt check above still run between
+             * blocks, exactly as before. */
+            if (c->jit_enabled && b->native_ok == 1u && !(b->poll_backedge >> 1) &&
+                !b->deferred_inline_pc && (c->run_limit - total) >= b->count) {
+                uint32_t done = b->native(c, c->run_limit - total);
+                if (done) {
+                    total += done;
+#if ARM920T_PROFILING
+                    c->prof.native_block_calls++;
+                    c->prof.native_arm_insns += done;
+#endif
+                    /* A native run makes no stable-read observation, which is
+                     * the only way the general tail keeps a poll snapshot. */
+                    poll_pc = UINT32_MAX;
+                    continue;
+                }
+            }
         }
 
         if (b->deferred_inline_pc) {
