@@ -1535,10 +1535,10 @@ static void case_native_forwarding(void) {
             }
             run_native_case();
             for (unsigned i = 0; i < GP32_ARRAY_COUNT(expected); ++i)
-                CHECK(gp32_ld32le(bus_ref.ram + DATA_ADDR - RAM_BASE + i * 4u) == expected[i],
+                CHECK(gp32_ld32le(bus_ref.ram + (DATA_ADDR - RAM_BASE) + i * 4u) == expected[i],
                       "forwarding fixture result");
             CHECK(ref_reg(11) == DATA_ADDR + sizeof(expected), "recorded every boundary result");
-            CHECK(gp32_ld32le(bus_ref.ram + DATA_ADDR - RAM_BASE + 0x200u) == 0x42u, "SWP performed its store");
+            CHECK(gp32_ld32le(bus_ref.ram + (DATA_ADDR - RAM_BASE) + 0x200u) == 0x42u, "SWP performed its store");
             teardown_pair();
         }
 }
@@ -2509,7 +2509,7 @@ static void case_cache_modified(int leaf) {
     set_reg_both(1, 0xe3a04022u);
     set_reg_both(2, changed);
     run_cache_pair(CODE_ADDR, 2u);
-    CHECK(gp32_ld32le(bus_ref.ram + changed - RAM_BASE) == 0xe3a04022u, "guest code write");
+    CHECK(gp32_ld32le(bus_ref.ram + (changed - RAM_BASE)) == 0xe3a04022u, "guest code write");
     uint64_t misses = arm920t_get_jit_misses(cpu_jit);
     run_cache_pair(retained, 32u);
     CHECK(arm920t_get_jit_misses(cpu_jit) == misses, "unrelated unchanged block was invalidated");
