@@ -66,6 +66,19 @@ performance, audio and input correctness across the library, not boot-only tests
   Together with the deferred-superblock result this argues against further
   dispatch-stub work on A53. Evidence `F:/GP32/results/round153/w-indirect/`,
   `F:/GP32/results/round154/abba-ic/`.
+- `0237a55` (PC only): x64 JIT gained the A64 live-word and identity-IO
+  word paths; LGM checked helpers 28.9M -> 1.2M per 1200 frames, PC LGM
+  +6-7%. Installed on H700 with the homebrew IRQ work (core sha256
+  `3f233960…`); the A64 JIT is unchanged there.
+- Rejected (round 155): GPIO-store and LCD-read specialised entries in the A64
+  IO word helper with a reduced continuation check (path 179/173 -> 150/84
+  instructions). H700 ABBA, identical output: LGM 60.80 -> 61.14 (+0.6%), Blue
+  75.70 -> 76.11, Princess 110.65 -> 110.11. Too small for two new bus entries
+  and a second continuation predicate. Per-access instruction trimming on the
+  A53 has now been tried three ways (identity IO, LCDCON5, GPIO/LCD entries)
+  with gains at or under 1%; the IO cost is dominated by the native-to-C
+  transition itself. Evidence `F:/GP32/results/round155/w-a64io/`,
+  `F:/GP32/results/round155/abba-io2/`.
 - Audio pops (round 150): the BIOS boot pop, the Dooly Soccer start pop and
   the BIOS sound-menu tick are guest PCM. The menu tick is three 335-sample
   plateaus of exactly 0x8000 that the Europe v1.6.6 BIOS reads from its own
