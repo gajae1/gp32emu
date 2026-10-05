@@ -31,6 +31,10 @@ typedef struct a64_emit {
     int fail;
     int ram_read, ram_write, memory, mmu, leaf;
     int nzcv_valid; /* host NZCV equals the committed guest flags */
+    int fwd_guest;  /* guest register whose committed value is still in w2, -1 = none.
+                     * Only a plain register data op leaves it set; every other
+                     * emitter and any helper/cold path clears it, because w2 is
+                     * caller-saved across helpers and reused as scratch. */
     uint32_t expected_next, generation;
     uint32_t loop_done, block_count;
     size_t loop_head;
@@ -404,10 +408,9 @@ static void a64_ret_tail(a64_emit_t *e) {
     if (e->leaf) {
         a64_u32(e, 0xf84107f3u); /* ldr x19, [sp], #16 */
     } else if (e->memory) {
-        a64_u32(e, 0xa94153f3u); /* ldp x19, x20, [sp, #16] */
-        a64_u32(e, 0xf94013f5u); /* ldr x21, [sp, #32] */
-    } else a64_u32(e, 0xf9400bf3u); /* ldr x19, [sp, #16] */
-    if (!e->leaf) a64_u32(e, 0xa8c37bfdu); /* ldp x29, x30, [sp], #48 */
+        a64_u32(e, 0xa9417bf5u); /* ldp x21, x30, [sp, #16] */
+        a64_u32(e, 0xa8c253f3u); /* ldp x19, x20, [sp], #32 */
+    } else a64_u32(e, 0xa8c17bf3u); /* ldp x19, x30, [sp], #16 */
     if (e->loop_done) {
         a64_u32(e, 0xa94167f8u); /* ldp x24, x25, [sp, #16] */
         a64_u32(e, 0xa8c25ff6u); /* ldp x22, x23, [sp], #32 */
@@ -488,10 +491,14 @@ static void a64_selfloop(a64_emit_t *e, uint32_t done) {
     exits[n++] = a64_jump(e, 0);
     a64_patch(e, no_fiq, e->pos);
     a64_patch(e, no_pending, e->pos);
-    a64_u32(e, 0x51000000u | (done << 10) | (22u << 5)); /* sub w0, w22, #done */
-    a64_cmp_imm(e, 0, e->block_count);
+    /* Keep the remaining budget in w22 itself: every exit restores the host
+     * frame through sp and reports the completed prefix in w0, so the extra
+     * copy the old "sub w0, w22, #done; ...; mov w22, w0" order needed is one
+     * word of the repeating body. The comparison is the same unsigned
+     * remaining-budget test against the full block length. */
+    a64_u32(e, 0x51000000u | (done << 10) | (22u << 5) | 22u); /* sub w22, w22, #done */
+    a64_cmp_imm(e, 22, e->block_count);
     exits[n++] = a64_jump(e, 3); /* LO */
-    a64_mov(e, 22, 0);
     a64_u32(e, 0x11000000u | (done << 10) | (23u << 5) | 23u);
     /* Dedicated signed imm26 backedge; existing forward fixups stay intact. */
     if (e->loop_head > e->pos || e->pos - e->loop_head >= (1u << 25)) e->fail = 1;
@@ -663,6 +670,10 @@ static int a64_data(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
     int test = code >= 8u && code <= 11u;
     int flags = test || (op->d & ARM_BC_DATA_S);
     int logical = code < 2u || code == 8u || code == 9u || code >= 12u;
+    /* w2 still holds the committed result of the previous data op (see the
+     * fwd_guest note): reuse it instead of reloading that guest register. */
+    int fwd = e->fwd_guest;
+    e->fwd_guest = -1;
     if (op->d & ARM_BC_DATA_REGSHIFT) return 0;
     if (!test && op->c == 15u && flags && e->leaf) return 0;
     int arith_imm = (op->d & ARM_BC_DATA_IMM) &&
@@ -682,44 +693,78 @@ static int a64_data(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
     if (arith_imm)
         imm_bits = op->imm <= 0xfffu ? op->imm << 10 :
                    0x00400000u | ((op->imm >> 12) << 10);
-    if (code != 13u && code != 15u) a64_guest(e, 0, op->b, op->pc);
+    /* Operand reloads are skipped when the value already sits in w2. The
+     * second operand only qualifies while it reaches the ALU unchanged: the
+     * folded shift travels inside the instruction, a zero-amount LSL emits
+     * nothing, and every other a64_shift rewrites w1 and reads it for the
+     * carry. The first operand is never transformed in place. Only MOV/MVN
+     * may drop their first operand (the ARM encoding ignores Rn there); a
+     * PC (r15) operand in either slot keeps its load, which is how the
+     * pipeline value pc + 8 reaches w0/w1 (see a64_guest). */
+    unsigned rn = 0u, rm = 1u;
+    int reads_rn = code != 13u && code != 15u;
+    int load_rn = reads_rn;
+    int load_rm = !(op->d & ARM_BC_DATA_IMM);
+    int plain_op2 = folded_shift || (!op->g && !op->h);
+    if (load_rn && op->b == (unsigned)fwd) { load_rn = 0; rn = 2u; }
+    if (load_rm && op->e == (unsigned)fwd && plain_op2) { load_rm = 0; rm = 2u; }
+    /* Both operands naming one guest register need a single reload. */
+    else if (load_rm && reads_rn && op->b == op->e && plain_op2) { load_rm = 0; rm = rn; }
+    /* A rotated-immediate logical operand is itself an A64 logical immediate,
+     * so the ALU instruction carries it directly and the materialization into
+     * w1/w2 disappears. BIC and MVN use the complement, which is encodable for
+     * some values only; unencodable values keep the general path. MOV/MVN name
+     * the zero register instead of a first operand. */
+    uint32_t logic_op = 0u, logic_enc = 0u;
+    if ((op->d & ARM_BC_DATA_IMM) && logical && op->imm) {
+        uint32_t v = code == 14u || code == 15u ? ~op->imm : op->imm;
+        if (a64_logical_imm32(v, &logic_enc))
+            logic_op = code == 1u || code == 9u ? 0x52000000u :
+                       code == 12u || code == 13u || code == 15u ? 0x32000000u :
+                                                                   0x12000000u;
+    }
+    if (load_rn) a64_guest(e, 0, op->b, op->pc);
     if (flags || (code >= 5u && code <= 7u) ||
         (!(op->d & ARM_BC_DATA_IMM) && op->g == 3u && !op->h))
         a64_load(e, 3, offsetof(arm920t_t, cpsr));
     if (op->d & ARM_BC_DATA_IMM) {
-        if (!arith_imm) a64_imm(e, code == 13u ? 2u : 1u, op->imm);
+        if (!arith_imm && !logic_op) a64_imm(e, code == 13u ? 2u : 1u, op->imm);
         if (flags && logical) {
             if (op->d & ARM_BC_DATA_IMM_CV) a64_imm(e, 4, (op->d & ARM_BC_DATA_IMM_C) ? C_FLAG : 0u);
             else a64_mask(e, 4, 3, C_FLAG);
         }
     } else {
-        a64_guest(e, 1, op->e, op->pc);
+        if (load_rm) a64_guest(e, 1, op->e, op->pc);
         if (!folded_shift) a64_shift(e, op->g, op->h, flags && logical);
     }
     uint32_t s = flags ? 0x20000000u : 0u;
-    switch (code) {
-    case 0: case 8: a64_rr(e, 0x0a000000u | shift_bits, 2, 0, 1); break;
-    case 1: case 9: a64_rr(e, 0x4a000000u | shift_bits, 2, 0, 1); break;
+    /* and/eor/orr W2, <first operand or wzr>, #imm */
+    if (logic_op)
+        a64_u32(e, logic_op | logic_enc |
+                    ((code == 13u || code == 15u ? 31u : rn) << 5) | 2u);
+    else switch (code) {
+    case 0: case 8: a64_rr(e, 0x0a000000u | shift_bits, 2, rn, rm); break;
+    case 1: case 9: a64_rr(e, 0x4a000000u | shift_bits, 2, rn, rm); break;
     case 2: case 10:
-        if (arith_imm) a64_u32(e, 0x51000000u | s | imm_bits | 2u); /* sub[s] w2, w0, #imm */
-        else a64_rr(e, 0x4b000000u | s | shift_bits, 2, 0, 1);
+        if (arith_imm) a64_u32(e, 0x51000000u | s | imm_bits | (rn << 5) | 2u); /* sub[s] w2, rn, #imm */
+        else a64_rr(e, 0x4b000000u | s | shift_bits, 2, rn, rm);
         break;
-    case 3: a64_rr(e, 0x4b000000u | s, 2, 1, 0); break;
+    case 3: a64_rr(e, 0x4b000000u | s, 2, rm, rn); break;
     case 4: case 11:
-        if (arith_imm) a64_u32(e, 0x11000000u | s | imm_bits | 2u); /* add[s] w2, w0, #imm */
-        else a64_rr(e, 0x0b000000u | s | shift_bits, 2, 0, 1);
+        if (arith_imm) a64_u32(e, 0x11000000u | s | imm_bits | (rn << 5) | 2u); /* add[s] w2, rn, #imm */
+        else a64_rr(e, 0x0b000000u | s | shift_bits, 2, rn, rm);
         break;
     case 5: case 6: case 7:
         a64_u32(e, 0xd51b4203u); /* msr nzcv, x3: ARM/A64 carry is no-borrow */
         a64_rr(e, (code == 5u ? 0x1a000000u : 0x5a000000u) | s,
-               2, code == 7u ? 1u : 0u, code == 7u ? 0u : 1u);
+               2, code == 7u ? rm : rn, code == 7u ? rn : rm);
         break;
-    case 12: a64_rr(e, 0x2a000000u | shift_bits, 2, 0, 1); break;
+    case 12: a64_rr(e, 0x2a000000u | shift_bits, 2, rn, rm); break;
     case 13:
-        if (!(op->d & ARM_BC_DATA_IMM)) a64_rr(e, 0x2a000000u | shift_bits, 2, 31, 1);
+        if (!(op->d & ARM_BC_DATA_IMM)) a64_rr(e, 0x2a000000u | shift_bits, 2, 31, rm);
         break;
-    case 14: a64_rr(e, 0x0a200000u | shift_bits, 2, 0, 1); break;
-    case 15: a64_rr(e, 0x2a200000u | shift_bits, 2, 31, 1); break;
+    case 14: a64_rr(e, 0x0a200000u | shift_bits, 2, rn, rm); break;
+    case 15: a64_rr(e, 0x2a200000u | shift_bits, 2, 31, rm); break;
     }
     if (flags) {
         if (logical) a64_cmp_imm(e, 2, 0);
@@ -752,6 +797,10 @@ static int a64_data(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
             } else a64_return(e, done);
         }
     }
+    /* An unconditional plain register write leaves its committed value in w2
+     * for the next op; a conditional op's fall-through reaches the same store
+     * without executing it, so only cond==14 may publish the result. */
+    if (!test && op->cond == 14u && op->c != 15u) e->fwd_guest = (int)op->c;
     return 1;
 }
 
@@ -1261,9 +1310,19 @@ static int a64_one(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
      * Memory guards, helpers and partial logical flag writes are barriers. */
     e->nzcv_valid = 0;
     if (op->kind == ARM_JIT_OP_DATA) {
-        if (op->d & ARM_BC_DATA_REGSHIFT) return a64_data_regshift(e, op, done);
+        if (op->d & ARM_BC_DATA_REGSHIFT) {
+            /* The register-shift form builds its operands in w0/w1/w6/w7 and
+             * writes its own result to w2, so a forwarded value cannot cross
+             * it (it publishes its own result under the same conditions). */
+            e->fwd_guest = -1;
+            return a64_data_regshift(e, op, done);
+        }
         return a64_data(e, op, done);
     }
+    /* Every other emitter writes w2 (address formation, transfer value,
+     * writeback) or calls a helper that clobbers it: the forwarded result of
+     * the previous op can never survive one of them. */
+    e->fwd_guest = -1;
     if (op->kind == ARM_JIT_OP_MUL) {
         if (op->insn & (1u << 23)) return a64_long_mul(e, op, done);
         return a64_mul(e, op, done);
@@ -1419,6 +1478,7 @@ static void arm_jit_compile_native(arm920t_t *c, arm_jit_block_t *b) {
     e.cap = sizeof(tmp) / sizeof(tmp[0]);
     e.cold = cold;
     e.cold_cap = ARM_JIT_MAX_INSNS;
+    e.fwd_guest = -1;
     e.mmu = !!(c->cp15[1] & 1u);
     e.live_read32 = c->live_read32;
     e.live_read32_count = c->live_read32_count;
@@ -1449,17 +1509,18 @@ static void arm_jit_compile_native(arm920t_t *c, arm_jit_block_t *b) {
         a64_u32(&e, 0xa9be5ff6u); /* stp x22, x23, [sp, #-32]! */
         a64_u32(&e, 0xa90167f8u); /* stp x24, x25, [sp, #16] */
     }
-    /* Leaf traces preserve x29/x30 without touching them. Other traces keep
-     * the aligned frame and x19/LR slots; only memory paths use x20/x21. */
+    /* Leaf traces never call a helper, so a single x19 slot and the untouched
+     * x29/x30 suffice. Other traces save the LR (helpers clobber it) in a
+     * 16-byte-aligned frame; only memory paths use x20/x21. No frame pointer
+     * is kept: the epilogue restores through sp, so x29 stays the caller's
+     * value and neither a slot nor a "mov x29, sp" is emitted. */
     if (e.leaf) {
         a64_u32(&e, 0xf81f0ff3u); /* str x19, [sp, #-16]! */
+    } else if (e.memory) {
+        a64_u32(&e, 0xa9be53f3u); /* stp x19, x20, [sp, #-32]! */
+        a64_u32(&e, 0xa9017bf5u); /* stp x21, x30, [sp, #16] */
     } else {
-        a64_u32(&e, 0xa9bd7bfdu); /* stp x29, x30, [sp, #-48]! */
-        if (e.memory) {
-            a64_u32(&e, 0xa90153f3u); /* stp x19, x20, [sp, #16] */
-            a64_u32(&e, 0xf90013f5u); /* str x21, [sp, #32] */
-        } else a64_u32(&e, 0xf9000bf3u); /* str x19, [sp, #16] */
-        a64_u32(&e, 0x910003fdu); /* mov x29, sp */
+        a64_u32(&e, 0xa9bf7bf3u); /* stp x19, x30, [sp, #-16]! */
     }
     a64_rr(&e, 0xaa000000u, 19, 31, 0);
     if (e.loop_done) {
@@ -1728,6 +1789,7 @@ static int a64_data_regshift(a64_emit_t *e, const arm_jit_op_t *op, uint32_t don
         a64_put_guest(e, op->c, 2);
         if (op->c == 15u) a64_return(e, done);
     }
+    if (!test && op->cond == 14u && op->c != 15u) e->fwd_guest = (int)op->c;
     return 1;
 }
 
