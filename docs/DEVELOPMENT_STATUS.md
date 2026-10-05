@@ -6,6 +6,26 @@ performance, audio and input correctness across the library, not boot-only tests
 
 ## Current accepted work
 
+- Rejected (round 161): a fast-transition chaining loop inside
+  `arm_jit_run` (enter the next cached block without returning to the outer
+  dispatcher). Identical output, but H700 ABBA lost Princess 121.8 -> ~120.0
+  (-1.5%) while LGM gained only +0.3%. Evidence `round161/abba-chain/`.
+- Rejected (round 161): A64 flag commit by byte store `strb [cpsr+3]`
+  (w-flags P1). Identical output, but Princess 122 -> 117.5 when all MSR-f
+  went through the helper and 122 -> 119 with a runtime nibble guard; LGM
+  79.1 -> 76.7. Likely an A53 store-to-load forwarding stall when the word
+  load of cpsr follows the byte store. Evidence `round161/abba-flags/`,
+  `abba-flags2/`.
+- Rejected (round 161): the remaining w-flags parts without the byte store
+  (logical flag commit through cmp/cmn + bfxil/bfi with carry kept at bit 0,
+  and `msr nzcv` published before a following conditional test). Identical
+  output; H700 ABBA Blue 85.18 -> 86.27 but LGM 78.75 -> 77.67 and Princess
+  122.06 -> 120.66. Evidence `round161/abba-flags3/`, patch
+  `round161/w-flags/`.
+- Accepted (round 161): x64 dense emission (w-x64dense, `src/arm920t.c`
+  only): emitted x64 code -4.7..-6.7%, PC LGM +3.0%, Blue +1.1%, Princess
+  neutral; PC ctest, pc-parity, parity5 and parity-boot identical. H700
+  unaffected.
 - Rejected (round 161): splitting io_write32 into a short GPIO body plus
   out-of-line GPEDAT and IRQ/DMA/LCD halves (aarch64 1508 -> 436 bytes, 17 ->
   7 GPIO lines). Identical output, but H700 ABBA lost LGM 78.95 -> 78.52 and

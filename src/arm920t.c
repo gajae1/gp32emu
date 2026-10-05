@@ -2566,6 +2566,7 @@ typedef struct x64_emit {
     size_t cap;
     size_t pos;
     int fail, mmu, ram_read, ram_write;
+    int fwd_guest; /* guest register whose committed value is in EAX, or -1 */
     uint32_t expected_next, generation, done, guest_pc;
     const arm_live_read32_t *live_read32;
     size_t live_read32_count;
@@ -2663,15 +2664,22 @@ static void x64_modrm(x64_emit_t *e, int mod, int reg, int rm) { x64_u8(e, (uint
 static uint32_t arm_reg_off(unsigned r) { return (uint32_t)offsetof(arm920t_t, r) + r * 4u; }
 static uint32_t cpsr_off(void) { return (uint32_t)offsetof(arm920t_t, cpsr); }
 static uint32_t jit_ram_base_off(void) { return (uint32_t)offsetof(arm920t_t, jit_ram_base); }
-static uint32_t jit_bios_base_off(void) { return (uint32_t)offsetof(arm920t_t, jit_bios_base); }
 
 static void x64_mov_r32_imm(x64_emit_t *e, int dst, uint32_t imm) { x64_rex(e, 0, 0, 0, dst); x64_u8(e, (uint8_t)(0xb8u + (dst & 7))); x64_u32(e, imm); }
 static void x64_mov_r64_imm(x64_emit_t *e, int dst, uint64_t imm) { x64_rex(e, 1, 0, 0, dst); x64_u8(e, (uint8_t)(0xb8u + (dst & 7))); x64_u64(e, imm); }
 static void x64_mov_r64_r64(x64_emit_t *e, int dst, int src) { x64_rex(e, 1, src, 0, dst); x64_u8(e, 0x89); x64_modrm(e, 3, src, dst); }
 static void x64_mov_r32_r32(x64_emit_t *e, int dst, int src) { x64_rex(e, 0, src, 0, dst); x64_u8(e, 0x89); x64_modrm(e, 3, src, dst); }
-static void x64_mov_r32_mem_cpu(x64_emit_t *e, int dst, uint32_t off) { x64_rex(e, 0, dst, 0, X64_EBX); x64_u8(e, 0x8b); x64_modrm(e, 2, dst, X64_EBX); x64_u32(e, off); }
-static void x64_mov_mem_cpu_r32(x64_emit_t *e, uint32_t off, int src) { x64_rex(e, 0, src, 0, X64_EBX); x64_u8(e, 0x89); x64_modrm(e, 2, src, X64_EBX); x64_u32(e, off); }
-static void x64_mov_mem_cpu_imm(x64_emit_t *e, uint32_t off, uint32_t imm) { x64_u8(e, 0xc7); x64_modrm(e, 2, 0, X64_EBX); x64_u32(e, off); x64_u32(e, imm); }
+/* r[0..15] and cpsr live in the first 68 bytes of the CPU struct, so every
+ * guest-register/status access fits the one-byte displacement form.  That is
+ * the x64 half of the A64 dense emission: identical semantics, three bytes
+ * shorter per access.  Larger fields keep the disp32 form. */
+static void x64_modrm_cpu(x64_emit_t *e, int reg, uint32_t off) {
+    if (off < 0x80u) { x64_modrm(e, 1, reg, X64_EBX); x64_u8(e, (uint8_t)off); }
+    else { x64_modrm(e, 2, reg, X64_EBX); x64_u32(e, off); }
+}
+static void x64_mov_r32_mem_cpu(x64_emit_t *e, int dst, uint32_t off) { x64_rex(e, 0, dst, 0, X64_EBX); x64_u8(e, 0x8b); x64_modrm_cpu(e, dst, off); }
+static void x64_mov_mem_cpu_r32(x64_emit_t *e, uint32_t off, int src) { x64_rex(e, 0, src, 0, X64_EBX); x64_u8(e, 0x89); x64_modrm_cpu(e, src, off); }
+static void x64_mov_mem_cpu_imm(x64_emit_t *e, uint32_t off, uint32_t imm) { x64_u8(e, 0xc7); x64_modrm_cpu(e, 0, off); x64_u32(e, imm); }
 static void x64_mov_r64_mem_cpu(x64_emit_t *e, int dst, uint32_t off) { x64_rex(e, 1, dst, 0, X64_EBX); x64_u8(e, 0x8b); x64_modrm(e, 2, dst, X64_EBX); x64_u32(e, off); }
 static void x64_sib(x64_emit_t *e, int scale, int index, int base) { x64_u8(e, (uint8_t)(((scale & 3) << 6) | ((index & 7) << 3) | (base & 7))); }
 static void x64_mov_r32_membase_index(x64_emit_t *e, int dst, int base, int index) { x64_rex(e, 0, dst, index, base); x64_u8(e, 0x8b); x64_modrm(e, 0, dst, X64_ESP); x64_sib(e, 0, index, base); }
@@ -2860,7 +2868,7 @@ static void x64_emit_alu_carry_in(x64_emit_t *e, int borrow_in) {
 }
 static void x64_emit_store_arm_reg(x64_emit_t *e, unsigned r, int src) { x64_mov_mem_cpu_r32(e, arm_reg_off(r), src); }
 
-static int x64_emit_op2_to_ecx(x64_emit_t *e, uint32_t insn, uint32_t pc, int carry) {
+static int x64_emit_op2_to_ecx(x64_emit_t *e, uint32_t insn, uint32_t pc, int carry, int fwd) {
     if (insn & (1u << 25)) {
         uint32_t imm = insn & 0xffu;
         unsigned rot = ((insn >> 8) & 0xfu) * 2u;
@@ -2874,7 +2882,10 @@ static int x64_emit_op2_to_ecx(x64_emit_t *e, uint32_t insn, uint32_t pc, int ca
         unsigned rs = (insn >> 8) & 0xfu;
         size_t done, zero, small, signfill;
         if (rm == 15u || rs == 15u) return 0;
-        x64_emit_load_arm_reg(e, X64_EAX, rm, pc);
+        /* A forwarded Rm is already committed in EAX.  This form overwrites
+         * EAX with the shifted result, so the caller must not read EAX as the
+         * forwarded register after it returns. */
+        if ((int)rm != fwd) x64_emit_load_arm_reg(e, X64_EAX, rm, pc);
         x64_emit_load_arm_reg(e, X64_ECX, rs, pc);
         x64_alu_r32_imm(e, 4, X64_ECX, 0xffu);
         switch (type) {
@@ -2926,7 +2937,10 @@ static int x64_emit_op2_to_ecx(x64_emit_t *e, uint32_t insn, uint32_t pc, int ca
         return 1;
     }
     unsigned amount = (insn >> 7) & 0x1fu;
-    x64_emit_load_arm_reg(e, X64_ECX, rm, pc);
+    /* A forwarded operand is already committed in EAX: a 3-byte register move
+     * replaces the register-file load and never touches the data cache. */
+    if (rm != 15u && (int)rm == fwd) x64_mov_r32_r32(e, X64_ECX, X64_EAX);
+    else x64_emit_load_arm_reg(e, X64_ECX, rm, pc);
     if (carry) {
         if (type == 0u && !amount) {
             x64_mov_r32_mem_cpu(e, X64_R8D, cpsr_off());
@@ -3003,7 +3017,18 @@ static int x64_emit_data_proc(x64_emit_t *e, const arm_jit_op_t *op, uint32_t do
     const uint32_t insn = op->insn;
     unsigned opc = (insn >> 21) & 0xfu;
     unsigned s = GP32_BIT(insn, 20), rn = (insn >> 16) & 0xfu, rd = (insn >> 12) & 0xfu;
+    unsigned rm = insn & 0xfu;
     int logical_s = s && (opc < 2u || opc == 8u || opc == 9u || opc >= 12u);
+    /* Operand forwarding: the previous unconditional non-flag-setting result
+     * is still committed in EAX, so an Rn/Rm that names it costs one register
+     * move instead of a register-file reload.  Every path below either
+     * consumes or drops the state; only an unconditional write republishes. */
+    int fwd = e->fwd_guest;
+    int plain = !(insn & (1u << 25)) && !(insn & (1u << 4));
+    /* A register-specified shift reuses EAX for Rm, so EAX no longer carries
+     * the forwarded register once operand2 has been built. */
+    int op2_eax_clobbered = !(insn & (1u << 25)) && (insn & (1u << 4)) != 0u;
+    e->fwd_guest = -1;
     if (rd == 15u) {
         /* Common ARM return sequence: MOV pc,lr / MOV pc,Rm.  Keep the exact
            write_r(pc) alignment semantics and return immediately after the
@@ -3046,26 +3071,39 @@ static int x64_emit_data_proc(x64_emit_t *e, const arm_jit_op_t *op, uint32_t do
                 x64_alu_r32_imm(e, 4, X64_R8D, C_FLAG);
             }
         }
+        /* MOV/MVN ignore Rn; everything else reads it once, and a forwarded
+         * Rn is already committed in EAX. */
+        if (opc != 0xdu && opc != 0xfu && (int)rn != fwd)
+            x64_emit_load_arm_reg(e, X64_EAX, rn, op->pc);
         switch (opc) {
-        case 0x0: x64_emit_load_arm_reg(e, X64_EAX, rn, op->pc); x64_alu_r32_imm(e, 4, X64_EAX, imm); break;
-        case 0x1: x64_emit_load_arm_reg(e, X64_EAX, rn, op->pc); x64_alu_r32_imm(e, 6, X64_EAX, imm); break;
-        case 0x2: x64_emit_load_arm_reg(e, X64_EAX, rn, op->pc); x64_alu_r32_imm(e, 5, X64_EAX, imm); break;
-        case 0x4: x64_emit_load_arm_reg(e, X64_EAX, rn, op->pc); x64_alu_r32_imm(e, 0, X64_EAX, imm); break;
-        case 0x8: x64_emit_load_arm_reg(e, X64_EAX, rn, op->pc); x64_alu_r32_imm(e, 4, X64_EAX, imm); x64_emit_set_nz(e, X64_EAX, logical_s); return 1;
-        case 0x9: x64_emit_load_arm_reg(e, X64_EAX, rn, op->pc); x64_alu_r32_imm(e, 6, X64_EAX, imm); x64_emit_set_nz(e, X64_EAX, logical_s); return 1;
-        case 0xa: x64_emit_load_arm_reg(e, X64_EAX, rn, op->pc); x64_alu_r32_imm(e, 7, X64_EAX, imm); x64_emit_nzcv_from_x86_flags(e, 1); return 1;
-        case 0xb: x64_emit_load_arm_reg(e, X64_EAX, rn, op->pc); x64_alu_r32_imm(e, 0, X64_EAX, imm); x64_emit_nzcv_from_x86_flags(e, 0); return 1;
-        case 0xc: x64_emit_load_arm_reg(e, X64_EAX, rn, op->pc); x64_alu_r32_imm(e, 1, X64_EAX, imm); break;
+        case 0x0: x64_alu_r32_imm(e, 4, X64_EAX, imm); break;
+        case 0x1: x64_alu_r32_imm(e, 6, X64_EAX, imm); break;
+        case 0x2: x64_alu_r32_imm(e, 5, X64_EAX, imm); break;
+        case 0x4: x64_alu_r32_imm(e, 0, X64_EAX, imm); break;
+        case 0x8: x64_alu_r32_imm(e, 4, X64_EAX, imm); x64_emit_set_nz(e, X64_EAX, logical_s); return 1;
+        case 0x9: x64_alu_r32_imm(e, 6, X64_EAX, imm); x64_emit_set_nz(e, X64_EAX, logical_s); return 1;
+        case 0xa: x64_alu_r32_imm(e, 7, X64_EAX, imm); x64_emit_nzcv_from_x86_flags(e, 1); return 1;
+        case 0xb: x64_alu_r32_imm(e, 0, X64_EAX, imm); x64_emit_nzcv_from_x86_flags(e, 0); return 1;
+        case 0xc: x64_alu_r32_imm(e, 1, X64_EAX, imm); break;
         case 0xd: x64_mov_r32_imm(e, X64_EAX, imm); break;
-        case 0xe: x64_emit_load_arm_reg(e, X64_EAX, rn, op->pc); x64_alu_r32_imm(e, 4, X64_EAX, ~imm); break;
+        case 0xe: x64_alu_r32_imm(e, 4, X64_EAX, ~imm); break;
         case 0xf: x64_mov_r32_imm(e, X64_EAX, ~imm); break;
         default: return 0;
         }
         x64_emit_data_result(e, opc, s, rd, done, logical_s);
+        if (!s && rd != 15u && op->cond == 14u) e->fwd_guest = (int)rd;
         return 1;
     }
-    if (!x64_emit_op2_to_ecx(e, insn, op->pc, logical_s)) return 0;
-    x64_emit_load_arm_reg(e, X64_EAX, rn, op->pc);
+    if (!x64_emit_op2_to_ecx(e, insn, op->pc, logical_s, fwd)) return 0;
+    /* Rn is the unshifted first operand.  With an unshifted shifter and
+     * Rn == Rm the single loaded value serves both roles; a forwarded Rn is
+     * not loaded again at all (A64 one-load and w2 forwarding). */
+    int same_plain = plain && rn == rm && rn != 15u &&
+                     ((insn >> 5) & 3u) == 0u && ((insn >> 7) & 0x1fu) == 0u;
+    if (opc != 0xdu && opc != 0xfu) {
+        if (same_plain) { if ((int)rn != fwd) x64_mov_r32_r32(e, X64_EAX, X64_ECX); }
+        else if ((int)rn != fwd || op2_eax_clobbered) x64_emit_load_arm_reg(e, X64_EAX, rn, op->pc);
+    }
     switch (opc) {
     case 0x0: x64_alu_r32_r32(e, 0x21, X64_EAX, X64_ECX); break; /* AND */
     case 0x1: x64_alu_r32_r32(e, 0x31, X64_EAX, X64_ECX); break; /* EOR */
@@ -3111,6 +3149,7 @@ static int x64_emit_data_proc(x64_emit_t *e, const arm_jit_op_t *op, uint32_t do
     default: return 0;
     }
     x64_emit_data_result(e, opc, s, rd, done, logical_s);
+    if (!s && rd != 15u && op->cond == 14u) e->fwd_guest = (int)rd;
     return 1;
 }
 
@@ -3568,23 +3607,25 @@ static int x64_emit_ram_dt(x64_emit_t *e, const arm_jit_op_t *op, uint32_t done)
 static void x64_emit_cond_skip(x64_emit_t *e, unsigned cond, size_t *patch, unsigned *npatch) {
     *npatch = 0;
     if (cond == 14u) return;
-    x64_mov_r32_mem_cpu(e, X64_EAX, cpsr_off());
+    /* R8D is scratch here: a conditional instruction may still consume the
+     * forwarded value in EAX, so the skip must not disturb it. */
+    x64_mov_r32_mem_cpu(e, X64_R8D, cpsr_off());
     switch (cond) {
-    case 0: x64_alu_r32_imm(e, 4, X64_EAX, Z_FLAG); patch[(*npatch)++] = x64_jcc32(e, 0x4); break; /* !Z -> skip */
-    case 1: x64_alu_r32_imm(e, 4, X64_EAX, Z_FLAG); patch[(*npatch)++] = x64_jcc32(e, 0x5); break;
-    case 2: x64_alu_r32_imm(e, 4, X64_EAX, C_FLAG); patch[(*npatch)++] = x64_jcc32(e, 0x4); break;
-    case 3: x64_alu_r32_imm(e, 4, X64_EAX, C_FLAG); patch[(*npatch)++] = x64_jcc32(e, 0x5); break;
-    case 4: x64_alu_r32_imm(e, 4, X64_EAX, N_FLAG); patch[(*npatch)++] = x64_jcc32(e, 0x4); break;
-    case 5: x64_alu_r32_imm(e, 4, X64_EAX, N_FLAG); patch[(*npatch)++] = x64_jcc32(e, 0x5); break;
-    case 6: x64_alu_r32_imm(e, 4, X64_EAX, V_FLAG); patch[(*npatch)++] = x64_jcc32(e, 0x4); break;
-    case 7: x64_alu_r32_imm(e, 4, X64_EAX, V_FLAG); patch[(*npatch)++] = x64_jcc32(e, 0x5); break;
+    case 0: x64_alu_r32_imm(e, 4, X64_R8D, Z_FLAG); patch[(*npatch)++] = x64_jcc32(e, 0x4); break; /* !Z -> skip */
+    case 1: x64_alu_r32_imm(e, 4, X64_R8D, Z_FLAG); patch[(*npatch)++] = x64_jcc32(e, 0x5); break;
+    case 2: x64_alu_r32_imm(e, 4, X64_R8D, C_FLAG); patch[(*npatch)++] = x64_jcc32(e, 0x4); break;
+    case 3: x64_alu_r32_imm(e, 4, X64_R8D, C_FLAG); patch[(*npatch)++] = x64_jcc32(e, 0x5); break;
+    case 4: x64_alu_r32_imm(e, 4, X64_R8D, N_FLAG); patch[(*npatch)++] = x64_jcc32(e, 0x4); break;
+    case 5: x64_alu_r32_imm(e, 4, X64_R8D, N_FLAG); patch[(*npatch)++] = x64_jcc32(e, 0x5); break;
+    case 6: x64_alu_r32_imm(e, 4, X64_R8D, V_FLAG); patch[(*npatch)++] = x64_jcc32(e, 0x4); break;
+    case 7: x64_alu_r32_imm(e, 4, X64_R8D, V_FLAG); patch[(*npatch)++] = x64_jcc32(e, 0x5); break;
     case 8: /* HI: C && !Z */
-        x64_alu_r32_imm(e, 4, X64_EAX, C_FLAG); patch[(*npatch)++] = x64_jcc32(e, 0x4);
-        x64_mov_r32_mem_cpu(e, X64_EAX, cpsr_off()); x64_alu_r32_imm(e, 4, X64_EAX, Z_FLAG); patch[(*npatch)++] = x64_jcc32(e, 0x5); break;
+        x64_alu_r32_imm(e, 4, X64_R8D, C_FLAG); patch[(*npatch)++] = x64_jcc32(e, 0x4);
+        x64_mov_r32_mem_cpu(e, X64_R8D, cpsr_off()); x64_alu_r32_imm(e, 4, X64_R8D, Z_FLAG); patch[(*npatch)++] = x64_jcc32(e, 0x5); break;
     case 9: { /* LS: !C || Z; skip if C && !Z */
         size_t pass;
-        x64_alu_r32_imm(e, 4, X64_EAX, C_FLAG); pass = x64_jcc32(e, 0x4);
-        x64_mov_r32_mem_cpu(e, X64_EAX, cpsr_off()); x64_alu_r32_imm(e, 4, X64_EAX, Z_FLAG); patch[(*npatch)++] = x64_jcc32(e, 0x4);
+        x64_alu_r32_imm(e, 4, X64_R8D, C_FLAG); pass = x64_jcc32(e, 0x4);
+        x64_mov_r32_mem_cpu(e, X64_R8D, cpsr_off()); x64_alu_r32_imm(e, 4, X64_R8D, Z_FLAG); patch[(*npatch)++] = x64_jcc32(e, 0x4);
         x64_patch32(e, pass, e->pos);
         break;
     }
@@ -3592,16 +3633,16 @@ static void x64_emit_cond_skip(x64_emit_t *e, unsigned cond, size_t *patch, unsi
         size_t pass_patch = 0;
         int has_pass_patch = 0;
         if (cond == 12u || cond == 13u) {
-            x64_alu_r32_imm(e, 4, X64_EAX, Z_FLAG);
+            x64_alu_r32_imm(e, 4, X64_R8D, Z_FLAG);
             if (cond == 12u) patch[(*npatch)++] = x64_jcc32(e, 0x5); /* GT: Z set means fail */
             else { pass_patch = x64_jcc32(e, 0x5); has_pass_patch = 1; } /* LE: Z set means pass */
         }
-        x64_mov_r32_mem_cpu(e, X64_EAX, cpsr_off());
-        x64_mov_r32_r32(e, X64_ECX, X64_EAX);
-        x64_shift_r32_imm(e, 5, X64_EAX, 31);
+        x64_mov_r32_mem_cpu(e, X64_R8D, cpsr_off());
+        x64_mov_r32_r32(e, X64_ECX, X64_R8D);
+        x64_shift_r32_imm(e, 5, X64_R8D, 31);
         x64_shift_r32_imm(e, 5, X64_ECX, 28);
-        x64_alu_r32_r32(e, 0x31, X64_EAX, X64_ECX);
-        x64_alu_r32_imm(e, 4, X64_EAX, 1u);
+        x64_alu_r32_r32(e, 0x31, X64_R8D, X64_ECX);
+        x64_alu_r32_imm(e, 4, X64_R8D, 1u);
         if (cond == 10u || cond == 12u) patch[(*npatch)++] = x64_jcc32(e, 0x5); /* GE/GT fail on N^V */
         else patch[(*npatch)++] = x64_jcc32(e, 0x4);                         /* LT/LE fail on !(N^V) */
         if (has_pass_patch) x64_patch32(e, pass_patch, e->pos);
@@ -3742,6 +3783,9 @@ static int x64_emit_mrs_psr(x64_emit_t *e, const arm_jit_op_t *op) {
 }
 
 static int x64_emit_one(x64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
+    if (op->kind == ARM_JIT_OP_DATA) return x64_emit_data_proc(e, op, done);
+    /* Every other emitter may clobber EAX: drop the forwarding state. */
+    e->fwd_guest = -1;
     if (op->kind == ARM_JIT_OP_PSR && x64_emit_msr_cpsr(e, op, done)) return 1;
     if (op->kind == ARM_JIT_OP_PSR && x64_emit_mrs_psr(e, op)) return 1;
     if (op->kind == ARM_JIT_OP_INTERP && op->reserved == 7u) {
@@ -3856,8 +3900,17 @@ static void arm_jit_compile_native(arm920t_t *c, arm_jit_block_t *b) {
     size_t enough = x64_jcc32(&e, 0x3); /* unsigned budget >= block count */
     x64_emit_return_imm(&e, 0);
     x64_patch32(&e, enough, e.pos);
-    x64_mov_r64_mem_cpu(&e, X64_R14D, jit_ram_base_off());
-    x64_mov_r64_mem_cpu(&e, X64_R15D, jit_bios_base_off());
+    /* Shape-specific frame: only a block that can emit a RAM transfer pays
+     * for the RAM base pointer, and no emitter ever read the BIOS base, so it
+     * is not loaded at all (the x64 half of A64 shape-specific frames). */
+    int need_ram_base = 0;
+    for (uint8_t i = 0; i < b->count; ++i) {
+        unsigned kind = arm_jit_ops(c, b)[i].kind;
+        if (kind == ARM_JIT_OP_SINGLE_DT || kind == ARM_JIT_OP_HALF ||
+            kind == ARM_JIT_OP_BLOCK_DT) { need_ram_base = 1; break; }
+    }
+    if (need_ram_base) x64_mov_r64_mem_cpu(&e, X64_R14D, jit_ram_base_off());
+    e.fwd_guest = -1;
     for (uint8_t i = 0; i < b->count; ++i) {
         const arm_jit_op_t *op = &arm_jit_ops(c, b)[i];
         e.expected_next = i + 1u < b->count ? arm_jit_ops(c, b)[i + 1u].pc : op->pc + 4u;
@@ -3869,10 +3922,12 @@ static void arm_jit_compile_native(arm920t_t *c, arm_jit_block_t *b) {
          * Elide its known return guard, retaining PC and guest cycle indices.
          * Boundary returns still execute their guarded real-PC path. */
         if (op->reserved == 7u && i + 1u < b->count) {
+            e.fwd_guest = -1;
             x64_mov_mem_cpu_imm(&e, arm_reg_off(15), e.expected_next);
             continue;
         }
         if (op->reserved == 8u) {
+            e.fwd_guest = -1;
             x64_emit_cond_skip(&e, op->cond ^ 1u, patches, &npatch);
             x64_mov_mem_cpu_imm(&e, arm_reg_off(15), op->pc + 4u);
             x64_emit_return_imm(&e, (uint32_t)i + 1u);
