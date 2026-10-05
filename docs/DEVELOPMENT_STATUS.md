@@ -6,6 +6,14 @@ performance, audio and input correctness across the library, not boot-only tests
 
 ## Current accepted work
 
+- Round 161 dispatcher hit path (`arm_jit_run`, all backends): the block's
+  {generation, epoch} tag is compared with the CPU's adjacent pair in one
+  64-bit load, the fast-path metadata (native_ok, counted poll, deferred
+  inline) is one 64-bit load and mask, and block hits count in a register
+  published once per run. Output identical (PC pc-parity/parity5/boot, H700
+  ABBA). H700 1.512 GHz: tag compare Princess 116.50 -> 120.82 (+3.7%), LGM
+  76.50 -> 77.82 (+1.7%), Blue 84.33 -> 84.50; then metadata + hits on top
+  Princess 120.93 -> 122.26, LGM 77.69 -> 78.82, Blue 84.81 -> 85.33.
 - Round 161 GPMM-layout freeware cards: the retail BIOS launcher only boots a
   card's top-level GAME\ executable, so cards whose executable sits elsewhere
   (Dynamate, GlooP Deluxe, Pinball Dreams, SmashGP, Tears) sat on DATA

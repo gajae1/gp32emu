@@ -194,9 +194,11 @@ typedef uint32_t (*arm_jit_native_fn)(arm920t_t *cpu, uint32_t cycles);
 
 typedef struct arm_jit_block {
     uint32_t tag_pc;
-    uint32_t tag_cache_epoch;
     uint32_t valid;
+    /* {generation, tag_cache_epoch} mirror arm920t's {jit_generation,
+     * jit_cache_epoch} so the dispatcher compares both in one 64-bit load. */
     uint32_t generation;
+    uint32_t tag_cache_epoch;
     uint8_t count;
     uint8_t native_ok; /* 0: unattempted; 1: compiled; 2: failed lazy attempt. */
     uint8_t poll_prefix;
@@ -330,6 +332,13 @@ struct arm920t {
     /* A64 arena: lowest cold byte of the current chunk (0 = chunk end). */
     size_t jit_cold_floor;
 };
+_Static_assert(offsetof(arm920t_t, jit_cache_epoch) == offsetof(arm920t_t, jit_generation) + 4u &&
+               offsetof(arm_jit_block_t, tag_cache_epoch) == offsetof(arm_jit_block_t, generation) + 4u,
+               "dispatcher compares {generation, epoch} as one 64-bit word");
+_Static_assert(offsetof(arm_jit_block_t, count) == 16u && offsetof(arm_jit_block_t, native_ok) == 17u &&
+               offsetof(arm_jit_block_t, poll_backedge) == 19u &&
+               offsetof(arm_jit_block_t, deferred_inline_pc) == 20u,
+               "dispatcher reads the block's fast-path metadata as one 64-bit word");
 
 /* Native dispatch only needs the compact header. Decoded instructions live
  * in a separate stable allocation so C helpers can retain their addresses. */
@@ -4104,6 +4113,8 @@ static uint32_t arm_jit_run(arm920t_t *c, uint32_t run_done) {
     if (!c->jit_ram_base) c->jit_ram_base = fastmem(c, ARM_JIT_RAM_BASE_ADDR, 1u, 0);
     if (!c->jit_bios_base) c->jit_bios_base = fastmem(c, 0x00000000u, 1u, 0);
     uint32_t total = run_done;
+    /* Block hits accumulate in a register and are published once per run. */
+    uint64_t hits = 0;
     uint32_t poll_pc = UINT32_MAX, poll_count = 0, poll_cpsr = 0;
     uint32_t poll_regs[16];
     /* Rejection authorizes only actual native execution, never skipping.
@@ -4121,21 +4132,25 @@ static uint32_t arm_jit_run(arm920t_t *c, uint32_t run_done) {
         arm_jit_block_t *b = c->jit_blocks ? &c->jit_blocks[arm_jit_block_index(pc)] : NULL;
         /* Keep the first-way hit as short as the direct-mapped lookup. Only
          * consult the other way after a miss; revalidate changed epochs before
-         * accepting either way, exactly as for the original single slot. */
-        if (!b || !((b->valid != 0u) & (b->tag_pc == pc) &
-                    (b->tag_cache_epoch == tag) & (b->generation == c->jit_generation))) {
+         * accepting either way, exactly as for the original single slot.
+         * {generation, tag_cache_epoch} is compared as one 64-bit word against
+         * the CPU's adjacent {jit_generation, jit_cache_epoch}. */
+        uint64_t want, have;
+        memcpy(&want, &c->jit_generation, sizeof(want));
+        if (b) memcpy(&have, &b->generation, sizeof(have));
+        if (!b || !((b->valid != 0u) & (b->tag_pc == pc) & (have == want))) {
             arm_jit_block_t *alt = b ? b + 1 : NULL;
             if (b && b->valid && b->tag_pc == pc &&
                 b->generation == c->jit_generation && arm_jit_fetch_unchanged(c, b)) {
                 b->tag_cache_epoch = tag;
-                c->jit_hits++;
+                hits++;
                 ARM_PROF_INC(c, jit_hits);
             } else if (alt && alt->valid && alt->tag_pc == pc &&
                        alt->generation == c->jit_generation &&
                        (alt->tag_cache_epoch == tag || arm_jit_fetch_unchanged(c, alt))) {
                 b = alt;
                 b->tag_cache_epoch = tag;
-                c->jit_hits++;
+                hits++;
                 ARM_PROF_INC(c, jit_hits);
             } else {
                 c->jit_misses++;
@@ -4148,7 +4163,7 @@ static uint32_t arm_jit_run(arm920t_t *c, uint32_t run_done) {
                 if (!b) break;
             }
         } else {
-            c->jit_hits++;
+            hits++;
             ARM_PROF_INC(c, jit_hits);
             /* Fast path for the common block transition: the first way
              * already holds this PC's compiled block in the current epoch and
@@ -4163,8 +4178,17 @@ static uint32_t arm_jit_run(arm920t_t *c, uint32_t run_done) {
              * and keeps the portable fallback for a native bail. The loop
              * condition and the interrupt check above still run between
              * blocks, exactly as before. */
-            if (c->jit_enabled && b->native_ok == 1u && !(b->poll_backedge >> 1) &&
-                !b->deferred_inline_pc && (c->run_limit - total) >= b->count) {
+            /* One 64-bit load covers count, native_ok, poll_backedge and
+             * deferred_inline_pc: compiled (native_ok == 1), not counted
+             * (poll_backedge <= 1) and no deferred inline target. */
+            uint64_t meta;
+            memcpy(&meta, &b->count, sizeof(meta));
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+            int fast = (meta & 0xfffffffffe00ff00ull) == 0x100u;
+#else
+            int fast = b->native_ok == 1u && !(b->poll_backedge >> 1) && !b->deferred_inline_pc;
+#endif
+            if (c->jit_enabled && fast && (c->run_limit - total) >= (uint8_t)b->count) {
                 uint32_t done = b->native(c, c->run_limit - total);
                 if (done) {
                     total += done;
@@ -4268,7 +4292,7 @@ static uint32_t arm_jit_run(arm920t_t *c, uint32_t run_done) {
                 else if (memcmp(poll_regs, c->r, sizeof(poll_regs)) == 0)
                     repeats = budget / done;
                 total += repeats * done;
-                c->jit_hits += repeats;
+                hits += repeats;
                 if (repeats) poll_skipped = 1;
 #if ARM920T_PROFILING
                 c->prof.jit_hits += repeats;
@@ -4302,6 +4326,7 @@ static uint32_t arm_jit_run(arm920t_t *c, uint32_t run_done) {
             }
         }
     }
+    c->jit_hits += hits;
     return total - run_done;
 }
 
