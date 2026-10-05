@@ -6,6 +6,16 @@ performance, audio and input correctness across the library, not boot-only tests
 
 ## Current accepted work
 
+- `3a5362a` (round 157): A64 shared block epilogue, cold LDM/STM page retry,
+  single 64-bit TLB pair load; hot bytes/block -21..-28%. H700 ABBA identical
+  output: LGM 67.16 -> 67.65, Blue 80.35 -> 81.50, Princess 113.90 -> 115.76.
+  `e42f656`: same hot/cold layout in the x64 emitter (PC +1-3%, identical).
+- Deferred (round 157): audio-buffer-status-driven presentation skip (skip the
+  panel decode/staging of a frame while still emulating it exactly). Audio
+  output is already exact: 735 frames per retro_run, correct av_info. Skipping
+  saves only 2.5-4.7% of a frame (PC) and cannot rescue LGM's 22 ms heavy
+  frames, against a public API change and ~1000 lines. Evidence
+  `F:/GP32/results/round157/w-audio/`.
 - `8d781e0` (round 156): A64 hot/cold block layout. Cold sequences
   (live-read and identity-IO probes, checked helper calls, block-transfer
   second-page paths) are emitted after the block epilogue; fast paths run
