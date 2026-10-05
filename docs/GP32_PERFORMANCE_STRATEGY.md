@@ -3234,3 +3234,21 @@ This correction was found during the private display-wait prototype, not
 attributed to a particular game's symptom or claimed as a speed gain. The
 wait prototype is not promoted; its long-suspension, callback and state
 compatibility boundaries are recorded in [HLE wait interrupts](HLE_WAIT_INTERRUPTS.md).
+
+
+## Rejected: promoting never-skipping poll candidates (rounds 140-145)
+
+Plain poll candidates that never earn a poll skip (for example the BIOS
+SmartMedia status prefix at 0x2740 during Little Girl Mill loading) run on the
+portable block interpreter. Promoting them to native blocks after 16 skipless
+runs cut interpreted instructions in that load by 95% on x86-64 and lowered PC
+CPU time (paired ratio 0.82-0.95). On H700 (1.512 GHz ABBA, identical output)
+it did not pay: the first version moved Little Girl Mill 43.50 -> 42.44 fps
+(-2.4%) because each A64 call ran about four guest instructions plus trace
+entry/exit and a dispatcher round trip. The revised version (native self-loop
+for promoted candidates, cheaper observation) still measured LGM 43.98 -> 43.55
+(-1.0%), Blue +1.7%, Princess +0.7%. Neither ships; diffs are in
+`F:/GP32/results/round142/abba-poll/` and `F:/GP32/results/round145/abba-poll2/`.
+An x86-64-only gate is possible but not taken because the PC already exceeds
+real time by a wide margin in this scene.
+
