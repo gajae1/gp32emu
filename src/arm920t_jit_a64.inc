@@ -38,9 +38,20 @@ typedef struct a64_emit {
     size_t live_read32_count;
     struct a64_cold_op *cold; /* deferred cold chains, one per fast-path op */
     unsigned cold_count, cold_cap;
+    int in_cold;              /* emitting a cold chain: never share the hot epilogue */
+    size_t ret_fixup[ARM_JIT_MAX_INSNS + 4]; /* hot exit sites of the shared epilogue */
+    unsigned ret_count;
+    size_t entry_exit;        /* hot budget-check branch into the cold entry exit */
 } a64_emit_t;
 
-enum a64_cold_kind { A64_COLD_SINGLE_DT = 1, A64_COLD_HALF, A64_COLD_BLOCK_DT };
+enum a64_cold_kind {
+    A64_COLD_SINGLE_DT = 1, A64_COLD_HALF, A64_COLD_BLOCK_DT,
+    /* The block-transfer two-page retry. It is entered from the hot page-cross
+     * branch, re-runs the translation and the transfer for a span that crosses
+     * one 4 KiB boundary, and resumes the hot continuation behind it. Its own
+     * guard rejections join the sibling classified-helper chain. */
+    A64_COLD_BLOCK_DT_XPAGE
+};
 
 /* One deferred cold chain.  The hot body records what to emit and where the
  * guards sit; the chain is written after the block body and ends by branching
@@ -54,6 +65,7 @@ typedef struct a64_cold_op {
     uint32_t done, expected_next, generation;
     uint8_t kind, load, wb, access, byte, live, nfixup;
     size_t fixup[16]; /* hot branch sites that enter this chain */
+    unsigned sibling; /* chain that owns this chain's guard rejections (0 = none) */
 } a64_cold_op_t;
 
 ARM_FORCE_INLINE int arm_a64_can_continue(const arm920t_t *c, int stop,
@@ -380,10 +392,15 @@ static void a64_cmp(a64_emit_t *e, unsigned rn, unsigned rm) {
 static void a64_cmp_imm(a64_emit_t *e, unsigned rn, unsigned imm) {
     a64_u32(e, 0x7100001fu | (imm << 10) | (rn << 5));
 }
-static void a64_return(a64_emit_t *e, uint32_t done) {
+/* Materialize the completed-op count the dispatcher expects in w0. */
+static void a64_ret_done(a64_emit_t *e, uint32_t done) {
     if (e->loop_done)
         a64_u32(e, 0x11000000u | (done << 10) | (23u << 5)); /* add w0, w23, #done */
     else a64_imm(e, 0, done);
+}
+
+/* Restore the host frame and return to dispatch. */
+static void a64_ret_tail(a64_emit_t *e) {
     if (e->leaf) {
         a64_u32(e, 0xf84107f3u); /* ldr x19, [sp], #16 */
     } else if (e->memory) {
@@ -396,6 +413,28 @@ static void a64_return(a64_emit_t *e, uint32_t done) {
         a64_u32(e, 0xa8c25ff6u); /* ldp x22, x23, [sp], #32 */
     }
     a64_u32(e, 0xd65f03c0u); /* ret */
+}
+
+/* Leave the block.  A hot exit only materializes w0 and branches to the one
+ * shared epilogue that a64_ret_flush emits at the end of the hot body, so the
+ * frame restore and ret exist once per block instead of once per exit.  Cold
+ * chains emit the whole sequence inline: they cannot branch back into the hot
+ * body's tail.  Every exit still passes the same completed-op count, and the
+ * fall-through exit reaches the same epilogue. */
+static void a64_return(a64_emit_t *e, uint32_t done) {
+    a64_ret_done(e, done);
+    if (e->in_cold) { a64_ret_tail(e); return; }
+    if (e->ret_count >= sizeof(e->ret_fixup) / sizeof(e->ret_fixup[0])) { e->fail = 1; return; }
+    e->ret_fixup[e->ret_count++] = a64_jump(e, 14);
+}
+
+/* The shared hot epilogue: the fall-through exit falls into it and every hot
+ * exit branch is patched to its first instruction. */
+static void a64_ret_flush(a64_emit_t *e, uint32_t done) {
+    a64_ret_done(e, done);
+    size_t target = e->pos;
+    for (unsigned i = 0; i < e->ret_count; ++i) a64_patch(e, e->ret_fixup[i], target);
+    a64_ret_tail(e);
 }
 
 /* Only the first explicitly eligible entry backedge chains. A full decoded
@@ -725,12 +764,17 @@ static void a64_ram_offset(a64_emit_t *e, size_t *slow, unsigned *nslow, unsigne
      * a helper that changes it exits through arm_a64_exec_checked. The MMU
      * enable bit is therefore constant throughout this compiled block. */
     if (e->mmu) {
-        a64_ubfx(e, 8, 0, 12, 20); /* full VA page tag */
-        a64_mask(e, 6, 8, 0xfffu); /* original (VA >> 12) & 0xfff index */
-        a64_rr(e, 0x8b000c00u, 10, 20, 6); /* add x10, x20, x6, lsl #3 */
-        a64_u32(e, 0x29402547u); /* ldp w7, w9, [x10]: VA page, XOR offset */
-        a64_cmp(e, 8, 7);
+        /* The pair is 8 bytes wide and jit_tlb_page[] starts on an 8-byte
+         * boundary of the CPU struct, so one 64-bit load fetches its
+         * {VA page, XOR offset} words where a masked index, a scaled add and
+         * a paired load used to sit. */
+        _Static_assert((offsetof(arm920t_t, jit_tlb_page) & 7u) == 0u,
+                       "native RAM page lookup alignment");
+        a64_ubfx(e, 6, 0, 12, 12); /* original (VA >> 12) & 0xfff index */
+        a64_u32(e, 0xf8665a87u); /* ldr x7, [x20, w6, uxtw #3]: VA page, XOR offset */
+        a64_u32(e, 0x6b4030ffu); /* cmp w7, w0, lsr #12: full VA page tag */
         slow[(*nslow)++] = a64_jump(e, 1);
+        a64_u32(e, 0xd360fce9u); /* lsr x9, x7, #32: XOR offset */
         a64_rr(e, 0x4a000000u, 0, 0, 9); /* VA XOR offset -> direct RAM offset */
     } else {
         a64_imm(e, 6, ARM_JIT_RAM_BASE_ADDR);
@@ -983,13 +1027,14 @@ static int a64_block_dt(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
     a64_u32(e, 0x35000000u | 6u); /* cbnz w6 -> helper on unaligned span */
     if (count > 1u) {
         /* Same virtual 4 KiB page takes the original single-translation path.
-         * Otherwise branch to a two-page path; with count <= 16 (64 bytes),
-         * an aligned span can cross at most one 4 KiB boundary. */
+         * A span crossing a 4 KiB boundary branches to the cold two-page retry
+         * behind the block instead of walking an inline second copy; with
+         * count <= 16 (64 bytes) an aligned span crosses at most one boundary. */
         a64_u32(e, 0x11000000u | ((4u * (count - 1u)) << 10) | (0u << 5) | 5u); /* w5 = last */
         a64_rr(e, 0x4a000000u, 6, 0, 5); /* eor w6, w0, w5 */
         a64_ubfx(e, 6, 6, 12, 20);
         xpage = e->pos;
-        a64_u32(e, 0x35000000u | 6u); /* cbnz w6 -> two-page path */
+        a64_u32(e, 0x35000000u | 6u); /* cbnz w6 -> cold two-page retry */
     }
     /* The span stays within this 4 KiB page, so proving its aligned first
      * word in a full RAM page also proves every transferred word. */
@@ -999,62 +1044,76 @@ static int a64_block_dt(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
     if (w && (!load || !(list & (1u << rn))))
         a64_put_guest(e, rn, 2); /* a load containing Rn suppresses this */
     a64_block_dt_exit(e, op, done);
-    /* A one-word span has no second path at all: its move ends the op and
-     * falls through to the hot continuation.  A wider span jumps over the
-     * two-page path, which falls through to the same continuation. */
-    size_t single_done = count > 1u ? a64_jump(e, 14) : 0u;
+    /* The single-page path is complete and falls through to the op's
+     * continuation, which is also where the cold two-page retry resumes.
+     * Everything the fast paths skip moves behind the block: the two-page
+     * retry as its own chain (first, so its own guard rejections can be
+     * forward-patched into the classified-helper chain that follows) and the
+     * ordinary guard handlers, odd-load-PC prechecks and classified fallback
+     * in the sibling chain. */
+    a64_cold_op_t *xcold = NULL;
     if (count > 1u) {
-        a64_patch(e, xpage, e->pos);
-
-        /* w11 retains virtual addr0 and w2 retains offset0 across the second
-         * a64_ram_offset call. w2's normal writeback value is reconstructed
-         * after both translations, so using it as a preserved temporary is
-         * safe. */
-        a64_mov(e, 11, 0);
-        a64_ram_offset(e, slow, &nslow, 4u);
-        a64_mov(e, 2, 0);
-        a64_mov(e, 0, 11);
-        a64_u32(e, 0x11000000u | (0xfffu << 10)); /* add w0, w0, #0xfff */
-        a64_mask(e, 0, 0, ~0xfffu); /* w0 = next 4 KiB boundary */
-        a64_ram_offset(e, slow, &nslow, 4u);
-        a64_mov(e, 4, 0); /* w4 = offset1 */
-
-        /* w5 = number of words in the first page. */
-        a64_mask(e, 5, 11, 0xfffu);
-        a64_imm(e, 6, 0x1000u);
-        a64_rr(e, 0x4b000000u, 5, 6, 5); /* w5 = 0x1000 - addr0 page offset */
-        a64_ubfx(e, 5, 5, 2, 30); /* w5 /= 4 */
-
-        /* Each fragment ends at or before its already-proved RAM page edge. */
-        a64_rr(e, 0x8b000000u, 12, 21, 2); /* x12 = RAM pointer for page 0 */
-        a64_rr(e, 0x8b000000u, 15, 21, 4); /* x15 = RAM pointer for page 1 */
-        /* Bias page 1 by the page-0 word count so both pointers use the same
-         * ascending transfer index. Only indices >= w5 dereference this
-         * base. */
-        a64_rr(e, 0xcb000800u, 15, 15, 5); /* sub x15, x15, x5, lsl #2 */
-
-        if (w) { /* Reconstruct final_base from the saved virtual addr0. */
-            a64_mov(e, 2, 11);
-            if (u) {
-                uint32_t adjust = 4u * count - (p ? 4u : 0u);
-                a64_u32(e, 0x11000000u | (adjust << 10) | (11u << 5) | 2u);
-            } else if (!p) {
-                a64_u32(e, 0x51000000u | (4u << 10) | (11u << 5) | 2u);
-            }
-        }
-        a64_block_dt_transfer(e, op, count, 1, slow, &nslow);
-        if (w && (!load || !(list & (1u << rn))))
-            a64_put_guest(e, rn, 2);
-        a64_block_dt_exit(e, op, done);
-        a64_patch(e, single_done, e->pos);
+        xcold = a64_cold_open(e, op, done, A64_COLD_BLOCK_DT_XPAGE);
+        if (xcold) a64_cold_fix(e, xcold, xpage);
     }
-
-    /* Both fast paths are complete.  The guard handlers, the odd-load-PC
-     * prechecks and the classified fallback move to the cold area; a wider
-     * span's single-page path skips the two-page path. */
     a64_cold_op_t *cold = a64_cold_open(e, op, done, A64_COLD_BLOCK_DT);
+    if (xcold && cold) xcold->sibling = (unsigned)(cold - e->cold);
     if (cold) for (unsigned i = 0; i < nslow; ++i) a64_cold_fix(e, cold, slow[i]);
     return 1;
+}
+
+/* Cold two-page retry for a block transfer whose aligned span crosses one
+ * 4 KiB boundary.  This is the sequence the inline layout used to carry (and
+ * skip) inside the hot body; it runs with the same registers the single-page
+ * path held at its page-cross branch: w0 = addr0, w2 = final_base (writeback
+ * shapes), w11 = free.  Guard rejections are collected in slow[] and join the
+ * sibling classified-helper chain, so a rejected retry re-executes the whole
+ * op on the checked path with the guest state untouched. */
+static void a64_block_dt_xpage(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done,
+                               size_t *slow, unsigned *nslow) {
+    unsigned d = op->d, rn = op->a;
+    uint32_t list = op->imm;
+    int load = !!(d & 0x01u), p = !!(d & 0x10u), u = !!(d & 0x08u), w = !!(d & 0x02u);
+    unsigned count = op->g;
+    /* w11 retains virtual addr0 and w2 retains offset0 across the second
+     * a64_ram_offset call. w2's normal writeback value is reconstructed
+     * after both translations, so using it as a preserved temporary is
+     * safe. */
+    a64_mov(e, 11, 0);
+    a64_ram_offset(e, slow, nslow, 4u);
+    a64_mov(e, 2, 0);
+    a64_mov(e, 0, 11);
+    a64_u32(e, 0x11000000u | (0xfffu << 10)); /* add w0, w0, #0xfff */
+    a64_mask(e, 0, 0, ~0xfffu); /* w0 = next 4 KiB boundary */
+    a64_ram_offset(e, slow, nslow, 4u);
+    a64_mov(e, 4, 0); /* w4 = offset1 */
+
+    /* w5 = number of words in the first page. */
+    a64_mask(e, 5, 11, 0xfffu);
+    a64_imm(e, 6, 0x1000u);
+    a64_rr(e, 0x4b000000u, 5, 6, 5); /* w5 = 0x1000 - addr0 page offset */
+    a64_ubfx(e, 5, 5, 2, 30); /* w5 /= 4 */
+
+    /* Each fragment ends at or before its already-proved RAM page edge. */
+    a64_rr(e, 0x8b000000u, 12, 21, 2); /* x12 = RAM pointer for page 0 */
+    a64_rr(e, 0x8b000000u, 15, 21, 4); /* x15 = RAM pointer for page 1 */
+    /* Bias page 1 by the page-0 word count so both pointers use the same
+     * ascending transfer index. Only indices >= w5 dereference this base. */
+    a64_rr(e, 0xcb000800u, 15, 15, 5); /* sub x15, x15, x5, lsl #2 */
+
+    if (w) { /* Reconstruct final_base from the saved virtual addr0. */
+        a64_mov(e, 2, 11);
+        if (u) {
+            uint32_t adjust = 4u * count - (p ? 4u : 0u);
+            a64_u32(e, 0x11000000u | (adjust << 10) | (11u << 5) | 2u);
+        } else if (!p) {
+            a64_u32(e, 0x51000000u | (4u << 10) | (11u << 5) | 2u);
+        }
+    }
+    a64_block_dt_transfer(e, op, count, 1, slow, nslow);
+    if (w && (!load || !(list & (1u << rn))))
+        a64_put_guest(e, rn, 2);
+    a64_block_dt_exit(e, op, done);
 }
 
 static void a64_block_dt_transfer(a64_emit_t *e, const arm_jit_op_t *op,
@@ -1285,6 +1344,7 @@ static uint32_t a64_selfloop_prefix(arm920t_t *c, arm_jit_block_t *b) {
  * those ops emit no cold chain, so no chain can sit between a flag producer
  * and the conditional code that consumes its flags. */
 static void a64_cold_flush(a64_emit_t *e) {
+    e->in_cold = 1;
     for (unsigned i = 0; i < e->cold_count && !e->fail; ++i) {
         a64_cold_op_t *c = &e->cold[i];
         size_t entry = e->pos;
@@ -1292,6 +1352,21 @@ static void a64_cold_flush(a64_emit_t *e) {
         e->expected_next = c->expected_next;
         e->generation = c->generation;
         switch (c->kind) {
+        case A64_COLD_BLOCK_DT_XPAGE: {
+            /* The hot page-cross branch lands here instead of walking an
+             * inline second copy of the whole transfer. The retry's own guard
+             * rejections belong to the sibling classified-helper chain, which
+             * is emitted after this one, so every fixup stays a forward
+             * patch. Its continuation is the hot fall-through behind the
+             * single-page path. */
+            size_t xslow[8];
+            unsigned nxs = 0;
+            a64_cold_op_t *sib = c->sibling < e->cold_count ? &e->cold[c->sibling] : NULL;
+            a64_block_dt_xpage(e, c->op, c->done, xslow, &nxs);
+            if (sib) for (unsigned j = 0; j < nxs; ++j) a64_cold_fix(e, sib, xslow[j]);
+            a64_branch_back(e, c->cont);
+            break;
+        }
         case A64_COLD_SINGLE_DT: {
             /* The inline order: certificate, direct identity-I/O attempt,
              * then the checked helper that every rejection lands on. */
@@ -1317,6 +1392,7 @@ static void a64_cold_flush(a64_emit_t *e) {
          * layout, now a backward branch into the hot body. */
         a64_branch_back(e, c->cont);
     }
+    e->in_cold = 0;
 }
 
 static void arm_jit_compile_native(arm920t_t *c, arm_jit_block_t *b) {
@@ -1390,9 +1466,10 @@ static void arm_jit_compile_native(arm920t_t *c, arm_jit_block_t *b) {
     /* The dispatcher normally guarantees this. Keep the function itself safe
      * for short budgets too, leaving the partial block to portable bytecode. */
     a64_cmp_imm(&e, 1, b->count);
-    size_t enough = a64_jump(&e, 2); /* HS */
-    a64_return(&e, 0);
-    a64_patch(&e, enough, e.pos);
+    /* The dispatcher normally guarantees a full block budget. Its rare
+     * rejection leaves through the cold entry exit behind the block body, so
+     * no never-executed return sequence sits in front of the hot code. */
+    e.entry_exit = a64_jump(&e, 3); /* LO: too short a budget leaves through the cold exit */
     e.loop_head = e.pos;
     for (unsigned i = 0; i < b->count; ++i) {
         const arm_jit_op_t *op = &arm_jit_ops(c, b)[i];
@@ -1453,7 +1530,14 @@ static void arm_jit_compile_native(arm920t_t *c, arm_jit_block_t *b) {
     if (last->kind == ARM_JIT_OP_BRANCH && last->cond == 14u)
         final_pc = arm_jit_branch_target(last->pc, last->insn);
     a64_store_imm(&e, offsetof(arm920t_t, r) + 15u * 4u, final_pc);
-    a64_return(&e, b->count);
+    a64_ret_flush(&e, b->count);
+    if (e.entry_exit) {
+        a64_patch(&e, e.entry_exit, e.pos);
+        e.in_cold = 1;
+        a64_ret_done(&e, 0);
+        a64_ret_tail(&e);
+        e.in_cold = 0;
+    }
     a64_cold_flush(&e);
     if (e.fail) return;
     size_t bytes = e.pos * sizeof(tmp[0]);
