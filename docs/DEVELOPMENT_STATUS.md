@@ -135,3 +135,10 @@ binary; it was not a proven hang. Default-BIOS GlooP/Pinball/Tears loading,
 unattributed controls, long gameplay, physical audio/input latency and Android
 runtime remain open. FIFO-empty electrical output is not settled by manuals;
 do not invent replacement samples as a fidelity fix.
+
+- Optional guest CPU speed (`CPU_SPEED_OPTION.md`): instruction clock only,
+  peripheral time preserved, default 100%. Blue Angelo's CPU-bound NPC load
+  shortens at 150-300%; timer-paced titles are unchanged. Round 138 found the
+  Blue pause is guest SmartMedia/ECC work (no emulator wait) and the GlooP/
+  Pinball/Tears stall is a defect of BIOS image ecf63b73bbd1 with cards lacking
+  GAME\\; dated v1.6.6 images boot them (`results/round138/`).

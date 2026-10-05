@@ -54,6 +54,10 @@ uint32_t s3c2400_debug_read32(s3c2400_t *soc, uint32_t addr);
 uint32_t s3c2400_fclk_hz(const s3c2400_t *soc);
 uint32_t s3c2400_hclk_hz(const s3c2400_t *soc);
 uint32_t s3c2400_run_clock_hz(const s3c2400_t *soc);
+/* Host CPU-speed option (50..400 percent of the guest-programmed run clock).
+ * Peripheral time is preserved. Call only between CPU runs. */
+int s3c2400_set_cpu_speed_percent(s3c2400_t *soc, uint32_t percent);
+uint32_t s3c2400_cpu_speed_percent(const s3c2400_t *soc);
 int s3c2400_state_save(const s3c2400_t *soc, FILE *f);
 int s3c2400_state_load(s3c2400_t *soc, FILE *f);
 int s3c2400_state_save_io(const s3c2400_t *soc, state_io_t *io);

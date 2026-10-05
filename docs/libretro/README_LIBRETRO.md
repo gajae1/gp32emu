@@ -139,6 +139,11 @@ The core exposes these options through RetroArch's Core Options menu:
 - Dynamic recompiler: enabled by default.
 - LCD persistence / GP32 FLU ghosting: disabled by default.
 - Frame interpolation: disabled by default.
+- CPU speed: 100% by default. Higher values give the game more CPU time per
+  second without changing sound pitch, timers or screen refresh, which can
+  shorten CPU-bound loading or slowdown. It needs proportionally more host CPU;
+  on H700-class devices keep 100% unless a scene needs it. See
+  `docs/CPU_SPEED_OPTION.md`.
 - Boot mode: `auto` by default. `auto` uses BIOS when found, `require_bios` fails clearly if the BIOS is missing, and `direct_hle` forces BIOSless direct/HLE loading.
 
 
