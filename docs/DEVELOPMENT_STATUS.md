@@ -6,6 +6,20 @@ performance, audio and input correctness across the library, not boot-only tests
 
 ## Current accepted work
 
+- Frame-time anatomy (round 163, `gp32_bench --frame-times-raw` prints every
+  frame's host time and, with `--cpu-profile`, per-frame counters). H700
+  1.512 GHz: the LGM bench scene (cold boot, warmup 2400) is a card-loading
+  phase for its first 712 frames (~105k native blocks per frame of SmartMedia
+  GPIO streaming, 19.2-20.4 ms each) followed by gameplay at 2-5 ms; the
+  "712/1200 over 16.67 ms" figure is that loading run, not gameplay. The ASR
+  opening movie is the sustained overload: from
+  `F:/GP32/results/round163/asr-opening.state` (headless, 1505 frames from
+  cold boot) frames 8-90+ run 77k-128k blocks each and take 17-29 ms on H700
+  (2-7 ms on PC), which matches the reported opening crackle. H700 cycle
+  sampling of that window: JIT code ~38%, `arm920t_run` 18.8% (loop head,
+  lines 6-12), IO word helper 6.4%, `io_write32` 4.2%, LCD render 2.2%;
+  the bench's own byte-wise FNV frame hash is ~15% there (absent in the
+  core). `F:/GP32/results/round163/device-abba.py` adds this scene to ABBA.
 - Rejected (round 161): a fast-transition chaining loop inside
   `arm_jit_run` (enter the next cached block without returning to the outer
   dispatcher). Identical output, but H700 ABBA lost Princess 121.8 -> ~120.0
@@ -16,6 +30,12 @@ performance, audio and input correctness across the library, not boot-only tests
   79.1 -> 76.7. Likely an A53 store-to-load forwarding stall when the word
   load of cpsr follows the byte store. Evidence `round161/abba-flags/`,
   `abba-flags2/`.
+- Rejected (round 161): shared A64 memory-access thunks (w-memthunk): hot
+  memory-site bytes -35%, emitted hot footprint -15..-22%, but +2.07
+  executed words per access. Identical output; H700 ABBA LGM 78.94 -> 76.66,
+  Princess 122.40 -> 118.47, Blue 85.47 -> 85.17. On the A53 the extra
+  instructions cost more than the saved I-cache lines. Evidence
+  `round161/w-memthunk/`, `abba-memthunk/`.
 - Rejected (round 161): the remaining w-flags parts without the byte store
   (logical flag commit through cmp/cmn + bfxil/bfi with carry kept at bit 0,
   and `msr nzcv` published before a following conditional test). Identical

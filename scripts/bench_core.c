@@ -366,6 +366,7 @@ int main(int argc, char **argv) {
     const char *bios = NULL, *smc = NULL, *state_path = NULL, *input_script_path = NULL;
     uint64_t warmup = 2400, frames = 600;
     int jit = 0, cpu_profile = 0, legacy_cycle_frames = 0, frame_times = 0, force_bios = 0;
+    int frame_times_raw = 0;
     unsigned cpu_speed = 100u;
 
     for (int i = 1; i < argc; ++i) {
@@ -378,6 +379,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--legacy-cycle-frames")) legacy_cycle_frames = 1;
         else if (!strcmp(argv[i], "--cpu-profile")) cpu_profile = 1;
         else if (!strcmp(argv[i], "--frame-times")) frame_times = 1;
+        else if (!strcmp(argv[i], "--frame-times-raw")) frame_times = frame_times_raw = 1;
         else if (!strcmp(argv[i], "--force-bios")) force_bios = 1;
         else if (!strcmp(argv[i], "--cpu-speed") && i + 1 < argc) cpu_speed = (unsigned)strtoul(argv[++i], NULL, 0);
         else if (!strcmp(argv[i], "--input-script") && i + 1 < argc) input_script_path = argv[++i];
@@ -517,6 +519,20 @@ int main(int argc, char **argv) {
            gp32_get_pc(g), gp32_get_cpsr(g), gp32_get_run_clock_hz(g),
            audio_frames, video_hash, audio_hash, jit);
     printf(",\"frame_pacing\":\"%s\"", legacy_cycle_frames ? "legacy_cycles" : "time");
+    if (frame_times && frame_times_raw) {
+        printf(",\"frame_ms\":[");
+        for (uint64_t i = 0; i < measured; ++i) printf("%s%.3f", i ? "," : "", frame_ms[i]);
+        printf("]");
+        if (frame_ctr) {
+            printf(",\"frame_counters\":[");
+            for (uint64_t i = 0; i < measured; ++i) {
+                printf("%s{\"index\":%" PRIu64, i ? "," : "", i);
+                print_frame_counters_json(&frame_ctr[i]);
+                printf("}");
+            }
+            printf("]");
+        }
+    }
     if (frame_times) print_frame_times_json(frame_ms, (size_t)measured, frame_ctr);
     if (cpu_profile) {
         gp32_cpu_profile_t p;
