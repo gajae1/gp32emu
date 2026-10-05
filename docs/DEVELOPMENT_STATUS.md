@@ -6,6 +6,16 @@ performance, audio and input correctness across the library, not boot-only tests
 
 ## Current accepted work
 
+- Round 161 GPMM-layout freeware cards: the retail BIOS launcher only boots a
+  card's top-level GAME\ executable, so cards whose executable sits elsewhere
+  (Dynamate, GlooP Deluxe, Pinball Dreams, SmashGP, Tears) sat on DATA
+  LOADING. The libretro core and bench now classify the card's FAT layout
+  (paths only, no file data) and start such cards through the direct loader
+  with the card mounted; require_bios keeps the BIOS path. Commercial cards
+  are frame-identical on all three boot settings; the five cards match the
+  pristine direct boot frame by frame (Pinball Dreams still presents one
+  frame on direct boot, a separate open issue). Evidence
+  `F:/GP32/results/round159/w-gpmm/` (verify.py, verify-r161.log).
 - Round 160 chunked two-region A64 arena: the arena is split into 512 KiB
   chunks; hot bodies grow up from a chunk's start, cold chains down from its
   end, so consecutive hot bodies share lines and the prefetcher runs into the

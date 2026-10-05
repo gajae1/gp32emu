@@ -14,6 +14,18 @@ static void json_string(const char *s) {
     putchar('"');
 }
 
+/* Which launcher starts this card: "bios_game" for a commercial GAME\\ layout
+ * the retail BIOS boots, "direct_only" for a card only the host-side direct
+ * loader can start (freeware GPMM\\), "none" when neither finds an
+ * executable. */
+static const char *launcher_name(smc_card_launch_layout_t layout) {
+    switch (layout) {
+    case SMC_CARD_LAYOUT_BIOS_GAME: return "bios_game";
+    case SMC_CARD_LAYOUT_DIRECT_ONLY: return "direct_only";
+    default: return "none";
+    }
+}
+
 int main(int argc, char **argv) {
     if (argc < 2 || argc > 3) {
         fputs("usage: gp32_smc_inspect image.smc [new-payload.bin]\n", stderr);
@@ -41,6 +53,12 @@ int main(int argc, char **argv) {
         }
     }
     fputs("{\"executable\":", stdout); json_string(pkg.executable_path);
+    {
+        char launcher_exe[260] = {0}, layout_err[256] = {0};
+        smc_card_launch_layout_t layout = smc_direct_classify_file(argv[1], launcher_exe, sizeof(launcher_exe), layout_err, sizeof(layout_err));
+        fputs(",\"launcher\":", stdout); json_string(launcher_name(layout));
+        fputs(",\"launcher_executable\":", stdout); json_string(launcher_exe);
+    }
     printf(",\"load_addr\":%u,\"entry_addr\":%u,\"payload_size\":%zu,"
            "\"was_fxe\":%d,\"was_b2fxec\":%d,\"was_host_decrunched\":%d,\"assets\":[",
            pkg.image.load_addr, pkg.image.entry_addr, pkg.image.payload_size,

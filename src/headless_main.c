@@ -1,5 +1,6 @@
 #include "gp32emu/gp32.h"
 #include "input_script.h"
+#include "smc_direct.h"
 #include "media/gp32_media.h"
 #include "audio/gp32_audio_resampler.h"
 #include <errno.h>
@@ -139,9 +140,9 @@ static uint32_t bios_auto_start_buttons_for_frame(uint64_t frame) {
 
 static void usage(const char *argv0) {
     fprintf(stderr,
-        "usage: %s [--bios gp32166m.bin] [--smc game.smc] [--fxe homebrew.fxe|--fpk package.fpk] [--input-script script.txt] [--load-state file.gp32st] [--save-state out.gp32st] [--no-bios-auto-start] [--cycles-per-frame N] [--frames N] [--hle-sef-rate HZ] [--buttons MASK] [--button-at CYCLES:MASK] [--cycles N] [--step-cycles N] [--dump-frame out.ppm] [--dump-at CYCLES:out.ppm] [--record-mkv out.mkv] [--dump-wav out.wav] [--save-smc out.smc] [--dump-mem ADDR LEN out.bin] [--trace] [--jit|--no-jit] [--jit-stats] [--dump-regs] [--dump-lcd-regs] [--dump-cp15] [--progress] [--rotate-ccw|--rotate-cw|--rotate-180]\n"
+        "usage: %s [--bios gp32166m.bin] [--smc game.smc] [--fxe homebrew.fxe|--fpk package.fpk] [--input-script script.txt] [--load-state file.gp32st] [--save-state out.gp32st] [--no-bios-auto-start] [--force-bios] [--cycles-per-frame N] [--frames N] [--hle-sef-rate HZ] [--buttons MASK] [--button-at CYCLES:MASK] [--cycles N] [--step-cycles N] [--dump-frame out.ppm] [--dump-at CYCLES:out.ppm] [--record-mkv out.mkv] [--dump-wav out.wav] [--save-smc out.smc] [--dump-mem ADDR LEN out.bin] [--trace] [--jit|--no-jit] [--jit-stats] [--dump-regs] [--dump-lcd-regs] [--dump-cp15] [--progress] [--rotate-ccw|--rotate-cw|--rotate-180]\n"
         "\n"
-        "Headless standalone GP32 emulator smoke runner. No BIOS or game data is bundled. --fxe accepts classic scrambled FXE files and raw GXB payloads; --fpk extracts and loads the package's main FXE. Input scripts use FRAMEf:BUTTON names such as 1550f:P. BIOS+SMC headless runs synthesize a few A/confirm pulses unless --no-bios-auto-start or explicit input is supplied. --dump-at CYCLES:out.ppm captures are serviced live in --cycles mode at the requested cycle, and in --frames mode at the first frame boundary whose completed cycle count reaches CYCLES; a capture scheduled exactly at the final frame boundary is written once at exit from that final state.\n",
+        "Headless standalone GP32 emulator smoke runner. No BIOS or game data is bundled. --fxe accepts classic scrambled FXE files and raw GXB payloads; --fpk extracts and loads the package's main FXE. Input scripts use FRAMEf:BUTTON names such as 1550f:P. BIOS+SMC headless runs synthesize a few A/confirm pulses unless --no-bios-auto-start or explicit input is supplied; a card whose only executable is outside GAME\\ (the freeware GPMM\\ layout) is loaded through the direct boot instead, and --force-bios keeps the BIOS path. --dump-at CYCLES:out.ppm captures are serviced live in --cycles mode at the requested cycle, and in --frames mode at the first frame boundary whose completed cycle count reaches CYCLES; a capture scheduled exactly at the final frame boundary is written once at exit from that final state.\n",
         argv0);
 }
 
@@ -156,7 +157,7 @@ int main(int argc, char **argv) {
     uint32_t cycles = 100000, step_cycles = 1000000, cycles_per_frame = 1100000;
     uint64_t frames = 0;
     int cycles_per_frame_set = 0;
-    int trace = 0, jit_enabled = 0, jit_stats = 0, dump_regs = 0, dump_lcd_regs = 0, dump_cp15 = 0, progress = 0, rotate = 0, bios_auto_start = 1;
+    int trace = 0, jit_enabled = 0, jit_stats = 0, dump_regs = 0, dump_lcd_regs = 0, dump_cp15 = 0, progress = 0, rotate = 0, bios_auto_start = 1, force_bios = 0;
     for (int i = 1; i < argc; ++i) {
         if (!strcmp(argv[i], "--bios") && i + 1 < argc) bios = argv[++i];
         else if (!strcmp(argv[i], "--smc") && i + 1 < argc) smc = argv[++i];
@@ -166,6 +167,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--load-state") && i + 1 < argc) load_state = argv[++i];
         else if (!strcmp(argv[i], "--save-state") && i + 1 < argc) save_state = argv[++i];
         else if (!strcmp(argv[i], "--no-bios-auto-start")) bios_auto_start = 0;
+        else if (!strcmp(argv[i], "--force-bios")) force_bios = 1;
         else if (!strcmp(argv[i], "--buttons") && i + 1 < argc) buttons = (uint32_t)strtoul(argv[++i], NULL, 0);
         else if (!strcmp(argv[i], "--button-at") && i + 1 < argc) {
             if (event_count >= sizeof(events) / sizeof(events[0])) { fprintf(stderr, "too many --button-at events\n"); return 2; }
@@ -216,11 +218,24 @@ int main(int argc, char **argv) {
         fprintf(stderr, "--load-state requires the original --smc, --fxe, or --fpk backing media for deterministic validation\n");
         return 2;
     }
+    /* The retail BIOS launcher boots a card from its top-level GAME\\ directory
+     * and stalls on the freeware GPMM\\ layout, so a card whose only executable
+     * lives elsewhere is loaded through the direct SmartMedia boot. --force-bios
+     * and --load-state keep the recorded BIOS path. */
+    int smc_direct_boot = 0;
+    if (bios && smc && !fxe && !fpk && !force_bios && !load_state) {
+        char layout_exe[260], layout_err[256];
+        if (smc_direct_classify_file(smc, layout_exe, sizeof(layout_exe), layout_err, sizeof(layout_err)) == SMC_CARD_LAYOUT_DIRECT_ONLY) {
+            fprintf(stderr, "boot path: direct SmartMedia (starts from %s; the retail BIOS launcher boots GAME\\ cards only)\n",
+                    layout_exe[0] ? layout_exe : "a freeware layout");
+            smc_direct_boot = 1;
+        }
+    }
     if (cycles_per_frame == 0) cycles_per_frame = 1100000u;
-    int bios_auto_start_active = bios_auto_start && bios && smc && !fxe && !fpk && !input_script_path && event_count == 0u && buttons == 0u;
+    int bios_auto_start_active = bios_auto_start && bios && smc && !smc_direct_boot && !fxe && !fpk && !input_script_path && event_count == 0u && buttons == 0u;
     gp32_options_t opt;
     memset(&opt, 0, sizeof(opt));
-    opt.bios_path = bios;
+    opt.bios_path = smc_direct_boot ? NULL : bios;
     opt.smartmedia_path = smc;
     opt.enable_trace = trace;
     opt.log = trace ? log_line : NULL;

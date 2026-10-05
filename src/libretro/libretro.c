@@ -2,6 +2,7 @@
 #include "gp32emu/gp32.h"
 #include "gp32emu/video_effects.h"
 #include "audio/gp32_audio_resampler.h"
+#include "smc_direct.h"
 #include <errno.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -229,6 +230,19 @@ static void destroy_emu_with_save(void) {
     emu = NULL;
 }
 
+/* Which loader starts SmartMedia content.
+ *
+ * BIOS keeps the retail firmware in charge. DIRECT extracts the card's
+ * executable and mounts no card device. DIRECT_MEDIA extracts the same
+ * executable but mounts the card first, because a freeware card reads its own
+ * assets through the card and only renders when it is in the slot - the
+ * configuration gp32_create's BIOSless direct boot has always used. */
+typedef enum content_boot {
+    CONTENT_BOOT_BIOS = 0,
+    CONTENT_BOOT_DIRECT = 1,
+    CONTENT_BOOT_DIRECT_MEDIA = 2
+} content_boot_t;
+
 /* A persisted SmartMedia image, when present, supersedes the original media.
  * Returns 1 if the save was mounted, 0 if absent, -1 if present but unreadable.
  * The -1 case fails the content load instead of silently mounting the pristine
@@ -251,6 +265,29 @@ static int mount_saved_smartmedia(gp32_t *g, int use_direct, int over_base) {
     return 1;
 }
 
+/* Direct boot of a card the guest also reads: mount the card image the way the
+ * BIOS path does (the persisted card over the content as its savestate base),
+ * then extract and start the executable from that same image. */
+static int load_direct_smartmedia_with_media(gp32_t *g, const void *data, size_t size, const char *path, const char *label) {
+    if (smartmedia_save_path[0] && file_exists(smartmedia_save_path)) {
+        int base_ok = 0;
+        if (data && size) base_ok = gp32_set_smartmedia_state_base(g, data, size) == GP32_OK;
+        else if (path && path[0]) base_ok = gp32_set_smartmedia_state_base_file(g, path) == GP32_OK;
+        if (!base_ok)
+            lr_log(RETRO_LOG_WARN, "[gp32emu] content image unavailable as the savestate base; states will carry the whole card\n");
+        int saved = mount_saved_smartmedia(g, 0, 1);
+        if (saved < 0) return saved;
+        if (saved) return gp32_load_smartmedia_direct(g, smartmedia_save_path) == GP32_OK;
+    }
+    if (data && size) {
+        if (gp32_load_smartmedia_data(g, data, size) != GP32_OK) return 0;
+        return gp32_load_smartmedia_direct_data(g, data, size, label) == GP32_OK;
+    }
+    if (!path || !path[0]) return 0;
+    if (gp32_load_smartmedia(g, path) != GP32_OK) return 0;
+    return gp32_load_smartmedia_direct(g, path) == GP32_OK;
+}
+
 /* Mount the SmartMedia content image and, when a persisted card exists, mount
  * that card over the content instead of in place of it.
  *
@@ -260,8 +297,9 @@ static int mount_saved_smartmedia(gp32_t *g, int use_direct, int over_base) {
  * a failed load, 1 for a mounted card and -1 for an unreadable persisted image,
  * which must fail the load instead of silently booting the pristine content and
  * overwriting the save on exit. */
-static int load_smartmedia_content(gp32_t *g, const void *data, size_t size, const char *path, const char *label, int use_direct) {
-    if (use_direct) {
+static int load_smartmedia_content(gp32_t *g, const void *data, size_t size, const char *path, const char *label, content_boot_t boot) {
+    if (boot == CONTENT_BOOT_DIRECT_MEDIA) return load_direct_smartmedia_with_media(g, data, size, path, label);
+    if (boot == CONTENT_BOOT_DIRECT) {
         /* Direct boot extracts the executable from the image and mounts no
          * card device, so no base applies. */
         int saved = mount_saved_smartmedia(g, 1, 0);
@@ -791,7 +829,7 @@ void retro_run(void) {
     flush_audio();
 }
 
-static int load_content(gp32_t *g, const struct retro_game_info *game, int use_direct) {
+static int load_content(gp32_t *g, const struct retro_game_info *game, content_boot_t boot) {
     const char *path = game ? game->path : NULL;
     const void *data = game ? game->data : NULL;
     size_t size = game ? game->size : 0;
@@ -803,14 +841,14 @@ static int load_content(gp32_t *g, const struct retro_game_info *game, int use_d
         if (ext_fxe) return gp32_load_fxe_data(g, data, size, label) == GP32_OK;
         if (ext_fpk) return gp32_load_fpk_data(g, data, size, label) == GP32_OK;
         if (ext_smc || (!ext_fxe && !ext_fpk)) {
-            return load_smartmedia_content(g, data, size, path, label, use_direct) > 0;
+            return load_smartmedia_content(g, data, size, path, label, boot) > 0;
         }
     }
     if (!path || !path[0]) return 0;
     if (ext_fxe) return gp32_load_fxe(g, path) == GP32_OK;
     if (ext_fpk) return gp32_load_fpk(g, path) == GP32_OK;
     if (ext_smc) {
-        return load_smartmedia_content(g, NULL, 0, path, label, use_direct) > 0;
+        return load_smartmedia_content(g, NULL, 0, path, label, boot) > 0;
     }
     return 0;
 }
@@ -839,7 +877,6 @@ bool retro_load_game(const struct retro_game_info *game) {
     if (environ_cb) environ_cb(RETRO_ENVIRONMENT_SET_PIXEL_FORMAT, &fmt);
 
     int ext_smc = content_path[0] && has_ext(content_path, "smc");
-    int use_direct = (boot_mode == 2);
     char bios_path[4096];
     int have_bios = find_bios_path(bios_path, sizeof(bios_path), content_path);
 
@@ -847,16 +884,43 @@ bool retro_load_game(const struct retro_game_info *game) {
     lr_log(RETRO_LOG_INFO, "[gp32emu] save directory: %s\n", save_dir);
     if (content_path[0]) lr_log(RETRO_LOG_INFO, "[gp32emu] loading content: %s\n", content_path);
 
+    /* The retail BIOS launcher starts a card from its top-level GAME\\ directory.
+     * A card whose only executable sits in another folder (the freeware GPMM\
+     * layout) ends in the firmware's own card-scan error path and stays on the
+     * DATA LOADING screen forever, exactly as on hardware without the Free
+     * Launcher. Those cards boot through the host-side direct loader instead,
+     * which also mounts the card because the game reads its own assets through
+     * it. require_bios stays an explicit BIOS choice. */
+    smc_card_launch_layout_t layout = SMC_CARD_LAYOUT_NONE;
+    char layout_exe[260] = {0};
+    if (ext_smc && boot_mode != 1) {
+        char layout_err[256] = {0};
+        layout = (game && game->data && game->size)
+            ? smc_direct_classify_buffer(game->data, game->size, path_basename(content_path),
+                                         layout_exe, sizeof(layout_exe), layout_err, sizeof(layout_err))
+            : smc_direct_classify_file(content_path, layout_exe, sizeof(layout_exe), layout_err, sizeof(layout_err));
+        if (layout == SMC_CARD_LAYOUT_DIRECT_ONLY) {
+            lr_log(RETRO_LOG_WARN, "[gp32emu] %s starts from %s: the retail BIOS launcher only boots GAME\\ cards, using the direct SmartMedia boot with the card mounted.\n",
+                   path_basename(content_path), layout_exe[0] ? layout_exe : "a freeware layout");
+            lr_message("GP32emu: freeware card layout - using direct boot");
+        } else if (layout == SMC_CARD_LAYOUT_NONE) {
+            lr_log(RETRO_LOG_INFO, "[gp32emu] no GAME\\ or freeware executable in %s (%s); keeping the configured boot path.\n",
+                   path_basename(content_path), layout_err[0] ? layout_err : "unknown layout");
+        }
+    }
+    content_boot_t boot = (boot_mode == 2) ? CONTENT_BOOT_DIRECT : CONTENT_BOOT_BIOS;
+    if (layout == SMC_CARD_LAYOUT_DIRECT_ONLY) boot = CONTENT_BOOT_DIRECT_MEDIA;
+
     if (boot_mode == 1 && !have_bios) {
         lr_log(RETRO_LOG_ERROR, "[gp32emu] Required BIOS not found. Put gp32166m.bin in RetroArch's system directory.\n");
         lr_message("GP32emu: missing gp32166m.bin in system directory");
         return false;
     }
 
-    if (!use_direct && have_bios) {
+    if (boot == CONTENT_BOOT_BIOS && have_bios) {
         lr_log(RETRO_LOG_INFO, "[gp32emu] using BIOS: %s\n", bios_path);
         emu = create_core_with_optional_bios(bios_path);
-        if (emu && load_content(emu, game, 0)) {
+        if (emu && load_content(emu, game, CONTENT_BOOT_BIOS)) {
             gp32_set_jit(emu, use_jit);
             gp32_set_cpu_speed_percent(emu, cpu_speed_percent);
             gp32_video_effects_reset(&effects);
@@ -871,15 +935,15 @@ bool retro_load_game(const struct retro_game_info *game) {
         if (boot_mode == 1 || !ext_smc) return false;
         lr_log(RETRO_LOG_WARN, "[gp32emu] falling back to BIOSless direct SmartMedia boot.\n");
         lr_message("GP32emu: BIOS boot failed, using direct SmartMedia boot");
-        use_direct = 1;
-    } else if (!use_direct && !have_bios) {
+        boot = (layout == SMC_CARD_LAYOUT_DIRECT_ONLY) ? CONTENT_BOOT_DIRECT_MEDIA : CONTENT_BOOT_DIRECT;
+    } else if (boot == CONTENT_BOOT_BIOS && !have_bios) {
         if (ext_smc && boot_mode == 0) {
             lr_log(RETRO_LOG_WARN, "[gp32emu] BIOS not found; trying BIOSless direct SmartMedia boot. Put gp32166m.bin in the system directory for normal BIOS boot.\n");
             lr_message("GP32emu: BIOS not found, using direct SmartMedia boot");
-            use_direct = 1;
+            boot = (layout == SMC_CARD_LAYOUT_DIRECT_ONLY) ? CONTENT_BOOT_DIRECT_MEDIA : CONTENT_BOOT_DIRECT;
         } else {
             lr_log(RETRO_LOG_INFO, "[gp32emu] BIOS not found; loading content through direct/HLE path.\n");
-            use_direct = 1;
+            boot = CONTENT_BOOT_DIRECT;
         }
     }
 
@@ -890,7 +954,7 @@ bool retro_load_game(const struct retro_game_info *game) {
     }
     gp32_set_jit(emu, use_jit);
     gp32_set_cpu_speed_percent(emu, cpu_speed_percent);
-    if (!load_content(emu, game, use_direct)) {
+    if (!load_content(emu, game, boot)) {
         const char *err = gp32_get_error(emu);
         lr_log(RETRO_LOG_ERROR, "[gp32emu] content load failed: %s\n", (err && err[0]) ? err : "unknown or unsupported content");
         lr_message("GP32emu: content load failed");
