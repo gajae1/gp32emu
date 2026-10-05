@@ -27,6 +27,7 @@ int s3c2400_load_smartmedia_buffer(s3c2400_t *soc, const uint8_t *data, size_t s
 int s3c2400_save_smartmedia(s3c2400_t *soc, const char *path, char *err, size_t err_len);
 int s3c2400_load_ram_image(s3c2400_t *soc, uint32_t addr, const uint8_t *data, size_t size, char *err, size_t err_len);
 size_t s3c2400_ram_size(const s3c2400_t *soc);
+const uint8_t *s3c2400_ram_data(const s3c2400_t *soc);
 void s3c2400_set_buttons(s3c2400_t *soc, uint32_t button_mask);
 void s3c2400_set_irq_sink(s3c2400_t *soc, arm920t_t *cpu);
 void s3c2400_set_log(s3c2400_t *soc, s3c2400_log_fn fn, void *user);

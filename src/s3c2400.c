@@ -433,6 +433,11 @@ int s3c2400_load_ram_image(s3c2400_t *s, uint32_t addr, const uint8_t *data, siz
 
 size_t s3c2400_ram_size(const s3c2400_t *s) { return s ? s->ram_size : 0u; }
 
+/* Identity-mapped SDRAM backing store. Callers must keep every byte they touch
+ * inside s3c2400_ram_size(); a read of this array is exactly what
+ * s3c2400_read32() returns for an address in RAM. */
+const uint8_t *s3c2400_ram_data(const s3c2400_t *s) { return s ? s->ram : NULL; }
+
 void s3c2400_set_buttons(s3c2400_t *s, uint32_t mask) { if (s) { s->buttons = mask; buttons_refresh(s); } }
 
 static uint8_t expand6(uint32_t v) {
