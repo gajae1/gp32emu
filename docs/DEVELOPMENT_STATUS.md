@@ -6,6 +6,14 @@ performance, audio and input correctness across the library, not boot-only tests
 
 ## Current accepted work
 
+- Rejected (round 159): retrying soft poll refusals (TLB mapping miss,
+  interrupt/epoch cut) instead of pinning a counted poll block to native.
+  Recovered 1.6M skipped instructions in Princess slot 0 with identical
+  output, but H700 ABBA lost Princess 117.49 -> 114.15 (-2.8%), LGM 71.87 ->
+  71.54, Blue 84.08 -> 83.83: the extra dispatcher bookkeeping costs more than
+  the skips. A library audit found no other refused MMIO poll worth skipping
+  (PWM/UART/IIS/DMA/RTC/ADC status is polled by none of 27 titles). Evidence
+  `F:/GP32/results/round158/w-pollaudit/`, `F:/GP32/results/round159/abba-soft/`.
 - `4043416`: SMFS card-library wrappers (Samsung/Mirko gp_smc.a, card gate
   SWI 0x11 + closed FAT driver) are fingerprinted structurally in direct
   FPK/FXE mode and routed to the asset-backed file HLE. WinterSports Eins
