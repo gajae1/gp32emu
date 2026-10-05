@@ -238,12 +238,20 @@ static uint32_t gp32_gpedat_readback(const s3c2400_t *s) {
     return data | (s->button_in1 & 0xc0u);
 }
 
-/* Keep both live words equal to an ordinary GPIO read. Must run after every
- * mutation of gpio[], smc_lines, cached buttons or card presence: the CPU
- * loads these words instead of issuing a bus read. */
-static void live_read32_refresh(s3c2400_t *s) {
+static void live_gpbdat_refresh(s3c2400_t *s) {
     s->live_gpbdat = gp32_gpbdat_readback(s);
+}
+
+static void live_gpedat_refresh(s3c2400_t *s) {
     s->live_gpedat = gp32_gpedat_readback(s);
+}
+
+/* Keep both live words equal to an ordinary GPIO read. Must run after every
+ * broad mutation of gpio[], smc_lines, cached buttons or card presence. The
+ * hot GPIO write path below refreshes only the affected word. */
+static void live_read32_refresh(s3c2400_t *s) {
+    live_gpbdat_refresh(s);
+    live_gpedat_refresh(s);
 }
 
 /* Fill the SoC-owned descriptor list once, before the first reset (which
@@ -1228,17 +1236,21 @@ static void io_write32(s3c2400_t *s, uint32_t addr, uint32_t value, uint32_t mas
                 gp32_codec_gpio(&s->codec, old_gpe, *reg);
                 s->codec_gain_q16 = gp32_codec_gain_q16(&s->codec);
             }
+            live_gpedat_refresh(s);
         } else {
             *reg = (*reg & ~mask) | (value & mask);
             switch(off){
             case 0x08: s->smc_lines.read = ((*reg & 1u) == 0); if (gp32_smc_update_does_work(&s->smc_lines)) gp32_smc_update(s); break;
             case 0x0c: s->smc_lines.datatx = (uint8_t)(*reg & 0xffu); break;
             case 0x24: s->smc_lines.do_read=((*reg&0x100u)==0); s->smc_lines.chip=((*reg&0x80u)==0); s->smc_lines.wp=((*reg&0x40u)==0); if (gp32_smc_update_does_work(&s->smc_lines)) gp32_smc_update(s); break;
+            default: break;
             }
+            /* GPBCON can open a NAND read window and change datarx. GPDDAT
+             * can deselect the card, which resets latches consumed by both
+             * live words. Unknown GPIO mutations stay conservative. */
+            if (off == 0x08u || off == 0x0cu) live_gpbdat_refresh(s);
+            else live_read32_refresh(s);
         }
-        /* Every GPIO width/offset funnels here: register, NAND and latch
-         * effects are already applied, so refresh both live words last. */
-        live_read32_refresh(s);
         return;
     }
     off = addr & 0xfffffu;
