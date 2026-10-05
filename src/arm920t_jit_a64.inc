@@ -24,6 +24,12 @@
 #ifndef ARM_JIT_CODE_SIZE
 #define ARM_JIT_CODE_SIZE (64u * 1024u * 1024u)
 #endif
+/* Arena chunk: hot bodies grow up from its start, cold chains down from its
+ * end, so every hot guard (B.cond/CBZ/CBNZ, +-1 MiB) still reaches its cold
+ * chain while consecutive hot bodies share lines instead of cold tails. */
+#ifndef ARM_JIT_A64_CHUNK
+#define ARM_JIT_A64_CHUNK (512u * 1024u)
+#endif
 
 typedef struct a64_emit {
     uint32_t *code;
@@ -46,6 +52,7 @@ typedef struct a64_emit {
     size_t ret_fixup[ARM_JIT_MAX_INSNS + 4]; /* hot exit sites of the shared epilogue */
     unsigned ret_count;
     size_t entry_exit;        /* hot budget-check branch into the cold entry exit */
+    size_t hot_end;           /* words [0, hot_end) are the hot body and epilogue */
 } a64_emit_t;
 
 enum a64_cold_kind {
@@ -1469,6 +1476,40 @@ static void a64_cold_flush(a64_emit_t *e) {
     e->in_cold = 0;
 }
 
+/* Copy one emitted block into the arena with its hot words [0, hot) at
+ * hot_dst and its cold words [hot, n) at cold_dst.  The buffer holds only
+ * instructions (no literals), so every PC-relative branch is found by its
+ * encoding; only branches crossing the hot/cold boundary change, and each is
+ * re-encoded for the new distance.  Returns 0 if one would not reach. */
+static int a64_place(uint32_t *hot_dst, uint32_t *cold_dst, const uint32_t *src,
+                     size_t hot, size_t n) {
+    for (size_t i = 0; i < n; ++i) {
+        uint32_t w = src[i], mask;
+        unsigned bits;
+        if ((w & 0x7c000000u) == 0x14000000u) { bits = 26; mask = 0x03ffffffu; }
+        else if ((w & 0xff000010u) == 0x54000000u || (w & 0x7e000000u) == 0x34000000u) { bits = 19; mask = 0x7ffffu << 5; }
+        else if ((w & 0x7e000000u) == 0x36000000u) { bits = 14; mask = 0x3fffu << 5; }
+        else bits = 0, mask = 0;
+        if (bits) {
+            unsigned shift = bits == 26 ? 0u : 5u;
+            int64_t imm = (int64_t)((w & mask) >> shift);
+            if (imm & ((int64_t)1 << (bits - 1))) imm -= (int64_t)1 << bits;
+            int64_t t = (int64_t)i + imm;
+            if (t < 0 || t > (int64_t)n) return 0;
+            if ((i < hot) != ((size_t)t < hot)) {
+                intptr_t from = i < hot ? (intptr_t)(hot_dst + i) : (intptr_t)(cold_dst + (i - hot));
+                intptr_t to = (size_t)t < hot ? (intptr_t)(hot_dst + t) : (intptr_t)(cold_dst + ((size_t)t - hot));
+                int64_t d = (int64_t)(to - from) / 4;
+                if (d >= ((int64_t)1 << (bits - 1)) || d < -((int64_t)1 << (bits - 1))) return 0;
+                w = (w & ~mask) | (((uint32_t)d << shift) & mask);
+            }
+        }
+        if (i < hot) hot_dst[i] = w;
+        else cold_dst[i - hot] = w;
+    }
+    return 1;
+}
+
 static void arm_jit_compile_native(arm920t_t *c, arm_jit_block_t *b) {
     if (!c || !b || !b->count) return;
     uint32_t tmp[ARM_JIT_NATIVE_MAX_BYTES / sizeof(uint32_t)];
@@ -1608,6 +1649,7 @@ static void arm_jit_compile_native(arm920t_t *c, arm_jit_block_t *b) {
         final_pc = arm_jit_branch_target(last->pc, last->insn);
     a64_store_imm(&e, offsetof(arm920t_t, r) + 15u * 4u, final_pc);
     a64_ret_flush(&e, b->count);
+    e.hot_end = e.pos;
     if (e.entry_exit) {
         a64_patch(&e, e.entry_exit, e.pos);
         e.in_cold = 1;
@@ -1617,18 +1659,43 @@ static void arm_jit_compile_native(arm920t_t *c, arm_jit_block_t *b) {
     }
     a64_cold_flush(&e);
     if (e.fail) return;
-    size_t bytes = e.pos * sizeof(tmp[0]);
+    size_t hot_bytes = e.hot_end * sizeof(tmp[0]);
+    size_t cold_bytes = (e.pos - e.hot_end) * sizeof(tmp[0]);
     if (!c->jit_code) {
         c->jit_code_size = ARM_JIT_CODE_SIZE;
         c->jit_code = arm_jit_alloc_exec(c->jit_code_size);
         if (!c->jit_code) { c->jit_code_size = c->jit_code_used = 0; ARM_PROF_INC(c, jit_code_alloc_failures); return; }
+        c->jit_cold_floor = 0;
     }
-    size_t start = (c->jit_code_used + 15u) & ~(size_t)15u;
-    if (bytes > c->jit_code_size || start > c->jit_code_size - bytes) { ARM_PROF_INC(c, jit_code_full_events); return; }
-    void *dst = c->jit_code + start;
-    memcpy(dst, tmp, bytes);
-    arm_jit_flush_exec(dst, bytes);
-    c->jit_code_used = start + bytes;
+    size_t start = (c->jit_code_used + 15u) & ~(size_t)15u, cold_at;
+    for (;;) {
+        size_t cs = start & ~(size_t)(ARM_JIT_A64_CHUNK - 1u);
+        size_t ce = c->jit_code_size - cs > ARM_JIT_A64_CHUNK ? cs + ARM_JIT_A64_CHUNK : c->jit_code_size;
+        size_t floor = c->jit_cold_floor;
+        if (floor <= cs || floor > ce) floor = ce;
+        if (start <= floor && cold_bytes <= floor - start && hot_bytes <= floor - cold_bytes - start) {
+            cold_at = floor - cold_bytes;
+            c->jit_cold_floor = cold_at;
+            break;
+        }
+        if (ce >= c->jit_code_size) {
+            /* Full: make the next translation recycle the arena. */
+            c->jit_code_used = c->jit_code_size;
+            ARM_PROF_INC(c, jit_code_full_events);
+            return;
+        }
+        start = ce;
+    }
+    uint32_t *hot_dst = (uint32_t *)(void *)(c->jit_code + start);
+    uint32_t *cold_dst = (uint32_t *)(void *)(c->jit_code + cold_at);
+    if (!a64_place(hot_dst, cold_dst, tmp, e.hot_end, e.pos)) {
+        c->jit_cold_floor = cold_at + cold_bytes;
+        return;
+    }
+    arm_jit_flush_exec(hot_dst, hot_bytes);
+    if (cold_bytes) arm_jit_flush_exec(cold_dst, cold_bytes);
+    c->jit_code_used = start + hot_bytes;
+    void *dst = hot_dst;
     union { void *p; arm_jit_native_fn f; } cvt;
     cvt.p = dst;
     b->native = cvt.f;

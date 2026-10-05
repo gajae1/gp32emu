@@ -6,6 +6,15 @@ performance, audio and input correctness across the library, not boot-only tests
 
 ## Current accepted work
 
+- Round 160 chunked two-region A64 arena: the arena is split into 512 KiB
+  chunks; hot bodies grow up from a chunk's start, cold chains down from its
+  end, so consecutive hot bodies share lines and the prefetcher runs into the
+  next hot body. Blocks are emitted unchanged into the scratch buffer and
+  only branches crossing the hot/cold boundary are re-encoded at placement
+  (guards keep single B.cond/CBZ/CBNZ forms; the chunk keeps them in range).
+  Output identical; H700 ABBA LGM 74.13 -> 76.37 (+3.0%), Blue 84.82 ->
+  84.28 (-0.6%), Princess 116.50 -> 116.07 (-0.4%). Native jit/recycle/poll/
+  exception/state/callback tests pass on H700.
 - Round 159 dense A64 emission: no frame pointer, shape-specific frames,
   forwarding the w2 operand, rotated-immediate logical ops, one load when
   both operands name the same guest register, in-place self-loop budget.
