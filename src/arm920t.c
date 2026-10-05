@@ -2332,15 +2332,6 @@ static void arm_jit_exception_return_helper(arm920t_t *c, uint32_t result) {
 }
 
 #if defined(__x86_64__) || defined(_M_X64)
-/* Read-only status access has no bus callback or active-mode side effect.
- * The x64 emitter can consume the value without a checked interpreter call. */
-static uint32_t arm_x64_read_spsr(arm920t_t *c) {
-    ARM_PROF_INC(c, helper_interp_ops);
-    ARM_PROF_INC(c, helper_op_kinds[ARM_JIT_OP_PSR]);
-    uint32_t *saved = spsr_ptr(c, mode(c));
-    return saved ? *saved : c->cpsr;
-}
-
 #ifndef ARM_JIT_CODE_SIZE
 #define ARM_JIT_CODE_SIZE (64u * 1024u * 1024u)
 #endif
@@ -3240,8 +3231,42 @@ static int x64_emit_msr_cpsr(x64_emit_t *e, const arm_jit_op_t *op, uint32_t don
     return 1;
 }
 
+/* Read-only status access has no bus callback or active-mode side effect, so
+ * a decoded block can be reused across modes: resolve the SPSR bank from the
+ * live CPSR at execution time. A zero table entry marks a mode without an
+ * SPSR bank (USER/SYS and unused encodings) and keeps the interpreter's CPSR
+ * fallback. Mirrors the AArch64 a64_psr_mov shape. MRS to PC stays on the
+ * checked classified helper. */
+static const uint32_t x64_spsr_offsets[32] = {
+    [MODE_FIQ] = (uint32_t)offsetof(arm920t_t, spsr_fiq),
+    [MODE_SVC] = (uint32_t)offsetof(arm920t_t, spsr_svc),
+    [MODE_ABT] = (uint32_t)offsetof(arm920t_t, spsr_abt),
+    [MODE_IRQ] = (uint32_t)offsetof(arm920t_t, spsr_irq),
+    [MODE_UND] = (uint32_t)offsetof(arm920t_t, spsr_und),
+};
+
+static int x64_emit_mrs_psr(x64_emit_t *e, const arm_jit_op_t *op) {
+    unsigned rd = (op->insn >> 12) & 0xfu;
+    if ((op->insn & 0x0fbf0fffu) != 0x010f0000u || rd == 15u) return 0;
+    x64_mov_r32_mem_cpu(e, X64_EAX, cpsr_off());
+    if (op->insn & (1u << 22)) {
+        x64_mov_r32_r32(e, X64_EDX, X64_EAX);           /* live mode index */
+        x64_alu_r32_imm(e, 4, X64_EDX, 31u);
+        x64_shift_r32_imm(e, 4, X64_EDX, 2u);
+        x64_mov_r64_imm(e, X64_R10D, (uint64_t)(uintptr_t)x64_spsr_offsets);
+        x64_mov_r32_membase_index(e, X64_ECX, X64_R10D, X64_EDX);
+        x64_alu_r32_imm(e, 7, X64_ECX, 0u);             /* zero: no SPSR bank */
+        size_t no_bank = x64_jcc32(e, 0x4);
+        x64_mov_r32_membase_index(e, X64_EAX, X64_EBX, X64_ECX);
+        x64_patch32(e, no_bank, e->pos);
+    }
+    x64_emit_store_arm_reg(e, rd, X64_EAX);
+    return 1;
+}
+
 static int x64_emit_one(x64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
     if (op->kind == ARM_JIT_OP_PSR && x64_emit_msr_cpsr(e, op, done)) return 1;
+    if (op->kind == ARM_JIT_OP_PSR && x64_emit_mrs_psr(e, op)) return 1;
     if (op->kind == ARM_JIT_OP_INTERP && op->reserved == 7u) {
         /* BX lr must commit interworking and prove PC/status/interrupt state
          * before following the caller. Reuse the precise checked helper. */
@@ -3264,15 +3289,6 @@ static int x64_emit_one(x64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
         return 1;
     }
     case ARM_JIT_OP_PSR: {
-        unsigned rd = (op->insn >> 12) & 15u;
-        if ((op->insn & 0x0fbf0fffu) == 0x010f0000u && rd != 15u) {
-            if (op->insn & (1u << 22)) {
-                x64_emit_arg0_cpu(e);
-                x64_call_abs(e, (uintptr_t)arm_x64_read_spsr);
-            } else x64_mov_r32_mem_cpu(e, X64_EAX, cpsr_off());
-            x64_mov_mem_cpu_r32(e, arm_reg_off(rd), X64_EAX);
-            return 1;
-        }
         x64_emit_call_helper_op(e, op);
         if (op->stop) x64_emit_return_imm(e, done);
         return 1;
