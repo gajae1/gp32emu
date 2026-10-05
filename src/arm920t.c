@@ -2490,17 +2490,19 @@ static void x64_emit_nzcv_from_x86_flags(x64_emit_t *e, int invert_carry) {
     x64_mov_mem_cpu_r32(e, cpsr_off(), X64_EAX);
 }
 
-static void x64_emit_set_nz_no_carry(x64_emit_t *e, int value_reg) {
-    /* test value,value; lahf; rebuild only N/Z, preserving C/V. */
+static void x64_emit_set_nz(x64_emit_t *e, int value_reg, int shifter_carry) {
+    /* R8D holds the ARM shifter carry at bit 29 when requested. Capture
+     * N/Z from the logical result; preserve V and all control bits. */
     x64_alu_r32_r32(e, 0x85, value_reg, value_reg); /* test r/m, r */
     x64_u8(e, 0x9f);
     x64_movzx_ecx_ah(e);
     x64_mov_r32_mem_cpu(e, X64_EAX, cpsr_off());
-    x64_alu_r32_imm(e, 4, X64_EAX, ~(N_FLAG | Z_FLAG));
+    x64_alu_r32_imm(e, 4, X64_EAX, ~(N_FLAG | Z_FLAG | (shifter_carry ? C_FLAG : 0u)));
     x64_mov_r32_r32(e, X64_ESI, X64_ECX);
     x64_alu_r32_imm(e, 4, X64_ESI, 0x000000c0u);
     x64_shift_r32_imm(e, 4, X64_ESI, 24);
     x64_alu_r32_r32(e, 0x09, X64_EAX, X64_ESI);
+    if (shifter_carry) x64_alu_r32_r32(e, 0x09, X64_EAX, X64_R8D);
     x64_mov_mem_cpu_r32(e, cpsr_off(), X64_EAX);
 }
 
@@ -2510,7 +2512,7 @@ static void x64_emit_load_arm_reg(x64_emit_t *e, int dst, unsigned r, uint32_t p
 }
 static void x64_emit_store_arm_reg(x64_emit_t *e, unsigned r, int src) { x64_mov_mem_cpu_r32(e, arm_reg_off(r), src); }
 
-static int x64_emit_op2_to_ecx(x64_emit_t *e, uint32_t insn, uint32_t pc) {
+static int x64_emit_op2_to_ecx(x64_emit_t *e, uint32_t insn, uint32_t pc, int carry) {
     if (insn & (1u << 25)) {
         uint32_t imm = insn & 0xffu;
         unsigned rot = ((insn >> 8) & 0xfu) * 2u;
@@ -2520,6 +2522,7 @@ static int x64_emit_op2_to_ecx(x64_emit_t *e, uint32_t insn, uint32_t pc) {
     unsigned rm = insn & 0xfu;
     unsigned type = (insn >> 5) & 3u;
     if (insn & (1u << 4)) {
+        if (carry) return 0; /* logical S register-specified shifts use the helper */
         unsigned rs = (insn >> 8) & 0xfu;
         size_t done, zero, small, signfill;
         if (rm == 15u || rs == 15u) return 0;
@@ -2576,11 +2579,32 @@ static int x64_emit_op2_to_ecx(x64_emit_t *e, uint32_t insn, uint32_t pc) {
     }
     unsigned amount = (insn >> 7) & 0x1fu;
     x64_emit_load_arm_reg(e, X64_ECX, rm, pc);
+    if (carry) {
+        if (type == 0u && !amount) {
+            x64_mov_r32_mem_cpu(e, X64_R8D, cpsr_off());
+            x64_alu_r32_imm(e, 4, X64_R8D, C_FLAG);
+        } else {
+            /* Extract before shifting: host shifts mask #32 to zero, and
+             * subsequent logical instructions destroy host CF. */
+            unsigned bit = type == 0u ? 32u - amount :
+                           amount ? amount - 1u : type == 3u ? 0u : 31u;
+            x64_mov_r32_r32(e, X64_R8D, X64_ECX);
+            if (bit) x64_shift_r32_imm(e, 5, X64_R8D, bit);
+            x64_alu_r32_imm(e, 4, X64_R8D, 1u);
+            x64_shift_r32_imm(e, 4, X64_R8D, 29);
+        }
+    }
     if (amount == 0u) {
         if (type == 0u) return 1;
         if (type == 1u) { x64_mov_r32_imm(e, X64_ECX, 0); return 1; }
         if (type == 2u) { x64_shift_r32_imm(e, 7, X64_ECX, 31); return 1; }
-        return 0; /* RRX needs CPSR C */
+        if (!carry) return 0; /* non-S RRX retains the existing helper */
+        x64_mov_r32_mem_cpu(e, X64_EDX, cpsr_off());
+        x64_alu_r32_imm(e, 4, X64_EDX, C_FLAG);
+        x64_shift_r32_imm(e, 4, X64_EDX, 2); /* old C -> bit 31 */
+        x64_shift_r32_imm(e, 5, X64_ECX, 1);
+        x64_alu_r32_r32(e, 0x09, X64_ECX, X64_EDX);
+        return 1;
     }
     switch (type) {
     case 0: x64_shift_r32_imm(e, 4, X64_ECX, amount); return 1; /* SHL */
@@ -2590,12 +2614,6 @@ static int x64_emit_op2_to_ecx(x64_emit_t *e, uint32_t insn, uint32_t pc) {
     }
 }
 
-static int x64_op2_preserves_carry(uint32_t insn) {
-    if (insn & (1u << 25)) return (((insn >> 8) & 0xfu) == 0u);
-    if (insn & (1u << 4)) return 0;
-    return (((insn >> 5) & 3u) == 0u) && (((insn >> 7) & 0x1fu) == 0u);
-}
-
 static void x64_emit_return_pc_reg(x64_emit_t *e, int src, uint32_t done) {
     x64_alu_r32_imm(e, 4, src, ~3u);
     x64_mov_mem_cpu_r32(e, arm_reg_off(15), src);
@@ -2603,7 +2621,7 @@ static void x64_emit_return_pc_reg(x64_emit_t *e, int src, uint32_t done) {
 }
 
 static void x64_emit_data_result(x64_emit_t *e, unsigned opc, unsigned s,
-                                 unsigned rd, uint32_t done) {
+                                 unsigned rd, uint32_t done, int shifter_carry) {
     /* Flag emitters clobber EAX/ECX/EDX/ESI. Preserve the unaligned PC
      * result in R10D until the helper arguments are set up. */
     if (rd == 15u) x64_mov_r32_r32(e, X64_R10D, X64_EAX);
@@ -2611,7 +2629,7 @@ static void x64_emit_data_result(x64_emit_t *e, unsigned opc, unsigned s,
     if (s && (opc == 0x2u || opc == 0x4u))
         x64_emit_nzcv_from_x86_flags(e, opc == 0x2u);
     else if (s)
-        x64_emit_set_nz_no_carry(e, X64_EAX);
+        x64_emit_set_nz(e, X64_EAX, shifter_carry);
     if (rd == 15u) {
         x64_emit_arg0_cpu(e);
         x64_mov_r32_r32(e, X64_HOST_ARG1, X64_R10D);
@@ -2624,6 +2642,7 @@ static int x64_emit_data_proc(x64_emit_t *e, const arm_jit_op_t *op, uint32_t do
     const uint32_t insn = op->insn;
     unsigned opc = (insn >> 21) & 0xfu;
     unsigned s = GP32_BIT(insn, 20), rn = (insn >> 16) & 0xfu, rd = (insn >> 12) & 0xfu;
+    int logical_s = s && (opc < 2u || opc == 8u || opc == 9u || opc >= 12u);
     if (rd == 15u) {
         /* Common ARM return sequence: MOV pc,lr / MOV pc,Rm.  Keep the exact
            write_r(pc) alignment semantics and return immediately after the
@@ -2644,12 +2663,19 @@ static int x64_emit_data_proc(x64_emit_t *e, const arm_jit_op_t *op, uint32_t do
         }
         if (!s || (opc >= 0x8u && opc <= 0xbu)) return 0;
     }
-    if (s && !(opc == 0x2u || opc == 0x4u || opc == 0x8u || opc == 0x9u || opc == 0xau || opc == 0xbu || opc == 0xcu || opc == 0xdu || opc == 0xeu || opc == 0xfu)) return 0;
-    if (s && !(opc == 0x2u || opc == 0x4u || opc == 0xau || opc == 0xbu) && !x64_op2_preserves_carry(insn)) return 0;
+    if (s && !logical_s && !(opc == 2u || opc == 4u || opc == 10u || opc == 11u)) return 0;
+    if (logical_s && !(insn & (1u << 25)) && (insn & (1u << 4))) return 0;
     if (insn & (1u << 25)) {
         uint32_t imm8 = insn & 0xffu;
         unsigned rot = ((insn >> 8) & 0xfu) * 2u;
         uint32_t imm = gp32_ror32(imm8, rot);
+        if (logical_s) {
+            if (rot) x64_mov_r32_imm(e, X64_R8D, (imm >> 31) << 29);
+            else {
+                x64_mov_r32_mem_cpu(e, X64_R8D, cpsr_off());
+                x64_alu_r32_imm(e, 4, X64_R8D, C_FLAG);
+            }
+        }
         switch (opc) {
         case 0x0: x64_emit_load_arm_reg(e, X64_EAX, rn, op->pc); x64_alu_r32_imm(e, 4, X64_EAX, imm); break;
         case 0x1: x64_emit_load_arm_reg(e, X64_EAX, rn, op->pc); x64_alu_r32_imm(e, 6, X64_EAX, imm); break;
@@ -2675,8 +2701,8 @@ static int x64_emit_data_proc(x64_emit_t *e, const arm_jit_op_t *op, uint32_t do
             x64_alu_r32_imm(e, 5, X64_EAX, imm);
             x64_alu_r32_r32(e, 0x29, X64_EAX, X64_EDX);
             break;
-        case 0x8: x64_emit_load_arm_reg(e, X64_EAX, rn, op->pc); x64_alu_r32_imm(e, 4, X64_EAX, imm); x64_emit_set_nz_no_carry(e, X64_EAX); return 1;
-        case 0x9: x64_emit_load_arm_reg(e, X64_EAX, rn, op->pc); x64_alu_r32_imm(e, 6, X64_EAX, imm); x64_emit_set_nz_no_carry(e, X64_EAX); return 1;
+        case 0x8: x64_emit_load_arm_reg(e, X64_EAX, rn, op->pc); x64_alu_r32_imm(e, 4, X64_EAX, imm); x64_emit_set_nz(e, X64_EAX, logical_s); return 1;
+        case 0x9: x64_emit_load_arm_reg(e, X64_EAX, rn, op->pc); x64_alu_r32_imm(e, 6, X64_EAX, imm); x64_emit_set_nz(e, X64_EAX, logical_s); return 1;
         case 0xa: x64_emit_load_arm_reg(e, X64_EAX, rn, op->pc); x64_alu_r32_imm(e, 7, X64_EAX, imm); x64_emit_nzcv_from_x86_flags(e, 1); return 1;
         case 0xb: x64_emit_load_arm_reg(e, X64_EAX, rn, op->pc); x64_alu_r32_imm(e, 0, X64_EAX, imm); x64_emit_nzcv_from_x86_flags(e, 0); return 1;
         case 0xc: x64_emit_load_arm_reg(e, X64_EAX, rn, op->pc); x64_alu_r32_imm(e, 1, X64_EAX, imm); break;
@@ -2685,10 +2711,10 @@ static int x64_emit_data_proc(x64_emit_t *e, const arm_jit_op_t *op, uint32_t do
         case 0xf: x64_mov_r32_imm(e, X64_EAX, ~imm); break;
         default: return 0;
         }
-        x64_emit_data_result(e, opc, s, rd, done);
+        x64_emit_data_result(e, opc, s, rd, done, logical_s);
         return 1;
     }
-    if (!x64_emit_op2_to_ecx(e, insn, op->pc)) return 0;
+    if (!x64_emit_op2_to_ecx(e, insn, op->pc, logical_s)) return 0;
     x64_emit_load_arm_reg(e, X64_EAX, rn, op->pc);
     switch (opc) {
     case 0x0: x64_alu_r32_r32(e, 0x21, X64_EAX, X64_ECX); break; /* AND */
@@ -2713,13 +2739,13 @@ static int x64_emit_data_proc(x64_emit_t *e, const arm_jit_op_t *op, uint32_t do
         x64_alu_r32_r32(e, 0x29, X64_EAX, X64_ECX);
         x64_alu_r32_r32(e, 0x29, X64_EAX, X64_EDX);
         break;
-    case 0x8: /* TST, only when shifter carry is preserved */
+    case 0x8: /* TST */
         x64_alu_r32_r32(e, 0x21, X64_EAX, X64_ECX);
-        x64_emit_set_nz_no_carry(e, X64_EAX);
+        x64_emit_set_nz(e, X64_EAX, logical_s);
         return 1;
-    case 0x9: /* TEQ, only when shifter carry is preserved */
+    case 0x9: /* TEQ */
         x64_alu_r32_r32(e, 0x31, X64_EAX, X64_ECX);
-        x64_emit_set_nz_no_carry(e, X64_EAX);
+        x64_emit_set_nz(e, X64_EAX, logical_s);
         return 1;
     case 0xa: /* CMP */
         x64_alu_r32_r32(e, 0x39, X64_EAX, X64_ECX);
@@ -2735,7 +2761,7 @@ static int x64_emit_data_proc(x64_emit_t *e, const arm_jit_op_t *op, uint32_t do
     case 0xf: x64_mov_r32_r32(e, X64_EAX, X64_ECX); x64_not_r32(e, X64_EAX); break; /* MVN */
     default: return 0;
     }
-    x64_emit_data_result(e, opc, s, rd, done);
+    x64_emit_data_result(e, opc, s, rd, done, logical_s);
     return 1;
 }
 
@@ -2891,7 +2917,7 @@ static int x64_emit_mul(x64_emit_t *e, const arm_jit_op_t *op) {
         x64_alu_r32_r32(e, 0x01, X64_EAX, X64_ECX);
     }
     x64_emit_store_arm_reg(e, rd, X64_EAX);
-    if (insn & (1u << 20)) x64_emit_set_nz_no_carry(e, X64_EAX);
+    if (insn & (1u << 20)) x64_emit_set_nz(e, X64_EAX, 0);
     return 1;
 }
 
