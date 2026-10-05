@@ -557,14 +557,40 @@ static void arm_jit_flush_exec(void *ptr, size_t bytes) {
     if (!ptr || !bytes) return;
 #if defined(_WIN32)
     FlushInstructionCache(GetCurrentProcess(), ptr, bytes);
+#elif defined(ARM_JIT_NATIVE_A64)
+    /* Hand-rolled A64 maintenance. The linked __clear_cache (Zig 0.13
+     * compiler-rt and comparable bare implementations) strides by the running
+     * core's own CTR_EL0 line size and omits the completion DSB after IC IVAU.
+     * On big.LITTLE parts different cores report different line sizes, so a
+     * range written by one core can leave lines the invalidating core never
+     * touches; either hazard yields stale instruction fetches. Stride by the
+     * smaller of this core's line sizes, capped at 32 bytes so a migration to
+     * a core with smaller lines cannot skip any, and complete each step with
+     * the barriers the architecture requires. */
+    uint64_t a64_ctr;
+    __asm__ volatile("mrs %0, ctr_el0" : "=r"(a64_ctr));
+    size_t a64_istride = (size_t)4u << (unsigned)(a64_ctr & 0xfu);
+    size_t a64_dstride = (size_t)4u << (unsigned)((a64_ctr >> 16) & 0xfu);
+    size_t a64_stride = a64_istride < a64_dstride ? a64_istride : a64_dstride;
+    if (a64_stride > 32u) a64_stride = 32u;
+    char *a64_end = (char *)ptr + bytes;
+    if (!(a64_ctr & (1ull << 28))) { /* CTR_EL0.IDC: no D-cache cleaning needed */
+        for (uintptr_t a64_cur = (uintptr_t)ptr & ~(uintptr_t)(a64_stride - 1u);
+             a64_cur < (uintptr_t)a64_end; a64_cur += a64_stride)
+            __asm__ volatile("dc cvau, %0" ::"r"(a64_cur) : "memory");
+    }
+    /* Cleaning completes before invalidation; invalidation completes before
+     * fetch synchronization. The trailing DSB also covers a new block
+     * overwriting code from an earlier cache generation. */
+    __asm__ volatile("dsb ish" ::: "memory");
+    if (!(a64_ctr & (1ull << 29))) { /* CTR_EL0.DIC: no I-cache invalidation needed */
+        for (uintptr_t a64_cur = (uintptr_t)ptr & ~(uintptr_t)(a64_stride - 1u);
+             a64_cur < (uintptr_t)a64_end; a64_cur += a64_stride)
+            __asm__ volatile("ic ivau, %0" ::"r"(a64_cur) : "memory");
+    }
+    __asm__ volatile("dsb ish\n\tisb" ::: "memory");
 #elif defined(__GNUC__) || defined(__clang__)
     __builtin___clear_cache((char *)ptr, (char *)ptr + bytes);
-#if defined(ARM_JIT_NATIVE_A64)
-    /* Zig 0.13's A64 __clear_cache omits the completion DSB after IC IVAU.
-     * Complete invalidation before synchronizing instruction fetch, including
-     * when a new block overwrites code from an earlier cache generation. */
-    __asm__ volatile("dsb ish\n\tisb" ::: "memory");
-#endif
 #else
     GP32_UNUSED(ptr);
     GP32_UNUSED(bytes);
