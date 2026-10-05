@@ -24,6 +24,12 @@ int s3c2400_load_bios_buffer(s3c2400_t *soc, const uint8_t *data, size_t size, c
 void s3c2400_install_hle_bios(s3c2400_t *soc);
 int s3c2400_load_smartmedia(s3c2400_t *soc, const char *path, char *err, size_t err_len);
 int s3c2400_load_smartmedia_buffer(s3c2400_t *soc, const uint8_t *data, size_t size, char *err, size_t err_len);
+/* Mount a persisted card image over the state base the previous mount set (see
+ * smartmedia.h), or set that base without mounting anything. */
+int s3c2400_load_smartmedia_over_base(s3c2400_t *soc, const char *path, char *err, size_t err_len);
+int s3c2400_load_smartmedia_buffer_over_base(s3c2400_t *soc, const uint8_t *data, size_t size, char *err, size_t err_len);
+int s3c2400_set_smartmedia_state_base(s3c2400_t *soc, const uint8_t *data, size_t size, char *err, size_t err_len);
+int s3c2400_set_smartmedia_state_base_file(s3c2400_t *soc, const char *path, char *err, size_t err_len);
 int s3c2400_save_smartmedia(s3c2400_t *soc, const char *path, char *err, size_t err_len);
 int s3c2400_load_ram_image(s3c2400_t *soc, uint32_t addr, const uint8_t *data, size_t size, char *err, size_t err_len);
 size_t s3c2400_ram_size(const s3c2400_t *soc);
@@ -67,7 +73,8 @@ int s3c2400_state_load_io(s3c2400_t *soc, state_io_t *io, int has_audio_spans, i
  * migration also requires its saved stack to fit before SoC commit. Zero
  * parameters disable the corresponding check for the compatibility wrapper. */
 int s3c2400_state_load_io_checked(s3c2400_t *soc, state_io_t *io, int has_audio_spans, int has_iis_phase, int has_lcd_phase, int has_idle_phase, int has_codec,
-                                uint32_t expected_ram_size, uint32_t expected_run_clock, uint32_t required_ram_size);
+                                  uint32_t expected_ram_size, uint32_t expected_run_clock, uint32_t required_ram_size,
+                                  smc_state_format_t card_format);
 
 uint8_t s3c2400_read8(void *user, uint32_t addr);
 uint16_t s3c2400_read16(void *user, uint32_t addr);

@@ -420,6 +420,24 @@ int s3c2400_load_smartmedia_buffer(s3c2400_t *s, const uint8_t *data, size_t siz
     live_read32_refresh(s);
     return ok;
 }
+int s3c2400_load_smartmedia_over_base(s3c2400_t *s, const char *path, char *err, size_t err_len) {
+    if (!s) return 0;
+    int ok = smc_load_file_over_base(s->smc, path, err, err_len);
+    live_read32_refresh(s);
+    return ok;
+}
+int s3c2400_load_smartmedia_buffer_over_base(s3c2400_t *s, const uint8_t *data, size_t size, char *err, size_t err_len) {
+    if (!s) return 0;
+    int ok = smc_load_buffer_over_base(s->smc, data, size, err, err_len);
+    live_read32_refresh(s);
+    return ok;
+}
+int s3c2400_set_smartmedia_state_base(s3c2400_t *s, const uint8_t *data, size_t size, char *err, size_t err_len) {
+    return s && smc_set_state_base(s->smc, data, size, err, err_len);
+}
+int s3c2400_set_smartmedia_state_base_file(s3c2400_t *s, const char *path, char *err, size_t err_len) {
+    return s && smc_set_state_base_file(s->smc, path, err, err_len);
+}
 int s3c2400_save_smartmedia(s3c2400_t *s, const char *path, char *err, size_t err_len) { return s && smc_save_file(s->smc, path, err, err_len); }
 
 int s3c2400_load_ram_image(s3c2400_t *s, uint32_t addr, const uint8_t *data, size_t size, char *err, size_t err_len) {
@@ -2355,7 +2373,8 @@ int s3c2400_state_save_io(const s3c2400_t *s, state_io_t *io) {
 }
 
 int s3c2400_state_load_io_checked(s3c2400_t *s, state_io_t *io, int has_audio_spans, int has_iis_phase, int has_lcd_phase, int has_idle_phase, int has_codec,
-                                uint32_t expected_ram_size, uint32_t expected_run_clock, uint32_t required_ram_size) {
+                                uint32_t expected_ram_size, uint32_t expected_run_clock, uint32_t required_ram_size,
+                                smc_state_format_t card_format) {
     if (!s || !io) return 0;
 #ifdef GP32EMU_WASM
     static s3c2400_state_image_t st_storage;
@@ -2377,18 +2396,18 @@ int s3c2400_state_load_io_checked(s3c2400_t *s, state_io_t *io, int has_audio_sp
     uint8_t *new_ram = (uint8_t *)malloc(st->ram_size);
     if (!new_ram) return 0;
     if (!state_io_read(io, new_ram, st->ram_size)) { free(new_ram); return 0; }
-    /* SmartMedia precedes audio in v0002. Stage a new device so truncated audio
-     * or an allocation failure cannot replace the currently mounted card. */
-    smc_t *new_smc = smc_create();
-    if (!new_smc || !smc_state_load_io(new_smc, io)) {
-        smc_destroy(new_smc); free(new_ram); return 0;
-    }
+    /* SmartMedia precedes audio in v0002. The section is parsed and validated
+     * against the mounted card and the state base before the live device is
+     * touched, so a truncated stream or a stream built on a different frontend
+     * image cannot leave a half-replaced card. */
+    smc_state_stage_t *card = smc_state_stage_begin(s->smc, io, card_format);
+    if (!card) { free(new_ram); return 0; }
     int16_t *new_audio = NULL;
     uint64_t new_audio_cap = 0;
     if (st->audio_frames) {
         new_audio = (int16_t *)malloc((size_t)st->audio_frames * 2u * sizeof(int16_t));
-        if (!new_audio) { smc_destroy(new_smc); free(new_ram); return 0; }
-        if (!state_io_read(io, new_audio, (size_t)st->audio_frames * 2u * sizeof(int16_t))) { free(new_audio); smc_destroy(new_smc); free(new_ram); return 0; }
+        if (!new_audio) { smc_state_stage_destroy(card); free(new_ram); return 0; }
+        if (!state_io_read(io, new_audio, (size_t)st->audio_frames * 2u * sizeof(int16_t))) { free(new_audio); smc_state_stage_destroy(card); free(new_ram); return 0; }
         new_audio_cap = st->audio_frames;
     }
     uint32_t span_count = 0;
@@ -2435,8 +2454,7 @@ int s3c2400_state_load_io_checked(s3c2400_t *s, state_io_t *io, int has_audio_sp
     if (has_idle_phase && (!state_io_read(io, &idle_phase, sizeof(idle_phase)) || idle_phase >= runclk)) goto bad_audio;
     uint8_t codec[6] = {0};
     if (has_codec && (!state_io_read(io, codec, sizeof(codec)) || codec[2] > 8u || codec[3] > 63u)) goto bad_audio;
-    smc_destroy(s->smc);
-    s->smc = new_smc;
+    smc_state_stage_commit(s->smc, card);
     free(s->ram);
     free(s->audio);
     s->ram = new_ram;
@@ -2506,13 +2524,14 @@ int s3c2400_state_load_io_checked(s3c2400_t *s, state_io_t *io, int has_audio_sp
 bad_audio:
     free(new_spans);
     free(new_audio);
-    smc_destroy(new_smc);
+    smc_state_stage_destroy(card);
     free(new_ram);
     return 0;
 }
 
 int s3c2400_state_load_io(s3c2400_t *s, state_io_t *io, int has_audio_spans, int has_iis_phase, int has_lcd_phase, int has_idle_phase, int has_codec) {
-    return s3c2400_state_load_io_checked(s, io, has_audio_spans, has_iis_phase, has_lcd_phase, has_idle_phase, has_codec, 0u, 0u, 0u);
+    return s3c2400_state_load_io_checked(s, io, has_audio_spans, has_iis_phase, has_lcd_phase, has_idle_phase, has_codec, 0u, 0u, 0u,
+                                         SMC_STATE_FORMAT_V14);
 }
 
 int s3c2400_state_save(const s3c2400_t *s, FILE *f) {

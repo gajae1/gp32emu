@@ -87,4 +87,21 @@ static inline int state_io_read(state_io_t *io, void *data, size_t bytes) {
     return 1;
 }
 
+/* Advance a reader past bytes that carry no data. The v0014 SmartMedia section
+ * pads its entry region to the session budget, so the loader skips the tail
+ * instead of copying megabytes of zeros. Only reading modes are accepted: a
+ * writer that pads must write real zero bytes. */
+static inline int state_io_skip(state_io_t *io, size_t bytes) {
+    if (!io || io->failed || bytes > SIZE_MAX - io->pos) return state_io_fail(io);
+    if (io->mode == STATE_IO_READ) {
+        if (bytes > io->size - io->pos) return state_io_fail(io);
+    } else if (io->mode == STATE_IO_FILE) {
+        if (bytes && fseek(io->file, (long)bytes, SEEK_CUR) != 0) return state_io_fail(io);
+    } else {
+        return state_io_fail(io);
+    }
+    io->pos += bytes;
+    return 1;
+}
+
 #endif /* GP32EMU_STATE_IO_H */

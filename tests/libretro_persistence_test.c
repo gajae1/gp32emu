@@ -148,6 +148,81 @@ static void start_core(void) {
     retro_init();
 }
 
+/* Cross-session savestates over a persisted card.
+ *
+ * Session 1 loads the frontend content, saves a state and quits; the guest's
+ * save data lands on the card file afterwards. Session 2 mounts that persisted
+ * card *over* the content the frontend passes again and must still load the
+ * session-1 state, because the state is expressed against the content image and
+ * not against the card that happened to be mounted when it was saved. */
+#define BIG_PAGES 8192u
+#define BIG_SIZE ((size_t)528u * BIG_PAGES)
+
+static void test_state_across_sessions(void) {
+    char big_rom[4096], big_save[4096], probe[4096];
+    join_path(big_rom, sizeof(big_rom), test_content_dir, "rom_big.smc");
+    join_path(big_save, sizeof(big_save), test_save_dir, "rom_big.gp32.smc");
+    join_path(probe, sizeof(probe), test_root, "probe_big.smc");
+    remove(big_save);
+    uint8_t *image = (uint8_t *)malloc(BIG_SIZE);
+    if (!image) { ++failures; return; }
+    for (size_t i = 0; i < BIG_SIZE; ++i) image[i] = (uint8_t)((i * 31u) ^ (i >> 9) ^ 0x5au);
+    for (uint32_t page = 0; page < BIG_PAGES; ++page) image[(size_t)page * 528u] = 0x5au;
+    /* Blank save cell in the content: the state below is saved before the guest
+     * writes it, so restoring must bring the blank value back. */
+    image[(size_t)MARK_PAGE * 528u + MARK_COL] = 0xffu;
+    if (!write_file(big_rom, image, BIG_SIZE)) { free(image); ++failures; return; }
+
+    struct retro_game_info game = { big_rom, NULL, 0, NULL };
+    start_core();
+    CHECK(retro_load_game(&game), "big-card content load must succeed");
+    size_t state_size = retro_serialize_size();
+    CHECK(state_size > 0, "state size must be reported");
+    void *state = malloc(state_size);
+    if (!state_size || !state || !retro_serialize(state, state_size)) { free(state); free(image); ++failures; return; }
+    retro_unload_game();
+
+    /* The game writes its save data to the card after the state was saved. */
+    CHECK(nand_write_and_save(big_save), "guest save write lands on the persisted card");
+    CHECK(file_exists(big_save), "unload must persist the card");
+
+    start_core();
+    CHECK(retro_load_game(&game), "later session must mount the persisted card over the content");
+    size_t again_size = retro_serialize_size();
+    CHECK(again_size == state_size, "the same mounted card must report the same state size");
+    CHECK(retro_unserialize(state, state_size), "session 1 state must load in a later session");
+    void *again = malloc(again_size);
+    CHECK(again && retro_serialize(again, again_size) && !memcmp(again, state, state_size < again_size ? state_size : again_size),
+          "loaded machine must serialize byte identically");
+    free(again);
+    /* The state restores the save-time card: the write that came after it is
+     * undone, exactly as a full-image state always did. */
+    CHECK(dump_mounted_image(probe), "restored card dump must succeed");
+    uint8_t cell = 0x5au;
+    CHECK(nand_read_byte(probe, MARK_PAGE, MARK_COL, &cell) && cell == 0xffu,
+          "restored card must drop the write that followed the state");
+    retro_unload_game();
+    retro_deinit();
+
+    /* The same game without its content image cannot rebuild the delta base and
+     * falls back to carrying the whole card: the size difference is the win. */
+    char hidden[4096];
+    join_path(hidden, sizeof(hidden), test_content_dir, "rom_big.hidden");
+    remove(hidden);
+    CHECK(rename(big_rom, hidden) == 0, "hide the content image");
+    start_core();
+    CHECK(retro_load_game(&game), "load without the content image still mounts the persisted card");
+    size_t full_size = retro_serialize_size();
+    retro_unload_game();
+    retro_deinit();
+    CHECK(rename(hidden, big_rom) == 0, "restore the content image");
+    CHECK(full_size > state_size + BIG_SIZE / 2u, "the delta payload is far smaller than the full-image payload");
+
+    remove(big_save);
+    free(state);
+    free(image);
+}
+
 int main(int argc, char **argv) {
     snprintf(test_root, sizeof(test_root), "%s", argc > 1 ? argv[1] : "libretro_persistence_tmp");
     join_path(test_system_dir, sizeof(test_system_dir), test_root, "system");
@@ -244,6 +319,7 @@ int main(int argc, char **argv) {
     CHECK(file_exists(save_b), "unload after replacement must persist the second image");
 
     retro_deinit();
+    test_state_across_sessions();
     free(rom);
     if (failures) {
         fprintf(stderr, "libretro persistence: %d failures\n", failures);

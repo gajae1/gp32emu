@@ -3481,3 +3481,32 @@ H700 takes 1510.460 ms for that interval, but its frequency ramps from 720 MHz
 before the run to 1104 MHz after. No peak-throughput or optimization ratio is
 claimed from it. Next diagnosis should trace guest resource/audio stop/start
 behavior in frames 84-151. Evidence: `F:/GP32/results/resume73-blue-dialogue/`.
+### SmartMedia savestate delta (round152)
+
+Savestate v0014 stores a SmartMedia section in one of two forms. The full form
+is the previous layout byte for byte, and every older magic keeps loading
+through it. The delta form carries only the NAND pages that differ from an
+immutable base image: the image the frontend passes as content. It is padded to
+a per-session entry budget, so one mounted card serializes to one size while
+the game runs (10.4 MB against 26.6 MB for a 16 MiB card, and 43.9 MB for the
+32 MiB one, because the section no longer carries a per-page hash array).
+
+The base must be an image a later session can reproduce, which is why it is the
+frontend content and not the mounted card: the libretro core persists guest
+writes to <save dir>/<rom>.gp32.smc and mounts that file over the content in
+every later session, so the content image is the only stable one. A state
+therefore loads in any later session of the same game even after the guest
+wrote its save data to the card, and the loaded card is the save-time card: a
+write that followed the state is undone exactly like a full-image state always
+did. A stream whose base is not the mounted content (a changed or re-dumped
+content file) is refused before the live card is touched.
+
+The session budget is the card's divergence at mount plus fixed headroom, never
+below a 2048-entry floor, capped by the full-image size. A card the guest
+rewrites past that budget falls back to the full form, which never fails and
+never exceeds the pre-v0014 payload; the fallback is deterministic and monotone
+(the divergence only grows). Rejected alternative: re-basing the delta onto the
+live card when the budget is exceeded. It keeps the payload small but makes
+states depend on a card image a later session cannot reproduce, which is the
+failure this round fixes. Measurements, regression tests and the trade-off
+table: F:/GP32/results/round152/state-size2/.

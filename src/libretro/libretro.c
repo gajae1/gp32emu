@@ -233,10 +233,13 @@ static void destroy_emu_with_save(void) {
  * Returns 1 if the save was mounted, 0 if absent, -1 if present but unreadable.
  * The -1 case fails the content load instead of silently mounting the pristine
  * ROM, which would overwrite the save on exit. */
-static int mount_saved_smartmedia(gp32_t *g, int use_direct) {
+static int mount_saved_smartmedia(gp32_t *g, int use_direct, int over_base) {
     if (!smartmedia_save_path[0] || !file_exists(smartmedia_save_path)) return 0;
+    /* The card image mounts over the frontend content, never over its own
+     * savestate base: states stay expressed against the content image. */
     gp32_status_t st = use_direct ? gp32_load_smartmedia_direct(g, smartmedia_save_path)
-                                  : gp32_load_smartmedia(g, smartmedia_save_path);
+                                  : over_base ? gp32_load_smartmedia_over_base(g, smartmedia_save_path)
+                                              : gp32_load_smartmedia(g, smartmedia_save_path);
     if (st != GP32_OK) {
         const char *err = gp32_get_error(g);
         lr_log(RETRO_LOG_ERROR, "[gp32emu] saved SmartMedia image %s is unreadable: %s\n",
@@ -246,6 +249,37 @@ static int mount_saved_smartmedia(gp32_t *g, int use_direct) {
     }
     lr_log(RETRO_LOG_INFO, "[gp32emu] restored saved SmartMedia image: %s\n", smartmedia_save_path);
     return 1;
+}
+
+/* Mount the SmartMedia content image and, when a persisted card exists, mount
+ * that card over the content instead of in place of it.
+ *
+ * The content image is the savestate base: it is the image every later session
+ * of this game passes again, so a state written against it stays loadable there
+ * even after the guest wrote its save data to the persisted card. Returns 0 for
+ * a failed load, 1 for a mounted card and -1 for an unreadable persisted image,
+ * which must fail the load instead of silently booting the pristine content and
+ * overwriting the save on exit. */
+static int load_smartmedia_content(gp32_t *g, const void *data, size_t size, const char *path, const char *label, int use_direct) {
+    if (use_direct) {
+        /* Direct boot extracts the executable from the image and mounts no
+         * card device, so no base applies. */
+        int saved = mount_saved_smartmedia(g, 1, 0);
+        if (saved) return saved;
+        if (data && size) return gp32_load_smartmedia_direct_data(g, data, size, label) == GP32_OK;
+        return path && path[0] && gp32_load_smartmedia_direct(g, path) == GP32_OK;
+    }
+    if (smartmedia_save_path[0] && file_exists(smartmedia_save_path)) {
+        int base_ok = 0;
+        if (data && size) base_ok = gp32_set_smartmedia_state_base(g, data, size) == GP32_OK;
+        else if (path && path[0]) base_ok = gp32_set_smartmedia_state_base_file(g, path) == GP32_OK;
+        if (!base_ok)
+            lr_log(RETRO_LOG_WARN, "[gp32emu] content image unavailable as the savestate base; states will carry the whole card\n");
+        int saved = mount_saved_smartmedia(g, 0, 1);
+        if (saved) return saved;
+    }
+    if (data && size) return gp32_load_smartmedia_data(g, data, size) == GP32_OK;
+    return path && path[0] && gp32_load_smartmedia(g, path) == GP32_OK;
 }
 
 static int try_bios_path(char *out, size_t outsz, const char *dir, const char *name) {
@@ -769,20 +803,14 @@ static int load_content(gp32_t *g, const struct retro_game_info *game, int use_d
         if (ext_fxe) return gp32_load_fxe_data(g, data, size, label) == GP32_OK;
         if (ext_fpk) return gp32_load_fpk_data(g, data, size, label) == GP32_OK;
         if (ext_smc || (!ext_fxe && !ext_fpk)) {
-            int saved = mount_saved_smartmedia(g, use_direct);
-            if (saved) return saved > 0;
-            if (use_direct) return gp32_load_smartmedia_direct_data(g, data, size, label) == GP32_OK;
-            return gp32_load_smartmedia_data(g, data, size) == GP32_OK;
+            return load_smartmedia_content(g, data, size, path, label, use_direct) > 0;
         }
     }
     if (!path || !path[0]) return 0;
     if (ext_fxe) return gp32_load_fxe(g, path) == GP32_OK;
     if (ext_fpk) return gp32_load_fpk(g, path) == GP32_OK;
     if (ext_smc) {
-        int saved = mount_saved_smartmedia(g, use_direct);
-        if (saved) return saved > 0;
-        if (use_direct) return gp32_load_smartmedia_direct(g, path) == GP32_OK;
-        return gp32_load_smartmedia(g, path) == GP32_OK;
+        return load_smartmedia_content(g, NULL, 0, path, label, use_direct) > 0;
     }
     return 0;
 }
@@ -884,10 +912,14 @@ unsigned retro_get_region(void) { return RETRO_REGION_NTSC; }
 bool retro_load_game_special(unsigned game_type, const struct retro_game_info *info, size_t num_info) { (void)game_type; (void)info; (void)num_info; return false; }
 size_t retro_serialize_size(void) {
     if (!emu) return 0;
-    /* Libretro must never report a larger size during one loaded game. Normal
-     * retro_run drains captured PCM; latch the first exact payload size and
-     * reject later growth that cannot fit the frontend's supplied buffer. */
-    if (!state_capacity) state_capacity = gp32_state_size(emu);
+    /* Libretro must never report a smaller size than the core then writes.
+     * Normal retro_run drains captured PCM and the SmartMedia delta pads to a
+     * per-session budget, so one game serializes to one size; the single case
+     * that grows is a guest that rewrites more card pages than the budget
+     * holds, which puts the whole image back into the section. Take the largest
+     * value seen so a frontend buffer always fits what we write. */
+    size_t size = gp32_state_size(emu);
+    if (size > state_capacity) state_capacity = size;
     return state_capacity;
 }
 bool retro_serialize(void *data, size_t size) {
