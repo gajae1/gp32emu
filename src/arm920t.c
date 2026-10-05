@@ -2811,7 +2811,8 @@ static int x64_emit_ram_block_dt(x64_emit_t *e, const arm_jit_op_t *op, uint32_t
     int l = !!(op->d & 1u), w = !!(op->d & 2u);
     int u = !!(op->d & 8u), p = !!(op->d & 16u);
     int block_pc = l && (list & 0x8000u);
-    if (op->reserved || (op->d & 4u) || !list || !count || rn == 15u ||
+    if ((op->reserved && op->reserved != 3u && op->reserved != 4u &&
+         op->reserved != 5u) || (op->d & 4u) || !list || !count || rn == 15u ||
         !(l ? e->ram_read : e->ram_write)) return 0;
     size_t slow[8];
     unsigned nslow = 0;
@@ -2854,12 +2855,25 @@ static int x64_emit_ram_block_dt(x64_emit_t *e, const arm_jit_op_t *op, uint32_t
     }
     if (w && (!l || !(list & (1u << rn)))) x64_emit_store_arm_reg(e, rn, X64_R9D);
     if (block_pc) {
-        x64_emit_return_pc_reg(e, X64_R11D, done);
+        size_t leaf_continue = 0;
+        if (op->reserved == 3u || op->reserved == 5u) {
+            /* Inlined leaf return. Keep the real stack word and continue only
+             * at this trace's decoded successor; any other target leaves the
+             * block with the loaded and aligned PC committed. */
+            x64_alu_r32_imm(e, 4, X64_R11D, ~3u);
+            x64_mov_mem_cpu_r32(e, arm_reg_off(15), X64_R11D);
+            x64_alu_r32_imm(e, 7, X64_R11D, e->expected_next);
+            size_t matched = x64_jcc32(e, 0x4); /* EQ */
+            x64_emit_return_imm(e, done);
+            x64_patch32(e, matched, e->pos);
+            leaf_continue = x64_jmp32(e);
+        } else x64_emit_return_pc_reg(e, X64_R11D, done);
         /* Only failed prechecks reach the whole-op helper. Neither exit can
          * fall through and overwrite the loaded PC with a sequential PC. */
         for (unsigned i = 0; i < nslow; ++i) x64_patch32(e, slow[i], e->pos);
         x64_emit_call_helper_op(e, op);
         x64_emit_return_imm(e, done);
+        if (leaf_continue) x64_patch32(e, leaf_continue, e->pos);
     } else x64_emit_memory_slow(e, op, slow, nslow);
     return 1;
 }
@@ -2882,14 +2896,9 @@ static int x64_emit_mul(x64_emit_t *e, const arm_jit_op_t *op) {
 }
 
 static int x64_emit_block_dt(x64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
-    if (op->reserved == 3u || op->reserved == 4u || op->reserved == 5u) {
-        /* A balanced leaf can alias its saved return through another register.
-         * Preserve the real stack transfers and return at the loaded PC; the
-         * dispatcher then validates state before selecting the next block. */
-        x64_emit_call_helper_op(e, op);
-        if (op->reserved != 4u) x64_emit_return_imm(e, done);
-        return 1;
-    }
+    /* Framed leaf push/pop wrappers carry markers 3/4/5, but they are still
+     * ordinary single-word stack transfers: the direct-RAM path keeps their
+     * exact ordering, writeback suppression and decoded-return guard. */
     /* Retain the conservative non-MMU base-in-list gates. Unusual forms
      * also stay on the whole-op semantic helper. */
     if ((op->imm & (1u << op->a)) && (op->d & 3u)) return 0;
@@ -2924,15 +2933,22 @@ static int x64_emit_addrmode2_offset_to_ecx(x64_emit_t *e, uint32_t insn, uint32
  * devices, cold misses and rejected spans retain the whole-op helper. Word
  * translation aligns the VA before lookup and rotates by the original VA;
  * halfwords instead access contiguous physical bytes, including page edges.
- * PC loads remain on the whole-op helper to commit their control-flow exit. */
-static int x64_emit_ram_dt(x64_emit_t *e, const arm_jit_op_t *op) {
+ * PC loads remain on the whole-op helper to commit their control-flow exit,
+ * except a framed leaf return (markers 3/5), which continues only when the
+ * loaded target is the decoded successor of this trace. */
+static int x64_emit_ram_dt(x64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
     const uint32_t insn = op->insn;
     unsigned rn = (insn >> 16) & 15u, rd = (insn >> 12) & 15u;
     int half = op->kind == ARM_JIT_OP_HALF;
     int p = GP32_BIT(insn,24), u = GP32_BIT(insn,23), w = GP32_BIT(insn,21), l = GP32_BIT(insn,20);
     unsigned sh = (insn >> 5) & 3u;
     unsigned bytes = half ? ((l && sh == 2u) ? 1u : 2u) : (GP32_BIT(insn,22) ? 1u : 4u);
-    if (!(l ? e->ram_read : e->ram_write) || (l && rd == 15u) ||
+    /* A framed leaf return loads its return address from the stack; keep the
+     * architected write_r alignment and leave the trace unless the loaded
+     * target is this trace's decoded successor. */
+    int leaf_return = !half && l && rd == 15u &&
+                      (op->reserved == 3u || op->reserved == 5u);
+    if (!(l ? e->ram_read : e->ram_write) || (l && rd == 15u && !leaf_return) ||
         ((!p || w) && rn == 15u) || (half && (rd == 15u || (l ? !sh : sh != 1u)))) return 0;
     if (half) {
         if (GP32_BIT(insn,22)) x64_mov_r32_imm(e, X64_ECX, op->imm);
@@ -2968,7 +2984,7 @@ static int x64_emit_ram_dt(x64_emit_t *e, const arm_jit_op_t *op) {
             else x64_movzx_r32_membase_index16(e, X64_EAX, X64_R14D, X64_EDX);
         } else if (half) x64_movsx_r32_membase_index8(e, X64_EAX, X64_R14D, X64_EDX);
         else x64_movzx_r32_membase_index8(e, X64_EAX, X64_R14D, X64_EDX);
-        x64_emit_store_arm_reg(e, rd, X64_EAX);
+        if (!leaf_return) x64_emit_store_arm_reg(e, rd, X64_EAX);
     } else {
         x64_emit_load_arm_reg(e, X64_ECX, rd, op->pc);
         if (bytes == 4u) x64_mov_membase_index_r32(e, X64_R14D, X64_EDX, X64_ECX);
@@ -2976,7 +2992,18 @@ static int x64_emit_ram_dt(x64_emit_t *e, const arm_jit_op_t *op) {
         else x64_mov_membase_index8_r32(e, X64_R14D, X64_EDX, X64_ECX);
     }
     if (!p || w) x64_emit_store_arm_reg(e, rn, X64_R9D);
+    size_t leaf_continue = 0;
+    if (leaf_return) {
+        x64_alu_r32_imm(e, 4, X64_EAX, ~3u);
+        x64_mov_mem_cpu_r32(e, arm_reg_off(15), X64_EAX);
+        x64_alu_r32_imm(e, 7, X64_EAX, e->expected_next);
+        size_t matched = x64_jcc32(e, 0x4); /* EQ */
+        x64_emit_return_imm(e, done);
+        x64_patch32(e, matched, e->pos);
+        leaf_continue = x64_jmp32(e);
+    }
     x64_emit_memory_slow(e, op, slow, nslow);
+    if (leaf_continue) x64_patch32(e, leaf_continue, e->pos);
     return 1;
 }
 
@@ -3082,7 +3109,7 @@ static int x64_emit_one(x64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
     case ARM_JIT_OP_DATA: return x64_emit_data_proc(e, op, done);
     case ARM_JIT_OP_MUL: return x64_emit_mul(e, op);
     case ARM_JIT_OP_HALF:
-    case ARM_JIT_OP_SINGLE_DT: return x64_emit_ram_dt(e, op);
+    case ARM_JIT_OP_SINGLE_DT: return x64_emit_ram_dt(e, op, done);
     case ARM_JIT_OP_BLOCK_DT: return e->mmu ? x64_emit_ram_block_dt(e, op, done) : x64_emit_block_dt(e, op, done);
     case ARM_JIT_OP_BRANCH: {
         int32_t off = gp32_sign_extend((op->insn & 0x00ffffffu) << 2, 26);
