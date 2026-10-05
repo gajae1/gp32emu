@@ -6,6 +6,17 @@ performance, audio and input correctness across the library, not boot-only tests
 
 ## Current accepted work
 
+- Accepted (round 163): straight-line JIT traces may cross the 1 KiB collector
+  page boundary when the next page is already mapped. The side-effect-free
+  peek proves the fetch without a table walk, TLB refill, fault or MMIO read;
+  revalidation still re-proves every recorded fetch. This keeps hot
+  page-straddling loops as one block with one in-place backedge instead of two
+  dispatcher entries per pass (ASR's audio/crypto loops at `0x0c064708`,
+  `0x0c064734`, ...). PC ctest/pc-parity/parity5/parity-boot identical, H700
+  native tests pass. H700 ABBA: ASR opening 93.76 -> 96.02 fps (+2.4%), LGM
+  78.76 -> 79.27 (+0.6%), Blue 85.31 -> 85.48; Princess 121.91 -> 119.68
+  (-1.8%, still about twice the 60 fps target). Evidence
+  `F:/GP32/results/round163/abba-xpage/`.
 - Frame-time anatomy (round 163, `gp32_bench --frame-times-raw` prints every
   frame's host time and, with `--cpu-profile`, per-frame counters). H700
   1.512 GHz: the LGM bench scene (cold boot, warmup 2400) is a card-loading
