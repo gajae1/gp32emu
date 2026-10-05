@@ -91,6 +91,8 @@ struct s3c2400 {
     uint32_t lcd_vpos;
     uint64_t lcd_line_accum;
     uint32_t lcd_cached_line;
+    uint32_t lcd_cached_line_pos;
+    uint32_t lcd_cached_status;
     uint8_t lcd_line_valid;
     uint8_t lcd_timing_valid;
     uint64_t lcd_cached_frame_cycles, lcd_cached_line_cycles;
@@ -165,10 +167,18 @@ struct s3c2400 {
     uint32_t cpu_speed_percent;
 };
 
+#if defined(_MSC_VER)
+#define GP32_IO_COLD __declspec(noinline)
+#else
+#define GP32_IO_COLD __attribute__((noinline, cold))
+#endif
+
 static uint8_t *s3c2400_fastmem(void *user, uint32_t addr, size_t bytes, int write);
 static uint32_t s3c2400_read32_io(void *user, uint32_t addr);
 static void s3c2400_write32_io(void *user, uint32_t addr, uint32_t value);
 static void io_write32(s3c2400_t *s, uint32_t addr, uint32_t value, uint32_t mask);
+static GP32_IO_COLD uint32_t io_read32_rare(s3c2400_t *s, uint32_t addr);
+static GP32_IO_COLD void io_write32_rare(s3c2400_t *s, uint32_t addr, uint32_t value, uint32_t mask);
 static uint32_t lcd_current_line_count(s3c2400_t *s);
 static uint32_t lcd_current_status(s3c2400_t *s);
 static int lcd_is_tft(const uint32_t *regs);
@@ -1002,23 +1012,58 @@ static uint32_t pwm_current_count(s3c2400_t *s, unsigned t) {
 }
 
 static uint32_t io_read32(s3c2400_t *s, uint32_t addr) {
+    uint32_t off = addr & 0xfffffu;
+    /* The guest library polls IRQ, DMA, LCD and GPIO; no register range in the
+     * identity-IO window crosses a 1 MiB boundary, so one switch on the block
+     * number replaces the range ladder. The cold blocks keep the old ladder
+     * verbatim in io_read32_rare(). */
+    switch (addr >> 20u) {
+    case 0x14au:
+        if (off <= 0x3ffu) {
+            uint32_t data = reg_array_read(s->lcd_regs, sizeof(s->lcd_regs), off);
+            if (off == 0u) {
+                uint32_t linecnt = (s->lcd_regs[0] & 1u) ? lcd_current_line_count(s) : 0u;
+                data = (data & ~0xfffc0000u) | ((linecnt & 0x3ffu) << 18);
+            }
+            if (off == 0x10u) data = (data & ~(15u << 17)) | lcd_current_status(s);
+            return data;
+        }
+        if (off <= 0x7ffu) return lcd_palette_read32(s, off - 0x400u);
+        return 0xffffffffu;
+    case 0x144u:
+        return off <= 0x17u ? reg_array_read(s->irq, sizeof(s->irq), off) : 0xffffffffu;
+    case 0x146u:
+        return off <= 0x7bu ? reg_array_read(s->dma, sizeof(s->dma), off) : 0xffffffffu;
+    case 0x156u: {
+        if (off > 0x5bu) return 0xffffffffu;
+        uint32_t data = reg_array_read(s->gpio, sizeof(s->gpio), off);
+        switch (off) {
+        case 0x08: data = (data & ~1u) | (!s->smc_lines.read ? 1u : 0u); break;
+        case 0x0c: data = gp32_gpbdat_readback(s); break;
+        case 0x24:
+            data &= ~0x3c0u;
+            if (!s->smc_lines.busy) data |= 0x200u;
+            if (!s->smc_lines.do_read) data |= 0x100u;
+            if (!s->smc_lines.chip) data |= 0x080u;
+            if (!smc_is_protected(s->smc)) data |= 0x040u;
+            break;
+        case 0x30: data = gp32_gpedat_readback(s); break;
+        }
+        return data;
+    }
+    default:
+        return io_read32_rare(s, addr);
+    }
+}
+
+/* Cold half of io_read32: the unchanged range ladder for the blocks the hot
+ * path does not decode, so every remaining address keeps its previous result
+ * (0xffffffff for the gaps and for unmapped memory). */
+static GP32_IO_COLD uint32_t io_read32_rare(s3c2400_t *s, uint32_t addr) {
     uint32_t off;
     if (addr >= 0x14000000u && addr <= 0x1400003bu) return reg_array_read(s->memcon, sizeof(s->memcon), addr - 0x14000000u);
     if (addr >= 0x14200000u && addr <= 0x1420005bu) return reg_array_read(s->usb_host, sizeof(s->usb_host), addr - 0x14200000u);
-    if (addr >= 0x14400000u && addr <= 0x14400017u) return reg_array_read(s->irq, sizeof(s->irq), addr - 0x14400000u);
-    if (addr >= 0x14600000u && addr <= 0x1460007bu) return reg_array_read(s->dma, sizeof(s->dma), addr - 0x14600000u);
     if (addr >= 0x14800000u && addr <= 0x14800017u) return reg_array_read(s->clkpow, sizeof(s->clkpow), addr - 0x14800000u);
-    if (addr >= 0x14a00000u && addr <= 0x14a003ffu) {
-        off = addr - 0x14a00000u;
-        uint32_t data = reg_array_read(s->lcd_regs, sizeof(s->lcd_regs), off);
-        if (off == 0) {
-            uint32_t linecnt = (s->lcd_regs[0] & 1u) ? lcd_current_line_count(s) : 0u;
-            data = (data & ~0xfffc0000u) | ((linecnt & 0x3ffu) << 18);
-        }
-        if (off == 0x10u) data = (data & ~(15u << 17)) | lcd_current_status(s);
-        return data;
-    }
-    if (addr >= 0x14a00400u && addr <= 0x14a007ffu) return lcd_palette_read32(s, addr - 0x14a00400u);
     if (addr >= 0x15000000u && addr <= 0x1500002bu) {
         off = addr - 0x15000000u;
         uint32_t data = reg_array_read(s->uart0, sizeof(s->uart0), off);
@@ -1044,23 +1089,6 @@ static uint32_t io_read32(s3c2400_t *s, uint32_t addr) {
     if (addr >= 0x15300000u && addr <= 0x1530000bu) return reg_array_read(s->watchdog, sizeof(s->watchdog), addr - 0x15300000u);
     if (addr >= 0x15400000u && addr <= 0x1540000fu) { uint32_t data = reg_array_read(s->iic, sizeof(s->iic), addr - 0x15400000u); if ((addr & 0xff) == 0x04) data &= ~0xfu; return data; }
     if (addr >= 0x15508000u && addr <= 0x15508013u) return reg_array_read(s->iis, sizeof(s->iis), addr - 0x15508000u);
-    if (addr >= 0x15600000u && addr <= 0x1560005bu) {
-        off = addr - 0x15600000u;
-        uint32_t data = reg_array_read(s->gpio, sizeof(s->gpio), off);
-        switch (off) {
-        case 0x08: data = (data & ~1u) | (!s->smc_lines.read ? 1u : 0u); break;
-        case 0x0c: data = gp32_gpbdat_readback(s); break;
-        case 0x24:
-            data &= ~0x3c0u;
-            if (!s->smc_lines.busy) data |= 0x200u;
-            if (!s->smc_lines.do_read) data |= 0x100u;
-            if (!s->smc_lines.chip) data |= 0x080u;
-            if (!smc_is_protected(s->smc)) data |= 0x040u;
-            break;
-        case 0x30: data = gp32_gpedat_readback(s); break;
-        }
-        return data;
-    }
     if (addr >= 0x15700040u && addr <= 0x1570008bu) return reg_array_read(s->rtc, sizeof(s->rtc), addr - 0x15700040u);
     if (addr >= 0x15800000u && addr <= 0x15800007u) return reg_array_read(s->adc, sizeof(s->adc), addr - 0x15800000u);
     if (addr >= 0x15900000u && addr <= 0x15900017u) return reg_array_read(s->spi, sizeof(s->spi), addr - 0x15900000u);
@@ -1203,28 +1231,32 @@ static void io_write32(s3c2400_t *s, uint32_t addr, uint32_t value, uint32_t mas
         live_read32_refresh(s);
         return;
     }
-    if (s->cpu_run_active && ((addr >= 0x14600000u && addr <= 0x1460007bu) ||
-                              (addr >= 0x14a00000u && addr <= 0x14a0000fu) ||
-                              (addr >= 0x15100000u && addr <= 0x15100043u) ||
-                              (addr >= 0x15508000u && addr <= 0x15508013u))) {
-        /* A register change near the end of a CPU batch must not replace the
-         * DMA source, timer, sample rate or LCD timing of its elapsed time.
-         * Finish the current instruction, tick the old peripheral state, then
-         * apply its stores. Reads in SWP/LDM precede any deferred store. */
-        defer_io_write(s, addr, value, mask);
-        return;
-    }
-    if (addr >= 0x14000000u && addr <= 0x1400003bu) { reg_array_write(s->memcon,sizeof(s->memcon),addr-0x14000000u,value,mask); return; }
-    if (addr >= 0x14200000u && addr <= 0x1420005bu) { reg_array_write(s->usb_host,sizeof(s->usb_host),addr-0x14200000u,value,mask); return; }
-    if (addr >= 0x14400000u && addr <= 0x14400017u) {
-        off = addr - 0x14400000u; uint32_t old = reg_array_read(s->irq, sizeof(s->irq), off); reg_array_write(s->irq,sizeof(s->irq),off,value,mask);
-        if (off == 0x00) s->irq[0] = old & ~value;
-        else if (off == 0x10) s->irq[4] = old & ~value;
-        check_irq(s);
-        return;
-    }
-    if (addr >= 0x14600000u && addr <= 0x1460007bu) {
-        off=addr-0x14600000u; uint32_t old=reg_array_read(s->dma,sizeof(s->dma),off); reg_array_write(s->dma,sizeof(s->dma),off,value,mask);
+    off = addr & 0xfffffu;
+    /* IRQ, DMA and LCD are the written blocks the guest library polls. The
+     * blocks the hot path does not decode keep the old ladder, including its
+     * deferred-write yield, in io_write32_rare(). */
+    switch (addr >> 20u) {
+    case 0x144u:
+        if (off > 0x17u) break;
+        {
+            uint32_t old = reg_array_read(s->irq, sizeof(s->irq), off);
+            reg_array_write(s->irq,sizeof(s->irq),off,value,mask);
+            if (off == 0x00) s->irq[0] = old & ~value;
+            else if (off == 0x10) s->irq[4] = old & ~value;
+            check_irq(s);
+            return;
+        }
+    case 0x146u: {
+        if (off > 0x7bu) break;
+        if (s->cpu_run_active) {
+            /* A register change near the end of a CPU batch must not replace the
+             * DMA source, timer, sample rate or LCD timing of its elapsed time.
+             * Finish the current instruction, tick the old peripheral state, then
+             * apply its stores. Reads in SWP/LDM precede any deferred store. */
+            defer_io_write(s, addr, value, mask);
+            return;
+        }
+        uint32_t old=reg_array_read(s->dma,sizeof(s->dma),off); reg_array_write(s->dma,sizeof(s->dma),off,value,mask);
         /* DCON[22] is the reload-off option. It must not disable an
          * already-running channel when software writes DCON: hardware turns
          * the request off only when the current transfer count reaches zero.
@@ -1251,12 +1283,15 @@ static void io_write32(s3c2400_t *s, uint32_t addr, uint32_t value, uint32_t mas
         }
         return;
     }
-    if (addr >= 0x14800000u && addr <= 0x14800017u) {
-        clock_write(s, addr, value, mask);
-        return;
-    }
-    if (addr >= 0x14a00000u && addr <= 0x14a003ffu) {
-        off = addr - 0x14a00000u;
+    case 0x14au: {
+        if (off > 0x7ffu) break;
+        if (off >= 0x400u) { lcd_palette_write32(s, off - 0x400u, value, mask); return; }
+        if (s->cpu_run_active && off <= 0x0fu) {
+            /* Same settle rule as the other live blocks: an LCD timing write
+             * must not rewrite the timing of the cycles already emulated. */
+            defer_io_write(s, addr, value, mask);
+            return;
+        }
         int was_tft = lcd_is_tft(s->lcd_regs);
         s->lcd_line_valid = 0;
         s->lcd_timing_valid = 0;
@@ -1278,7 +1313,28 @@ static void io_write32(s3c2400_t *s, uint32_t addr, uint32_t value, uint32_t mas
         if (off == 0u) s3c2400_render_lcd(s);
         return;
     }
-    if (addr >= 0x14a00400u && addr <= 0x14a007ffu) { lcd_palette_write32(s, addr - 0x14a00400u, value, mask); return; }
+    default:
+        break;
+    }
+    io_write32_rare(s, addr, value, mask);
+}
+
+/* Cold half of io_write32: unchanged register bodies plus the unmapped-store
+ * report, kept out of line so the sampled hot decode stays contiguous. Its
+ * deferred-write yield covers exactly the blocks this ladder owns. */
+static GP32_IO_COLD void io_write32_rare(s3c2400_t *s, uint32_t addr, uint32_t value, uint32_t mask) {
+    uint32_t off;
+    if (s->cpu_run_active && ((addr >= 0x15100000u && addr <= 0x15100043u) ||
+                              (addr >= 0x15508000u && addr <= 0x15508013u))) {
+        defer_io_write(s, addr, value, mask);
+        return;
+    }
+    if (addr >= 0x14000000u && addr <= 0x1400003bu) { reg_array_write(s->memcon,sizeof(s->memcon),addr-0x14000000u,value,mask); return; }
+    if (addr >= 0x14200000u && addr <= 0x1420005bu) { reg_array_write(s->usb_host,sizeof(s->usb_host),addr-0x14200000u,value,mask); return; }
+    if (addr >= 0x14800000u && addr <= 0x14800017u) {
+        clock_write(s, addr, value, mask);
+        return;
+    }
     if (addr >= 0x15000000u && addr <= 0x1500002bu) { reg_array_write(s->uart0,sizeof(s->uart0),addr-0x15000000u,value,mask); return; }
     if (addr >= 0x15004000u && addr <= 0x1500402bu) { reg_array_write(s->uart1,sizeof(s->uart1),addr-0x15004000u,value,mask); return; }
     if (addr >= 0x15100000u && addr <= 0x15100043u) { reg_array_write(s->pwm,sizeof(s->pwm),addr-0x15100000u,value,mask); s->pwm_clock_dirty = 1; return; }
@@ -1883,17 +1939,59 @@ static uint64_t lcd_panel_frame_cycles(s3c2400_t *s) {
     return s->lcd_cached_frame_cycles;
 }
 
+/* Per-window LCD observation cache. lcd_line_accum and the LCD register image
+ * only change in s3c2400_tick() and in the LCD/clock write paths, and all of
+ * them clear lcd_line_valid, so the values derived here stay exact while the
+ * flag holds: a repeated read inside one CPU run window returns exactly what
+ * the per-read computation returned at that cycle. */
+static void lcd_update_observations(s3c2400_t *s) {
+    lcd_refresh_timing_cache(s);
+    uint64_t frame = s->lcd_cached_frame_cycles, line_cycles = s->lcd_cached_line_cycles;
+    uint64_t accum = s->lcd_line_accum;
+    /* TFT phase is normalized by reset, timing writes, tick and state load,
+     * so the common case needs no 64-bit modulo. */
+    uint64_t phase = accum < frame ? accum : accum % frame;
+    uint64_t index = phase / line_cycles;
+    uint64_t pos = phase - index * line_cycles;
+    uint32_t visible = s->lcd_cached_visible;
+    int tft = lcd_is_tft(s->lcd_regs);
+    s->lcd_cached_line_pos = (uint32_t)pos;
+    uint64_t line = index;
+    if (tft) {
+        uint32_t start = GP32_BITS(s->lcd_regs[1], 5, 0) + 1u + GP32_BITS(s->lcd_regs[1], 31, 24) + 1u;
+        line = line < start ? 0u : line - start;
+    }
+    s->lcd_cached_line = line >= visible ? 0u : visible - 1u - (uint32_t)line;
+    uint32_t status = 0u;
+    if (tft && (s->lcd_regs[0] & 1u)) {
+        uint32_t pixel = 2u * (GP32_BITS(s->lcd_regs[0], 17, 8) + 1u);
+        uint32_t h = (uint32_t)(pos / pixel);
+        uint32_t v = (uint32_t)index;
+        uint32_t vs = GP32_BITS(s->lcd_regs[1], 5, 0) + 1u;
+        uint32_t vb = vs + GP32_BITS(s->lcd_regs[1], 31, 24) + 1u;
+        uint32_t hs = GP32_BITS(s->lcd_regs[3], 7, 0) + 1u;
+        uint32_t hb = hs + GP32_BITS(s->lcd_regs[2], 25, 19) + 1u;
+        uint32_t vstatus = v < vs ? 0u : v < vb ? 1u : v < vb + visible ? 2u : 3u;
+        uint32_t hstatus = h < hs ? 0u : h < hb ? 1u : h < hb + GP32_BITS(s->lcd_regs[2],18,8) + 1u ? 2u : 3u;
+        status = (vstatus << 19) | (hstatus << 17);
+    }
+    s->lcd_cached_status = status;
+    s->lcd_line_valid = 1;
+}
+
 static void lcd_observation_deadline(s3c2400_t *s, int horizontal) {
     unsigned bit = horizontal ? 2u : 1u;
-    if (!s->cpu_run_active || (s->cpu_lcd_deadline_set & bit)) return;
+    /* Repeated polls inside one run window take the early return: the deadline
+     * and the observation cache are already settled for this cycle. */
+    if (__builtin_expect(!s->cpu_run_active || (s->cpu_lcd_deadline_set & bit) != 0u, 1)) return;
     s->cpu_lcd_deadline_set |= bit;
-    lcd_refresh_timing_cache(s);
+    if (!s->lcd_line_valid) lcd_update_observations(s);
     uint64_t frame = s->lcd_cached_frame_cycles, line = s->lcd_cached_line_cycles;
-    uint64_t phase = s->lcd_line_accum % frame;
-    uint64_t remaining = line - phase % line;
+    uint64_t phase = s->lcd_line_accum < frame ? s->lcd_line_accum : s->lcd_line_accum % frame;
+    uint64_t pos = s->lcd_cached_line_pos;
+    uint64_t remaining = line - pos;
     if (horizontal && lcd_is_tft(s->lcd_regs)) {
         uint64_t pixel = 2u * (GP32_BITS(s->lcd_regs[0], 17, 8) + 1u);
-        uint64_t pos = phase % line;
         uint64_t end = pixel * (GP32_BITS(s->lcd_regs[3], 7, 0) + 1u);
         if (pos >= end) end += pixel * (GP32_BITS(s->lcd_regs[2], 25, 19) + 1u);
         if (pos >= end) end += pixel * (GP32_BITS(s->lcd_regs[2], 18, 8) + 1u);
@@ -1915,34 +2013,15 @@ static void lcd_observation_deadline(s3c2400_t *s, int horizontal) {
 static uint32_t lcd_current_line_count(s3c2400_t *s) {
     if (!s) return 0u;
     lcd_observation_deadline(s, 0);
-    if (s->lcd_line_valid) return s->lcd_cached_line;
-    lcd_refresh_timing_cache(s);
-    uint64_t line = (s->lcd_line_accum % s->lcd_cached_frame_cycles) / s->lcd_cached_line_cycles;
-    uint32_t visible = s->lcd_cached_visible;
-    if (lcd_is_tft(s->lcd_regs)) {
-        uint32_t start = GP32_BITS(s->lcd_regs[1], 5, 0) + 1u + GP32_BITS(s->lcd_regs[1], 31, 24) + 1u;
-        line = line < start ? 0u : line - start;
-    }
-    s->lcd_cached_line = line >= visible ? 0u : visible - 1u - (uint32_t)line;
-    s->lcd_line_valid = 1;
+    if (!s->lcd_line_valid) lcd_update_observations(s);
     return s->lcd_cached_line;
 }
 
 static uint32_t lcd_current_status(s3c2400_t *s) {
     if (!(s->lcd_regs[0] & 1u) || !lcd_is_tft(s->lcd_regs)) return 0u;
     lcd_observation_deadline(s, 1);
-    lcd_refresh_timing_cache(s);
-    uint64_t phase = s->lcd_line_accum % s->lcd_cached_frame_cycles;
-    uint32_t v = (uint32_t)(phase / s->lcd_cached_line_cycles);
-    uint32_t pixel = 2u * (GP32_BITS(s->lcd_regs[0], 17, 8) + 1u);
-    uint32_t h = (uint32_t)((phase % s->lcd_cached_line_cycles) / pixel);
-    uint32_t vs = GP32_BITS(s->lcd_regs[1], 5, 0) + 1u;
-    uint32_t vb = vs + GP32_BITS(s->lcd_regs[1], 31, 24) + 1u;
-    uint32_t hs = GP32_BITS(s->lcd_regs[3], 7, 0) + 1u;
-    uint32_t hb = hs + GP32_BITS(s->lcd_regs[2], 25, 19) + 1u;
-    uint32_t vstatus = v < vs ? 0u : v < vb ? 1u : v < vb + s->lcd_cached_visible ? 2u : 3u;
-    uint32_t hstatus = h < hs ? 0u : h < hb ? 1u : h < hb + GP32_BITS(s->lcd_regs[2],18,8) + 1u ? 2u : 3u;
-    return (vstatus << 19) | (hstatus << 17);
+    if (!s->lcd_line_valid) lcd_update_observations(s);
+    return s->lcd_cached_status;
 }
 
 static void iis_fifo_write16(s3c2400_t *s, uint16_t sample) {
