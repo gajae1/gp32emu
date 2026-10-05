@@ -2412,6 +2412,7 @@ static void x64_alu_r32_imm(x64_emit_t *e, unsigned alu, int dst, uint32_t imm) 
 static void x64_shift_r32_imm(x64_emit_t *e, unsigned subop, int dst, unsigned imm) { x64_rex(e, 0, 0, 0, dst); x64_u8(e, 0xc1); x64_modrm(e, 3, (int)subop, dst); x64_u8(e, (uint8_t)imm); }
 static void x64_shift_r32_cl(x64_emit_t *e, unsigned subop, int dst) { x64_rex(e, 0, 0, 0, dst); x64_u8(e, 0xd3); x64_modrm(e, 3, (int)subop, dst); }
 static void x64_not_r32(x64_emit_t *e, int dst) { x64_rex(e, 0, 0, 0, dst); x64_u8(e, 0xf7); x64_modrm(e, 3, 2, dst); }
+static void x64_cmovcc_r32_r32(x64_emit_t *e, uint8_t cc, int dst, int src) { x64_rex(e, 0, dst, 0, src); x64_u8(e, 0x0f); x64_u8(e, (uint8_t)(0x40u | (cc & 15u))); x64_modrm(e, 3, dst, src); }
 static void x64_imul_r32_r32(x64_emit_t *e, int dst, int src) { x64_rex(e, 0, dst, 0, src); x64_u8(e, 0x0f); x64_u8(e, 0xaf); x64_modrm(e, 3, dst, src); }
 static void x64_movzx_ecx_ah(x64_emit_t *e) { x64_u8(e, 0x0f); x64_u8(e, 0xb6); x64_u8(e, 0xcc); }
 static void x64_movzx_esi_dl(x64_emit_t *e) { x64_u8(e, 0x0f); x64_u8(e, 0xb6); x64_u8(e, 0xf2); }
@@ -2648,6 +2649,16 @@ static void x64_emit_return_pc_reg(x64_emit_t *e, int src, uint32_t done) {
 
 static void x64_emit_data_result(x64_emit_t *e, unsigned opc, unsigned s,
                                  unsigned rd, uint32_t done, int shifter_carry) {
+    /* S=0 data-processing writes of PC are computed jumps: commit the
+     * aligned result exactly like write_r(15) and leave the block. The
+     * AArch64 emitter already inlines this form; only a PC-writing form
+     * with S keeps the exception-return helper (CPSR comes from SPSR). */
+    if (rd == 15u && !s) {
+        x64_alu_r32_imm(e, 4, X64_EAX, ~3u);
+        x64_mov_mem_cpu_r32(e, arm_reg_off(15), X64_EAX);
+        x64_emit_return_imm(e, done);
+        return;
+    }
     /* Flag emitters clobber EAX/ECX/EDX/ESI. Preserve the unaligned PC
      * result in R10D until the helper arguments are set up. */
     if (rd == 15u) x64_mov_r32_r32(e, X64_R10D, X64_EAX);
@@ -2687,7 +2698,10 @@ static int x64_emit_data_proc(x64_emit_t *e, const arm_jit_op_t *op, uint32_t do
             } else x64_emit_return_pc_reg(e, X64_EAX, done);
             return 1;
         }
-        if (!s || (opc >= 0x8u && opc <= 0xbu)) return 0;
+        /* Test forms never write PC; S=0 writes fall through to the shared
+         * ALU paths, which commit the computed jump in x64_emit_data_result.
+         * S=1 exception returns keep the SPSR-aware helper. */
+        if (opc >= 0x8u && opc <= 0xbu) return 0;
     }
     if (s && !logical_s && !(opc == 2u || opc == 4u || opc == 10u || opc == 11u)) return 0;
     if (logical_s && !(insn & (1u << 25)) && (insn & (1u << 4))) return 0;
@@ -3173,7 +3187,61 @@ static int x64_emit_coproc_local(x64_emit_t *e, const arm_jit_op_t *op, uint32_t
     return 1;
 }
 
+/* MSR CPSR: write the selected bytes of the live status word natively.
+ * Mirrors the AArch64 shape: the operand and the byte mask are computed
+ * before any guest state is touched, a live mode change (or a USER-mode
+ * request for a control byte) keeps the whole-op classified helper, and
+ * the terminating op returns to dispatch so a new execution state, bank
+ * or interrupt mask is observed before the next instruction. SPSR writes
+ * and non-terminating shapes stay on the existing helper route. */
+static int x64_emit_msr_cpsr(x64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
+    const uint32_t insn = op->insn;
+    if ((insn & 0x0db0f000u) != 0x0120f000u || (insn & (1u << 22)) || !op->stop) return 0;
+    unsigned field = (insn >> 16) & 0xfu;
+    uint32_t mask = 0u;
+    for (unsigned byte = 0; byte < 4u; ++byte)
+        if (field & (1u << byte)) mask |= 0xffu << (byte * 8u);
+    if (!mask) mask = 0xf0000000u; /* existing op_psr zero-field behavior */
+    if (insn & (1u << 25))
+        x64_mov_r32_imm(e, X64_EAX, gp32_ror32(insn & 0xffu, ((insn >> 8) & 0xfu) * 2u));
+    else x64_emit_load_arm_reg(e, X64_EAX, insn & 0xfu, op->pc);
+    x64_mov_r32_mem_cpu(e, X64_ECX, cpsr_off());
+    size_t slow = SIZE_MAX;
+    unsigned mode_sel = mask & MODE_MASK;
+    if (mode_sel) {
+        /* delta & MODE_MASK != 0 needs save_banked/load_banked: helper. */
+        x64_mov_r32_r32(e, X64_EDX, X64_EAX);
+        x64_alu_r32_r32(e, 0x31, X64_EDX, X64_ECX);
+        x64_alu_r32_imm(e, 4, X64_EDX, mode_sel);
+        x64_alu_r32_r32(e, 0x85, X64_EDX, X64_EDX);
+        slow = x64_jcc32(e, 0x5); /* JNZ slow */
+    }
+    x64_mov_r32_imm(e, X64_EDX, mask);
+    if (mask & 0x00ffffffu) {
+        /* USER mode writes the flags byte only (DDI0100E A4-65), so take the
+         * live mask AND 0xff000000. The AND clobbers host flags, hence the
+         * live-mode compare is the last flag producer before the CMOVE. */
+        x64_mov_r32_r32(e, X64_EDI, X64_EDX);
+        x64_alu_r32_imm(e, 4, X64_EDI, 0xff000000u); /* op_psr ANDs the live mask */
+        x64_mov_r32_r32(e, X64_ESI, X64_ECX);
+        x64_alu_r32_imm(e, 4, X64_ESI, MODE_MASK);
+        x64_alu_r32_imm(e, 7, X64_ESI, MODE_USR);
+        x64_cmovcc_r32_r32(e, 0x4, X64_EDX, X64_EDI); /* CMOVE: USER -> flags only */
+    }
+    x64_alu_r32_r32(e, 0x31, X64_EAX, X64_ECX); /* operand ^ old CPSR */
+    x64_alu_r32_r32(e, 0x21, X64_EAX, X64_EDX); /* & effective byte mask */
+    x64_alu_r32_r32(e, 0x31, X64_ECX, X64_EAX); /* old ^ delta keeps unselected bits */
+    x64_mov_mem_cpu_r32(e, cpsr_off(), X64_ECX);
+    x64_emit_return_imm(e, done);
+    if (slow != SIZE_MAX) {
+        x64_patch32(e, slow, e->pos);
+        x64_emit_call_helper_op(e, op);
+    }
+    return 1;
+}
+
 static int x64_emit_one(x64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
+    if (op->kind == ARM_JIT_OP_PSR && x64_emit_msr_cpsr(e, op, done)) return 1;
     if (op->kind == ARM_JIT_OP_INTERP && op->reserved == 7u) {
         /* BX lr must commit interworking and prove PC/status/interrupt state
          * before following the caller. Reuse the precise checked helper. */

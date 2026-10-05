@@ -1892,6 +1892,101 @@ static void case_native_regshift(void) {
     }
 }
 
+static void set_cpsr_both(uint32_t v); /* defined with the SPSR bank cases */
+
+/* S=0 data-processing writes of PC are computed jumps.  They must commit
+ * write_r(15) alignment, leave the ALU flags alone and end the native
+ * block, on both native backends.  A64 already inlined the shape; this
+ * pins the x64 route that mirrors it (BIOS dispatch tables, then the
+ * shifted-register, register-specified-shift and immediate forms). */
+static void case_native_data_pc(void) {
+    /* LS = C==0 or Z==1: 0x000000d3 takes the jump, 0x200000d3 (C=1,Z=0)
+     * falls through and proves the skipped condition still retires PC+4. */
+    const uint32_t table[] = {
+        0x908ff100u, /* ADDLS pc,pc,r0,LSL #2: r0=2 -> pc+8+8 = +0x10 */
+        0xe3a03011u, /* MOV r3,#0x11: fall-through path only */
+        0xe3a03022u, /* MOV r3,#0x22 */
+        0xe3a03033u, /* MOV r3,#0x33 */
+        0xe3a05077u, /* MOV r5,#0x77: taken landing (+0x10) */
+        0xe3a06066u, /* MOV r6,#0x66 */
+        0xeafffffeu
+    };
+    for (unsigned taken = 0; taken < 2u; ++taken) {
+        current_case = taken ? "data-pc-jump-taken" : "data-pc-jump-skipped";
+        setup_pair();
+        set_cpsr_both(taken ? 0x000000d3u : 0x200000d3u);
+        set_reg_both(0u, 2u);
+        load_both(table, GP32_ARRAY_COUNT(table));
+        run_native_case();
+        CHECK(ref_reg(3u) == (taken ? 0u : 0x33u), "computed jump writes PC only");
+        CHECK(ref_reg(5u) == 0x77u && ref_reg(6u) == 0x66u, "computed jump landing path");
+        CHECK(arm920t_get_pc(cpu_ref) == CODE_ADDR + 0x18u, "computed jump trace tail");
+        CHECK((arm920t_get_cpsr(cpu_ref) & 0xf0000000u) ==
+              (taken ? 0x00000000u : 0x20000000u), "computed jump preserves ALU flags");
+        gp32_cpu_profile_t profile;
+        arm920t_get_cpu_profile(cpu_jit, &profile);
+        if (profile.supported && profile.native_backend) {
+            CHECK(profile.helper_op_kinds[1] == 0u,
+                  "computed jump must not use the classified DATA helper");
+            CHECK(profile.native_arm_insns > 0u, "computed jump must run natively");
+        }
+        teardown_pair();
+    }
+
+    const uint32_t shifted[] = {
+        0xe1a0f121u, /* MOV pc,r1,LSR #2: r1=0x1040 -> pc+0x10 */
+        0xe3a03011u,
+        0xe3a03022u,
+        0xe3a03033u,
+        0xe3a05077u, /* landing */
+        0xeafffffeu
+    };
+    current_case = "data-pc-shifted";
+    setup_pair();
+    set_cpsr_both(0xa00000d3u); /* N=1,C=1 must survive the PC write */
+    set_reg_both(1u, 0x1040u);
+    load_both(shifted, GP32_ARRAY_COUNT(shifted));
+    run_native_case();
+    CHECK(ref_reg(3u) == 0u && ref_reg(5u) == 0x77u, "shifted computed jump");
+    CHECK((arm920t_get_cpsr(cpu_ref) & 0xf0000000u) == 0xa0000000u,
+          "S=0 PC write must not change ALU flags");
+    teardown_pair();
+
+    const uint32_t regshift[] = {
+        0xe08ff130u, /* ADD pc,pc,r0,LSR r1: r0=0x40, r1=3 -> pc+8+8 */
+        0xe3a03011u,
+        0xe3a03022u,
+        0xe3a03033u,
+        0xe3a05077u, /* landing */
+        0xeafffffeu
+    };
+    current_case = "data-pc-regshift";
+    setup_pair();
+    set_cpsr_both(0x000000d3u);
+    set_reg_both(0u, 0x40u);
+    set_reg_both(1u, 3u);
+    load_both(regshift, GP32_ARRAY_COUNT(regshift));
+    run_native_case();
+    CHECK(ref_reg(3u) == 0u && ref_reg(5u) == 0x77u, "register-shift computed jump");
+    teardown_pair();
+
+    const uint32_t immediate[] = {
+        0xe3a0fe41u, /* MOV pc,#0x410: immediate operand, ror #28 */
+        0xe3a03011u,
+        0xe3a03022u,
+        0xe3a03033u,
+        0xe3a05077u, /* landing (+0x10) */
+        0xeafffffeu
+    };
+    current_case = "data-pc-immediate";
+    setup_pair();
+    set_cpsr_both(0x000000d3u);
+    load_both(immediate, GP32_ARRAY_COUNT(immediate));
+    run_native_case();
+    CHECK(ref_reg(3u) == 0u && ref_reg(5u) == 0x77u, "immediate computed jump");
+    teardown_pair();
+}
+
 static void case_native_longmul_psr(void) {
     const uint32_t program[] = {
         0xe168f001u, /* MSR SPSR_f,r1 */
@@ -2391,7 +2486,7 @@ static void case_native_cpsr_same_mode(void) {
         }
         gp32_cpu_profile_t profile;
         arm920t_get_cpu_profile(cpu_jit, &profile);
-        if (profile.supported && profile.native_backend == 2u) {
+        if (profile.supported && (profile.native_backend == 1u || profile.native_backend == 2u)) {
             CHECK(profile.native_arm_insns == GP32_ARRAY_COUNT(modes), "native MSR coverage");
             /* A control-byte write with a deliberately different USER source
              * mode takes the shared privilege helper. Other writes stay native;
@@ -3673,6 +3768,9 @@ int main(int argc, char **argv) {
     } else if (argc == 2 && !strcmp(argv[1], "--ldr-pc-native")) {
         case_native_ldr_pc();
         case_native_ldr_pc_chain();
+    } else if (argc == 2 && !strcmp(argv[1], "--msr-data-pc")) {
+        case_native_cpsr();
+        case_native_data_pc();
     } else if (argc == 2 && !strcmp(argv[1], "--psr-blocks")) {
         case_native_psr_continuation();
     } else if (argc == 2 && !strcmp(argv[1], "--cpsr")) {
@@ -3757,6 +3855,7 @@ int main(int argc, char **argv) {
     case_native_exception_return();
     case_native_psr_continuation();
     case_native_cpsr();
+    case_native_data_pc();
     case_cache_maintenance_native();
     case_native_mapped_block();
     case_unframed_leaf();
