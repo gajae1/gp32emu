@@ -154,6 +154,16 @@ firmware elapsed time continue normally. Recursive HLE callbacks/mixing are
 a separate change because they would reuse the pending callback's private
 stack and mix tail; their existing timing is intentionally retained here.
 
+Reach census (round 142): a direct-HLE (BIOS-less) 1800-frame cold-boot sweep
+of 37 commercial SMC images with per-frame callback counters found pending
+callbacks only in Blue Angelo (347 frames, 342 starts, never suspended), and
+no frame in any title where a pending callback coincided with a frame without
+audio output. Long silent runs in Dyhard EU, Rally Pop, Tears, Winter Is and
+Hany Party have no pending callback and come from the titles' own audio state.
+The paused mixing therefore has no measured audible effect; recursive mixing
+stays unimplemented until a title needs it. Evidence:
+`F:/GP32/results/round142/hle-mix-callback/` (`summ.py`, `sweep-*.csv`).
+
 The focused `gp32_callback` regression uses a real PWM IRQ and guest ARM
 scheduler code to save the callback frame, select another SDK task, suspend
 for more than one watchdog interval, save/load, select the callback again,
