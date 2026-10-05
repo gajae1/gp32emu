@@ -6,6 +6,18 @@ performance, audio and input correctness across the library, not boot-only tests
 
 ## Current accepted work
 
+- Round 158-159 (installed `308ebb5`, core sha256 `eaae9686…`):
+  `526a937` LCD observations once per run window and IO dispatch by
+  addr>>20 (LGM +1.1%); `4a00d54` LCDCON5 certified as a run-invariant poll
+  read, so the BIOS VSTATUS wait at 0x2740 is skipped exactly (LGM boot
+  window LCDCON5 reads 14.6M -> 0.32M); `308ebb5` A64 TLB EOR fold and pair
+  self-loop fence (hot bytes -6..-9%; H700 ABBA LGM 70.43 -> 72.04, Blue
+  81.80 -> 83.97, Princess 116.52 -> 115.77). H700 frame times at `308ebb5`:
+  LGM 71.6 fps p50 21.2 / p99 22.3 / max 25.8 ms (712/1200 over 16.67, none
+  over 33.3), LGM boot window 75.7 p99 22.5, Princess 115.6 p99 9.3, ASR
+  208.3 p99 13.6 (3 over), Her 182.9 p99 6.6, Blue 83.6 p99 20.6 (5 over).
+  Since round 153: LGM 60.7 -> 71.6 (+18%), Blue 75.0 -> 83.6, Princess
+  111.9 -> 115.6, ASR 198.6 -> 208.3, Her 172.5 -> 182.9 fps.
 - `3a5362a` (round 157): A64 shared block epilogue, cold LDM/STM page retry,
   single 64-bit TLB pair load; hot bytes/block -21..-28%. H700 ABBA identical
   output: LGM 67.16 -> 67.65, Blue 80.35 -> 81.50, Princess 113.90 -> 115.76.
