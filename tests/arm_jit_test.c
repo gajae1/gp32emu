@@ -3777,20 +3777,21 @@ static void case_cache_maintenance_native(void) {
  * ragged budgets elsewhere, and an instruction-at-a-time reference here.
  * On A64 the profile must also prove that whole-op dispatch was removed. */
 static void case_checked_access(void) {
-    /* dir: 0 = halfword helper (no single counters), 1 = single load, 2 = single store */
-    const struct { uint32_t insn; unsigned effect; uint32_t base; unsigned dir; } cases[] = {
-        {0xe4942004u, 1u, IO_ADDR, 1u},       /* LDR post / SoC yield */
-        {0xe4d42004u, 2u, IO_ADDR, 1u},       /* LDRB post / redirected PC */
-        {0xe0d420f4u, 3u, IO_ADDR, 0u},       /* LDRSH post / NZCV change */
-        {0xe5d42000u, 4u, IO_ADDR, 1u},       /* LDRB / Thumb change */
-        {0xe7a42081u, 5u, IO_ADDR, 2u},       /* STR shifted offset! / flush */
-        {0xe5642001u, 6u, IO_ADDR + 1u, 2u},  /* STRB negative offset! / disable */
-        {0xe0c420b4u, 7u, IO_ADDR, 0u},       /* STRH post / trace */
-        {0xe13440b1u, 8u, IO_ADDR + 2u, 0u},  /* LDRH r4,[r4,-r1]! / Rd==Rn */
-        {0xe1d420d0u, 9u, IO_ADDR, 0u},       /* LDRSB / FIQ */
-        {0xe5942000u, 0u, IO_ADDR + 1u, 1u},  /* unaligned word / rotate */
-        {0xe0d420b4u, 1u, IO_ADDR, 0u},       /* LDRH post / yield */
-        {0xe4842004u, 1u, IO_ADDR, 2u},       /* STR post / yield */
+    /* dir: 0 = halfword helper (no single counters), 1 = single load, 2 = single store;
+     * direct: 1 = word transfer the A64 direct identity-I/O path owns. */
+    const struct { uint32_t insn; unsigned effect; uint32_t base; unsigned dir; unsigned direct; } cases[] = {
+        {0xe4942004u, 1u, IO_ADDR, 1u, 1u},       /* LDR post / SoC yield */
+        {0xe4d42004u, 2u, IO_ADDR, 1u, 0u},       /* LDRB post / redirected PC */
+        {0xe0d420f4u, 3u, IO_ADDR, 0u, 0u},       /* LDRSH post / NZCV change */
+        {0xe5d42000u, 4u, IO_ADDR, 1u, 0u},       /* LDRB / Thumb change */
+        {0xe7a42081u, 5u, IO_ADDR, 2u, 1u},       /* STR shifted offset! / flush */
+        {0xe5642001u, 6u, IO_ADDR + 1u, 2u, 0u},  /* STRB negative offset! / disable */
+        {0xe0c420b4u, 7u, IO_ADDR, 0u, 0u},       /* STRH post / trace */
+        {0xe13440b1u, 8u, IO_ADDR + 2u, 0u, 0u},  /* LDRH r4,[r4,-r1]! / Rd==Rn */
+        {0xe1d420d0u, 9u, IO_ADDR, 0u, 0u},       /* LDRSB / FIQ */
+        {0xe5942000u, 0u, IO_ADDR + 1u, 1u, 1u},  /* unaligned word / rotate */
+        {0xe0d420b4u, 1u, IO_ADDR, 0u, 0u},       /* LDRH post / yield */
+        {0xe4842004u, 1u, IO_ADDR, 2u, 1u},       /* STR post / yield */
     };
     for (unsigned i = 0; i < GP32_ARRAY_COUNT(cases); ++i) {
         current_case = "checked-access";
@@ -3833,17 +3834,30 @@ static void case_checked_access(void) {
         gp32_cpu_profile_t profile;
         arm920t_get_cpu_profile(cpu_jit, &profile);
         if (profile.supported && profile.native_backend == 2u) {
+            const uint64_t access_helpers =
+                profile.helper_ld_word + profile.helper_ld_byte + profile.helper_ld_half +
+                profile.helper_ld_sbyte + profile.helper_ld_shalf + profile.helper_st_word +
+                profile.helper_st_byte + profile.helper_st_half;
             CHECK(profile.native_block_calls != 0u, "checked-access native coverage");
-            CHECK(profile.helper_ld_word + profile.helper_ld_byte + profile.helper_ld_half +
-                  profile.helper_ld_sbyte + profile.helper_ld_shalf + profile.helper_st_word +
-                  profile.helper_st_byte + profile.helper_st_half == 1u,
-                  "checked-access fixture must reach one access helper");
             CHECK(profile.helper_op_kinds[5u] == 0u && profile.helper_op_kinds[6u] == 0u,
                   "checked access avoids whole-op HALF/SINGLE_DT dispatch");
-            if (cases[i].dir) {
-                /* mem/ldword helpers bypass exec_classified but must keep the
-                 * same attribution: MMU is off so the probe always hits, and
-                 * the IO window lands on the non-RAM counter and its record. */
+            if (cases[i].direct) {
+                /* Word transfers whose RAM guard failed take the direct
+                 * identity-I/O path: the bus observation above already proved
+                 * the one real access, so no access helper and no slow-reason
+                 * probe may be entered for it. */
+                CHECK(access_helpers == 0u, "direct I/O word path bypasses the access helpers");
+                CHECK(profile.slow_bail_single_tlbmiss == 0u &&
+                      profile.slow_bail_single_nonram == 0u &&
+                      profile.single_nonram_regions[IO_ADDR >> 24] == 0u,
+                      "direct I/O word path is not attributed as a slow bail");
+                CHECK(profile.native_arm_insns != 0u, "direct I/O word path runs native code");
+            } else if (cases[i].dir) {
+                /* Byte transfers keep the checked single-transfer helper and
+                 * its pre-access attribution: MMU is off so the probe always
+                 * hits, and the IO window lands on the non-RAM counter and its
+                 * record. */
+                CHECK(access_helpers == 1u, "checked byte access reaches one access helper");
                 CHECK(profile.slow_bail_single_tlbmiss == 0u &&
                       profile.slow_bail_single_nonram == 1u &&
                       profile.single_nonram_regions[IO_ADDR >> 24] == 1u,
@@ -3856,6 +3870,7 @@ static void case_checked_access(void) {
             } else {
                 /* Halfword ops share the checked helper but are never single
                  * transfers; only the generic bail reason may advance. */
+                CHECK(access_helpers == 1u, "checked halfword access reaches one access helper");
                 CHECK(profile.slow_bail_single_nonram == 0u &&
                       profile.single_nonram_regions[IO_ADDR >> 24] == 0u &&
                       (profile.single_nonram_addresses[0].reads |
@@ -3910,6 +3925,24 @@ static void case_physical_access_once(void) {
                 if (op < 2u) CHECK(ref_reg(1u) == (op ? 0x80u : 0x8877ff80u), "physical load value");
                 else CHECK(bus_jit.mem_value == bus_ref.mem_value &&
                            bus_ref.mem_value == (op == 3u ? 0x78u : 0x12345678u), "physical store value");
+                gp32_cpu_profile_t profile;
+                arm920t_get_cpu_profile(cpu_jit, &profile);
+                if (native && profile.supported && profile.native_backend == 2u) {
+                    /* 0x13000000 is outside the identity-I/O window, so even the
+                     * word transfers keep the checked helper and the
+                     * attribution the emitted gates always produced.  The
+                     * translation itself runs inside that helper (after this
+                     * read-only classifier), so a cold TLB entry stays the
+                     * first failing guard: the TLB-miss counter advances, no
+                     * non-RAM record may appear, and no direct bus call may
+                     * take the access over. */
+                    CHECK(profile.slow_bail_single_tlbmiss == 1u &&
+                          profile.slow_bail_single_nonram == 0u &&
+                          profile.single_nonram_regions[pa >> 24] == 0u,
+                          "non-I/O physical access keeps the checked slow path");
+                    CHECK(profile.helper_ld_word + profile.helper_st_word ==
+                          ((op & 1u) == 0u ? 1u : 0u), "non-I/O word access helper attribution");
+                }
                 teardown_pair();
             }
         }
@@ -4032,6 +4065,221 @@ static void case_live_read32(void) {
     }
 }
 
+
+/* Direct identity-I/O word path (A64): after the RAM guard rejects the
+ * address the emitter proves the current full-mask TLB entry (MMU on) or the
+ * identity mapping (MMU off) plus the physical 0x14000000..0x16000000 window,
+ * and the bus callback, the register commits and the exit condition stay with
+ * the dedicated helper.  Word LDR/STR with pre/post index and writeback must
+ * observe exactly one bus access at the proven physical address with the
+ * callback-visible PC+4 and the pre-writeback base, run entirely native, and
+ * still leave the block when the callback raises an IRQ. */
+static void case_io_direct_word(void) {
+    const struct { uint32_t insn; unsigned wb; unsigned off; } cases[] = {
+        {0xe5942000u, 0u, 0u}, /* LDR r2,[r4] */
+        {0xe5b42004u, 1u, 4u}, /* LDR r2,[r4,#4]! */
+        {0xe4942004u, 1u, 0u}, /* LDR r2,[r4],#4 */
+        {0xe5842000u, 0u, 0u}, /* STR r2,[r4] */
+        {0xe5a42004u, 1u, 4u}, /* STR r2,[r4,#4]! */
+        {0xe4842004u, 1u, 0u}, /* STR r2,[r4],#4 */
+        {0xe7842081u, 0u, 4u}, /* STR r2,[r4,r1,lsl #1] with r1=2 */
+    };
+    const uint32_t va = 0x10008000u;
+    const uint32_t masks[] = {0xfffu, 0x3ffu}; /* 4 KiB small page and 1 KiB tiny page */
+    for (unsigned mmu = 0; mmu < 2u; ++mmu) {
+        unsigned variants = mmu ? GP32_ARRAY_COUNT(masks) : 1u;
+        for (unsigned v = 0; v < variants; ++v) {
+            for (unsigned i = 0; i < GP32_ARRAY_COUNT(cases); ++i) {
+                const int load = (cases[i].insn & (1u << 20)) != 0u;
+                const uint32_t base = mmu ? va : IO_ADDR;
+                const uint32_t pa = IO_ADDR + cases[i].off;
+                const char *map = mmu ? (v ? "tiny" : "mapped") : "identity";
+                const char *shape = load ? (cases[i].wb ? "ldr-wb" : "ldr")
+                                         : (cases[i].wb ? "str-wb" : "str");
+                char name[64];
+                snprintf(name, sizeof(name), "io-direct-word-%s-%s", map, shape);
+                current_case = name;
+                setup_pair();
+                arm920t_set_trace(cpu_ref, 1, NULL, NULL); /* instruction-at-a-time oracle */
+                const uint32_t program[] = {cases[i].insn, 0xe3a06001u, 0xeafffffeu};
+                load_both(program, GP32_ARRAY_COUNT(program));
+                if (mmu) {
+                    /* BIOS code page plus the mapped data page under test. */
+                    arm920t_state_image_t *state = calloc(1, sizeof(*state));
+                    if (!state) exit(2);
+                    state->r[15] = CODE_ADDR; state->cpsr = 0x13u; state->cp15[1] = 1u;
+                    state->tlb_valid[0] = 1; state->tlb_mask[0] = 0xfffu;
+                    unsigned idx = (va >> 12) & 0xfffu;
+                    state->tlb_valid[idx] = 1; state->tlb_mask[idx] = masks[v];
+                    state->tlb_va_base[idx] = va & ~masks[v]; state->tlb_pa_base[idx] = IO_ADDR;
+                    arm920t_state_apply(cpu_ref, state); arm920t_state_apply(cpu_jit, state);
+                    free(state);
+                    arm920t_set_jit(cpu_jit, 1);
+                }
+                set_reg_both(1u, 2u); set_reg_both(2u, 0x12345678u); set_reg_both(4u, base);
+                bus_jit.observe_cpu = cpu_jit; bus_ref.observe_cpu = cpu_ref;
+                bus_jit.mem_probe = bus_ref.mem_probe = 1u;
+                CHECK(arm920t_run(cpu_jit, 32u) == arm920t_run(cpu_ref, 32u), "io-direct budget");
+                compare_state();
+                CHECK(bus_jit.mem_calls == 1u && bus_ref.mem_calls == 1u, "io-direct one bus access");
+                CHECK(bus_ref.mem_addr == pa && bus_jit.mem_addr == pa,
+                      "io-direct access at the proven physical address");
+                CHECK(bus_jit.mem_pc == CODE_ADDR + 4u && bus_ref.mem_pc == CODE_ADDR + 4u,
+                      "io-direct callback PC+4");
+                CHECK(bus_jit.mem_base == base && bus_ref.mem_base == base,
+                      "io-direct pre-writeback base");
+                if (load) CHECK(ref_reg(2u) == 0x8877ff80u, "io-direct loaded callback value");
+                else CHECK(bus_jit.mem_value == 0x12345678u && bus_ref.mem_value == 0x12345678u,
+                           "io-direct store source");
+                CHECK(ref_reg(4u) == (cases[i].wb ? base + 4u : 0x12345678u),
+                      "io-direct writeback and callback register mutation");
+                gp32_cpu_profile_t profile;
+                arm920t_get_cpu_profile(cpu_jit, &profile);
+                if (profile.supported && profile.native_backend == 2u) {
+                    CHECK(profile.native_block_calls != 0u, "io-direct native coverage");
+                    CHECK(profile.helper_ld_word == 0u && profile.helper_st_word == 0u &&
+                          profile.helper_ld_byte == 0u && profile.helper_st_byte == 0u,
+                          "io-direct word path bypasses the access helpers");
+                    CHECK(profile.slow_bail_single_nonram == 0u && profile.slow_bail_single_tlbmiss == 0u,
+                          "io-direct word path is not attributed as a slow bail");
+                }
+                printf("io-direct %s %s insn=%08" PRIx32 " addr=%08" PRIx32 " wb=%08" PRIx32 " r2=%08" PRIx32 "\n",
+                       map, shape, cases[i].insn, bus_jit.mem_addr,
+                       arm920t_get_reg(cpu_jit, 4u), arm920t_get_reg(cpu_jit, 2u));
+                teardown_pair();
+            }
+        }
+    }
+    {
+        /* A cold TLB entry must keep the checked helper for the same shape,
+         * with its pre-access attribution intact. */
+        const uint32_t program[] = {0xe5942000u, 0xe3a06001u, 0xeafffffeu};
+        current_case = "io-direct-cold-tlb";
+        setup_pair();
+        arm920t_set_trace(cpu_ref, 1, NULL, NULL);
+        load_both(program, GP32_ARRAY_COUNT(program));
+        arm920t_state_image_t *state = calloc(1, sizeof(*state));
+        if (!state) exit(2);
+        state->r[15] = CODE_ADDR; state->cpsr = 0x13u; state->cp15[1] = 1u;
+        state->tlb_valid[0] = 1; state->tlb_mask[0] = 0xfffu;
+        arm920t_state_apply(cpu_ref, state); arm920t_state_apply(cpu_jit, state);
+        free(state);
+        arm920t_set_jit(cpu_jit, 1);
+        set_reg_both(2u, 0x12345678u); set_reg_both(4u, va);
+        bus_jit.observe_cpu = cpu_jit; bus_ref.observe_cpu = cpu_ref;
+        bus_jit.mem_probe = bus_ref.mem_probe = 1u;
+        CHECK(arm920t_run(cpu_jit, 32u) == arm920t_run(cpu_ref, 32u), "io-direct cold TLB budget");
+        compare_state();
+        CHECK(bus_jit.mem_calls == 1u && bus_ref.mem_calls == 1u && bus_ref.mem_addr == va,
+              "cold TLB keeps one checked access");
+        gp32_cpu_profile_t profile;
+        arm920t_get_cpu_profile(cpu_jit, &profile);
+        if (profile.supported && profile.native_backend == 2u) {
+            CHECK(profile.slow_bail_single_tlbmiss == 1u && profile.slow_bail_single_nonram == 0u,
+                  "cold TLB keeps the checked slow-reason attribution");
+            CHECK(profile.helper_ld_word == 1u, "cold TLB keeps the checked access helper");
+        }
+        printf("io-direct cold-tlb addr=%08" PRIx32 " r2=%08" PRIx32 "\n",
+               bus_jit.mem_addr, arm920t_get_reg(cpu_jit, 2u));
+        teardown_pair();
+    }
+    {
+        /* A live TLB entry whose physical target is outside the identity-I/O
+         * window must be rejected by the direct probe: the checked helper owns
+         * the bus access and the accessible mapping also reaches the non-RAM
+         * attribution, so the window rejection is exercised with a proven
+         * mapping instead of a cold entry. */
+        const uint32_t insns[] = {0xe5942000u, 0xe5842000u}; /* LDR r2,[r4]; STR r2,[r4] */
+        const uint32_t va = 0x10008000u, pa = 0x13000000u;
+        for (unsigned i = 0; i < GP32_ARRAY_COUNT(insns); ++i) {
+            const int load = (insns[i] & (1u << 20)) != 0u;
+            current_case = load ? "io-direct-mapped-nonio-ldr" : "io-direct-mapped-nonio-str";
+            setup_pair();
+            arm920t_set_trace(cpu_ref, 1, NULL, NULL);
+            const uint32_t program[] = {insns[i], 0xe3a06001u, 0xeafffffeu};
+            load_both(program, GP32_ARRAY_COUNT(program));
+            arm920t_state_image_t *state = calloc(1, sizeof(*state));
+            if (!state) exit(2);
+            state->r[15] = CODE_ADDR; state->cpsr = 0x13u; state->cp15[1] = 1u;
+            state->tlb_valid[0] = 1; state->tlb_mask[0] = 0xfffu;
+            unsigned idx = (va >> 12) & 0xfffu;
+            state->tlb_valid[idx] = 1; state->tlb_mask[idx] = 0xfffu;
+            state->tlb_va_base[idx] = va; state->tlb_pa_base[idx] = pa;
+            arm920t_state_apply(cpu_ref, state); arm920t_state_apply(cpu_jit, state);
+            free(state);
+            arm920t_set_jit(cpu_jit, 1);
+            set_reg_both(2u, 0x12345678u); set_reg_both(4u, va);
+            bus_jit.observe_cpu = cpu_jit; bus_ref.observe_cpu = cpu_ref;
+            bus_jit.mem_probe = bus_ref.mem_probe = 1u;
+            CHECK(arm920t_run(cpu_jit, 32u) == arm920t_run(cpu_ref, 32u), "io-direct non-IO budget");
+            compare_state();
+            CHECK(bus_jit.mem_calls == 1u && bus_ref.mem_calls == 1u && bus_ref.mem_addr == pa,
+                  "non-IO mapped target keeps one checked access");
+            gp32_cpu_profile_t profile;
+            arm920t_get_cpu_profile(cpu_jit, &profile);
+            if (profile.supported && profile.native_backend == 2u) {
+                CHECK(profile.helper_ld_word + profile.helper_st_word == 1u &&
+                      profile.slow_bail_single_tlbmiss == 0u,
+                      "non-IO mapped target keeps the checked access helper");
+                CHECK(profile.slow_bail_single_nonram == 1u &&
+                      profile.single_nonram_regions[pa >> 24] == 1u,
+                      "non-IO mapped target keeps the non-RAM attribution");
+            }
+            printf("io-direct mapped non-IO %s insn=%08" PRIx32 " addr=%08" PRIx32 " r2=%08" PRIx32 "\n",
+                   load ? "ldr" : "str", insns[i], bus_jit.mem_addr, arm920t_get_reg(cpu_jit, 2u));
+            teardown_pair();
+        }
+    }
+    {
+        /* A store that raises an IRQ inside the callback must leave the block
+         * after the committed transfer and writeback, exactly as the checked
+         * path does. */
+        const uint32_t handler[] = {
+            0xe5896000u, /* STR r6,[r9]: capture state before the next guest MOV */
+            0xe5883000u, /* STR r3,[r8]: acknowledge IRQ */
+            0xe25ef004u, /* SUBS pc,lr,#4: resume after the transfer */
+        };
+        const uint32_t program[] = {0xe4842004u, 0xe3a06001u, 0xeafffffeu};
+        current_case = "io-direct-irq-write";
+        setup_pair();
+        arm920t_set_trace(cpu_ref, 1, NULL, NULL);
+        load_both(program, GP32_ARRAY_COUNT(program));
+        for (unsigned i = 0; i < GP32_ARRAY_COUNT(handler); ++i)
+            set_mem_both(0x18u + 4u * i, handler[i]);
+        set_mem_both(DATA_ADDR, 0xdeadbeefu);
+        set_reg_both(2u, 0x12345678u);
+        set_reg_both(4u, IO_ADDR);
+        set_reg_both(8u, IO_ADDR + 4u);
+        set_reg_both(9u, DATA_ADDR);
+        arm920t_set_cpsr(cpu_jit, 0x1fu); arm920t_set_cpsr(cpu_ref, 0x1fu);
+        bus_jit.observe_cpu = cpu_jit; bus_ref.observe_cpu = cpu_ref;
+        bus_jit.io_raise_at = bus_ref.io_raise_at = 1u;
+        CHECK(arm920t_run(cpu_jit, 32u) == arm920t_run(cpu_ref, 32u), "io-direct IRQ budget");
+        compare_state();
+        CHECK(gp32_ld32le(bus_ptr(&bus_ref, DATA_ADDR, 4u)) == 0u &&
+              gp32_ld32le(bus_ptr(&bus_jit, DATA_ADDR, 4u)) == 0u,
+              "IRQ handler runs before the following MOV");
+        CHECK(arm920t_get_reg(cpu_jit, 4u) == IO_ADDR + 4u && ref_reg(4u) == IO_ADDR + 4u,
+              "writeback commits once before the IRQ");
+        CHECK(bus_jit.io_count == 1u && bus_ref.io_count == 1u &&
+              bus_jit.io_acks == 1u && bus_ref.io_acks == 1u, "one store and one IRQ acknowledge");
+        CHECK(bus_jit.io_pc[0] == CODE_ADDR + 4u && bus_ref.io_pc[0] == CODE_ADDR + 4u,
+              "IRQ write observes PC+4");
+        CHECK(ref_reg(6u) == 1u && arm920t_get_pc(cpu_ref) == CODE_ADDR + 8u,
+              "IRQ returns after the committed store");
+        gp32_cpu_profile_t profile;
+        arm920t_get_cpu_profile(cpu_jit, &profile);
+        if (profile.supported && profile.native_backend == 2u) {
+            CHECK(profile.helper_st_word == 0u && profile.slow_bail_single_nonram == 0u,
+                  "direct IRQ write bypasses the checked helper");
+        }
+        printf("io-direct irq-write pc=%08" PRIx32 " wb=%08" PRIx32 " captured=%08" PRIx32 "\n",
+               bus_jit.io_pc[0], arm920t_get_reg(cpu_jit, 4u),
+               gp32_ld32le(bus_ptr(&bus_jit, DATA_ADDR, 4u)));
+        teardown_pair();
+    }
+}
+
 int main(int argc, char **argv) {
     /* Native gate triage can isolate this mapped physical-boundary case
      * without rerunning unrelated differential workloads. */
@@ -4048,6 +4296,7 @@ int main(int argc, char **argv) {
     int portable_only = argc == 2 && !strcmp(argv[1], "--portable-callback");
     int pairs_only = argc == 2 && !strcmp(argv[1], "--block-pairs");
     int access_only = argc == 2 && !strcmp(argv[1], "--checked-access");
+    int io_only = argc == 2 && !strcmp(argv[1], "--io-direct");
     int poll_only = argc == 2 && !strcmp(argv[1], "--poll-progress");
     int psr_only = argc == 2 && !strcmp(argv[1], "--psr");
     int terminal_coproc_only = argc == 2 && !strcmp(argv[1], "--terminal-coproc");
@@ -4055,6 +4304,7 @@ int main(int argc, char **argv) {
         case_native_sflag_logic();
     } else if (argc == 2 && !strcmp(argv[1], "--live-read32")) {
         case_live_read32();
+        case_io_direct_word();
     } else if (argc == 2 && !strcmp(argv[1], "--ram-page-tags")) {
         case_native_mapped_pages();
         case_native_mmu_mode_changes();
@@ -4090,6 +4340,8 @@ int main(int argc, char **argv) {
         case_terminal_coproc_predicate();
     } else if (poll_only) {
         case_poll_progress();
+    } else if (io_only) {
+        case_io_direct_word();
     } else if (access_only) {
         case_checked_access();
         case_checked_access_translation();
@@ -4140,6 +4392,7 @@ int main(int argc, char **argv) {
         case_native_mapped_ram_end();
     } else {
     case_live_read32();
+    case_io_direct_word();
     case_terminal_swi_yield();
     case_terminal_coproc_predicate();
     case_native_ldm_pc();
@@ -4220,7 +4473,7 @@ int main(int argc, char **argv) {
            (argc == 2 && !strcmp(argv[1], "--ldm-pc-native")) ? "ldm-pc-native" :
            (argc == 2 && !strcmp(argv[1], "--psr-blocks")) ? "psr-blocks" :
            (argc == 2 && !strcmp(argv[1], "--cpsr")) ? "cpsr" :
-           (argc == 2 && !strcmp(argv[1], "--carry-arith")) ? "carry-arith" : psr_only ? "spsr" : poll_only ? "poll-progress" : access_only ? "checked-access" : pairs_only ? "block-pairs/fences" : portable_only ? "portable-callback" : block_only ? "block-callback" : irq_only ? "callback-IRQ" : chain_only ? "branch-chain" : forward_only ? "forward-loop" : callback_only ? "callback-PC" : (leaf_only ? "unframed-leaf" : (ram_end_only ? "mapped-page-RAM-end" : (loops_only ? "loop-fences" : "flags/shift/branch/mem/half/block/mul/seeded/budget/loop-fences"))),
+           (argc == 2 && !strcmp(argv[1], "--carry-arith")) ? "carry-arith" : psr_only ? "spsr" : poll_only ? "poll-progress" : io_only ? "io-direct" : access_only ? "checked-access" : pairs_only ? "block-pairs/fences" : portable_only ? "portable-callback" : block_only ? "block-callback" : irq_only ? "callback-IRQ" : chain_only ? "branch-chain" : forward_only ? "forward-loop" : callback_only ? "callback-PC" : (leaf_only ? "unframed-leaf" : (ram_end_only ? "mapped-page-RAM-end" : (loops_only ? "loop-fences" : "flags/shift/branch/mem/half/block/mul/seeded/budget/loop-fences"))),
            jit_events, jit_fallbacks);
     return 0;
 }
