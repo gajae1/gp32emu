@@ -144,6 +144,50 @@ static int check_swi5_place_image(uint32_t scratch, uint32_t rom_start) {
     return ok;
 }
 
+/* A packed hand-off arrives with the image still at its scratch address, so the
+ * initialised RW data and the ZI window only exist behind the ROM window inside
+ * the blob. Firmware ROM 0x64c8 moves the data and clears the window; the
+ * hand-off has to do the same or the title runs with a zeroed .data/bss. */
+static int check_swi5_scatter_rw_and_zi(void) {
+    gp32_t *g = gp32_create(NULL);
+    if (!g) return 0;
+    direct_set_fxe_mode(g, 1u);
+    const uint32_t scratch = GP32_RAM_BASE + 0x8000u;
+    const uint32_t rom_start = GP32_RAM_BASE + 0x100u;
+    const uint32_t size_word = scratch;
+    const uint32_t hdr = scratch + 4u;
+    const uint32_t rom_size = 0x100u;
+    const uint32_t image_end = rom_start + rom_size;
+    const uint32_t rw_end = image_end + 0x40u;
+    const uint32_t zi_end = rw_end + 0x80u;
+    s3c2400_write32(g->soc, size_word, rom_size + 0x40u);
+    s3c2400_write32(g->soc, hdr + 0x00u, 0xea000006u);
+    s3c2400_write32(g->soc, hdr + 0x04u, rom_start);
+    s3c2400_write32(g->soc, hdr + 0x08u, image_end);
+    s3c2400_write32(g->soc, hdr + 0x0cu, image_end);
+    s3c2400_write32(g->soc, hdr + 0x10u, zi_end);
+    s3c2400_write32(g->soc, hdr + 0x14u, rw_end);
+    s3c2400_write32(g->soc, hdr + 0x18u, zi_end);
+    for (uint32_t i = 0; i < 8u; ++i) s3c2400_write32(g->soc, hdr + 0x20u + i * 4u, 0xe1a00000u + i);
+    /* The decruncher leaves the initialised RW data right behind the ROM window. */
+    for (uint32_t i = 0; i < 0x40u; i += 4u) s3c2400_write32(g->soc, hdr + rom_size + i, 0xdead0000u + i);
+    /* Poison both destination windows so the move and the clear are visible. */
+    for (uint32_t i = 0; i < zi_end - image_end; i += 4u) s3c2400_write32(g->soc, image_end + i, 0xffffffffu);
+    arm920t_set_reg(g->cpu, 0, size_word);
+    arm920t_set_reg(g->cpu, 1, 0u);
+    int ok = direct_fxe_swi(g, g->cpu, 0x05u, rom_start + 0x400u, 0) &&
+             arm920t_get_reg(g->cpu, 15) == rom_start &&
+             s3c2400_debug_read32(g->soc, rom_start) == 0xea000006u &&
+             s3c2400_debug_read32(g->soc, rom_start + 0x24u) == 0xe1a00001u &&
+             s3c2400_debug_read32(g->soc, image_end) == 0xdead0000u &&
+             s3c2400_debug_read32(g->soc, rw_end - 4u) == 0xdead003cu &&
+             s3c2400_debug_read32(g->soc, rw_end) == 0u &&
+             s3c2400_debug_read32(g->soc, zi_end - 4u) == 0u;
+    gp32_destroy(g);
+    if (!ok) fputs("FAIL: SWI #5 hand-off leaves the RW data and ZI window behind\n", stderr);
+    return ok;
+}
+
 static int check_zip_entry_name(const char *path) {
     const uint8_t payload[] = {0x12, 0x34, 0x56, 0x78};
     const char *name = "a.../game.gxb";
@@ -164,6 +208,7 @@ int main(int argc, char **argv) {
     /* Overlapping copy in both directions: destination below and above source. */
     if (!check_swi5_place_image(GP32_RAM_BASE + 0x100u, GP32_RAM_BASE + 0x80u)) return 1;
     if (!check_swi5_place_image(GP32_RAM_BASE + 0x100u, GP32_RAM_BASE + 0x140u)) return 1;
+    if (!check_swi5_scatter_rw_and_zi()) return 1;
     if (argc > 1 && !check_zip_entry_name(argv[1])) return 1;
     if (!check_card_query()) return 1;
     if (!check_open(GP32_RAM_BASE + 0x200u) || !check_open(GP32_RAM_BASE + 0x2400u)) {

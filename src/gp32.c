@@ -3138,15 +3138,27 @@ static int direct_resume_ready_sdk_task(gp32_t *g, uint32_t pc, uint32_t first_t
  * Without that step the image stays at the scratch address while every
  * absolute address it contains still describes the relocated layout, so the
  * guest starts executing whatever the scratch address happened to hold and
- * leaves RAM.  Copy the declared ROM window in place (the two windows
- * overlap, so the direction follows memmove rules) and report the header's
- * new address.  Returns 0 when the header is absent or the declared window is
- * not usable, in which case the caller keeps the unrelocated image. */
+ * leaves RAM.  Place it exactly as firmware ROM 0x64c8 (the routine the SWI 5
+ * service at ROM 0x2298 calls) places it, in three steps:
+ *   1. move the declared ROM window [hdr, hdr + (hdr[+8] - hdr[+4])) to hdr[+4],
+ *   2. move the initialised RW data the decruncher left directly behind that
+ *      window to hdr[+12], for hdr[+20] - hdr[+12] bytes,
+ *   3. clear the declared ZI window [hdr[+20], hdr[+24]).
+ * Steps 2 and 3 are what make a hand-off work at all: the image is still at its
+ * scratch address when it arrives, so its .data and .bss exist nowhere else
+ * yet.  Both overlapping moves follow memmove rules.  The field offsets are the
+ * ones that firmware routine reads; they agree with the GXB headers in the
+ * corpus, where hdr[+16] and hdr[+24] are always equal.  Returns 0 when the
+ * header is absent or the declared window is not usable, in which case the
+ * caller keeps the unrelocated image. */
 static int direct_gxb_place_image(gp32_t *g, uint32_t hdr, uint32_t *out_hdr) {
     uint32_t ram_end = GP32_RAM_BASE + (uint32_t)s3c2400_ram_size(g->soc);
-    if (!direct_ram_range(g, hdr, 0x0cu)) return 0;
+    if (!direct_ram_range(g, hdr, 0x20u)) return 0;
     uint32_t rom_start = s3c2400_debug_read32(g->soc, hdr + 4u);
     uint32_t rom_end = s3c2400_debug_read32(g->soc, hdr + 8u);
+    uint32_t rw_base = s3c2400_debug_read32(g->soc, hdr + 12u);
+    uint32_t rw_limit = s3c2400_debug_read32(g->soc, hdr + 20u);
+    uint32_t zi_limit = s3c2400_debug_read32(g->soc, hdr + 24u);
     if (rom_start == hdr) { *out_hdr = hdr; return 1; }
     if (rom_start < GP32_RAM_BASE || rom_start >= ram_end) return 0;
     if (rom_end <= rom_start || rom_end > ram_end) return 0;
@@ -3157,6 +3169,16 @@ static int direct_gxb_place_image(gp32_t *g, uint32_t hdr, uint32_t *out_hdr) {
     } else {
         for (uint32_t i = size; i-- > 0u; ) s3c2400_write8(g->soc, rom_start + i, s3c2400_read8(g->soc, hdr + i));
     }
+    uint32_t rw_size = (rw_limit > rw_base) ? (rw_limit - rw_base) : 0u;
+    uint32_t rw_src = hdr + size;
+    if (rw_size && direct_ram_range(g, rw_src, rw_size) && direct_ram_range(g, rw_base, rw_size)) {
+        if (rw_base <= rw_src || rw_base >= rw_src + rw_size) {
+            for (uint32_t i = 0; i < rw_size; ++i) s3c2400_write8(g->soc, rw_base + i, s3c2400_read8(g->soc, rw_src + i));
+        } else {
+            for (uint32_t i = rw_size; i-- > 0u; ) s3c2400_write8(g->soc, rw_base + i, s3c2400_read8(g->soc, rw_src + i));
+        }
+    }
+    if (zi_limit > rw_limit) direct_zero_if_ram(g, rw_limit, zi_limit - rw_limit);
     *out_hdr = rom_start;
     return 1;
 }
@@ -3543,8 +3565,8 @@ static int direct_fxe_swi(void *user, arm920t_t *cpu, uint32_t imm, uint32_t pc,
                 if (!w0_branch) target += 4u;
                 uint32_t placed = target;
                 if (direct_gxb_place_image(g, target, &placed)) {
-                    /* The declared rom_start window was just rewritten under the
-                       block cache, so drop every translated block. */
+                    /* The declared windows (ROM, RW and ZI) were just rewritten
+                       under the block cache, so drop every translated block. */
                     arm920t_flush_jit(cpu);
                     target = placed;
                 }
