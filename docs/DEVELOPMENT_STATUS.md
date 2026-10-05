@@ -19,6 +19,15 @@ performance, audio and input correctness across the library, not boot-only tests
   bytes, rare paths moved to cold functions). On top of `8d781e0` it retired
   +0.7% instructions with unchanged L1I refills and lost ~2% (67.2 -> 65.9).
   Evidence `F:/GP32/results/round156/w-disp/`.
+- Round 157 H700 frame times at `607480c` (installed, core sha256
+  `871243e0…`): LGM 65.7 fps p50 22.1 / p99 23.2 ms (still 715/1200 over
+  16.67 ms; heavy frames need ~1.33x more), Blue 77.9 p99 21.5 (6 over),
+  ASR 194.5 p99 15.2 (5 over), Princess 108.8 p99 9.6, Her 173.1 p99 7.1.
+- Rejected (round 157): `-ffunction-sections` plus an lld symbol ordering
+  file placing the hot C helpers next to `arm920t_run`. L1I refills fell 7%
+  (0.957e9 -> 0.891e9) but fps moved only 66.78 -> 66.95 (+0.3%); the zig
+  driver also rejects `--symbol-ordering-file`, so it would need a custom link
+  step. Evidence `F:/GP32/results/round157/` (order.txt, link.py).
 - H700 PMU (round 156, `perf_event_open` user-only, LGM 2400+1200 frames,
   HEAD): cpu_cycles 58.57e9, inst_retired 44.49e9 (IPC 0.76), L1I refills
   1.253e9 (one per 35 instructions), branch mispredicts 0.18e9, L1D refills
