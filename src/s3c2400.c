@@ -1224,7 +1224,7 @@ uint8_t s3c2400_read8(void *user, uint32_t addr) {
 uint16_t s3c2400_read16(void *user, uint32_t addr) { uint16_t v=(uint16_t)s3c2400_read8(user,addr); v|=(uint16_t)s3c2400_read8(user,addr+1u)<<8; return v; }
 uint32_t s3c2400_read32(void *user, uint32_t addr) {
     s3c2400_t *s=(s3c2400_t*)user;
-    if (addr+3u < BIOS_SIZE) return gp32_ld32le(&s->bios[addr]);
+    if (addr < BIOS_SIZE - 3u) return gp32_ld32le(&s->bios[addr]);
     uint8_t *p=ram_ptr(s,addr,4); if(p) return gp32_ld32le(p);
     if ((addr & 3u)==0) {
         if (addr == 0x14a00000u) { uint32_t data = s->lcd_regs[0]; uint32_t linecnt = (data & 1u) ? lcd_current_line_count(s) : 0u; return (data & ~0xfffc0000u) | ((linecnt & 0x3ffu) << 18); }
