@@ -2541,6 +2541,14 @@ enum x64_reg32 {
     X64_R12D = 12, X64_R13D = 13, X64_R14D = 14, X64_R15D = 15
 };
 
+/* Hot/cold layout: only the RAM fast path is emitted inline.  Every sequence
+ * the fast path skips (guard handlers, the live-read and identity-I/O probes,
+ * the checked helpers) is recorded while the hot body is emitted and replayed
+ * into a cold area after the block's epilogue, so no fetched hot line carries
+ * cold bytes.  Hot guards branch forward into their own cold chain and every
+ * chain branches back to the hot continuation it was recorded with. */
+struct x64_cold_op;
+
 typedef struct x64_emit {
     uint8_t *b;
     size_t cap;
@@ -2549,7 +2557,26 @@ typedef struct x64_emit {
     uint32_t expected_next, generation, done, guest_pc;
     const arm_live_read32_t *live_read32;
     size_t live_read32_count;
+    struct x64_cold_op *cold; /* deferred cold chains, one per fast-path op */
+    unsigned cold_count, cold_cap;
 } x64_emit_t;
+
+enum x64_cold_kind { X64_COLD_DT = 1, X64_COLD_BLOCK_DT };
+
+/* One deferred cold chain.  The hot body records what to emit and where the
+ * guard branches sit; the chain is written after the block body and ends by
+ * branching back to its continuation.  Nothing here changes what the chain
+ * executes: the op pointer, the continuation and the helper arguments are the
+ * same values the inline emitters used, and the guard branches still leave the
+ * registers exactly as the checked helper expects them.  A terminal chain's
+ * helper retires the block itself and needs no branch back. */
+typedef struct x64_cold_op {
+    const arm_jit_op_t *op;
+    size_t cont; /* hot continuation this chain resumes at */
+    uint32_t done, expected_next, generation;
+    uint8_t kind, terminal, live, probe, nfixup;
+    size_t fixup[8]; /* hot branch sites that enter this chain */
+} x64_cold_op_t;
 
 static int arm_x64_exec_checked(arm920t_t *c, const arm_jit_op_t *op,
                                 uint32_t expected_next, uint32_t generation) {
@@ -2697,6 +2724,39 @@ static void x64_patch32(x64_emit_t *e, size_t at, size_t target) {
         uint32_t v = (uint32_t)(int32_t)rel;
         for (unsigned i = 0; i < 4; ++i) e->b[at + i] = (uint8_t)(v >> (i * 8u));
     } else e->fail = 1;
+}
+
+/* Emit an unconditional branch to an already emitted position.  Unlike the
+ * forward fixups above, a cold chain returns to a continuation behind it, so
+ * the branch is emitted and patched immediately; x64_patch32 covers the whole
+ * temporary block in either direction. */
+static void x64_branch_back(x64_emit_t *e, size_t target) {
+    if (e->fail || target > e->pos) { e->fail = 1; return; }
+    x64_patch32(e, x64_jmp32(e), target);
+}
+
+/* Record one cold chain; the hot body has already reached its continuation. */
+static x64_cold_op_t *x64_cold_open(x64_emit_t *e, const arm_jit_op_t *op,
+                                    uint32_t done, unsigned kind) {
+    if (e->fail || e->cold_count >= e->cold_cap) { e->fail = 1; return NULL; }
+    x64_cold_op_t *c = &e->cold[e->cold_count++];
+    memset(c, 0, sizeof(*c));
+    c->op = op;
+    c->cont = e->pos;
+    c->done = done;
+    c->expected_next = e->expected_next;
+    c->generation = e->generation;
+    c->kind = (uint8_t)kind;
+    return c;
+}
+
+/* Defer one hot branch site to its chain entry (patched when the chain is
+ * emitted).  Overflow is unreachable with the per-emitter fixup counts and
+ * fails closed if a future emitter ever exceeds them. */
+static void x64_cold_fix(x64_emit_t *e, x64_cold_op_t *c, size_t at) {
+    if (e->fail || !c) return;
+    if (c->nfixup >= GP32_ARRAY_COUNT(c->fixup)) { e->fail = 1; return; }
+    c->fixup[c->nfixup++] = at;
 }
 
 static void x64_emit_return_imm(x64_emit_t *e, uint32_t done) {
@@ -3096,14 +3156,6 @@ static void x64_emit_mmu_ram_offset(x64_emit_t *e, unsigned bytes,
     slow[(*nslow)++] = x64_jcc32(e, 0x7);
 }
 
-static void x64_emit_memory_slow(x64_emit_t *e, const arm_jit_op_t *op,
-                             size_t *slow, unsigned nslow) {
-    size_t next = x64_jmp32(e);
-    for (unsigned i = 0; i < nslow; ++i) x64_patch32(e, slow[i], e->pos);
-    x64_emit_call_helper_op(e, op);
-    x64_patch32(e, next, e->pos);
-}
-
 /* Prove the entire aligned RAM span before the first transfer/writeback.
  * Any rejected span executes the whole instruction through the checked helper,
  * so callbacks finish all lanes and writeback before IRQ/flush/disable exits.
@@ -3157,8 +3209,17 @@ static int x64_emit_ram_block_dt(x64_emit_t *e, const arm_jit_op_t *op, uint32_t
         x64_alu_r32_imm(e, 0, X64_EDX, 4u);
     }
     if (w && (!l || !(list & (1u << rn)))) x64_emit_store_arm_reg(e, rn, X64_R9D);
+    /* The fast path is complete: a loaded PC retires the block here, every
+     * other shape falls straight through to the next instruction.  The guard
+     * handlers, the odd-load-PC prechecks and the classified fallback move to
+     * the block's cold area; neither retire exit can fall through and
+     * overwrite the loaded PC with a sequential PC. */
+    x64_cold_op_t *cold = x64_cold_open(e, op, done, X64_COLD_BLOCK_DT);
+    if (cold) {
+        cold->terminal = (uint8_t)(block_pc != 0);
+        for (unsigned i = 0; i < nslow; ++i) x64_cold_fix(e, cold, slow[i]);
+    }
     if (block_pc) {
-        size_t leaf_continue = 0;
         if (op->reserved == 3u || op->reserved == 5u) {
             /* Inlined leaf return. Keep the real stack word and continue only
              * at this trace's decoded successor; any other target leaves the
@@ -3169,15 +3230,8 @@ static int x64_emit_ram_block_dt(x64_emit_t *e, const arm_jit_op_t *op, uint32_t
             size_t matched = x64_jcc32(e, 0x4); /* EQ */
             x64_emit_return_imm(e, done);
             x64_patch32(e, matched, e->pos);
-            leaf_continue = x64_jmp32(e);
         } else x64_emit_return_pc_reg(e, X64_R11D, done);
-        /* Only failed prechecks reach the whole-op helper. Neither exit can
-         * fall through and overwrite the loaded PC with a sequential PC. */
-        for (unsigned i = 0; i < nslow; ++i) x64_patch32(e, slow[i], e->pos);
-        x64_emit_call_helper_op(e, op);
-        x64_emit_return_imm(e, done);
-        if (leaf_continue) x64_patch32(e, leaf_continue, e->pos);
-    } else x64_emit_memory_slow(e, op, slow, nslow);
+    }
     return 1;
 }
 
@@ -3458,45 +3512,44 @@ static int x64_emit_ram_dt(x64_emit_t *e, const arm_jit_op_t *op, uint32_t done)
         x64_alu_r32_imm(e, 4, X64_EAX, ~3u);
         x64_mov_mem_cpu_r32(e, arm_reg_off(15), X64_EAX);
         x64_emit_return_imm(e, done);
-        for (unsigned i = 0; i < nslow; ++i) x64_patch32(e, slow[i], e->pos);
-        x64_emit_call_helper_op(e, op);
-        x64_emit_return_imm(e, done);
+        /* Cold: every rejected span re-executes the whole instruction through
+         * the checked helper and still retires.  No probe can continue, so the
+         * chain is terminal. */
+        x64_cold_op_t *cold = x64_cold_open(e, op, done, X64_COLD_DT);
+        if (cold) {
+            cold->terminal = 1u;
+            for (unsigned i = 0; i < nslow; ++i) x64_cold_fix(e, cold, slow[i]);
+        }
         return 1;
     }
-    size_t leaf_continue = 0;
     if (leaf_return) {
         /* write_r(15) in ARM state: a framed leaf return commits the loaded
          * word with its low bits masked and continues only on the decoded
-         * successor. */
+         * successor; any other target leaves the block.  The matched edge
+         * falls straight through to the hot continuation, which is also where
+         * the recorded cold chain resumes. */
         x64_alu_r32_imm(e, 4, X64_EAX, ~3u);
         x64_mov_mem_cpu_r32(e, arm_reg_off(15), X64_EAX);
         x64_alu_r32_imm(e, 7, X64_EAX, e->expected_next);
         size_t matched = x64_jcc32(e, 0x4); /* EQ */
         x64_emit_return_imm(e, done);
         x64_patch32(e, matched, e->pos);
-        leaf_continue = x64_jmp32(e);
     }
-    /* Cold path: the RAM guard's rejections land here.  A decoded word
-     * transfer with a data destination first gets the same two direct attempts
-     * the AArch64 backend has: the certified live word for an aligned load
-     * without writeback, then the identity-I/O window.  Both prove the same
-     * TLB/mapping and physical-window conditions there and hand every
-     * rejection to the checked whole-op helper below, which also owns bytes,
-     * halfwords, PC destinations and block-exit ops. */
-    int wb = !p || w;
-    size_t next = x64_jmp32(e);
-    for (unsigned i = 0; i < nslow; ++i) x64_patch32(e, slow[i], e->pos);
-    x64_dt_fixup_t fx;
-    fx.ncold = fx.nnext = 0;
-    if (!half && bytes == 4u && rd != 15u && !op->stop) {
-        if (l && !wb && e->live_read32_count <= 8u) x64_emit_live_read32(e, rd, &fx);
-        x64_emit_io_word(e, op, done, &fx);
+    /* The fast path is complete and continues straight into the next
+     * instruction.  Everything below it is recorded for the block's cold
+     * area: the guard handlers, the live-read certificate (the authoritative
+     * TLB is only read there), the direct identity-I/O probe with the address
+     * this instruction already computed, and the checked helper that every
+     * rejection lands on.  Both probes prove the same TLB/mapping and
+     * physical-window conditions the AArch64 backend proves there; the helper
+     * also owns bytes, halfwords, PC destinations and block-exit ops. */
+    int wb = !p || w; /* final base +/- offset, committed after the access */
+    x64_cold_op_t *cold = x64_cold_open(e, op, done, X64_COLD_DT);
+    if (cold) {
+        cold->probe = (uint8_t)(!half && bytes == 4u && rd != 15u && !op->stop);
+        cold->live = (uint8_t)(cold->probe && l && !wb && e->live_read32_count <= 8u);
+        for (unsigned i = 0; i < nslow; ++i) x64_cold_fix(e, cold, slow[i]);
     }
-    for (unsigned i = 0; i < fx.ncold; ++i) x64_patch32(e, fx.cold[i], e->pos);
-    x64_emit_call_helper_op(e, op);
-    for (unsigned i = 0; i < fx.nnext; ++i) x64_patch32(e, fx.next[i], e->pos);
-    x64_patch32(e, next, e->pos);
-    if (leaf_continue) x64_patch32(e, leaf_continue, e->pos);
     return 1;
 }
 
@@ -3719,13 +3772,59 @@ static int x64_emit_one(x64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
     }
 }
 
+/* Replay the recorded cold chains after the block's epilogue, so every line
+ * the RAM fast path walks is free of cold bytes.  A chain is entered only
+ * through its recorded hot branches and resumes at the continuation recorded
+ * with it, which is the point the inline layout fell through to.  The executed
+ * sequence itself is unchanged: the same guard handlers, probes and checked
+ * helpers run, at the same point of the same instruction, with the same
+ * registers and the same continuation.  Host flags never have to survive a
+ * chain by construction: the fast-path ops that open one leave no host flag
+ * live across it (every conditional skip reads CPSR from memory before the
+ * next op) and the chain's final jump preserves them like the inline
+ * fall-through did. */
+static void x64_cold_flush(x64_emit_t *e) {
+    for (unsigned i = 0; i < e->cold_count && !e->fail; ++i) {
+        x64_cold_op_t *c = &e->cold[i];
+        size_t entry = e->pos;
+        for (unsigned j = 0; j < c->nfixup; ++j) x64_patch32(e, c->fixup[j], entry);
+        e->done = c->done;
+        e->expected_next = c->expected_next;
+        e->generation = c->generation;
+        x64_dt_fixup_t fx;
+        fx.ncold = fx.nnext = 0;
+        if (c->kind == X64_COLD_DT) {
+            /* The inline order: certificate, direct identity-I/O attempt, then
+             * the checked helper that every rejection lands on. */
+            if (c->live) x64_emit_live_read32(e, (c->op->insn >> 12) & 15u, &fx);
+            if (c->probe) x64_emit_io_word(e, c->op, c->done, &fx);
+        }
+        for (unsigned j = 0; j < fx.ncold; ++j) x64_patch32(e, fx.cold[j], e->pos);
+        x64_emit_call_helper_op(e, c->op);
+        if (c->terminal) {
+            /* No certificate edge is pending on a terminal chain; the helper
+             * itself retires the block exactly as the inline layout did. */
+            for (unsigned j = 0; j < fx.nnext; ++j) x64_patch32(e, fx.next[j], e->pos);
+            x64_emit_return_imm(e, c->done);
+        } else {
+            /* Certificate hits and the helper's may-continue edge resume the
+             * recorded hot continuation, which sits behind this chain. */
+            for (unsigned j = 0; j < fx.nnext; ++j) x64_patch32(e, fx.next[j], c->cont);
+            x64_branch_back(e, c->cont);
+        }
+    }
+}
+
 static void arm_jit_compile_native(arm920t_t *c, arm_jit_block_t *b) {
     if (!c || !b || !b->count) return;
     uint8_t tmp[ARM_JIT_NATIVE_MAX_BYTES];
+    x64_cold_op_t cold[ARM_JIT_MAX_INSNS];
     x64_emit_t e;
     memset(&e, 0, sizeof(e));
     e.b = tmp;
     e.cap = sizeof(tmp);
+    e.cold = cold;
+    e.cold_cap = ARM_JIT_MAX_INSNS;
     e.mmu = !!(c->cp15[1] & 1u);
     e.generation = b->generation;
     e.live_read32 = c->live_read32;
@@ -3802,6 +3901,7 @@ static void arm_jit_compile_native(arm920t_t *c, arm_jit_block_t *b) {
         x64_mov_mem_cpu_imm(&e, arm_reg_off(15), final_pc);
         x64_emit_return_imm(&e, b->count);
     }
+    x64_cold_flush(&e);
     if (e.fail) return;
     void *dst = arm_jit_code_reserve(c, e.pos);
     if (!dst) return;
