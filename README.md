@@ -134,6 +134,6 @@ From the build directory, include `./` in the core path:
 retroarch -L ./gp32emu_libretro.so "Little Wizard (Europe).smc"
 ```
 
-Supported content extensions are `.smc`, `.fxe`, and `.fpk`. Core options expose JIT, boot mode (`auto`, `require_bios`, or `direct_hle`), LCD persistence, and frame interpolation. Boot mode defaults to `auto`, which uses `gp32166m.bin` when available and falls back to direct/HLE SmartMedia boot if the BIOS is missing. LCD persistence and frame interpolation are optional and disabled by default.
+Supported content extensions are `.smc`, `.fxe`, and `.fpk`. Core options expose JIT, boot mode (`auto`, `require_bios`, or `direct_hle`), LCD persistence, and frame interpolation. Boot mode defaults to `auto`, which uses `gp32166m.bin` when available and falls back to direct/HLE SmartMedia boot if the BIOS is missing. In `auto` mode a card whose only executable is outside the commercial `GAME\` layout (a freeware `GPMM\` card, which the retail BIOS launcher cannot start) also boots through the direct loader instead of stalling on the BIOS DATA LOADING screen; `require_bios` and `direct_hle` keep their explicit meaning. LCD persistence and frame interpolation are optional and disabled by default.
 
 Input uses RetroPad port 1: D-pad maps to GP32 directions, A/B to GP32 A/B, L/R to GP32 L/R, Start to GP32 Start, and Select to GP32 Select. Use RetroArch's normal input remapping for controller-specific mappings.

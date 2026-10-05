@@ -316,7 +316,8 @@ static void file_list_free(smc_file_list_t *list) {
     memset(list, 0, sizeof(*list));
 }
 
-static int fat_walk_dir(const fat_view_t *fv, const uint8_t *dir, size_t dir_size, const char *prefix, smc_file_list_t *list, unsigned depth, char *err, size_t err_len) {
+/* names_only lists paths without reading file data (layout classification). */
+static int fat_walk_dir(const fat_view_t *fv, const uint8_t *dir, size_t dir_size, const char *prefix, smc_file_list_t *list, unsigned depth, int names_only, char *err, size_t err_len) {
     if (!fv || !dir || !list || depth > 12u) return 1;
     for (size_t off = 0; off + 32u <= dir_size; off += 32u) {
         const uint8_t *e = dir + off;
@@ -337,10 +338,13 @@ static int fat_walk_dir(const fat_view_t *fv, const uint8_t *dir, size_t dir_siz
             uint32_t max_dir = (fv->cluster_count + 2u) * fv->sec_per_clus * 512u;
             uint8_t *sub = fat_read_chain(fv, cl, max_dir, &sub_size);
             if (sub) {
-                int ok = fat_walk_dir(fv, sub, sub_size, path, list, depth + 1u, err, err_len);
+                int ok = fat_walk_dir(fv, sub, sub_size, path, list, depth + 1u, names_only, err, err_len);
                 free(sub);
                 if (!ok) return 0;
             }
+        } else if (names_only) {
+            static const uint8_t none[1];
+            if (!file_list_add(list, path, none, 0, attr, cl, err, err_len)) return 0;
         } else {
             size_t got = 0;
             uint8_t *buf = fat_read_chain(fv, cl, size, &got);
@@ -353,10 +357,14 @@ static int fat_walk_dir(const fat_view_t *fv, const uint8_t *dir, size_t dir_siz
     return 1;
 }
 
-static int fat_extract_all(const fat_view_t *fv, smc_file_list_t *list, char *err, size_t err_len) {
+static int fat_walk_root(const fat_view_t *fv, smc_file_list_t *list, int names_only, char *err, size_t err_len) {
     size_t root_size = (size_t)fv->root_sec_count * 512u;
     if ((uint64_t)fv->root_sec * 512u + root_size > fv->img_size) return 0;
-    return fat_walk_dir(fv, fv->img + (size_t)fv->root_sec * 512u, root_size, "", list, 0u, err, err_len);
+    return fat_walk_dir(fv, fv->img + (size_t)fv->root_sec * 512u, root_size, "", list, 0u, names_only, err, err_len);
+}
+
+static int fat_extract_all(const fat_view_t *fv, smc_file_list_t *list, char *err, size_t err_len) {
+    return fat_walk_root(fv, list, 0, err, err_len);
 }
 
 static const smc_file_buf_t *find_first_ext(const smc_file_list_t *list, const char *ext) {
@@ -1088,5 +1096,85 @@ int smc_direct_load_buffer(const uint8_t *data, size_t size, const char *label, 
     if (!smc_reconstruct_512(raw, size, &img, &img_size, err, err_len)) { free(raw); return 0; }
     free(raw);
     return smc_direct_load_image_owned(img, img_size, label ? label : "buffer", pkg, err, err_len);
+}
+
+/* True when path is an entry of the card's top-level directory dir. The retail
+ * BIOS scans gp:\\game\\ itself and does not descend into a folder that
+ * merely contains a GAME directory, so only a top-level match counts. */
+static int path_in_card_dir(const char *path, const char *dir) {
+    size_t n = strlen(dir);
+    if (!path || strlen(path) <= n) return 0;
+    for (size_t i = 0; i < n; ++i)
+        if (tolower((unsigned char)path[i]) != tolower((unsigned char)dir[i])) return 0;
+    return path[n] == '/';
+}
+
+/* Mirrors the executable preference of smc_direct_load_image_owned: .GXE, then
+ * .GXB, then .FXE. A GAME\\ executable always wins because a card carrying one
+ * boots through the retail BIOS regardless of what else the card holds. */
+static smc_card_launch_layout_t classify_file_list(const smc_file_list_t *list, char *exe_out, size_t exe_out_len) {
+    static const char *const exts[] = { ".gxe", ".gxb", ".fxe" };
+    const smc_file_buf_t *bios = NULL;
+    const smc_file_buf_t *direct_only = NULL;
+    for (size_t e = 0; list && e < GP32_ARRAY_COUNT(exts); ++e) {
+        for (size_t i = 0; i < list->count; ++i) {
+            const smc_file_buf_t *it = &list->items[i];
+            if (!ends_ci(it->path, exts[e])) continue;
+            if (path_in_card_dir(it->path, "GAME")) {
+                if (!bios) bios = it;
+            } else if (!direct_only) {
+                direct_only = it;
+            }
+        }
+    }
+    const smc_file_buf_t *pick = bios ? bios : direct_only;
+    if (pick && exe_out && exe_out_len) copy_str_trunc(exe_out, exe_out_len, pick->path);
+    if (bios) return SMC_CARD_LAYOUT_BIOS_GAME;
+    return direct_only ? SMC_CARD_LAYOUT_DIRECT_ONLY : SMC_CARD_LAYOUT_NONE;
+}
+
+static smc_card_launch_layout_t classify_image_owned(uint8_t *img, size_t img_size, char *exe_out, size_t exe_out_len, char *err, size_t err_len) {
+    fat_view_t fv;
+    if (!img) { serr(err, err_len, "invalid SMC layout image"); return SMC_CARD_LAYOUT_NONE; }
+    if (!fat_find(img, img_size, &fv)) {
+        free(img);
+        serr(err, err_len, "no FAT12/FAT16 filesystem found in SMC image");
+        return SMC_CARD_LAYOUT_NONE;
+    }
+    smc_file_list_t list;
+    memset(&list, 0, sizeof(list));
+    if (!fat_walk_root(&fv, &list, 1, err, err_len)) { file_list_free(&list); free(img); return SMC_CARD_LAYOUT_NONE; }
+    free(img);
+    smc_card_launch_layout_t layout = classify_file_list(&list, exe_out, exe_out_len);
+    if (layout == SMC_CARD_LAYOUT_NONE) serr(err, err_len, "SMC filesystem contains no .GXE/.GXB/.FXE executable");
+    file_list_free(&list);
+    return layout;
+}
+
+smc_card_launch_layout_t smc_direct_classify_file(const char *path, char *exe_out, size_t exe_out_len, char *err, size_t err_len) {
+    if (err && err_len) err[0] = '\0';
+    if (exe_out && exe_out_len) exe_out[0] = '\0';
+    if (!path) { serr(err, err_len, "invalid SMC layout arguments"); return SMC_CARD_LAYOUT_NONE; }
+    size_t raw_size = 0, img_size = 0;
+    uint8_t *raw = read_file_or_zip(path, &raw_size, err, err_len);
+    if (!raw) return SMC_CARD_LAYOUT_NONE;
+    uint8_t *img = NULL;
+    if (!smc_reconstruct_512(raw, raw_size, &img, &img_size, err, err_len)) { free(raw); return SMC_CARD_LAYOUT_NONE; }
+    free(raw);
+    return classify_image_owned(img, img_size, exe_out, exe_out_len, err, err_len);
+}
+
+smc_card_launch_layout_t smc_direct_classify_buffer(const uint8_t *data, size_t size, const char *label, char *exe_out, size_t exe_out_len, char *err, size_t err_len) {
+    if (err && err_len) err[0] = '\0';
+    if (exe_out && exe_out_len) exe_out[0] = '\0';
+    if (!data || !size) { serr(err, err_len, "invalid SMC layout buffer arguments"); return SMC_CARD_LAYOUT_NONE; }
+    uint8_t *raw = (uint8_t *)malloc(size);
+    if (!raw) { serr(err, err_len, "out of memory reading %s", label ? label : "buffer"); return SMC_CARD_LAYOUT_NONE; }
+    memcpy(raw, data, size);
+    uint8_t *img = NULL;
+    size_t img_size = 0;
+    if (!smc_reconstruct_512(raw, size, &img, &img_size, err, err_len)) { free(raw); return SMC_CARD_LAYOUT_NONE; }
+    free(raw);
+    return classify_image_owned(img, img_size, exe_out, exe_out_len, err, err_len);
 }
 
