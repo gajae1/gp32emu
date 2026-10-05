@@ -13,6 +13,13 @@
  * cannot continue executing an obsolete trace. No guest cycles are elided.
  * Eligible entry backedges retain w22 (remaining), w23 (completed prefixes),
  * w24 (entry epoch), x25 (CPU control-field base). These are callee-saved.
+ *
+ * Hot/cold layout: only the RAM fast path is emitted inline. Every sequence
+ * the fast path skips (guard handlers, the live-read and identity-I/O probes,
+ * the checked helpers) is recorded while the hot body is emitted and replayed
+ * into a cold area after the block's epilogue, so no fetched hot line carries
+ * cold bytes. Hot guards branch forward into their own cold chain and every
+ * chain branches back to the hot continuation it was recorded with.
  */
 #ifndef ARM_JIT_CODE_SIZE
 #define ARM_JIT_CODE_SIZE (64u * 1024u * 1024u)
@@ -29,7 +36,25 @@ typedef struct a64_emit {
     size_t loop_head;
     const arm_live_read32_t *live_read32;
     size_t live_read32_count;
+    struct a64_cold_op *cold; /* deferred cold chains, one per fast-path op */
+    unsigned cold_count, cold_cap;
 } a64_emit_t;
+
+enum a64_cold_kind { A64_COLD_SINGLE_DT = 1, A64_COLD_HALF, A64_COLD_BLOCK_DT };
+
+/* One deferred cold chain.  The hot body records what to emit and where the
+ * guards sit; the chain is written after the block body and ends by branching
+ * back to cont.  Nothing here changes what the chain executes: the op fields,
+ * the continuation and the helper arguments are the same values the inline
+ * emitters used, and the guard branches still leave the registers exactly as
+ * the checked helper expects them. */
+typedef struct a64_cold_op {
+    const arm_jit_op_t *op;
+    size_t cont; /* hot continuation label this chain resumes at */
+    uint32_t done, expected_next, generation;
+    uint8_t kind, load, wb, access, byte, live, nfixup;
+    size_t fixup[16]; /* hot branch sites that enter this chain */
+} a64_cold_op_t;
 
 ARM_FORCE_INLINE int arm_a64_can_continue(const arm920t_t *c, int stop,
                                          uint32_t expected_next, uint32_t generation,
@@ -301,7 +326,9 @@ static void a64_lsl(a64_emit_t *e, unsigned rd, unsigned rn, unsigned amount) {
             ((31u - amount) << 10) | (rn << 5) | rd);
 }
 
-/* All fixups are forward within the temporary block (word indices). */
+/* All fixups are forward within the temporary block (word indices).  A cold
+ * chain returns to its hot continuation, which sits behind it, so that edge is
+ * emitted directly by a64_branch_back instead of being patched. */
 static size_t a64_jump(a64_emit_t *e, unsigned cond) {
     size_t p = e->pos;
     a64_u32(e, cond == 14u ? 0x14000000u : (0x54000000u | cond));
@@ -319,6 +346,33 @@ static void a64_patch(a64_emit_t *e, size_t at, size_t target) {
         e->code[at] |= delta << 5; /* tbz: imm14 */
     }
     else e->code[at] |= delta << 5;
+}
+/* Emit an unconditional backward branch to an already emitted position. */
+static void a64_branch_back(a64_emit_t *e, size_t target) {
+    if (e->fail || target > e->pos || e->pos - target >= (1u << 25)) { e->fail = 1; return; }
+    a64_u32(e, 0x14000000u | ((uint32_t)(target - e->pos) & 0x03ffffffu));
+}
+/* Record one cold chain; the hot body has already reached its continuation. */
+static a64_cold_op_t *a64_cold_open(a64_emit_t *e, const arm_jit_op_t *op,
+                                    uint32_t done, unsigned kind) {
+    if (e->fail || e->cold_count >= e->cold_cap) { e->fail = 1; return NULL; }
+    a64_cold_op_t *c = &e->cold[e->cold_count++];
+    memset(c, 0, sizeof(*c));
+    c->op = op;
+    c->cont = e->pos;
+    c->done = done;
+    c->expected_next = e->expected_next;
+    c->generation = e->generation;
+    c->kind = (uint8_t)kind;
+    return c;
+}
+/* Defer one hot branch site to its chain entry (patched when the chain is
+ * emitted).  Overflow is unreachable with the per-emitter fixup counts and
+ * fails closed if a future emitter ever exceeds them. */
+static void a64_cold_fix(a64_emit_t *e, a64_cold_op_t *c, size_t at) {
+    if (e->fail || !c) return;
+    if (c->nfixup >= sizeof(c->fixup) / sizeof(c->fixup[0])) { e->fail = 1; return; }
+    c->fixup[c->nfixup++] = at;
 }
 static void a64_cmp(a64_emit_t *e, unsigned rn, unsigned rm) {
     a64_rr(e, 0x6b000000u, 31, rn, rm);
@@ -465,9 +519,10 @@ static void a64_mem_slow(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done,
  * every miss, tiny or unusual page, fault-tolerant identity fallback, byte
  * access and any other target.  On success arm_a64_io_word_checked performs the
  * bus callback with this physical address plus the same register commits and
- * continuation check; *cont receives the continuation edge. */
+ * continuation check; the proven access resumes the recorded hot continuation
+ * (cont), which is behind this cold chain. */
 static void a64_io_word(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done,
-                        int load, int wb, size_t *cold, unsigned *ncold, size_t *cont) {
+                        int load, int wb, size_t *cold, unsigned *ncold, size_t cont) {
     a64_mask(e, 3, 12, ~3u);  /* the checked path translates the aligned word */
     if (e->mmu) {
         _Static_assert(sizeof(arm_tlb_entry_t) == 16u &&
@@ -511,7 +566,7 @@ static void a64_io_word(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done,
     a64_u32(e, 0x35000000u); /* cbnz w0: commits are done, may continue */
     a64_return(e, done);
     a64_patch(e, keep, e->pos);
-    *cont = a64_jump(e, 14);
+    a64_branch_back(e, cont);
 }
 
 /* Immediate ARM shifter: w1 is the value, w3 the old CPSR, w4 the
@@ -692,8 +747,9 @@ static void a64_ram_offset(a64_emit_t *e, size_t *slow, unsigned *nslow, unsigne
 
 /* Cold path only: preserve the original VA in w12 for the checked fallback.
  * Read the authoritative TLB, without filling it or widening a restored mask.
- * Certificates contain live storage, never a cached value or skipped read. */
-static void a64_live_read32(a64_emit_t *e, unsigned rd, size_t next) {
+ * Certificates contain live storage, never a cached value or skipped read.
+ * A matched certificate resumes the hot continuation of its own access. */
+static void a64_live_read32(a64_emit_t *e, unsigned rd, size_t cont) {
     if (!e->live_read32_count) return;
     size_t reject[3];
     unsigned nreject = 0;
@@ -727,9 +783,8 @@ static void a64_live_read32(a64_emit_t *e, unsigned rd, size_t next) {
         a64_ptr(e, 10, (uintptr_t)e->live_read32[i].word);
         a64_u32(e, 0xb9400000u | (10u << 5) | 1u); /* fresh ldr w1, [x10] */
         a64_put_guest(e, rd, 1);
-        /* Reuse the RAM path's forward continuation branch. This edge alone
-         * points backward; a64_patch deliberately accepts only forward fixups. */
-        a64_u32(e, 0x14000000u | ((uint32_t)(next - e->pos) & 0x03ffffffu));
+        /* Cold area: the continuation is behind this branch. */
+        a64_branch_back(e, cont);
         a64_patch(e, unmatched, e->pos);
     }
     for (unsigned i = 0; i < nreject; ++i) a64_patch(e, reject[i], e->pos);
@@ -808,20 +863,21 @@ static int a64_single_dt(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
             a64_patch(e, matched, e->pos);
         } else a64_return(e, done);
     }
-    size_t next = a64_jump(e, 14);
-    for (unsigned i = 0; i < nslow; ++i) a64_patch(e, slow[i], e->pos);
-    if (access && load && !byte && !wb) a64_live_read32(e, op->b, next);
-    /* A word access whose mapping the RAM guard rejected gets one direct
-     * identity-I/O attempt with the address this instruction already computed;
-     * everything the probe rejects lands on the checked helper below. */
-    size_t io_cold[4], io_cont = 0;
-    unsigned nio = 0;
-    if (access && !byte) a64_io_word(e, op, done, load, wb, io_cold, &nio, &io_cont);
-    for (unsigned i = 0; i < nio; ++i) a64_patch(e, io_cold[i], e->pos);
-    if (access) a64_mem_slow(e, op, done, load, wb);
-    else a64_slow(e, op, done);
-    if (io_cont) a64_patch(e, io_cont, e->pos);
-    a64_patch(e, next, e->pos);
+    /* The fast path is complete and continues straight into the next
+     * instruction.  Everything below it is recorded for the block's cold
+     * area: the guard handlers, the live-read certificate (the authoritative
+     * TLB is only read there), the direct identity-I/O probe with the address
+     * this instruction already computed, and the checked helper that every
+     * rejection lands on. */
+    a64_cold_op_t *cold = a64_cold_open(e, op, done, A64_COLD_SINGLE_DT);
+    if (cold) {
+        cold->load = (uint8_t)load;
+        cold->wb = (uint8_t)wb;
+        cold->access = (uint8_t)access;
+        cold->byte = (uint8_t)byte;
+        cold->live = (uint8_t)(access && load && !byte && !wb);
+        for (unsigned i = 0; i < nslow; ++i) a64_cold_fix(e, cold, slow[i]);
+    }
     return 1;
 }
 
@@ -866,10 +922,14 @@ static int a64_half(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
         a64_u32(e, 0x78206800u | (0u << 16) | (21u << 5) | 1u); /* strh w1, [x21, x0] */
     }
     if (wb) a64_put_guest(e, op->a, 2);
-    size_t next = a64_jump(e, 14);
-    for (unsigned i = 0; i < nslow; ++i) a64_patch(e, slow[i], e->pos);
-    a64_mem_slow(e, op, done, load, wb);
-    a64_patch(e, next, e->pos);
+    /* As for a64_single_dt: the fast path is complete, and the guard
+     * handlers plus the checked access helper move to the cold area. */
+    a64_cold_op_t *cold = a64_cold_open(e, op, done, A64_COLD_HALF);
+    if (cold) {
+        cold->load = (uint8_t)load;
+        cold->wb = (uint8_t)wb;
+        for (unsigned i = 0; i < nslow; ++i) a64_cold_fix(e, cold, slow[i]);
+    }
     return 1;
 }
 
@@ -939,55 +999,61 @@ static int a64_block_dt(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
     if (w && (!load || !(list & (1u << rn))))
         a64_put_guest(e, rn, 2); /* a load containing Rn suppresses this */
     a64_block_dt_exit(e, op, done);
-    size_t single_done = a64_jump(e, 14);
-    if (count > 1u) a64_patch(e, xpage, e->pos);
+    /* A one-word span has no second path at all: its move ends the op and
+     * falls through to the hot continuation.  A wider span jumps over the
+     * two-page path, which falls through to the same continuation. */
+    size_t single_done = count > 1u ? a64_jump(e, 14) : 0u;
+    if (count > 1u) {
+        a64_patch(e, xpage, e->pos);
 
-    /* w11 retains virtual addr0 and w2 retains offset0 across the second
-     * a64_ram_offset call. w2's normal writeback value is reconstructed after
-     * both translations, so using it as a preserved temporary is safe. */
-    a64_mov(e, 11, 0);
-    a64_ram_offset(e, slow, &nslow, 4u);
-    a64_mov(e, 2, 0);
-    a64_mov(e, 0, 11);
-    a64_u32(e, 0x11000000u | (0xfffu << 10)); /* add w0, w0, #0xfff */
-    a64_mask(e, 0, 0, ~0xfffu); /* w0 = next 4 KiB boundary */
-    a64_ram_offset(e, slow, &nslow, 4u);
-    a64_mov(e, 4, 0); /* w4 = offset1 */
+        /* w11 retains virtual addr0 and w2 retains offset0 across the second
+         * a64_ram_offset call. w2's normal writeback value is reconstructed
+         * after both translations, so using it as a preserved temporary is
+         * safe. */
+        a64_mov(e, 11, 0);
+        a64_ram_offset(e, slow, &nslow, 4u);
+        a64_mov(e, 2, 0);
+        a64_mov(e, 0, 11);
+        a64_u32(e, 0x11000000u | (0xfffu << 10)); /* add w0, w0, #0xfff */
+        a64_mask(e, 0, 0, ~0xfffu); /* w0 = next 4 KiB boundary */
+        a64_ram_offset(e, slow, &nslow, 4u);
+        a64_mov(e, 4, 0); /* w4 = offset1 */
 
-    /* w5 = number of words in the first page. */
-    a64_mask(e, 5, 11, 0xfffu);
-    a64_imm(e, 6, 0x1000u);
-    a64_rr(e, 0x4b000000u, 5, 6, 5); /* w5 = 0x1000 - addr0 page offset */
-    a64_ubfx(e, 5, 5, 2, 30); /* w5 /= 4 */
+        /* w5 = number of words in the first page. */
+        a64_mask(e, 5, 11, 0xfffu);
+        a64_imm(e, 6, 0x1000u);
+        a64_rr(e, 0x4b000000u, 5, 6, 5); /* w5 = 0x1000 - addr0 page offset */
+        a64_ubfx(e, 5, 5, 2, 30); /* w5 /= 4 */
 
-    /* Each fragment ends at or before its already-proved RAM page edge. */
-    a64_rr(e, 0x8b000000u, 12, 21, 2); /* x12 = RAM pointer for page 0 */
-    a64_rr(e, 0x8b000000u, 15, 21, 4); /* x15 = RAM pointer for page 1 */
-    /* Bias page 1 by the page-0 word count so both pointers use the same
-     * ascending transfer index. Only indices >= w5 dereference this base. */
-    a64_rr(e, 0xcb000800u, 15, 15, 5); /* sub x15, x15, x5, lsl #2 */
+        /* Each fragment ends at or before its already-proved RAM page edge. */
+        a64_rr(e, 0x8b000000u, 12, 21, 2); /* x12 = RAM pointer for page 0 */
+        a64_rr(e, 0x8b000000u, 15, 21, 4); /* x15 = RAM pointer for page 1 */
+        /* Bias page 1 by the page-0 word count so both pointers use the same
+         * ascending transfer index. Only indices >= w5 dereference this
+         * base. */
+        a64_rr(e, 0xcb000800u, 15, 15, 5); /* sub x15, x15, x5, lsl #2 */
 
-    if (w) { /* Reconstruct final_base from the saved virtual addr0. */
-        a64_mov(e, 2, 11);
-        if (u) {
-            uint32_t adjust = 4u * count - (p ? 4u : 0u);
-            a64_u32(e, 0x11000000u | (adjust << 10) | (11u << 5) | 2u);
-        } else if (!p) {
-            a64_u32(e, 0x51000000u | (4u << 10) | (11u << 5) | 2u);
+        if (w) { /* Reconstruct final_base from the saved virtual addr0. */
+            a64_mov(e, 2, 11);
+            if (u) {
+                uint32_t adjust = 4u * count - (p ? 4u : 0u);
+                a64_u32(e, 0x11000000u | (adjust << 10) | (11u << 5) | 2u);
+            } else if (!p) {
+                a64_u32(e, 0x51000000u | (4u << 10) | (11u << 5) | 2u);
+            }
         }
+        a64_block_dt_transfer(e, op, count, 1, slow, &nslow);
+        if (w && (!load || !(list & (1u << rn))))
+            a64_put_guest(e, rn, 2);
+        a64_block_dt_exit(e, op, done);
+        a64_patch(e, single_done, e->pos);
     }
-    a64_block_dt_transfer(e, op, count, 1, slow, &nslow);
-    if (w && (!load || !(list & (1u << rn))))
-        a64_put_guest(e, rn, 2);
-    a64_block_dt_exit(e, op, done);
 
-    size_t next = a64_jump(e, 14);
-    for (unsigned i = 0; i < nslow; ++i) a64_patch(e, slow[i], e->pos);
-    a64_slow(e, op, done);
-    a64_patch(e, next, e->pos);
-    /* Patch after next so both paths land after the helper, rather than
-     * entering a64_slow a second time after a successful single-page move. */
-    a64_patch(e, single_done, e->pos);
+    /* Both fast paths are complete.  The guard handlers, the odd-load-PC
+     * prechecks and the classified fallback move to the cold area; a wider
+     * span's single-page path skips the two-page path. */
+    a64_cold_op_t *cold = a64_cold_open(e, op, done, A64_COLD_BLOCK_DT);
+    if (cold) for (unsigned i = 0; i < nslow; ++i) a64_cold_fix(e, cold, slow[i]);
     return 1;
 }
 
@@ -1208,12 +1274,60 @@ static uint32_t a64_selfloop_prefix(arm920t_t *c, arm_jit_block_t *b) {
     return 0;
 }
 
+/* Replay the recorded cold chains after the block's hot body, so every line
+ * the RAM fast path walks is free of cold bytes.  A chain is entered only
+ * through its recorded hot branches and resumes at the continuation that was
+ * recorded with it, which is the point the inline layout fell through to.  The
+ * executed sequence itself is unchanged: the same guard handlers, probes and
+ * checked helpers run, at the same point of the same instruction, with the
+ * same registers and the same continuation.  Host NZCV never has to survive a
+ * chain by construction: only a flag-setting data op leaves nzcv_valid set and
+ * those ops emit no cold chain, so no chain can sit between a flag producer
+ * and the conditional code that consumes its flags. */
+static void a64_cold_flush(a64_emit_t *e) {
+    for (unsigned i = 0; i < e->cold_count && !e->fail; ++i) {
+        a64_cold_op_t *c = &e->cold[i];
+        size_t entry = e->pos;
+        for (unsigned j = 0; j < c->nfixup; ++j) a64_patch(e, c->fixup[j], entry);
+        e->expected_next = c->expected_next;
+        e->generation = c->generation;
+        switch (c->kind) {
+        case A64_COLD_SINGLE_DT: {
+            /* The inline order: certificate, direct identity-I/O attempt,
+             * then the checked helper that every rejection lands on. */
+            if (c->live) a64_live_read32(e, c->op->b, c->cont);
+            size_t io_cold[4];
+            unsigned nio = 0;
+            if (c->access && !c->byte)
+                a64_io_word(e, c->op, c->done, c->load, c->wb, io_cold, &nio, c->cont);
+            for (unsigned j = 0; j < nio; ++j) a64_patch(e, io_cold[j], e->pos);
+            if (c->access) a64_mem_slow(e, c->op, c->done, c->load, c->wb);
+            else a64_slow(e, c->op, c->done);
+            break;
+        }
+        case A64_COLD_HALF:
+            a64_mem_slow(e, c->op, c->done, c->load, c->wb);
+            break;
+        default:
+            a64_slow(e, c->op, c->done);
+            break;
+        }
+        /* Both checked helpers end with a "may continue" edge that lands
+         * exactly here; this is the recorded fall-through of the inline
+         * layout, now a backward branch into the hot body. */
+        a64_branch_back(e, c->cont);
+    }
+}
+
 static void arm_jit_compile_native(arm920t_t *c, arm_jit_block_t *b) {
     if (!c || !b || !b->count) return;
     uint32_t tmp[ARM_JIT_NATIVE_MAX_BYTES / sizeof(uint32_t)];
+    a64_cold_op_t cold[ARM_JIT_MAX_INSNS];
     a64_emit_t e = {0};
     e.code = tmp;
     e.cap = sizeof(tmp) / sizeof(tmp[0]);
+    e.cold = cold;
+    e.cold_cap = ARM_JIT_MAX_INSNS;
     e.mmu = !!(c->cp15[1] & 1u);
     e.live_read32 = c->live_read32;
     e.live_read32_count = c->live_read32_count;
@@ -1340,6 +1454,7 @@ static void arm_jit_compile_native(arm920t_t *c, arm_jit_block_t *b) {
         final_pc = arm_jit_branch_target(last->pc, last->insn);
     a64_store_imm(&e, offsetof(arm920t_t, r) + 15u * 4u, final_pc);
     a64_return(&e, b->count);
+    a64_cold_flush(&e);
     if (e.fail) return;
     size_t bytes = e.pos * sizeof(tmp[0]);
     if (!c->jit_code) {
