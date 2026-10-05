@@ -13,9 +13,10 @@ performance, audio and input correctness across the library, not boot-only tests
   10.4 MB instead of 26.6-43.9 MB, save+load 1.7 ms instead of 6-12 ms; v0002+
   still load). Non-profile H700 frame times at `53d7619` (`--frame-times`):
   LGM 60.7 fps, p50 24.3 / p99 25.6 / max 51.1 ms, 715/1200 frames over
-  16.67 ms; the distribution is bimodal (heavy ~24 ms guest logic frame, light
-  ~9 ms wait frame), so each pair fits 33.3 ms with little margin and LGM
-  still needs roughly 20% more speed. Princess 111.9 fps p99 9.4; ASR 198.6
+  16.67 ms; the mean (16.5 ms) implies a bimodal split of heavy ~24 ms guest
+  logic frames and light ~5 ms wait frames. Pairs fit 33.3 ms, but each heavy
+  frame must get about 1.46x faster before every host frame meets 16.67 ms
+  and video pacing stops depending on the audio buffer. Princess 111.9 fps p99 9.4; ASR 198.6
   p99 14.4 (3 over); Her 172.5 p99 7.2; Blue 75.0 p99 21.9 (24 over, max
   30.6). Evidence `F:/GP32/results/round153/h700-frametimes.json`.
 - Audio pops (round 150): the BIOS boot pop, the Dooly Soccer start pop and
