@@ -3,13 +3,16 @@ param(
     [ValidateSet('arm64-v8a','armeabi-v7a')][string[]]$Abi = @('arm64-v8a','armeabi-v7a'),
     [string]$OutputDirectory,
     [int]$Jobs = 4,
-    [int]$ApiLevel = 21
+    [int]$ApiLevel = 21,
+    [string]$Ninja = (Get-Command ninja -ErrorAction SilentlyContinue).Source
 )
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
 if (-not $Ndk) { throw 'Pass -Ndk <Android NDK directory> or set ANDROID_NDK_HOME.' }
 $toolchain = Join-Path $Ndk 'build/cmake/android.toolchain.cmake'
 if (-not (Test-Path -LiteralPath $toolchain -PathType Leaf)) { throw "NDK toolchain missing: $toolchain" }
+if (-not $Ninja) { throw 'Pass -Ninja <ninja.exe> or put Ninja on PATH.' }
+if (-not (Test-Path -LiteralPath $Ninja -PathType Leaf)) { throw "Ninja not found: $Ninja" }
 if (-not $OutputDirectory) { $OutputDirectory = Join-Path $repoRoot 'build-android' }
 $OutputDirectory = [IO.Path]::GetFullPath($OutputDirectory)
 $cmake = (Get-Command cmake -ErrorAction Stop).Source
@@ -17,6 +20,7 @@ $manifest = @()
 foreach ($targetAbi in $Abi) {
     $buildDirectory = Join-Path $OutputDirectory $targetAbi
     & $cmake -S $repoRoot -B $buildDirectory -G Ninja "-DCMAKE_TOOLCHAIN_FILE=$toolchain" `
+        "-DCMAKE_MAKE_PROGRAM=$Ninja" `
         "-DANDROID_ABI=$targetAbi" "-DANDROID_PLATFORM=android-$ApiLevel" -DCMAKE_BUILD_TYPE=Release `
         -DGP32EMU_BUILD_LIBRETRO=ON -DGP32EMU_BUILD_HEADLESS=OFF -DGP32EMU_REQUIRE_C23=ON
     if ($LASTEXITCODE -ne 0) { throw "Configure failed: $targetAbi" }

@@ -14,3 +14,7 @@ web/*.wasm
 .qmake.stash
 __pycache__/
 *.pyc
+
+# Android ndk-build outputs
+libs/
+obj/

@@ -6,6 +6,16 @@ performance, audio and input correctness across the library, not boot-only tests
 
 ## Current accepted work
 
+- Android build support (round 163): the standard libretro `jni/Android.mk` +
+  `jni/Application.mk` path now mirrors CMake for ndk-build, and
+  `scripts/build_android.ps1` accepts/autodetects Ninja instead of assuming it
+  is on PATH. Verified with NDK r28.2: arm64-v8a (A64 JIT), armeabi-v7a
+  (portable interpreter) and x86_64 (x64 JIT) all link as `libretro.so`; the
+  CMake route also builds both Android ABIs as
+  `gp32emu_libretro_android.so`. Exports are limited to `retro_*`; 64-bit
+  Android LOAD segments use 16 KiB alignment. Runtime loading on a real Android
+  device remains unverified. Evidence `F:/GP32/results/round163/w-android/`,
+  `F:/GP32/results/round163/android/`.
 - Rejected (round 163): splitting the JIT dispatcher into a compact
   `arm_jit_run` steady state plus ARM_NOINLINE `arm_jit_run_slow` (w-runloop).
   The resident A64 dispatch loop shrank 308 -> 196 bytes and PC improved
