@@ -3514,6 +3514,14 @@ static int direct_fxe_swi(void *user, arm920t_t *cpu, uint32_t imm, uint32_t pc,
     case 0x12: /* Firmware exit.  Keep direct-loaded homebrew in a benign idle loop. */
         arm920t_set_reg(cpu, 15, pc);
         return 1;
+    case 0x04: /* Firmware system boot (retail ROM 0x20d8): the service clears RAM,
+                 * reloads the firmware and finally jumps to the entry the launcher
+                 * published, so it never returns to the caller.  Direct mode has no
+                 * firmware to restart, so park on the instruction like the exit
+                 * service below.  Returning instead sent the caller's stale LR
+                 * (GpMadMP3's "press A to reboot" CRT epilogue) into data. */
+        arm920t_set_reg(cpu, 15, pc);
+        return 1;
     case 0x1ff: /* Firmware high-range selector 0xFF: device state reset and
                  * continuation through FIQ-mode r12, implemented above. */
         return direct_handle_swi_reinit(g, cpu);
@@ -3584,7 +3592,7 @@ static int direct_fxe_swi(void *user, arm920t_t *cpu, uint32_t imm, uint32_t pc,
         return 1;
     }
     default:
-        if (imm == 0x02u || imm == 0x04u || imm == 0x07u || imm == 0x09u || imm == 0x0au ||
+        if (imm == 0x02u || imm == 0x07u || imm == 0x09u || imm == 0x0au ||
             imm == 0x0du || imm == 0x0eu ||
             (imm >= 0x100u && imm <= 0x120u)) {
             arm920t_set_reg(cpu, 0, 0u);
