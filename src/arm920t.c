@@ -2403,6 +2403,8 @@ static void x64_alu_r32_imm(x64_emit_t *e, unsigned alu, int dst, uint32_t imm) 
 static void x64_shift_r32_imm(x64_emit_t *e, unsigned subop, int dst, unsigned imm) { x64_rex(e, 0, 0, 0, dst); x64_u8(e, 0xc1); x64_modrm(e, 3, (int)subop, dst); x64_u8(e, (uint8_t)imm); }
 static void x64_shift_r32_cl(x64_emit_t *e, unsigned subop, int dst) { x64_rex(e, 0, 0, 0, dst); x64_u8(e, 0xd3); x64_modrm(e, 3, (int)subop, dst); }
 static void x64_not_r32(x64_emit_t *e, int dst) { x64_rex(e, 0, 0, 0, dst); x64_u8(e, 0xf7); x64_modrm(e, 3, 2, dst); }
+static void x64_bt_r32_imm(x64_emit_t *e, int reg, unsigned bit) { x64_rex(e, 0, 0, 0, reg); x64_u8(e, 0x0f); x64_u8(e, 0xba); x64_modrm(e, 3, 4, reg); x64_u8(e, (uint8_t)bit); }
+static void x64_cmc(x64_emit_t *e) { x64_u8(e, 0xf5); }
 static void x64_cmovcc_r32_r32(x64_emit_t *e, uint8_t cc, int dst, int src) { x64_rex(e, 0, dst, 0, src); x64_u8(e, 0x0f); x64_u8(e, (uint8_t)(0x40u | (cc & 15u))); x64_modrm(e, 3, dst, src); }
 static void x64_imul_r32_r32(x64_emit_t *e, int dst, int src) { x64_rex(e, 0, dst, 0, src); x64_u8(e, 0x0f); x64_u8(e, 0xaf); x64_modrm(e, 3, dst, src); }
 static void x64_movzx_ecx_ah(x64_emit_t *e) { x64_u8(e, 0x0f); x64_u8(e, 0xb6); x64_u8(e, 0xcc); }
@@ -2527,6 +2529,16 @@ static void x64_emit_set_nz(x64_emit_t *e, int value_reg, int shifter_carry) {
 static void x64_emit_load_arm_reg(x64_emit_t *e, int dst, unsigned r, uint32_t pc) {
     if (r == 15u) x64_mov_r32_imm(e, dst, pc + 8u);
     else x64_mov_r32_mem_cpu(e, dst, arm_reg_off(r));
+}
+
+/* ADC/ADD read CPSR C; SBC/RSC read it as a borrow (!C). x86 adc/add take
+ * CF as the carry and sbb/sub take CF as the borrow, so the carry-in is loaded
+ * straight into CF with BT and complemented with CMC for the borrow forms.
+ * EDX is scratch; the ALU write and the flag materialization follow. */
+static void x64_emit_alu_carry_in(x64_emit_t *e, int borrow_in) {
+    x64_mov_r32_mem_cpu(e, X64_EDX, cpsr_off());
+    x64_bt_r32_imm(e, X64_EDX, 29); /* CF = CPSR C (bit 29) */
+    if (borrow_in) x64_cmc(e);      /* sbb borrow-in = !C */
 }
 static void x64_emit_store_arm_reg(x64_emit_t *e, unsigned r, int src) { x64_mov_mem_cpu_r32(e, arm_reg_off(r), src); }
 
@@ -2654,8 +2666,11 @@ static void x64_emit_data_result(x64_emit_t *e, unsigned opc, unsigned s,
      * result in R10D until the helper arguments are set up. */
     if (rd == 15u) x64_mov_r32_r32(e, X64_R10D, X64_EAX);
     else x64_emit_store_arm_reg(e, rd, X64_EAX);
-    if (s && (opc == 0x2u || opc == 0x4u))
-        x64_emit_nzcv_from_x86_flags(e, opc == 0x2u);
+    /* The host ALU for SUB/RSB/SBC/RSC leaves CF as a borrow, which is ARM's
+     * !C; ADD/ADC leave the carry directly in CF. OF/SF/ZF already match the
+     * ARM V/N/Z for every one of these forms. */
+    if (s && opc >= 0x2u && opc <= 0x7u)
+        x64_emit_nzcv_from_x86_flags(e, opc != 0x4u && opc != 0x5u);
     else if (s)
         x64_emit_set_nz(e, X64_EAX, shifter_carry);
     if (rd == 15u) {
@@ -2694,9 +2709,15 @@ static int x64_emit_data_proc(x64_emit_t *e, const arm_jit_op_t *op, uint32_t do
          * S=1 exception returns keep the SPSR-aware helper. */
         if (opc >= 0x8u && opc <= 0xbu) return 0;
     }
-    if (s && !logical_s && !(opc == 2u || opc == 4u || opc == 10u || opc == 11u)) return 0;
+    /* S=1 arithmetic and its carry/reverse forms each map to a single host
+     * sub/sbb/add/adc or a flag-reading test. Logical S keeps its shifter
+     * carry path and RRX/PC-operand shifts still fall back below. */
+    if (s && !logical_s && !(opc >= 0x2u && opc <= 0x7u) && opc != 0xau && opc != 0xbu) return 0;
     if (logical_s && !(insn & (1u << 25)) && (insn & (1u << 4))) return 0;
-    if (insn & (1u << 25)) {
+    /* ADC/SBC/RSB/RSC share the register path so that the carry-in and the
+     * flag write stay in one adc/sbb; their immediate operand is just as
+     * cheap to build in ECX. */
+    if ((insn & (1u << 25)) && opc != 0x3u && opc != 0x5u && opc != 0x6u && opc != 0x7u) {
         uint32_t imm8 = insn & 0xffu;
         unsigned rot = ((insn >> 8) & 0xfu) * 2u;
         uint32_t imm = gp32_ror32(imm8, rot);
@@ -2711,27 +2732,7 @@ static int x64_emit_data_proc(x64_emit_t *e, const arm_jit_op_t *op, uint32_t do
         case 0x0: x64_emit_load_arm_reg(e, X64_EAX, rn, op->pc); x64_alu_r32_imm(e, 4, X64_EAX, imm); break;
         case 0x1: x64_emit_load_arm_reg(e, X64_EAX, rn, op->pc); x64_alu_r32_imm(e, 6, X64_EAX, imm); break;
         case 0x2: x64_emit_load_arm_reg(e, X64_EAX, rn, op->pc); x64_alu_r32_imm(e, 5, X64_EAX, imm); break;
-        case 0x3: x64_mov_r32_imm(e, X64_EAX, imm); x64_emit_load_arm_reg(e, X64_ECX, rn, op->pc); x64_alu_r32_r32(e, 0x29, X64_EAX, X64_ECX); break;
         case 0x4: x64_emit_load_arm_reg(e, X64_EAX, rn, op->pc); x64_alu_r32_imm(e, 0, X64_EAX, imm); break;
-        case 0x5:
-            if (s) return 0;
-            x64_emit_load_arm_reg(e, X64_EAX, rn, op->pc);
-            x64_mov_r32_mem_cpu(e, X64_EDX, cpsr_off());
-            x64_shift_r32_imm(e, 5, X64_EDX, 29);
-            x64_alu_r32_imm(e, 4, X64_EDX, 1u);
-            x64_alu_r32_imm(e, 0, X64_EAX, imm);
-            x64_alu_r32_r32(e, 0x01, X64_EAX, X64_EDX);
-            break;
-        case 0x6:
-            if (s) return 0;
-            x64_emit_load_arm_reg(e, X64_EAX, rn, op->pc);
-            x64_mov_r32_mem_cpu(e, X64_EDX, cpsr_off());
-            x64_shift_r32_imm(e, 5, X64_EDX, 29);
-            x64_alu_r32_imm(e, 4, X64_EDX, 1u);
-            x64_alu_r32_imm(e, 6, X64_EDX, 1u);
-            x64_alu_r32_imm(e, 5, X64_EAX, imm);
-            x64_alu_r32_r32(e, 0x29, X64_EAX, X64_EDX);
-            break;
         case 0x8: x64_emit_load_arm_reg(e, X64_EAX, rn, op->pc); x64_alu_r32_imm(e, 4, X64_EAX, imm); x64_emit_set_nz(e, X64_EAX, logical_s); return 1;
         case 0x9: x64_emit_load_arm_reg(e, X64_EAX, rn, op->pc); x64_alu_r32_imm(e, 6, X64_EAX, imm); x64_emit_set_nz(e, X64_EAX, logical_s); return 1;
         case 0xa: x64_emit_load_arm_reg(e, X64_EAX, rn, op->pc); x64_alu_r32_imm(e, 7, X64_EAX, imm); x64_emit_nzcv_from_x86_flags(e, 1); return 1;
@@ -2751,24 +2752,23 @@ static int x64_emit_data_proc(x64_emit_t *e, const arm_jit_op_t *op, uint32_t do
     case 0x0: x64_alu_r32_r32(e, 0x21, X64_EAX, X64_ECX); break; /* AND */
     case 0x1: x64_alu_r32_r32(e, 0x31, X64_EAX, X64_ECX); break; /* EOR */
     case 0x2: x64_alu_r32_r32(e, 0x29, X64_EAX, X64_ECX); break; /* SUB */
-    case 0x3: x64_alu_r32_r32(e, 0x29, X64_ECX, X64_EAX); x64_mov_r32_r32(e, X64_EAX, X64_ECX); break; /* RSB */
-    case 0x4: x64_alu_r32_r32(e, 0x01, X64_EAX, X64_ECX); break; /* ADD */
-    case 0x5: /* ADC, no flag form */
-        if (s) return 0;
-        x64_mov_r32_mem_cpu(e, X64_EDX, cpsr_off());
-        x64_shift_r32_imm(e, 5, X64_EDX, 29);
-        x64_alu_r32_imm(e, 4, X64_EDX, 1u);
-        x64_alu_r32_r32(e, 0x01, X64_EAX, X64_ECX);
-        x64_alu_r32_r32(e, 0x01, X64_EAX, X64_EDX);
+    case 0x3: /* RSB: operand2 - Rn */
+        x64_alu_r32_r32(e, 0x29, X64_ECX, X64_EAX);
+        x64_mov_r32_r32(e, X64_EAX, X64_ECX);
         break;
-    case 0x6: /* SBC, no flag form */
-        if (s) return 0;
-        x64_mov_r32_mem_cpu(e, X64_EDX, cpsr_off());
-        x64_shift_r32_imm(e, 5, X64_EDX, 29);
-        x64_alu_r32_imm(e, 4, X64_EDX, 1u);
-        x64_alu_r32_imm(e, 6, X64_EDX, 1u); /* xor edx,1 */
-        x64_alu_r32_r32(e, 0x29, X64_EAX, X64_ECX);
-        x64_alu_r32_r32(e, 0x29, X64_EAX, X64_EDX);
+    case 0x4: x64_alu_r32_r32(e, 0x01, X64_EAX, X64_ECX); break; /* ADD */
+    case 0x5: /* ADC: one host adc keeps CF/SF/ZF/OF as the ARM flags */
+        x64_emit_alu_carry_in(e, 0);
+        x64_alu_r32_r32(e, 0x11, X64_EAX, X64_ECX);
+        break;
+    case 0x6: /* SBC: Rn - op2 - !C; sbb's borrow is ARM's !C */
+        x64_emit_alu_carry_in(e, 1);
+        x64_alu_r32_r32(e, 0x19, X64_EAX, X64_ECX);
+        break;
+    case 0x7: /* RSC: op2 - Rn - !C (sbb on the reversed operands) */
+        x64_emit_alu_carry_in(e, 1);
+        x64_alu_r32_r32(e, 0x19, X64_ECX, X64_EAX);
+        x64_mov_r32_r32(e, X64_EAX, X64_ECX);
         break;
     case 0x8: /* TST */
         x64_alu_r32_r32(e, 0x21, X64_EAX, X64_ECX);
