@@ -3572,6 +3572,234 @@ static void case_loop_framed_leaf(void) {
  * transfer, including post-index writeback, before the following MOV retires.
  * The handler captures r6 in RAM so delayed IRQ delivery remains observable
  * even after both engines return to the idle branch. */
+
+/* Superblock trace extension: an unconditional BL the leaf collectors cannot
+ * flatten continues the same native trace inside its callee, and the callee
+ * return continues at the decoded call continuation only through the guarded
+ * stack return or a BL link that no decoded instruction could have replaced.
+ * Each program is compared against the traced portable oracle at ragged
+ * budgets, so the appended PCs, an aliased stack return, a cross-page callee,
+ * the LR proof and a modified appended instruction are all checked against
+ * instruction-by-instruction execution. */
+static uint32_t cond_branch(uint32_t cond, uint32_t pc, uint32_t target) {
+    return 0x0a000000u | (cond << 28) | (((target - pc - 8u) >> 2) & 0x00ffffffu);
+}
+
+/* BL at CODE_ADDR+4 into CODE_ADDR+0x40 with a conditional branch inside the
+ * callee, so no leaf collector can flatten it. r0 ends at 16 + ret_imm + 5. */
+static void superblock_program(uint32_t ret_imm) {
+    const uint32_t callee = CODE_ADDR + 0x40u;
+    const uint32_t program[] = {0xe3a00000u, cache_branch(CODE_ADDR + 4u, callee, 1),
+                                0xe2800005u, 0xeafffffeu};
+    load_both(program, GP32_ARRAY_COUNT(program));
+    set_mem_both(callee + 0x00u, 0xe92d4000u);   /* PUSH {lr} */
+    set_mem_both(callee + 0x04u, 0xe3500000u);   /* CMP r0,#0 */
+    set_mem_both(callee + 0x08u, 0x03a00010u);   /* MOVEQ r0,#16 */
+    set_mem_both(callee + 0x0cu, 0x12800020u);   /* ADDNE r0,r0,#32 */
+    set_mem_both(callee + 0x10u,
+                 cond_branch(0x1u, callee + 0x10u, callee + 0x1cu)); /* BNE */
+    set_mem_both(callee + 0x14u, 0xe2800000u | ret_imm);
+    set_mem_both(callee + 0x18u, 0xe8bd8000u);   /* POP {pc} */
+    set_mem_both(callee + 0x1cu, 0xe2800002u);
+    set_mem_both(callee + 0x20u, 0xe8bd8000u);
+    set_reg_both(13u, DATA_ADDR + 0x100u);
+}
+
+static void case_superblock_trace(void) {
+    const uint32_t callee = CODE_ADDR + 0x40u;
+    current_case = "superblock-call-return";
+    /* Ragged budgets exercise every partial-trace exit; the complete
+     * call/return and the caller suffix must still match the oracle. */
+    for (unsigned budget = 1; budget <= 24u; ++budget) {
+        setup_pair();
+        arm920t_set_trace(cpu_ref, 1, NULL, NULL);
+        superblock_program(1u);
+        CHECK(arm920t_run(cpu_jit, budget) == arm920t_run(cpu_ref, budget),
+              "superblock short budget");
+        compare_state();
+        CHECK(arm920t_run(cpu_jit, 40u) == arm920t_run(cpu_ref, 40u),
+              "superblock remaining budget");
+        compare_state();
+        CHECK(ref_reg(0u) == 22u, "superblock callee result");
+        CHECK(ref_reg(13u) == DATA_ADDR + 0x100u, "superblock stack balanced");
+        CHECK(ref_reg(15u) == CODE_ADDR + 0x0cu, "superblock exit PC");
+        teardown_pair();
+    }
+    /* One complete run on a fresh profile: the BL, callee body and caller
+     * suffix must be a single extended trace, so a translation without the
+     * extension would need several native block entries. */
+    current_case = "superblock-single-trace";
+    setup_pair();
+    arm920t_set_trace(cpu_ref, 1, NULL, NULL);
+    superblock_program(1u);
+    arm920t_reset_cpu_profile(cpu_jit);
+    CHECK(arm920t_run(cpu_jit, 12u) == arm920t_run(cpu_ref, 12u), "superblock single trace run");
+    compare_state();
+    {
+        gp32_cpu_profile_t profile;
+        arm920t_get_cpu_profile(cpu_jit, &profile);
+        if (profile.supported && !portable_callbacks) {
+            CHECK(profile.native_block_calls == 1u, "call and return were not one trace");
+            CHECK(profile.native_arm_insns >= 10u, "extended trace retired too few instructions");
+        }
+    }
+    teardown_pair();
+    /* A callback that replaces the real stacked return must leave the trace at
+     * the loaded target instead of following the decoded continuation. */
+    for (unsigned redirect = 0; redirect < 2u; ++redirect) {
+        const uint32_t inner = CODE_ADDR + 0x40u;
+        current_case = redirect ? "superblock-aliased-return" : "superblock-plain-return";
+        setup_pair();
+        arm920t_set_trace(cpu_ref, 1, NULL, NULL);
+        {
+            const uint32_t program[] = {0xe3a00000u, cache_branch(CODE_ADDR + 4u, inner, 1),
+                                        0xe2800007u, 0xeafffffeu};
+            load_both(program, GP32_ARRAY_COUNT(program));
+        }
+        set_mem_both(inner + 0x00u, 0xe92d4000u);   /* PUSH {lr} */
+        set_mem_both(inner + 0x04u, 0xe5942000u);   /* LDR r2,[r4]: MMIO callback */
+        set_mem_both(inner + 0x08u, 0xe3500000u);   /* CMP r0,#0 */
+        set_mem_both(inner + 0x0cu,
+                     cond_branch(0x1u, inner + 0x0cu, inner + 0x18u)); /* BNE */
+        set_mem_both(inner + 0x10u, 0xe2800001u);   /* ADD r0,r0,#1 */
+        set_mem_both(inner + 0x14u, 0xe8bd8000u);   /* POP {pc} */
+        set_mem_both(inner + 0x18u, 0xe2800002u);
+        set_mem_both(inner + 0x1cu, 0xe8bd8000u);
+        set_reg_both(0u, 0u);
+        set_reg_both(4u, IO_ADDR);
+        set_reg_both(13u, DATA_ADDR + 0x100u);
+        bus_jit.observe_cpu = cpu_jit;
+        bus_ref.observe_cpu = cpu_ref;
+        bus_jit.io_return_at = bus_ref.io_return_at = redirect ? 1u : 0u;
+        CHECK(arm920t_run(cpu_jit, 40u) == arm920t_run(cpu_ref, 40u),
+              "superblock guarded return budget");
+        compare_state();
+        CHECK(ref_reg(0u) == (redirect ? 1u : 8u), "superblock guarded return result");
+        CHECK(ref_reg(15u) == CODE_ADDR + 0x0cu, "superblock guarded return PC");
+        CHECK(bus_ref.io_count == 1u && bus_jit.io_count == bus_ref.io_count,
+              "superblock callee MMIO count");
+        teardown_pair();
+    }
+    /* MOV pc,lr is followed only while the BL link is provably intact; the
+     * clobbered variant would run the caller suffix if it were stitched. */
+    for (unsigned clobber = 0; clobber < 2u; ++clobber) {
+        const uint32_t inner = CODE_ADDR + 0x3cu;
+        current_case = clobber ? "superblock-clobbered-link" : "superblock-link-return";
+        setup_pair();
+        arm920t_set_trace(cpu_ref, 1, NULL, NULL);
+        {
+            const uint32_t program[] = {0xe3a01004u, cache_branch(CODE_ADDR + 4u, inner, 1),
+                                        0xe2811008u, 0xeafffffeu};
+            load_both(program, GP32_ARRAY_COUNT(program));
+        }
+        set_mem_both(inner + 0x00u, 0xe5932000u);   /* LDR r2,[r3]: not a data leaf */
+        set_mem_both(inner + 0x04u, clobber ? 0xe3a0e050u : 0xe0811002u);
+        set_mem_both(inner + 0x08u, 0xe1a0f00eu);   /* MOV pc,lr */
+        set_reg_both(1u, 4u);
+        set_reg_both(3u, DATA_ADDR);
+        set_reg_both(13u, DATA_ADDR + 0x100u);
+        CHECK(arm920t_run(cpu_jit, 40u) == arm920t_run(cpu_ref, 40u), "superblock LR return");
+        compare_state();
+        CHECK(ref_reg(1u) == (clobber ? 4u : 12u), "superblock LR return result");
+        /* The clobbered link is the absolute 0x50, where the BIOS filler parks. */
+        CHECK(ref_reg(15u) == (clobber ? 0x50u : CODE_ADDR + 0x0cu), "superblock LR return PC");
+        teardown_pair();
+    }
+    /* A callee on the next 1 KiB code page keeps its own page anchor. */
+    current_case = "superblock-cross-page";
+    setup_pair();
+    arm920t_set_trace(cpu_ref, 1, NULL, NULL);
+    {
+        const uint32_t inner = CODE_ADDR + 0x400u;
+        const uint32_t program[] = {0xe3a00000u, cache_branch(CODE_ADDR + 4u, inner, 1),
+                                    0xe2800003u, 0xeafffffeu};
+        load_both(program, GP32_ARRAY_COUNT(program));
+        set_mem_both(inner + 0x00u, 0xe92d4000u);
+        set_mem_both(inner + 0x04u, 0xe3500000u);
+        set_mem_both(inner + 0x08u, cond_branch(0x1u, inner + 0x08u, inner + 0x14u));
+        set_mem_both(inner + 0x0cu, 0xe2800004u);
+        set_mem_both(inner + 0x10u, 0xe8bd8000u);
+        set_mem_both(inner + 0x14u, 0xe2800008u);
+        set_mem_both(inner + 0x18u, 0xe8bd8000u);
+        set_reg_both(13u, DATA_ADDR + 0x100u);
+        CHECK(arm920t_run(cpu_jit, 40u) == arm920t_run(cpu_ref, 40u), "superblock cross page");
+        compare_state();
+        CHECK(ref_reg(0u) == 7u, "superblock cross-page result");
+    }
+    teardown_pair();
+    /* Two nested BL levels inside one trace, each with its own continuation. */
+    current_case = "superblock-nested-levels";
+    setup_pair();
+    arm920t_set_trace(cpu_ref, 1, NULL, NULL);
+    {
+        const uint32_t mid = CODE_ADDR + 0x40u, deep = CODE_ADDR + 0x80u;
+        const uint32_t program[] = {0xe3a00000u, cache_branch(CODE_ADDR + 4u, mid, 1),
+                                    0xe2800001u, 0xeafffffeu};
+        load_both(program, GP32_ARRAY_COUNT(program));
+        set_mem_both(mid + 0x00u, 0xe92d4000u);
+        set_mem_both(mid + 0x04u, cache_branch(mid + 0x04u, deep, 1));
+        set_mem_both(mid + 0x08u, 0xe2800002u);
+        set_mem_both(mid + 0x0cu, 0xe8bd8000u);
+        set_mem_both(deep + 0x00u, 0xe92d4000u);
+        set_mem_both(deep + 0x04u, 0xe3500000u);
+        set_mem_both(deep + 0x08u, cond_branch(0x1u, deep + 0x08u, deep + 0x14u));
+        set_mem_both(deep + 0x0cu, 0xe2800004u);
+        set_mem_both(deep + 0x10u, 0xe8bd8000u);
+        set_mem_both(deep + 0x14u, 0xe2800008u);
+        set_mem_both(deep + 0x18u, 0xe8bd8000u);
+        set_reg_both(13u, DATA_ADDR + 0x100u);
+        CHECK(arm920t_run(cpu_jit, 60u) == arm920t_run(cpu_ref, 60u), "superblock nested levels");
+        compare_state();
+        CHECK(ref_reg(0u) == 7u, "superblock nested result");
+        CHECK(ref_reg(13u) == DATA_ADDR + 0x100u, "superblock nested stack balanced");
+    }
+    teardown_pair();
+    /* The call/return inside a counted loop must stay exact over repetitions. */
+    current_case = "superblock-call-loop";
+    setup_pair();
+    arm920t_set_trace(cpu_ref, 1, NULL, NULL);
+    {
+        const uint32_t program[] = {0xe3a01032u, 0xe3a00000u,
+                                    cache_branch(CODE_ADDR + 8u, callee, 1),
+                                    0xe2511001u, cond_branch(0x1u, CODE_ADDR + 0x10u, CODE_ADDR + 8u),
+                                    0xeafffffeu};
+        load_both(program, GP32_ARRAY_COUNT(program));
+        set_mem_both(callee + 0x00u, 0xe92d4000u);
+        set_mem_both(callee + 0x04u, 0xe3500000u);
+        set_mem_both(callee + 0x08u, cond_branch(0x0u, callee + 0x08u, callee + 0x14u));
+        set_mem_both(callee + 0x0cu, 0xe2800003u);
+        set_mem_both(callee + 0x10u, 0xe8bd8000u);
+        set_mem_both(callee + 0x14u, 0xe2800007u);
+        set_mem_both(callee + 0x18u, 0xe8bd8000u);
+        set_reg_both(13u, DATA_ADDR + 0x100u);
+        CHECK(arm920t_run(cpu_jit, 700u) == arm920t_run(cpu_ref, 700u), "superblock call loop");
+        compare_state();
+        /* r0 == 0 adds 7 through the taken side exit, the remaining 49
+         * repetitions add 3 on the fall-through path: 7 + 49 * 3. */
+        CHECK(ref_reg(0u) == 154u, "superblock call loop result");
+        CHECK(ref_reg(13u) == DATA_ADDR + 0x100u, "superblock call loop stack balanced");
+    }
+    teardown_pair();
+    /* Rewriting an appended callee instruction must invalidate the trace and
+     * re-fetch it: 16 + 9 + 5 = 30. */
+    current_case = "superblock-appended-modified";
+    setup_pair();
+    arm920t_set_trace(cpu_ref, 1, NULL, NULL);
+    superblock_program(1u);
+    CHECK(arm920t_run(cpu_jit, 40u) == arm920t_run(cpu_ref, 40u), "superblock pre-modification");
+    compare_state();
+    CHECK(ref_reg(0u) == 22u, "superblock pre-modification result");
+    set_mem_both(callee + 0x14u, 0xe2800009u);   /* ADD r0,r0,#9 */
+    arm920t_flush_jit(cpu_jit);
+    set_reg_both(0u, 0u);                        /* re-enter the caller entry */
+    set_reg_both(13u, DATA_ADDR + 0x100u);
+    set_reg_both(15u, CODE_ADDR);
+    CHECK(arm920t_run(cpu_jit, 40u) == arm920t_run(cpu_ref, 40u), "superblock post-modification");
+    compare_state();
+    CHECK(ref_reg(0u) == 30u, "superblock modified appended instruction");
+    teardown_pair();
+}
+
 static void case_callback_irq_commit(void) {
     const uint32_t transfers[] = {
         0xe4942004u, 0xe4d42004u, /* LDR/LDRB r2,[r4],#4 */
@@ -4368,6 +4596,7 @@ int main(int argc, char **argv) {
         case_callback_irq_commit();
         case_block_callback_exit();
         case_loop_callback_trace();
+        case_superblock_trace();
     } else if (block_only) {
         case_block_callback_exit();
         case_block_modes();
@@ -4456,6 +4685,7 @@ int main(int argc, char **argv) {
     case_loop_callback_trace();
     case_loop_framed_leaf();
     case_nested_framed_leaf();
+    case_superblock_trace();
     }
     current_case = "summary";
     if (jit_events == 0)
