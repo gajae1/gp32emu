@@ -34,8 +34,10 @@ performance, audio and input correctness across the library, not boot-only tests
 
 Resumable callbacks and the guest-loop display wait are now in production;
 see the integrated section at the end of `HLE_WAIT_INTERRUPTS.md`. The notes
-below record the earlier prototypes and remain for history. Open limits: SDK
-task switches inside callbacks fault, HLE mixing pauses during callbacks, and
+below record the earlier prototypes and remain for history. SDK task switches
+can now suspend and resume a callback through its guest task frame; state v12
+records that ownership while v11 and older states still load. Open limits:
+HLE mixing pauses during callbacks (including task suspension), and
 WinterSports Eins alpha still leaves RAM.
 
 Private candidate/evidence on the development machine:

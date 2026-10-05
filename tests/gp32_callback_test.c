@@ -1,4 +1,4 @@
-/* Behavioral regressions for the two real callback consumers and v11 state.
+/* Behavioral regressions for the two real callback consumers and v12 state.
  * No ROM, mocked CPU or alternate execution backend. */
 #include "../src/gp32.c"
 
@@ -98,7 +98,7 @@ static void check_refill(int jit, int final_probe, const char *path) {
     CHECK(gp32_run_cycles(g, 5u) == GP32_OK && g->direct_hle_callback_running, "suspend within real filler");
     size_t size = 0;
     uint8_t *image = save(g, &size);
-    CHECK(image && !memcmp(image, "GP32STATEv0011", 14u), "v11 writer");
+    CHECK(image && !memcmp(image, "GP32STATEv0012", 14u), "v12 writer");
     if (image) {
         CHECK(gp32_load_state_data(clone, image, size) == GP32_OK, "load active refill");
         CHECK(gp32_save_state(g, path) == GP32_OK && gp32_load_state(clone, path) == GP32_OK, "file continuation roundtrip");
@@ -133,6 +133,7 @@ static void check_state_validation(int jit) {
             {2u, 99u}, {54u, DIRECT_TICK_AFTER_REFILL}, {55u, 1u},
             {56u, 0x200u}, {59u, 4u}, {60u, 9u}, {26u, 0u}, {8u, 0u},
             {0u, 0x1000000u}, {1u, 67000000u}, {5u, GP32_RAM_BASE - 4u},
+            {85u, GP32_RAM_BASE - 4u}, {86u, 1u},
         };
         for (size_t i = 0; i < GP32_ARRAY_COUNT(corrupt); ++i) {
             memcpy(bad, image, size);
@@ -223,18 +224,109 @@ static void check_timer_epoch(int jit) {
     free(image); gp32_destroy(g); gp32_destroy(clone);
 }
 
+
+/* A real PWM IRQ saves the interrupted callback using the SDK's 16-word
+ * task frame, selects a second task with SWI #14, then that task selects the
+ * parked callback. No host register injection after callback entry. */
+static void check_task_switch(int jit) {
+    gp32_t *g = fixture(jit), *clone = fixture(jit);
+    if (!g || !clone) { gp32_destroy(g); gp32_destroy(clone); return; }
+    const uint32_t tasks = GP32_RAM_BASE + 0x8000u, other = tasks + 0x34u;
+    const uint32_t command = tasks + 0x100u, flag = marker + 4u;
+    const uint32_t worker = GP32_RAM_BASE + 0x26000u, frame = worker + 0x1000u;
+    const uint32_t handler = GP32_RAM_BASE + 0x24000u, mask = 1u << 10;
+    const uint32_t callback[] = {
+        0xe321f053u, 0xe3a03064u, 0xe2533001u, 0x1afffffdu,
+        0xe59f000cu, 0xe5901000u, 0xe2811001u, 0xe5801000u, 0xe12fff1eu, marker,
+    };
+    /* CPSR/r0-r12/PC are first parked on IRQ SP; copy them to SVC SP and
+     * include the interrupted SVC LR, as an SDK scheduler does. */
+    const uint32_t irq[] = {
+        0xe24ee004u, 0xe92d5fffu, 0xe14f0000u, 0xe92d0001u,
+        0xe1a0400du, 0xe28dd03cu, 0xe321f0d3u, 0xe24dd040u,
+        0xe1a0500du, 0xe3a0600eu, 0xe4947004u, 0xe4857004u,
+        0xe2566001u, 0x1afffffbu, 0xe58de038u, 0xe5947000u, 0xe58d703cu,
+        0xe59f0030u, 0xe3a01000u, 0xe5801000u, /* stop PWM */
+        0xe59f0028u, 0xe3a01c04u, 0xe5801000u, 0xe5801010u, /* ack IRQ */
+        0xe59f201cu, 0xe582d000u, 0xe2823034u, 0xe321f0d2u, /* back to IRQ */
+        0xe59f0010u, 0xef000014u, 0xeafffffeu,
+        0x15100008u, 0x14400000u, tasks, command,
+    };
+    const uint32_t task[] = {
+        0xe59f0038u, 0xe3a0105bu, 0xe5801008u, /* other task marker */
+        0xe5901000u, 0xe3510000u, 0x0afffffcu, /* wait for host release */
+        0xe59f2024u, 0xe3a01002u, 0xe5821014u,
+        0xe2823034u, 0xe59f0018u, 0xef000014u, 0xeafffffeu,
+        0xe1a00000u, 0xe1a00000u, 0xe1a00000u, flag, tasks, command,
+    };
+    put_code(g, fn, callback, GP32_ARRAY_COUNT(callback));
+    put_code(g, handler, irq, GP32_ARRAY_COUNT(irq));
+    put_code(g, worker, task, GP32_ARRAY_COUNT(task));
+    s3c2400_write32(g->soc, command, 0x20u);
+    s3c2400_write32(g->soc, tasks + 0x14u, 1u);
+    s3c2400_write32(g->soc, tasks + 0x30u, fn);
+    s3c2400_write32(g->soc, other, frame);
+    s3c2400_write32(g->soc, other + 0x14u, 2u);
+    s3c2400_write32(g->soc, other + 0x30u, worker);
+    s3c2400_write32(g->soc, frame, 0xd3u);
+    s3c2400_write32(g->soc, frame + 60u, worker);
+    uint8_t bios[36] = {0}; char error[128];
+    gp32_st32le(bios + 0x18u, 0xe59ff000u);
+    gp32_st32le(bios + 0x20u, handler);
+    CHECK(s3c2400_load_bios_buffer(g->soc, bios, sizeof(bios), error, sizeof(error)), "install PWM IRQ vector");
+    arm920t_set_cpsr(g->cpu, 0xd2u);
+    arm920t_set_reg(g->cpu, 13u, GP32_RAM_BASE + 0x31000u);
+    arm920t_set_cpsr(g->cpu, 0xd3u);
+    timer_due(g, 0u, fn);
+    CHECK(gp32_run_cycles(g, 16u) == GP32_OK && g->direct_hle_callback_running, "start preemptible HLE callback");
+    g->direct_hle_gpos_timer[0].enabled = 0u;
+    s3c2400_write32(g->soc, 0x14400008u, ~mask);
+    s3c2400_write32(g->soc, 0x15100000u, 0u);
+    s3c2400_write32(g->soc, 0x15100004u, 0u);
+    s3c2400_write32(g->soc, 0x1510000cu, 9u);
+    s3c2400_write32(g->soc, 0x15100008u, 1u);
+    gp32_status_t status = GP32_OK;
+    for (unsigned i = 0; i < 1000u && status == GP32_OK &&
+         s3c2400_debug_read32(g->soc, marker + 12u) != 91u; ++i)
+        status = gp32_run_cycles(g, 1u);
+    CHECK(status == GP32_OK && s3c2400_debug_read32(g->soc, marker + 12u) == 91u,
+          "PWM scheduler switches from active callback to ready SDK task without fault");
+    if (status == GP32_OK) {
+        CHECK(g->direct_hle_callback_running && !s3c2400_debug_read32(g->soc, marker), "task switch keeps unfinished callback and consumer tail");
+        CHECK(g->direct_callback.sdk_task == tasks && g->direct_callback.suspended,
+              "saved SDK task frame identifies callback ownership");
+        size_t size = 0; uint8_t *image = save(g, &size);
+        if (image) {
+            CHECK(gp32_load_state_data(clone, image, size) == GP32_OK, "restore callback while different task owns CPU");
+            CHECK(gp32_run_cycles(g, 70000000u) == GP32_OK && gp32_run_cycles(clone, 70000000u) == GP32_OK,
+                  "task suspension longer than watchdog does not time out callback");
+            CHECK(g->direct_hle_callback_running && !s3c2400_debug_read32(g->soc, marker), "foreign task never completes callback");
+            s3c2400_write32(g->soc, flag, 1u); s3c2400_write32(clone->soc, flag, 1u);
+            CHECK(finish_callback(g) == GP32_OK && finish_callback(clone) == GP32_OK, "SDK restores parked callback through its real return stub");
+            CHECK(s3c2400_debug_read32(g->soc, marker) == 1u && s3c2400_debug_read32(clone->soc, marker) == 1u &&
+                  gp32_get_pc(g) == caller && gp32_get_pc(clone) == caller && gp32_get_cpsr(g) == 0xd3u &&
+                  gp32_get_cpu_reg(g, 8u) == 0x12345678u && gp32_get_cycles(g) == gp32_get_cycles(clone),
+                  "resumed callback tail and original foreground context survive save/load");
+            size_t a_size = 0, b_size = 0;
+            uint8_t *a = save(g, &a_size), *b = save(clone, &b_size);
+            CHECK(a && b && a_size == b_size && !memcmp(a, b, a_size), "full resumed machine matches restored run");
+            free(a); free(b);
+        }
+        free(image);
+    }
+    printf("task-switch jit=%d status=%d error=%s\n", jit, status, gp32_get_error(g));
+    gp32_destroy(g); gp32_destroy(clone);
+}
+
 static void check_faults(int jit) {
-    for (unsigned fault = 0; fault < 3u; ++fault) {
+    for (unsigned fault = 0; fault < 2u; ++fault) {
         gp32_t *g = fixture(jit), *clone = fixture(jit);
         if (!g || !clone) { gp32_destroy(g); gp32_destroy(clone); continue; }
-        const uint32_t command = GP32_RAM_BASE + 0x8000u;
-        const uint32_t task_code[] = {0xe59f0008u, 0xef000014u, 0xe5801000u, 0xe12fff1eu, command};
         if (fault == 0u) s3c2400_write32(g->soc, fn, 0xeafffffeu);
-        else if (fault == 1u) { put_code(g, fn, task_code, GP32_ARRAY_COUNT(task_code)); s3c2400_write32(g->soc, command, 0x20u); }
-        else if (fault == 2u) s3c2400_write32(g->soc, fn, 0xe12fff1eu);
+        else s3c2400_write32(g->soc, fn, 0xe12fff1eu);
         timer_due(g, 0u, fn);
         CHECK(gp32_run_cycles(g, 16u) == GP32_OK, "start fault fixture");
-        if (fault == 2u) {
+        if (fault == 1u) {
             /* Existing ARM920T WFI is maintenance only. Exercise its supported
              * persistent halt state through the real CPU state API instead. */
             arm920t_state_image_t *cpu = malloc(sizeof(*cpu));
@@ -257,7 +349,7 @@ static void check_faults(int jit) {
             CHECK(s3c2400_debug_read32(g->soc, direct_fw_tick_addr(g)) >= 1000u, "firmware time advances during callback");
             gp32_framebuffer_desc_t fb;
             CHECK(gp32_get_framebuffer(g, &fb) == GP32_OK && fb.frame_counter > 0u, "normal hardware advances during callback");
-        } else if (fault == 1u) CHECK(s3c2400_debug_read32(g->soc, command) == 0x20u, "task switch fault precedes guest mutation");
+        }
         size_t size = 0; uint8_t *image = save(g, &size);
         if (image) CHECK(gp32_load_state_data(clone, image, size) == GP32_OK && gp32_run_cycles(clone, 1u) == GP32_ERR_CPU_FAULT,
                          "fault state persists through load");
@@ -301,6 +393,12 @@ static void check_exception_bank_state(int jit) {
     size_t size = 0; uint8_t *image = save(g, &size);
     if (image) {
         CHECK(gp32_load_state_data(clone, image, size) == GP32_OK, "load suspended callback with unused exception stack bank");
+        /* v11 has the same prefix without the two SDK task words. Its active
+         * callbacks default to an unbound, unsuspended continuation. */
+        const size_t cut = 16u + sizeof(gp32_state_image_t) + 32u + GP32_CONTINUATION_V11_WORDS * 4u;
+        memmove(image + cut, image + cut + 8u, size - cut - 8u);
+        memcpy(image, gp32_state_magic_v11, 16u);
+        CHECK(gp32_load_state_data(clone, image, size - 8u) == GP32_OK, "old v11 active callback remains readable");
         CHECK(finish_callback(g) == GP32_OK && finish_callback(clone) == GP32_OK, "return through normal CPU from restored IRQ context");
         CHECK(arm920t_get_pc(g->cpu) == caller && arm920t_get_pc(clone->cpu) == caller &&
               arm920t_get_cpsr(g->cpu) == 0xd3u && arm920t_get_cpsr(clone->cpu) == 0xd3u,
@@ -311,6 +409,10 @@ static void check_exception_bank_state(int jit) {
 }
 
 int main(int argc, char **argv) {
+    if (argc > 1 && !strcmp(argv[1], "--task-switch")) {
+        check_task_switch(0); check_task_switch(1);
+        return failures ? 1 : 0;
+    }
     if (argc > 1 && !strcmp(argv[1], "--exception-bank")) {
         check_exception_bank_state(0); check_exception_bank_state(1);
         printf("exception-bank regression: %s (%d failures)\n", failures ? "FAIL" : "PASS", failures);
@@ -321,7 +423,7 @@ int main(int argc, char **argv) {
         check_refill(jit, 0, path); check_refill(jit, 1, path);
         check_state_validation(jit); check_clock_and_volume(jit); check_timer_epoch(jit);
         check_remaining_timer_calls(jit); check_faults(jit);
-        check_exception_bank_state(jit);
+        check_exception_bank_state(jit); check_task_switch(jit);
     }
     printf("callback regression: %s (%d failures)\n", failures ? "FAIL" : "PASS", failures);
     return failures ? 1 : 0;
