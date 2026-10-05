@@ -406,6 +406,27 @@ void s3c2400_install_hle_bios(s3c2400_t *s) {
        firmware image uses zero-filled vectors/data so absent callbacks read as
        NULL while real BIOS boot remains controlled by s3c2400_load_bios(). */
     memset(s->bios, 0x00, BIOS_SIZE);
+    /* The exception vectors are the one low-ROM region a direct-loaded guest
+       executes instead of probing, and the retail ROM answers every one of them
+       with firmware code: the reset/fault vectors branch into the reboot path
+       (ROM 0x168), 0x14 self-loops, and the SWI vector dispatches to the
+       firmware services (ROM 0xf0), returning PC for the selectors it does not
+       implement.  Falling through zero words instead runs the guest through the
+       erased ROM into unmapped memory, so publish the terminal equivalents: the
+       entries the firmware would use to restart or fault stay parked
+       (`b .`), and the SWI entry returns to the caller with the exception-return
+       semantics the direct HLE declines to handle in C. */
+    static const uint32_t direct_vectors[8] = {
+        0xeafffffeu, /* 0x00 reset: the ROM reboots the system; park in place */
+        0xeafffffeu, /* 0x04 undefined instruction: ROM 0x04 branches to its fault/reboot path */
+        0xe1b0f00eu, /* 0x08 SWI: movs pc, lr - return like an unimplemented ROM selector */
+        0xeafffffeu, /* 0x0c prefetch abort: ROM 0x0c branches to its fault/reboot path */
+        0xeafffffeu, /* 0x10 data abort: same fault/reboot path */
+        0xeafffffeu, /* 0x14 reserved: the retail ROM self-loops at 0x14 */
+        0xeafffffeu, /* 0x18 IRQ: direct mode has no firmware interrupt dispatcher */
+        0xeafffffeu  /* 0x1c FIQ: same */
+    };
+    for (unsigned i = 0; i < 8u; ++i) gp32_st32le(&s->bios[i * 4u], direct_vectors[i]);
 }
 int s3c2400_load_smartmedia(s3c2400_t *s, const char *path, char *err, size_t err_len) {
     if (!s) return 0;
