@@ -1853,6 +1853,170 @@ static void case_native_sflag_logic(void) {
     }
 }
 
+/* Independent C model of the ARM carry/reverse data-processing forms. */
+static void carry_arith_model(unsigned code, uint32_t a, uint32_t b, unsigned cin,
+                              uint32_t *result, uint32_t *nzcv) {
+    uint32_t r;
+    if (code == 5u) { /* ADC: a + b + C */
+        uint64_t wide = (uint64_t)a + (uint64_t)b + (uint64_t)cin;
+        r = (uint32_t)wide;
+        *result = r;
+        *nzcv = (r & 0x80000000u) | (r == 0u ? 0x40000000u : 0u) |
+                ((wide >> 32) ? 0x20000000u : 0u) |
+                ((~(a ^ b) & (a ^ r) & 0x80000000u) ? 0x10000000u : 0u);
+        return;
+    }
+    uint32_t minuend, subtrahend;
+    unsigned borrow;
+    if (code == 6u) { minuend = a; subtrahend = b; borrow = cin ? 0u : 1u; } /* SBC */
+    else if (code == 3u) { minuend = b; subtrahend = a; borrow = 0u; }       /* RSB */
+    else { minuend = b; subtrahend = a; borrow = cin ? 0u : 1u; }            /* RSC */
+    uint64_t diff = (uint64_t)minuend - (uint64_t)subtrahend - (uint64_t)borrow;
+    r = (uint32_t)diff;
+    *result = r;
+    *nzcv = (r & 0x80000000u) | (r == 0u ? 0x40000000u : 0u) |
+            ((diff >> 63) ? 0u : 0x20000000u) |
+            (((minuend ^ subtrahend) & (minuend ^ r) & 0x80000000u) ? 0x10000000u : 0u);
+}
+
+static uint32_t carry_arith_ror32(uint32_t v, unsigned s) {
+    s &= 31u;
+    return s ? ((v >> s) | (v << (32u - s))) : v;
+}
+
+/* Immediate-shift operand2. An immediate LSR/ASR #0 means the 32-bit shift;
+ * RRX is deliberately absent because arithmetic RRX still uses the helper. */
+static uint32_t carry_arith_shift(unsigned type, unsigned amount, uint32_t v) {
+    switch (type) {
+    case 0u: return amount ? (amount < 32u ? v << amount : 0u) : v;
+    case 1u: return amount ? (amount < 32u ? v >> amount : 0u) : 0u;
+    case 2u:
+        if (amount == 0u || amount >= 32u) return (v & 0x80000000u) ? 0xffffffffu : 0u;
+        return (v & 0x80000000u) ? ((v >> amount) | (0xffffffffu << (32u - amount))) : (v >> amount);
+    default: return amount ? carry_arith_ror32(v, amount) : v;
+    }
+}
+
+/* Register-specified operand2: a zero amount performs no shift for every type,
+ * unlike the immediate LSR/ASR #32 encodings above. */
+static uint32_t carry_arith_regshift(unsigned type, unsigned amount, uint32_t v) {
+    amount &= 0xffu;
+    if (amount == 0u) return v;
+    switch (type) {
+    case 0u: return amount < 32u ? v << amount : 0u;
+    case 1u: return amount < 32u ? v >> amount : 0u;
+    case 2u:
+        if (amount >= 32u) return (v & 0x80000000u) ? 0xffffffffu : 0u;
+        return (v & 0x80000000u) ? ((v >> amount) | (0xffffffffu << (32u - amount))) : (v >> amount);
+    default: return carry_arith_ror32(v, amount);
+    }
+}
+
+typedef struct {
+    uint32_t *program, *expect_result, *expect_flags;
+    unsigned n, results, code, s, cin, rn;
+    uint32_t a;
+} carry_arith_build_t;
+
+/* MSR CPSR_f seed + tested op + MRS + STMIA.  r5 = 0x20000000 and r11 = 0
+ * select the incoming carry, r10 walks the record area, r4 is the destination
+ * and r12 the MRS scratch register. */
+static void carry_arith_emit(carry_arith_build_t *b, uint32_t op2, uint32_t operand2) {
+    uint32_t nzcv;
+    carry_arith_model(b->code, b->a, operand2, b->cin, &b->expect_result[b->results], &nzcv);
+    b->program[b->n++] = b->cin ? 0xe128f005u : 0xe128f00bu; /* MSR CPSR_f,r5/r11 */
+    b->program[b->n++] = 0xe0000000u | (b->code << 21) | (b->s << 20) |
+                         (b->rn << 16) | (4u << 12) | op2;
+    b->program[b->n++] = 0xe10fc000u;  /* MRS r12, CPSR */
+    b->program[b->n++] = 0xe8aa1010u;  /* STMIA r10!, {r4, r12} */
+    b->expect_flags[b->results] = b->s ? nzcv : (b->cin ? 0x20000000u : 0u);
+    ++b->results;
+}
+
+/* Seeded ADC/SBC/RSB/RSC.  Every opcode crosses both operands' boundary values
+ * (0, 0x7fffffff, 0x80000000, 0xffffffff), both carry-in states and the
+ * register, immediate, immediate-shift and register-shift operand forms; the S=0
+ * pass covers the register and immediate encodings as well.  Each case records
+ * its result and committed NZCV, checked against the C model above.  The x64
+ * emitter routed every S=1 form to the classified helper, so the DATA helper
+ * counter must stay zero on both native backends. */
+static void case_native_carry_arith(void) {
+    const uint32_t edges[4] = {0u, 0x7fffffffu, 0x80000000u, 0xffffffffu};
+    const unsigned codes[4] = {3u, 5u, 6u, 7u};                     /* RSB ADC SBC RSC */
+    const uint32_t imm_ops[4] = {0u, 1u, 0xffu, (4u << 8) | 0xffu}; /* #0 #1 #0xff #0xff000000 */
+    const uint32_t imm_vals[4] = {0u, 1u, 0xffu, 0xff000000u};
+    const struct { unsigned type, amount; } shifts[6] = {
+        {0u, 0u}, {0u, 31u}, {1u, 0u}, {1u, 5u}, {2u, 4u}, {3u, 7u}
+    };
+    const uint32_t amounts[4] = {0u, 1u, 31u, 33u}; /* seeded into r6..r9 */
+    /* The BIOS code window holds 16128 instructions: 3328 cases at 4 each. */
+    static uint32_t program[13400];
+    static uint32_t expect_result[3400], expect_flags[3400];
+    carry_arith_build_t build = {program, expect_result, expect_flags, 0u, 0u, 0u, 0u, 0u, 0u, 0u};
+    current_case = "native-carry-arith";
+    setup_pair();
+    arm920t_set_trace(cpu_ref, 1, NULL, NULL);
+    set_reg_both(0, edges[0]);
+    set_reg_both(1, edges[1]);
+    set_reg_both(2, edges[2]);
+    set_reg_both(3, edges[3]);
+    set_reg_both(5, 0x20000000u); /* C=1 MSR CPSR_f seed */
+    set_reg_both(11, 0u);         /* C=0 MSR CPSR_f seed */
+    set_reg_both(6, amounts[0]);
+    set_reg_both(7, amounts[1]);
+    set_reg_both(8, amounts[2]);
+    set_reg_both(9, amounts[3]);
+    set_reg_both(10, DATA_ADDR);
+    for (unsigned cv = 0; cv < 2u; ++cv)
+        for (unsigned k = 0; k < GP32_ARRAY_COUNT(codes); ++k) {
+            build.cin = cv;
+            build.code = codes[k];
+            for (unsigned rn = 0; rn < 4u; ++rn) {
+                build.rn = rn;
+                build.a = edges[rn];
+                for (unsigned sv = 1u; ; --sv) {   /* S=1 first, then S=0 */
+                    build.s = sv;
+                    for (unsigned rmi = 0; rmi < 4u; ++rmi)
+                        carry_arith_emit(&build, rmi, edges[rmi]);
+                    for (unsigned ii = 0; ii < 4u; ++ii)
+                        carry_arith_emit(&build, (1u << 25) | imm_ops[ii], imm_vals[ii]);
+                    if (!sv) break;
+                }
+                for (unsigned si = 0; si < GP32_ARRAY_COUNT(shifts); ++si)
+                    for (unsigned rmi = 0; rmi < 4u; ++rmi)
+                        carry_arith_emit(&build, (shifts[si].amount << 7) |
+                                         (shifts[si].type << 5) | rmi,
+                                         carry_arith_shift(shifts[si].type, shifts[si].amount, edges[rmi]));
+                for (unsigned type = 0; type < 4u; ++type)
+                    for (unsigned ai = 0; ai < GP32_ARRAY_COUNT(amounts); ++ai)
+                        for (unsigned rmi = 0; rmi < 4u; ++rmi)
+                            carry_arith_emit(&build, (1u << 4) | ((6u + ai) << 8) |
+                                             (type << 5) | rmi,
+                                             carry_arith_regshift(type, amounts[ai], edges[rmi]));
+            }
+        }
+    program[build.n++] = 0xeafffffeu;
+    load_both(program, build.n);
+    CHECK(arm920t_run(cpu_jit, 100000u) == arm920t_run(cpu_ref, 100000u),
+          "carry arithmetic budget");
+    compare_state();
+    CHECK(ref_reg(10) == DATA_ADDR + build.results * 8u, "every carry arithmetic result recorded");
+    for (unsigned i = 0; i < build.results; ++i) {
+        const uint8_t *slot = bus_ref.ram + (DATA_ADDR - RAM_BASE) + i * 8u;
+        uint32_t got = gp32_ld32le(slot);
+        if (got != expect_result[i]) { report("carry arithmetic result", got, expect_result[i]); break; }
+        got = gp32_ld32le(slot + 4u) & 0xf0000000u;
+        if (got != expect_flags[i]) { report("carry arithmetic NZCV", got, expect_flags[i]); break; }
+    }
+    gp32_cpu_profile_t profile;
+    arm920t_get_cpu_profile(cpu_jit, &profile);
+    if (profile.supported && profile.native_backend) {
+        CHECK(profile.native_arm_insns > 0u, "carry arithmetic native blocks engaged");
+        CHECK(profile.helper_op_kinds[1] == 0u, "ADC/SBC/RSB/RSC must not use the DATA helper");
+    }
+    teardown_pair();
+}
+
 /* Conditions immediately after arithmetic can reuse native NZCV. A logical
  * flag update, RAM range guard, helper or skipped predicated producer must
  * not accidentally reuse a different set of host flags. Store each decision
@@ -3877,6 +4041,8 @@ int main(int argc, char **argv) {
     } else if (argc == 2 && !strcmp(argv[1], "--msr-data-pc")) {
         case_native_cpsr();
         case_native_data_pc();
+    } else if (argc == 2 && !strcmp(argv[1], "--carry-arith")) {
+        case_native_carry_arith();
     } else if (argc == 2 && !strcmp(argv[1], "--psr-blocks")) {
         case_native_psr_continuation();
     } else if (argc == 2 && !strcmp(argv[1], "--cpsr")) {
@@ -3959,6 +4125,7 @@ int main(int argc, char **argv) {
     case_native_sflag_logic();
     case_native_condition_flags();
     case_native_regshift();
+    case_native_carry_arith();
     case_native_longmul_psr();
     case_native_spsr();
     case_native_exception_return();
@@ -4015,7 +4182,8 @@ int main(int argc, char **argv) {
            (argc == 2 && !strcmp(argv[1], "--terminal-helper")) ? "terminal-helper" :
            (argc == 2 && !strcmp(argv[1], "--ldm-pc-native")) ? "ldm-pc-native" :
            (argc == 2 && !strcmp(argv[1], "--psr-blocks")) ? "psr-blocks" :
-           (argc == 2 && !strcmp(argv[1], "--cpsr")) ? "cpsr" : psr_only ? "spsr" : poll_only ? "poll-progress" : access_only ? "checked-access" : pairs_only ? "block-pairs/fences" : portable_only ? "portable-callback" : block_only ? "block-callback" : irq_only ? "callback-IRQ" : chain_only ? "branch-chain" : forward_only ? "forward-loop" : callback_only ? "callback-PC" : (leaf_only ? "unframed-leaf" : (ram_end_only ? "mapped-page-RAM-end" : (loops_only ? "loop-fences" : "flags/shift/branch/mem/half/block/mul/seeded/budget/loop-fences"))),
+           (argc == 2 && !strcmp(argv[1], "--cpsr")) ? "cpsr" :
+           (argc == 2 && !strcmp(argv[1], "--carry-arith")) ? "carry-arith" : psr_only ? "spsr" : poll_only ? "poll-progress" : access_only ? "checked-access" : pairs_only ? "block-pairs/fences" : portable_only ? "portable-callback" : block_only ? "block-callback" : irq_only ? "callback-IRQ" : chain_only ? "branch-chain" : forward_only ? "forward-loop" : callback_only ? "callback-PC" : (leaf_only ? "unframed-leaf" : (ram_end_only ? "mapped-page-RAM-end" : (loops_only ? "loop-fences" : "flags/shift/branch/mem/half/block/mul/seeded/budget/loop-fences"))),
            jit_events, jit_fallbacks);
     return 0;
 }
