@@ -191,6 +191,35 @@ typedef struct arm_jit_block {
     arm_jit_native_fn native;
 } arm_jit_block_t;
 
+/*
+ * Poll-path state of one block, parallel to jit_blocks (same slot index) and
+ * kept out of the dispatch header so a two-way set still fits one cache line.
+ *
+ * A poll candidate is a self-loop without a provable progress step: it stays
+ * on the portable path, which can prove a constant, side-effect-free read set
+ * and then advance the cycle budget over a whole repetition.  That is only
+ * worth its per-instruction cost while a repetition can actually be skipped.
+ * A candidate that keeps running portable without ever reaching a skip is
+ * ordinary code that happens to branch back to its own entry; it runs on its
+ * native block instead.  Detection is empirical and cannot change guest
+ * output: both paths execute every instruction with identical results, and
+ * skipping is only ever decided by the existing fixed-point proof.
+ */
+typedef struct arm_jit_poll_state {
+    uint8_t flags; /* ARM_JIT_POLL_* */
+    uint8_t idle;  /* consecutive portable runs of a plain candidate without a skip */
+} arm_jit_poll_state_t;
+
+#define ARM_JIT_POLL_NATIVE 0x01u /* promoted: run the native block when available */
+#define ARM_JIT_POLL_LOOPS  0x02u /* a real skip proved a fixed point: keep the portable path */
+/*
+ * A fixed-point loop reaches its first skip within two consecutive observed
+ * repetitions.  Requiring this many consecutive no-skip portable runs before
+ * promoting keeps any candidate that skips more often than 1-in-N, and any
+ * counted candidate (separate shape, compile and skip policy), untouched.
+ */
+#define ARM_JIT_POLL_PROMOTE_AFTER 16u
+
 /* Packed mirror of tlb_va_base/tlb_pa_base/tlb_mask/tlb_valid: one 16-byte
  * entry per TLB index so a hit stays inside a single cache line instead of
  * touching four separately strided arrays.  It is a derived cache only; the
@@ -264,6 +293,8 @@ struct arm920t {
     /* Runtime certificates; appended to retain all existing hot-field offsets. */
     const arm_live_read32_t *live_read32;
     size_t live_read32_count;
+    /* Poll-path state, parallel to jit_blocks; appended for the same reason. */
+    arm_jit_poll_state_t *jit_poll;
 };
 
 /* Native dispatch only needs the compact header. Decoded instructions live
@@ -605,6 +636,7 @@ void arm920t_destroy(arm920t_t *c) {
 #endif
     free(c->jit_blocks);
     free(c->jit_ops);
+    free(c->jit_poll);
     free(c);
 }
 void arm920t_set_trace(arm920t_t *c, int en, arm_log_fn log, void *user) { if (c) { c->trace = en; c->log = log; c->log_user = user; } }
@@ -1451,9 +1483,14 @@ static int arm_jit_alloc(arm920t_t *c) {
     c->jit_blocks = (arm_jit_block_t *)calloc(ARM_JIT_BLOCK_COUNT, sizeof(c->jit_blocks[0]));
     if (!c->jit_blocks) return 0;
     c->jit_ops = calloc(ARM_JIT_BLOCK_COUNT, sizeof(c->jit_ops[0]));
-    if (!c->jit_ops) {
+    c->jit_poll = (arm_jit_poll_state_t *)calloc(ARM_JIT_BLOCK_COUNT, sizeof(c->jit_poll[0]));
+    if (!c->jit_ops || !c->jit_poll) {
         free(c->jit_blocks);
+        free(c->jit_ops);
+        free(c->jit_poll);
         c->jit_blocks = NULL;
+        c->jit_ops = NULL;
+        c->jit_poll = NULL;
         return 0;
     }
     return 1;
@@ -1815,6 +1852,11 @@ static ARM_NOINLINE arm_jit_block_t *arm_jit_translate(arm920t_t *c, uint32_t pc
             b->poll_backedge = 1;
     }
     b->poll_backedge |= (uint8_t)(arm_jit_counted_poll(c, b) << 1);
+    /* Re-translation starts the promotion observation over: the new block's
+     * path preference must be derived from its own runs, not from history
+     * recorded for whatever block previously occupied this slot. */
+    c->jit_poll[b - c->jit_blocks].flags = 0;
+    c->jit_poll[b - c->jit_blocks].idle = 0;
     b->valid = 1;
     ARM_PROF_INC(c, jit_blocks_compiled);
     /* Counted candidates first observe real portable reads. Do not allocate
@@ -3452,10 +3494,11 @@ static int arm_poll_read_stable(arm920t_t *c, const arm_jit_op_t *op) {
 /* No native block is active at lazy compilation. Recycle before emitting,
  * then restart dispatch: wrap may have cleared the block being considered.
  * Keep the emitter's large scratch frame out of the hot dispatch function.
- * Failed attempts are derived block state, reset only by retranslation. */
-static ARM_NOINLINE int arm_counted_poll_compile(arm920t_t *c, arm_jit_block_t *b) {
+ * Failed attempts are derived block state, reset only by retranslation.
+ * Returns 1 when dispatch must restart (the table may have been cleared). */
+static ARM_NOINLINE int arm_jit_lazy_compile(arm920t_t *c, arm_jit_block_t *b) {
 #if ARM920T_NATIVE_BACKEND
-    if (!c->jit_enabled || b->native_ok || arm_jit_needs_poll(c, b)) return 0;
+    if (!c->jit_enabled || b->native_ok) return 0;
     if (c->jit_code && c->jit_code_used &&
         c->jit_code_size > ARM_JIT_NATIVE_MAX_BYTES + 15u &&
         (c->jit_code_used > c->jit_code_size ||
@@ -3473,6 +3516,13 @@ static ARM_NOINLINE int arm_counted_poll_compile(arm920t_t *c, arm_jit_block_t *
     GP32_UNUSED(c); GP32_UNUSED(b);
 #endif
     return 0;
+}
+
+/* Counted candidates keep their observed-repetition proof on the portable
+ * path; only a rejected observation compiles native code for one. */
+static ARM_NOINLINE int arm_counted_poll_compile(arm920t_t *c, arm_jit_block_t *b) {
+    if (arm_jit_needs_poll(c, b)) return 0;
+    return arm_jit_lazy_compile(c, b);
 }
 
 /* The classified interpreter is much larger than native block dispatch. Keep
@@ -3665,6 +3715,7 @@ static uint32_t arm_jit_run(arm920t_t *c, uint32_t run_done) {
 
         uint32_t done = 0;
         int stable_reads = 0;
+        int poll_skipped = 0;
         /* Fetch/translation callbacks may also shorten the current run. */
         if (total >= c->run_limit) break;
         int counted = (b->poll_backedge >> 1) != 0;
@@ -3681,6 +3732,17 @@ static uint32_t arm_jit_run(arm920t_t *c, uint32_t run_done) {
         if (ARM920T_NATIVE_BACKEND && counted && c->jit_enabled && native_allowed &&
             (c->run_limit - total) >= b->count && !b->native_ok) {
             if (arm_counted_poll_compile(c, b)) {
+                poll_pc = rejected_pc = UINT32_MAX;
+                continue;
+            }
+        }
+        /* A promoted plain candidate gets its native block here, once, at the
+         * same safe point: no native block is active and a failed attempt is
+         * remembered in native_ok. */
+        if (ARM920T_NATIVE_BACKEND && !counted && !b->native && b->poll_backedge &&
+            (c->jit_poll[b - c->jit_blocks].flags & ARM_JIT_POLL_NATIVE) &&
+            c->jit_enabled && native_allowed && (c->run_limit - total) >= b->count && !b->native_ok) {
+            if (arm_jit_lazy_compile(c, b)) {
                 poll_pc = rejected_pc = UINT32_MAX;
                 continue;
             }
@@ -3732,6 +3794,7 @@ static uint32_t arm_jit_run(arm920t_t *c, uint32_t run_done) {
                     repeats = budget / done;
                 total += repeats * done;
                 c->jit_hits += repeats;
+                if (repeats) poll_skipped = 1;
 #if ARM920T_PROFILING
                 c->prof.jit_hits += repeats;
                 c->prof.poll_skip_events++;
@@ -3744,6 +3807,24 @@ static uint32_t arm_jit_run(arm920t_t *c, uint32_t run_done) {
             memcpy(poll_regs, c->r, sizeof(poll_regs));
         } else {
             poll_pc = UINT32_MAX;
+        }
+        /* Promotion observation for plain poll candidates. Only the portable
+         * path can prove a skip, and only a skipped repetition makes the
+         * portable path cheaper than the native block: a candidate that keeps
+         * completing without one is ordinary code. A real skip pins the block
+         * to the portable path for good, so a loop never loses its skip.
+         * poll_backedge is exactly 1 for a plain candidate (a counted one
+         * carries its counter register in the upper bits), so the hot path is
+         * one compare on the byte the loop has already loaded instead of three
+         * tests, and a native candidate that fell back to portable only keeps
+         * observing its own promotion, which changes nothing. */
+        if (b->poll_backedge == 1u) {
+            arm_jit_poll_state_t *ps = &c->jit_poll[b - c->jit_blocks];
+            if (poll_skipped) ps->flags |= ARM_JIT_POLL_LOOPS;
+            else if (!(ps->flags & (ARM_JIT_POLL_NATIVE | ARM_JIT_POLL_LOOPS)) &&
+                     ps->idle < ARM_JIT_POLL_PROMOTE_AFTER) {
+                if (++ps->idle >= ARM_JIT_POLL_PROMOTE_AFTER) ps->flags |= ARM_JIT_POLL_NATIVE;
+            }
         }
     }
     return total - run_done;

@@ -1152,9 +1152,22 @@ static int a64_one(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
 
 /* Exclude ordinary calls, status/coprocessor operations,
  * exceptions and PC-writing data/memory from the repeating prefix. The tail
- * after a conditional backedge keeps every existing exit/helper path. */
+ * after a conditional backedge keeps every existing exit/helper path.
+ *
+ * A plain poll candidate is compiled here only after the dispatcher promoted
+ * it, which the portable path only does after many repetitions that never
+ * proved a skip, and any candidate that ever skipped stays portable. Such a
+ * block must run its whole repetition natively: a promoted block that returns
+ * to the dispatcher after every poll body re-pays the trace entry, the
+ * dispatcher lookup and the checked access helper on each repetition, which
+ * for the four-instruction BIOS device poll cancelled the promotion on the
+ * measured LGM loading window. The self backedge repeats exactly the decoded
+ * prefix with the existing budget/generation/epoch/interrupt fences, so every
+ * repetition still executes and no skip decision moves to native code. */
 static uint32_t a64_selfloop_prefix(arm920t_t *c, arm_jit_block_t *b) {
-    if (arm_jit_needs_poll(c, b)) return 0;
+    if (arm_jit_needs_poll(c, b) &&
+        !(c->jit_poll && (c->jit_poll[b - c->jit_blocks].flags & ARM_JIT_POLL_NATIVE)))
+        return 0;
     for (unsigned i = 0; i < b->count; ++i) {
         const arm_jit_op_t *op = &arm_jit_ops(c, b)[i];
         /* Existing register-only leaf inlining proves LR/SP/mode unchanged.

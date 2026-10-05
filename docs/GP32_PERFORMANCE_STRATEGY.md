@@ -3236,7 +3236,7 @@ wait prototype is not promoted; its long-suspension, callback and state
 compatibility boundaries are recorded in [HLE wait interrupts](HLE_WAIT_INTERRUPTS.md).
 
 
-## Rejected: promoting never-skipping poll candidates (rounds 140-145)
+## Promoting never-skipping poll candidates (rounds 140-151, accepted v2)
 
 Plain poll candidates that never earn a poll skip (for example the BIOS
 SmartMedia status prefix at 0x2740 during Little Girl Mill loading) run on the
@@ -3251,4 +3251,12 @@ for promoted candidates, cheaper observation) still measured LGM 43.98 -> 43.55
 `F:/GP32/results/round142/abba-poll/` and `F:/GP32/results/round145/abba-poll2/`.
 An x86-64-only gate is possible but not taken because the PC already exceeds
 real time by a wide margin in this scene.
+
+Round 151 overturned that decision for v2. Those ABBA runs used the
+`GP32EMU_CPU_PROFILE=ON` bench and the LGM loading window (warmup 900). In a
+plain release bench (what the installed core runs) on LGM *gameplay* (warmup
+2400, 1200 frames) v2 measured 46.11 -> 57.58 fps (+24.9%), Blue +2.7%,
+Princess +2.6%, identical output; a SIGPROF sample of that scene showed 25%
+of host time in `arm_jit_run_portable`. v2 ships; the loading-window cost
+(about -1%) is accepted.
 
