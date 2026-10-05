@@ -6,6 +6,20 @@ performance, audio and input correctness across the library, not boot-only tests
 
 ## Current accepted work
 
+- Rejected (round 161): splitting io_write32 into a short GPIO body plus
+  out-of-line GPEDAT and IRQ/DMA/LCD halves (aarch64 1508 -> 436 bytes, 17 ->
+  7 GPIO lines). Identical output, but H700 ABBA lost LGM 78.95 -> 78.52 and
+  Princess 121.97 -> 121.43: LGM's SmartMedia streaming writes GPEDAT
+  (command/address latches) constantly, so the extra call costs more than
+  the saved lines. Evidence `F:/GP32/results/round161/w-chelp/`, `abba-iow/`.
+- Input latency audit (round 161, `F:/GP32/results/round161/w-input/`):
+  measured button-edge-to-changed-frame on Blue, Princess, ASR, Her and LGM;
+  every scene sits exactly at its guest floor (first GPIO read that sees the
+  edge, then the game's own draw and SADDR flip). No late poll, no extra
+  presented-frame delay, no double buffering. The proposed mid-run input
+  re-poll was not taken: Spruce's RetroArch uses the default Late poll type,
+  where the core's input_poll callback is a no-op and input is snapshotted
+  once per frame, so it would add callback cost for no gain.
 - Round 161 dispatcher hit path (`arm_jit_run`, all backends): the block's
   {generation, epoch} tag is compared with the CPU's adjacent pair in one
   64-bit load, the fast-path metadata (native_ok, counted poll, deferred
