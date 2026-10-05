@@ -79,6 +79,10 @@ struct gp32 {
     uint32_t direct_reset_image_valid;
     uint32_t direct_reset_scan_file_hle;
     uint32_t direct_reset_init_smc_gpio;
+    /* Set when the loaded guest asks the firmware to restart the machine (SWI 4)
+       or lands on the ROM's reset/fault vector; consumed at the frame boundary
+       so the restart happens with the CPU idle. */
+    uint32_t direct_reboot_pending;
     fpk_asset_t *direct_fpk_assets;
     size_t direct_fpk_asset_count;
     struct {
@@ -3511,16 +3515,37 @@ static int direct_fxe_swi(void *user, arm920t_t *cpu, uint32_t imm, uint32_t pc,
         arm920t_set_reg(cpu, 0, 0u);
         arm920t_set_reg(cpu, 1, 0u);
         return 1;
+    case 0x09: { /* Firmware interrupt-handler install (retail ROM 0x1260): store
+                  * the handler in the fixed ISR table and unmask the source. The
+                  * ROM's SWI wrapper restores r0/r1, so the caller sees them
+                  * unchanged. */
+        uint32_t source = arm920t_get_reg(cpu, 0) & 31u;
+        uint32_t handler = arm920t_get_reg(cpu, 1);
+        s3c2400_write32(g->soc, S3C2400_HLE_ISR_TABLE_ADDR + source * 4u, handler);
+        s3c2400_write32(g->soc, 0x14400008u,
+                        s3c2400_debug_read32(g->soc, 0x14400008u) & ~(1u << source));
+        return 1;
+    }
+    case 0x0a: { /* Firmware interrupt-handler removal (retail ROM 0x1294): clear
+                  * the table entry and mask the source again. */
+        uint32_t source = arm920t_get_reg(cpu, 0) & 31u;
+        s3c2400_write32(g->soc, S3C2400_HLE_ISR_TABLE_ADDR + source * 4u, 0u);
+        s3c2400_write32(g->soc, 0x14400008u,
+                        s3c2400_debug_read32(g->soc, 0x14400008u) | (1u << source));
+        return 1;
+    }
     case 0x12: /* Firmware exit.  Keep direct-loaded homebrew in a benign idle loop. */
         arm920t_set_reg(cpu, 15, pc);
         return 1;
     case 0x04: /* Firmware system boot (retail ROM 0x20d8): the service clears RAM,
                  * reloads the firmware and finally jumps to the entry the launcher
-                 * published, so it never returns to the caller.  Direct mode has no
-                 * firmware to restart, so park on the instruction like the exit
-                 * service below.  Returning instead sent the caller's stale LR
-                 * (GpMadMP3's "press A to reboot" CRT epilogue) into data. */
+                 * published, so it never returns to the caller. Returning instead
+                 * sent the caller's stale LR (GpMadMP3's "press A to reboot" CRT
+                 * epilogue) into data. Direct mode has no firmware to re-enter, so
+                 * the request restarts the loaded image at the frame boundary; the
+                 * guest stays parked on the service call until then. */
         arm920t_set_reg(cpu, 15, pc);
+        g->direct_reboot_pending = 1u; /* restarted at the frame boundary */
         return 1;
     case 0x1ff: /* Firmware high-range selector 0xFF: device state reset and
                  * continuation through FIQ-mode r12, implemented above. */
@@ -3592,7 +3617,7 @@ static int direct_fxe_swi(void *user, arm920t_t *cpu, uint32_t imm, uint32_t pc,
         return 1;
     }
     default:
-        if (imm == 0x02u || imm == 0x07u || imm == 0x09u || imm == 0x0au ||
+        if (imm == 0x02u || imm == 0x07u ||
             imm == 0x0du || imm == 0x0eu ||
             (imm >= 0x100u && imm <= 0x120u)) {
             arm920t_set_reg(cpu, 0, 0u);
@@ -3937,17 +3962,43 @@ gp32_status_t gp32_save_smartmedia(gp32_t *g, const char *path) {
     return GP32_OK;
 }
 
+/* The retail firmware answers a reboot request by restarting the machine: it
+ * clears RAM, reloads the firmware and jumps to the entry the launcher
+ * published. Direct mode has no firmware to re-enter, so the equivalent is to
+ * restart the image that is already loaded - the same restart the host Reset
+ * action performs for a direct-loaded guest. */
+static gp32_status_t direct_restart_loaded_image(gp32_t *g) {
+    gp32_status_t st = gp32_load_fxe_image_internal(g, &g->direct_reset_image, 0, g->direct_reset_scan_file_hle, g->direct_reset_init_smc_gpio, 1);
+    if (st == GP32_OK) {
+        if (g->direct_reset_init_smc_gpio) direct_init_smc_gpio(g);
+        if (g->direct_reset_scan_file_hle) direct_scan_file_hle(g);
+    }
+    return st;
+}
+
+/* SWI 4 asks the firmware to boot the system, and the ROM's own answer to the
+ * reset, undefined-instruction and abort vectors is the reboot path at ROM
+ * 0x168 (the parks published in the HLE image are their terminal equivalents).
+ * Both end at a frame boundary inside this function: a restart is only
+ * meaningful with the CPU stopped, and doing it here keeps the guest from
+ * resuming a half-torn-down context. */
+static gp32_status_t direct_service_reboot_request(gp32_t *g, gp32_status_t st) {
+    if (!g || st != GP32_OK) return st;
+    if (!g->direct_fxe_mode || !g->direct_reset_image_valid) return st;
+    uint32_t pc = arm920t_get_pc(g->cpu);
+    int on_fault_vector = (pc == 0x00000000u || pc == 0x00000004u || pc == 0x0000000cu || pc == 0x00000010u);
+    if (!g->direct_reboot_pending && !on_fault_vector) return st;
+    g->direct_reboot_pending = 0u;
+    gp32_status_t rst = direct_restart_loaded_image(g);
+    return rst == GP32_OK ? st : rst;
+}
+
 gp32_status_t gp32_reset(gp32_t *g) {
     if (!g) return GP32_ERR_INVALID_ARGUMENT;
     memset(&g->elapsed, 0, sizeof(g->elapsed));
     memset(&g->frame_time, 0, sizeof(g->frame_time));
     if (g->direct_reset_image_valid && g->direct_reset_image.payload && g->direct_reset_image.payload_size) {
-        gp32_status_t st = gp32_load_fxe_image_internal(g, &g->direct_reset_image, 0, g->direct_reset_scan_file_hle, g->direct_reset_init_smc_gpio, 1);
-        if (st == GP32_OK) {
-            if (g->direct_reset_init_smc_gpio) direct_init_smc_gpio(g);
-            if (g->direct_reset_scan_file_hle) direct_scan_file_hle(g);
-        }
-        return st;
+        return direct_restart_loaded_image(g);
     }
     direct_set_fxe_mode(g, 0u);
     g->direct_fxe_fb_addr = 0;
@@ -4344,7 +4395,7 @@ gp32_status_t gp32_run_frame(gp32_t *g) {
     gp32_status_t st = gp32_run(g, 0u, 1);
     if (direct_time_pending(g->frame_time.deadline_ns, g->elapsed.nanoseconds))
         memset(&g->frame_time, 0, sizeof(g->frame_time)); /* CPU stopped */
-    return st;
+    return direct_service_reboot_request(g, st);
 }
 
 gp32_status_t gp32_set_jit(gp32_t *g, int enabled) {
