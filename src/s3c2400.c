@@ -200,10 +200,20 @@ static int s3c2400_is_stable_read32(void *user, uint32_t addr) {
      * never a GPIO read. Inputs/card/state change outside the synchronous run;
      * DMA advances on tick. A write-free loop can therefore reuse all aligned
      * GPIO words for this run. CPU poll proofs reject peripheral stores.
+     * The two read-only LCD scan status words are run-invariant for the same
+     * reason and are additionally self-bounding: reading one stores this run's
+     * deadline at the next status edge (lcd_observation_deadline), so a
+     * repetition that only reads VSTATUS/HSTATUS (LCDCON5) or LINECNT (LCDCON1)
+     * cannot observe another value before the run ends on that edge. A stable
+     * poll fast-forward therefore retires exactly the instructions and cycles
+     * the guest loop would have executed, and a run bounded by the deadline
+     * ends at the same edge with the same registers, flags and PC either way.
+     * Disabled and STN panels report a constant status and set no deadline.
      * Other MMIO is deliberately excluded: reads can acknowledge hardware. */
     return addr <= BIOS_SIZE - 4u ||
            (addr >= RAM_BASE && (uint64_t)(addr - RAM_BASE) + 4u <= s->ram_size) ||
            addr == 0x14a00000u ||
+           addr == 0x14a00010u ||
            (!(addr & 3u) && addr >= 0x15600000u && addr <= 0x15600058u);
 }
 

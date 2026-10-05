@@ -313,6 +313,119 @@ static int check_clock_phase(s3c2400_t *s) {
     return 1;
 }
 
+/* BIOS-style VSTATUS wait: LDR LCDCON5, isolate VSTATUS, spin while the panel
+ * is in active video. The status word is run-invariant (the scan phase only
+ * advances after arm920t_run returned) and the read itself bounds the run at
+ * the next status edge, so a proven side-effect-free repetition may retire the
+ * iterations up to that edge. The reference bus withholds the stable-read
+ * certificate and must execute every iteration with identical r[0..15], CPSR
+ * and consumed cycles at every run boundary. */
+static int check_vstatus_poll_fast_forward(void) {
+    static const uint32_t code[] = {
+        0xe59c2010u, /* LDR r2,[r12,#16]  LCDCON5 VSTATUS/HSTATUS */
+        0xe1a029a2u, /* MOV r2,r2,LSR #19  VSTATUS */
+        0xe3520002u, /* CMP r2,#2 */
+        0x0afffffbu, /* BEQ start         spin while VSTATUS is active */
+        0xe3a04001u, /* MOV r4,#1         left active video */
+        0xeafffffeu,
+    };
+    lcd_geometry_t g = geometry(5u);
+    s3c2400_t *fast = s3c2400_create(2u * 1024u * 1024u);
+    s3c2400_t *ref = s3c2400_create(2u * 1024u * 1024u);
+    if (!fast || !ref) {
+        fprintf(stderr, "FAIL: VSTATUS poll SoC allocation\n");
+        s3c2400_destroy(fast); s3c2400_destroy(ref);
+        return 0;
+    }
+    arm_bus_t bus_fast = s3c2400_get_bus(fast);
+    arm_bus_t bus_ref = s3c2400_get_bus(ref);
+    bus_ref.is_stable_read32 = NULL;
+    arm920t_t *cpu_fast = arm920t_create(&bus_fast);
+    arm920t_t *cpu_ref = arm920t_create(&bus_ref);
+    int ok = cpu_fast != NULL && cpu_ref != NULL;
+    if (ok) {
+        s3c2400_set_irq_sink(fast, cpu_fast);
+        s3c2400_set_irq_sink(ref, cpu_ref);
+    }
+    /* Three lines into active video: VSTATUS is 2, so the loop spins until the
+     * status edge that ends the active region, then parks on MOV/B self. */
+    const uint64_t start = g.active_begin + 3u * g.line;
+    for (unsigned jit = 0; jit < 2u && ok; ++jit) {
+        if (!configure(fast, g.cv, 0) || !configure(ref, g.cv, 0)) { ok = 0; break; }
+        arm920t_reset(cpu_fast, 0x0c000000u);
+        arm920t_reset(cpu_ref, 0x0c000000u);
+        arm920t_set_jit(cpu_fast, (int)jit);
+        arm920t_set_jit(cpu_ref, (int)jit);
+        for (unsigned i = 0; i < GP32_ARRAY_COUNT(code); ++i) {
+            s3c2400_write32(fast, 0x0c000000u + i * 4u, code[i]);
+            s3c2400_write32(ref, 0x0c000000u + i * 4u, code[i]);
+        }
+        arm920t_set_reg(cpu_fast, 12, LCDCON1_ADDR);
+        arm920t_set_reg(cpu_ref, 12, LCDCON1_ADDR);
+        uint64_t elapsed_fast = 0, elapsed_ref = 0;
+        tick_to(fast, &elapsed_fast, start);
+        tick_to(ref, &elapsed_ref, start);
+        uint32_t cycles = 0;
+        /* One active region is ~240 lines; a deadline-truncated run covers
+         * less than a line, so allow well over one chunk per line. */
+        for (unsigned step = 0; step < 4096u; ++step) {
+            uint32_t done_fast = s3c2400_run_cpu(fast, 2048u);
+            uint32_t done_ref = s3c2400_run_cpu(ref, 2048u);
+            if (done_fast != done_ref) {
+                fprintf(stderr, "FAIL: VSTATUS poll run jit=%u step=%u fast=%u ref=%u\n",
+                        jit, step, done_fast, done_ref);
+                ok = 0;
+                break;
+            }
+            cycles += done_fast;
+            for (unsigned reg = 0; reg < 16u && ok; ++reg)
+                if (arm920t_get_reg(cpu_fast, reg) != arm920t_get_reg(cpu_ref, reg)) {
+                    fprintf(stderr, "FAIL: VSTATUS poll r%u jit=%u step=%u fast=%08x ref=%08x\n",
+                            reg, jit, step, arm920t_get_reg(cpu_fast, reg),
+                            arm920t_get_reg(cpu_ref, reg));
+                    ok = 0;
+                }
+            if (ok && arm920t_get_cpsr(cpu_fast) != arm920t_get_cpsr(cpu_ref)) {
+                fprintf(stderr, "FAIL: VSTATUS poll CPSR jit=%u step=%u\n", jit, step);
+                ok = 0;
+            }
+            if (ok && arm920t_get_reg(cpu_fast, 4) == 1u) break;
+        }
+        if (ok && arm920t_get_reg(cpu_fast, 4) != 1u) {
+            fprintf(stderr, "FAIL: VSTATUS poll never left active video jit=%u cycles=%u\n",
+                    jit, cycles);
+            ok = 0;
+        }
+        /* The wait spans most of active video; an early exit would mean the
+         * status edge was missed, an infinite one would mean it never came. */
+        if (ok && (cycles < (uint32_t)(100u * g.line) ||
+                   cycles > (uint32_t)(g.va * g.line))) {
+            fprintf(stderr, "FAIL: VSTATUS poll cycles=%u outside one active region\n", cycles);
+            ok = 0;
+        }
+        /* Only the certified bus may omit the spin: the reference executes
+         * every iteration. The wait spans over 100 lines, so a certified
+         * fast-forward must retire far more than the trailing self loop. */
+        gp32_cpu_profile_t pf, pr;
+        arm920t_get_cpu_profile(cpu_fast, &pf);
+        arm920t_get_cpu_profile(cpu_ref, &pr);
+        if (pf.supported && pf.poll_skipped_insns < 200000u) {
+            fprintf(stderr, "FAIL: VSTATUS poll did not fast-forward jit=%u "
+                    "skipped=%" PRIu64 " reference=%" PRIu64 "\n",
+                    jit, pf.poll_skipped_insns, pr.poll_skipped_insns);
+            ok = 0;
+        }
+    }
+    if (ok) puts("PASS: interpreter/JIT VSTATUS poll fast-forward is equivalent");
+    s3c2400_set_irq_sink(fast, NULL);
+    s3c2400_set_irq_sink(ref, NULL);
+    arm920t_destroy(cpu_fast);
+    arm920t_destroy(cpu_ref);
+    s3c2400_destroy(fast);
+    s3c2400_destroy(ref);
+    return ok;
+}
+
 static int check_cpu_status_poll(s3c2400_t *s) {
     /* Read LINECNT first, then wait for horizontal active video. The second
      * read must narrow the pending line deadline to the earlier status edge. */
@@ -391,6 +504,7 @@ int main(void) {
     ok = check_status_edges(a) && ok;
     ok = check_fractional_state(a, b, c) && ok;
     ok = check_clock_phase(a) && ok;
+    ok = check_vstatus_poll_fast_forward() && ok;
     ok = check_cpu_status_poll(a) && ok;
     ok = check_long_slice(a) && ok;
     s3c2400_destroy(a); s3c2400_destroy(b); s3c2400_destroy(c);
