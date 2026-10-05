@@ -3126,6 +3126,42 @@ static int direct_restore_saved_context(gp32_t *g, uint32_t task_addr);
 static void direct_tick_sdk_task_sleepers(gp32_t *g, uint32_t first_task, uint32_t last_task, uint32_t ticks);
 static int direct_resume_ready_sdk_task(gp32_t *g, uint32_t pc, uint32_t first_task, uint32_t last_task);
 
+/* Firmware SWI #5 image hand-off (GPSDK packer CRT).
+ *
+ * A packer that cannot decompress in place decrunches its image into scratch
+ * RAM and then asks the firmware to run it.  The hand-off argument points at
+ * either the image itself or at a four-byte length word in front of it, and
+ * the embedded GXB header declares the rom_start the image belongs at.  The
+ * firmware therefore has to place the image at its declared rom_start before
+ * entering it, exactly like the file loader does.
+ *
+ * Without that step the image stays at the scratch address while every
+ * absolute address it contains still describes the relocated layout, so the
+ * guest starts executing whatever the scratch address happened to hold and
+ * leaves RAM.  Copy the declared ROM window in place (the two windows
+ * overlap, so the direction follows memmove rules) and report the header's
+ * new address.  Returns 0 when the header is absent or the declared window is
+ * not usable, in which case the caller keeps the unrelocated image. */
+static int direct_gxb_place_image(gp32_t *g, uint32_t hdr, uint32_t *out_hdr) {
+    uint32_t ram_end = GP32_RAM_BASE + (uint32_t)s3c2400_ram_size(g->soc);
+    if (!direct_ram_range(g, hdr, 0x0cu)) return 0;
+    uint32_t rom_start = s3c2400_debug_read32(g->soc, hdr + 4u);
+    uint32_t rom_end = s3c2400_debug_read32(g->soc, hdr + 8u);
+    if (rom_start == hdr) { *out_hdr = hdr; return 1; }
+    if (rom_start < GP32_RAM_BASE || rom_start >= ram_end) return 0;
+    if (rom_end <= rom_start || rom_end > ram_end) return 0;
+    uint32_t size = rom_end - rom_start;
+    if (!direct_ram_range(g, hdr, size)) return 0;
+    if (rom_start < hdr) {
+        for (uint32_t i = 0; i < size; ++i) s3c2400_write8(g->soc, rom_start + i, s3c2400_read8(g->soc, hdr + i));
+    } else {
+        for (uint32_t i = size; i-- > 0u; ) s3c2400_write8(g->soc, rom_start + i, s3c2400_read8(g->soc, hdr + i));
+    }
+    *out_hdr = rom_start;
+    return 1;
+}
+
+
 static int direct_fxe_swi(void *user, arm920t_t *cpu, uint32_t imm, uint32_t pc, int thumb) {
     GP32_UNUSED(thumb);
     gp32_t *g = (gp32_t *)user;
@@ -3453,7 +3489,19 @@ static int direct_fxe_swi(void *user, arm920t_t *cpu, uint32_t imm, uint32_t pc,
             int w1_branch = (w1 & 0x0f000000u) == 0x0a000000u;
             if (w0_branch || w1_branch) {
                 if (!w0_branch) target += 4u;
-                if (direct_ram_range(g, stack, 4u)) arm920t_set_reg(cpu, 13, stack);
+                uint32_t placed = target;
+                if (direct_gxb_place_image(g, target, &placed)) {
+                    /* The declared rom_start window was just rewritten under the
+                       block cache, so drop every translated block. */
+                    arm920t_flush_jit(cpu);
+                    target = placed;
+                }
+                /* An image only inherits the caller's stack when that value can
+                   actually hold one: aligned, with room to grow down inside RAM.
+                   A packer hands over a scratch address such as rom_start | 1,
+                   and adopting it puts every later frame below the SDRAM window. */
+                if ((stack & 3u) == 0u && stack >= GP32_RAM_BASE + 0x100u && direct_ram_range(g, stack, 4u))
+                    arm920t_set_reg(cpu, 13, stack);
                 arm920t_set_reg(cpu, 15, target);
                 return 1;
             }
