@@ -1415,9 +1415,27 @@ static inline void lcd_row16(const uint8_t *src, uint32_t *dst,
 }
 
 /* An indexed byte is one whole pixel. Specialize the four byte orders
- * once per row span instead of shifting a variable-width pixel loop. */
+ * once per row span instead of shifting a variable-width pixel loop.
+ * AArch64 stores the four gathered palette words as one 16-byte block, which
+ * the compiler emits as a single STP pair instead of four 32-bit stores; every
+ * pixel keeps its original address and value.  Other targets keep the
+ * per-pixel stores their store ports already handle optimally. */
 static inline void lcd_row8(const uint8_t *src, uint32_t *dst, uint32_t words,
                             const uint32_t *palette, uint32_t mode) {
+#if defined(__aarch64__)
+#define LCD8_ROW(A, B, C, D)                         \
+    do {                                             \
+        while (words--) {                            \
+            uint32_t px[4];                          \
+            px[0] = palette[src[A]];                 \
+            px[1] = palette[src[B]];                 \
+            px[2] = palette[src[C]];                 \
+            px[3] = palette[src[D]];                 \
+            memcpy(dst, px, sizeof(px));             \
+            src += 4; dst += 4;                      \
+        }                                            \
+    } while (0)
+#else
 #define LCD8_ROW(A, B, C, D)                         \
     do {                                             \
         while (words--) {                            \
@@ -1428,6 +1446,7 @@ static inline void lcd_row8(const uint8_t *src, uint32_t *dst, uint32_t words,
             src += 4; dst += 4;                       \
         }                                            \
     } while (0)
+#endif
     switch (mode) {
     case 0u: LCD8_ROW(3, 2, 1, 0); break;
     case 1u: LCD8_ROW(0, 1, 2, 3); break;
