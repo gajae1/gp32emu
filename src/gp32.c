@@ -3162,6 +3162,55 @@ static int direct_gxb_place_image(gp32_t *g, uint32_t hdr, uint32_t *out_hdr) {
 }
 
 
+/* Firmware selector 0xFF of the high SWI range: every commercial SDK CRT ends
+ * its entry trampoline with "svc #0x1ff" (verified at 0x0C000190 in all 28
+ * payloads).  Retail firmware v1.6.6 reaches it through the ROM dispatch at
+ * 0x1004 -> 0x2888 -> 0x69d0, which uses imm24 & 0xff as the selector, so
+ * 0x1FF selects the service implemented at ROM 0x6b2c.  That service:
+ *   - re-installs the exception-mode stacks from the ROM table at 0x1058
+ *     (0x2390; supervisor top 0x0C7AFF00),
+ *   - reprograms the clock from the ROM table at 0x1090 (0x200c),
+ *   - restores the default 8-bpp LCD mode and rebuilds the 5:5:5 palette
+ *     (0x1804/0x23e4), clears the three launcher fields at 0x0C7B0C00,
+ *     0x0C7B0D00 and 0x0C7B0E00 (0x6c04-0x6c20),
+ *   - and finally branches to the continuation the caller published in
+ *     FIQ-mode r12 (0x6c24-0x6c48) with IRQ and FIQ disabled in supervisor
+ *     mode, leaving the pre-service CPSR in SPSR_svc.
+ * The caller idiom (Astonishia Story R 0x0C000168): mask the requested mode
+ * into r0/r1/r2, briefly enter FIQ mode to load r12_fiq with the instruction
+ * after the SWI, return to supervisor mode and issue svc #0x1ff.
+ *
+ * Direct-FXE HLE previously declined 0x1FF, so the CPU took the ordinary SWI
+ * exception into the zero-filled direct-mode vector page and walked memory
+ * until it reached RAM again.  Two deviations from the ROM routine are
+ * deliberate: the guest's banked stacks stay untouched because direct mode has
+ * no firmware stack table and the trampoline continues on its own frame, and
+ * the clock registers keep the guest's own programming because the direct-mode
+ * clock model derives everything from the guest's PLL writes. */
+static int direct_handle_swi_reinit(gp32_t *g, arm920t_t *cpu) {
+    arm920t_register_context_t ctx;
+    arm920t_get_register_context(cpu, &ctx);
+    uint32_t resume = ctx.bank_fiq[4]; /* r12_fiq is the firmware's continuation slot. */
+    if (!resume) return 0;             /* No published continuation: ordinary SWI semantics. */
+    uint32_t entry_cpsr = ctx.cpsr;
+    /* Default display state: 8 bpp over surface page 0 with the standard palette. */
+    g->direct_fxe_bpp = 8u;
+    g->direct_fxe_lcd_enabled = 1u;
+    g->direct_fxe_lcd_explicit = 0u;
+    g->direct_fxe_fb_addr = 0u;
+    direct_fill_default_palette(g);
+    direct_set_lcd_8bpp(g, direct_default_surface_addr(0u), 0u);
+    /* Launcher fields the firmware clears before handing control back. */
+    direct_write32_if_ram(g, 0x0c7b0c00u, 0u);
+    direct_write32_if_ram(g, 0x0c7b0d00u, 0u);
+    direct_write32_if_ram(g, 0x0c7b0e00u, 0u);
+    ctx.spsr_svc = entry_cpsr;
+    ctx.cpsr = (entry_cpsr & ~(0x1fu | 0xc0u)) | 0x13u | 0xc0u;
+    ctx.r[15] = resume;
+    arm920t_set_register_context(cpu, &ctx);
+    return 1;
+}
+
 static int direct_fxe_swi(void *user, arm920t_t *cpu, uint32_t imm, uint32_t pc, int thumb) {
     GP32_UNUSED(thumb);
     gp32_t *g = (gp32_t *)user;
@@ -3443,6 +3492,9 @@ static int direct_fxe_swi(void *user, arm920t_t *cpu, uint32_t imm, uint32_t pc,
     case 0x12: /* Firmware exit.  Keep direct-loaded homebrew in a benign idle loop. */
         arm920t_set_reg(cpu, 15, pc);
         return 1;
+    case 0x1ff: /* Firmware high-range selector 0xFF: device state reset and
+                 * continuation through FIQ-mode r12, implemented above. */
+        return direct_handle_swi_reinit(g, cpu);
     case 0x16: { /* GPSDK graphics mode/palette helper. */
         uint32_t selector = arm920t_get_reg(cpu, 0);
         uint32_t arg1 = arm920t_get_reg(cpu, 1);
