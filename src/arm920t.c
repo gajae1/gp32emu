@@ -1817,8 +1817,20 @@ static ARM_NOINLINE arm_jit_block_t *arm_jit_translate(arm920t_t *c, uint32_t pc
     uint8_t trace_extended = 0;
     uint32_t page_anchor = cur;
     for (uint8_t i = 0; i < ARM_JIT_MAX_INSNS; ++i) {
-        if (i && ((cur ^ page_anchor) & ~ARM_JIT_PAGE_MASK)) break;
-        uint32_t insn = rb32(c, cur);
+        uint32_t insn;
+        if (i && ((cur ^ page_anchor) & ~ARM_JIT_PAGE_MASK)) {
+            /* Straight-line code continues into the next (tiny) page only
+             * when that page is already mapped: the side-effect-free peek
+             * proves the fetch without a table walk, TLB refill, fault or
+             * MMIO read, exactly like stitched callee traces. Revalidation
+             * re-proves every recorded fetch through the live mapping, so a
+             * loop that straddles a page boundary stays one block and keeps
+             * its in-place backedge instead of two dispatches per pass. */
+            if (!arm_jit_peek_fetch(c, cur, &insn)) break;
+            page_anchor = cur;
+        } else {
+            insn = rb32(c, cur);
+        }
         arm_jit_op_t *op = &arm_jit_ops(c, b)[i];
         op->pc = cur;
         op->insn = insn;
