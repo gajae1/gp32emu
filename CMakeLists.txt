@@ -238,6 +238,13 @@ if (GP32EMU_BUILD_LIBRETRO)
     target_include_directories(gp32emu_libretro PRIVATE src src/libretro)
     target_link_libraries(gp32emu_libretro PRIVATE gp32emu)
     set_target_properties(gp32emu_libretro PROPERTIES PREFIX "")
+    if (NOT WIN32 AND NOT APPLE)
+        # Export only the libretro API; internal emulator and miniz symbols stay local.
+        target_link_options(gp32emu_libretro PRIVATE
+            "-Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/src/libretro/libretro.map")
+        set_property(TARGET gp32emu_libretro APPEND PROPERTY LINK_DEPENDS
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/libretro/libretro.map")
+    endif()
     if (ANDROID)
         set_target_properties(gp32emu_libretro PROPERTIES SUFFIX "_android.so")
         # RetroArch Android loads cores with the .so extension, via the NDK.
