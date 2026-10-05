@@ -1623,6 +1623,61 @@ static void case_native_immshift(void) {
     }
 }
 
+/* Every logical S opcode, every immediate shift encoding, and rotated
+ * immediates must agree with the traced interpreter. Record each result,
+ * flags and carry consumer before the next operation overwrites them.
+ * The DATA helper assertion prevents a passing test through the S-gate. */
+static void case_native_sflag_logic(void) {
+    const unsigned codes[] = {0u, 1u, 8u, 9u, 12u, 13u, 14u, 15u};
+    const uint32_t edges[] = {0u, 1u, 0x80000000u, 0x80000001u,
+                              0x7fffffffu, 0xffffffffu, 0xaaaaaaaau, 0x55555555u};
+    const unsigned bytes[] = {0u, 1u, 0x80u, 0xffu};
+    uint32_t random = 0x1415f1a9u;
+    for (unsigned seed = 0; seed < 16u; ++seed) {
+        random ^= random << 13; random ^= random >> 17; random ^= random << 5;
+        uint32_t operand = seed < GP32_ARRAY_COUNT(edges) ? edges[seed] : random;
+        for (unsigned cv = 0; cv < 4u; ++cv) {
+            uint32_t program[10000];
+            unsigned n = 0, results = 0;
+            current_case = "native-sflag-logic";
+            setup_pair();
+            arm920t_set_trace(cpu_ref, 1, NULL, NULL);
+            set_reg_both(0, operand ^ random);
+            set_reg_both(1, operand);
+            set_reg_both(10, DATA_ADDR);
+            set_reg_both(11, 0xc0000000u | (cv << 28)); /* old N/Z, C and V */
+            set_reg_both(12, 0u);
+            for (unsigned shape = 0; shape < 192u; ++shape) {
+                uint32_t op2 = shape < 128u ?
+                    1u | ((shape / 32u) << 5) | ((shape % 32u) << 7) :
+                    (1u << 25) | (((shape - 128u) / 4u) << 8) | bytes[(shape - 128u) % 4u];
+                for (unsigned k = 0; k < GP32_ARRAY_COUNT(codes); ++k) {
+                    program[n++] = 0xe128f00bu; /* MSR CPSR_f,r11 */
+                    program[n++] = 0xe3a02055u; /* sentinel for TST/TEQ no-write */
+                    program[n++] = 0xe0102000u | (codes[k] << 21) | op2;
+                    program[n++] = 0xe2ac4000u; /* ADC r4,r12,#0: consume shifter C */
+                    program[n++] = 0xe10f3000u; /* MRS r3,CPSR */
+                    program[n++] = 0xe8aa001cu; /* STMIA r10!,{r2,r3,r4} */
+                    ++results;
+                }
+            }
+            program[n++] = 0xeafffffeu;
+            load_both(program, n);
+            CHECK(arm920t_run(cpu_jit, 20000u) == arm920t_run(cpu_ref, 20000u),
+                  "logical S budget");
+            compare_state();
+            CHECK(ref_reg(10) == DATA_ADDR + results * 12u, "all logical S results recorded");
+            gp32_cpu_profile_t profile;
+            arm920t_get_cpu_profile(cpu_jit, &profile);
+            if (profile.supported && profile.native_backend) {
+                CHECK(profile.native_arm_insns > 0u, "logical S native blocks engaged");
+                CHECK(profile.helper_op_kinds[1] == 0u, "logical S must not use DATA helpers");
+            }
+            teardown_pair();
+        }
+    }
+}
+
 /* Conditions immediately after arithmetic can reuse native NZCV. A logical
  * flag update, RAM range guard, helper or skipped predicated producer must
  * not accidentally reuse a different set of host flags. Store each decision
@@ -3460,7 +3515,9 @@ int main(int argc, char **argv) {
     int access_only = argc == 2 && !strcmp(argv[1], "--checked-access");
     int poll_only = argc == 2 && !strcmp(argv[1], "--poll-progress");
     int psr_only = argc == 2 && !strcmp(argv[1], "--psr");
-    if (argc == 2 && !strcmp(argv[1], "--live-read32")) {
+    if (argc == 2 && !strcmp(argv[1], "--sflag-logic")) {
+        case_native_sflag_logic();
+    } else if (argc == 2 && !strcmp(argv[1], "--live-read32")) {
         case_live_read32();
     } else if (argc == 2 && !strcmp(argv[1], "--ram-page-tags")) {
         case_native_mapped_pages();
@@ -3552,6 +3609,7 @@ int main(int argc, char **argv) {
     case_native_forwarding();
     case_native_immediates();
     case_native_immshift();
+    case_native_sflag_logic();
     case_native_condition_flags();
     case_native_regshift();
     case_native_longmul_psr();
