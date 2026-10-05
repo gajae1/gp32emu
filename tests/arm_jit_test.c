@@ -2434,6 +2434,70 @@ static void case_native_psr_continuation(void) {
     }
 }
 
+/* A status read is read-only, so it must stay in the native block on both
+ * backends and resolve the SPSR bank from the live mode.  Bankless modes
+ * (USER/SYS and unused encodings) keep the interpreter's CPSR fallback.
+ * The program holds only status reads and a self branch, so a classified
+ * PSR helper call (kind 2) is a regression. */
+static void case_native_mrs_status(void) {
+    static const unsigned modes[] = {SPSR_MODE_USR, SPSR_MODE_FIQ, SPSR_MODE_IRQ, SPSR_MODE_SVC,
+                                     SPSR_MODE_ABT, SPSR_MODE_UND, SPSR_MODE_SYS, SPSR_MODE_UNUSED};
+    const uint32_t program[] = {
+        0xe14f2000u, /* MRS r2,SPSR */
+        0xe10f3000u, /* MRS r3,CPSR */
+        0xe14f4000u, /* MRS r4,SPSR: the same bank as r2 */
+        0xe10f5000u, /* MRS r5,CPSR */
+        0xeafffffeu
+    };
+    for (unsigned i = 0; i < GP32_ARRAY_COUNT(modes); ++i) {
+        uint32_t cpsr = 0x600000c0u | modes[i];
+        uint32_t bank = spsr_seed(modes[i]);
+        uint32_t expect = bank ? bank : cpsr;
+        current_case = "native-mrs-status";
+        setup_pair();
+        seed_spsr_banks();
+        set_cpsr_both(cpsr);
+        load_both(program, GP32_ARRAY_COUNT(program));
+        run_native_case();
+        CHECK(ref_reg(2) == expect && ref_reg(4) == expect, "MRS SPSR value");
+        CHECK(ref_reg(3) == cpsr && ref_reg(5) == cpsr, "MRS CPSR value");
+        gp32_cpu_profile_t profile;
+        arm920t_get_cpu_profile(cpu_jit, &profile);
+        if (profile.supported && (profile.native_backend == 1u || profile.native_backend == 2u)) {
+            CHECK(profile.helper_op_kinds[2] == 0u, "MRS must not use the classified PSR helper");
+            CHECK(profile.native_arm_insns > 0u, "MRS must run natively");
+        }
+        teardown_pair();
+    }
+
+    /* The translated block must resolve the bank at execution time: run it in
+     * SVC, switch to ABT without a flush, rewind PC and run the same block. */
+    current_case = "native-mrs-status-reuse";
+    setup_pair();
+    seed_spsr_banks();
+    set_cpsr_both(0x600000c0u | SPSR_MODE_SVC);
+    load_both(program, GP32_ARRAY_COUNT(program));
+    run_native_case();
+    uint64_t misses = arm920t_get_jit_misses(cpu_jit);
+    CHECK(ref_reg(2) == SPSR_SVC_SEED && ref_reg(3) == (0x600000c0u | SPSR_MODE_SVC),
+          "first mode reads its own bank");
+    set_cpsr_both(0x600000c0u | SPSR_MODE_ABT);
+    set_pc_both(CODE_ADDR);
+    CHECK(arm920t_run(cpu_jit, 64u) == arm920t_run(cpu_ref, 64u), "reuse run budget");
+    compare_state();
+    CHECK(arm920t_get_jit_misses(cpu_jit) == misses, "mode change kept the translated block");
+    CHECK(ref_reg(2) == SPSR_ABT_SEED && ref_reg(4) == SPSR_ABT_SEED,
+          "reused block reads the new mode bank");
+    CHECK(ref_reg(3) == (0x600000c0u | SPSR_MODE_ABT) && ref_reg(5) == ref_reg(3),
+          "reused block reads the new CPSR");
+    gp32_cpu_profile_t profile;
+    arm920t_get_cpu_profile(cpu_jit, &profile);
+    if (profile.supported && (profile.native_backend == 1u || profile.native_backend == 2u))
+        CHECK(profile.helper_op_kinds[2] == 0u, "reused MRS block stays native");
+    compare_spsr_banks();
+    teardown_pair();
+}
+
 /* Focused SPSR bundle; --psr runs this plus case_native_longmul_psr. */
 static void case_native_spsr(void) {
     case_native_spsr_mode_banks();
@@ -2442,6 +2506,7 @@ static void case_native_spsr(void) {
     case_native_spsr_conditions();
     case_native_spsr_bank_reuse();
     case_native_spsr_exception_return();
+    case_native_mrs_status();
 }
 
 /* CPSR writes retire before dispatch observes a new register bank, execution
