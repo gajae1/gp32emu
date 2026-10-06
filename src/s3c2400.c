@@ -1877,6 +1877,11 @@ uint32_t s3c2400_hclk_hz(const s3c2400_t *s) {
     return h ? h : 66000000u;
 }
 
+uint32_t s3c2400_pclk_hz(const s3c2400_t *s) {
+    uint32_t p = s ? clk_pclk(s, MPLLCON) : 0u;
+    return p ? p : 66000000u;
+}
+
 uint32_t s3c2400_run_clock_hz(const s3c2400_t *s) {
     uint32_t h = s ? s->cached_run_hz : 0u;
     return h ? h : 66000000u;

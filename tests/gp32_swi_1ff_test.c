@@ -1,5 +1,9 @@
-/* SWI #0x1FF: the SDK CRT trampoline against the firmware's selector-0xFF
- * service, on real CPU/hardware and both execution backends.
+/* Firmware services of direct-FXE HLE on real CPU/hardware and both execution
+ * backends: SWI #0x1FF (the SDK CRT trampoline against the selector-0xFF
+ * service) and SWI #0x0D plus the clock tree a direct load starts from (the
+ * retail BIOS clock service, ROM 0x200c).
+ *
+ * SWI #0x1FF:
  *
  * Retail firmware v1.6.6 dispatches the high SWI range with imm24 & 0xff as
  * the selector (ROM 0x1004 -> 0x2888 -> 0x69d0), so 0x1FF reaches the routine
@@ -78,6 +82,7 @@ static void dirty_display_state(gp32_t *g) {
     s3c2400_write32(g->soc, 0x0c7b0c00u, 0xdeadbeefu);
     s3c2400_write32(g->soc, 0x0c7b0d00u, 0x1234u);
     s3c2400_write32(g->soc, 0x0c7b0e00u, 0x5678u);
+    direct_apply_fw_clock(g, 0x47022u, 1u); /* a title's own 59.25 MHz clock */
 }
 
 static void check_reinit_service(int jit) {
@@ -101,6 +106,8 @@ static void check_reinit_service(int jit) {
     CHECK(g->direct_fxe_fb_addr == direct_default_surface_addr(0u), "default LCD surface restored");
     /* The retail firmware's 8-bpp TFT words. LCDCON1 read-back carries the live
        line count in bits 27:18 and LCDCON5 the live VSTATUS/HSTATUS in 20:17. */
+    CHECK(gp32_get_fclk_hz(g) == 67800000u && s3c2400_hclk_hz(g->soc) == 33900000u,
+          "clock back at the default table of ROM 0x1090");
     CHECK((s3c2400_debug_read32(g->soc, 0x14a00000u) & 0x3ffffu) == 0x377u, "LCDCON1 shows enabled 8-bpp TFT mode");
     CHECK((s3c2400_debug_read32(g->soc, 0x14a00010u) & ~(0xfu << 17)) == 0x702u, "8-bpp TFT LCDCON5 restored");
     CHECK(g->direct_fxe_palette_initialized == 1u, "standard palette installed");
@@ -129,6 +136,7 @@ static void check_declined_when_no_continuation(int jit) {
         CHECK(gp32_run_cycles(g, 4u) == GP32_OK, "declined service keeps running");
     CHECK(s3c2400_debug_read32(g->soc, marker) == 0u, "declined service does not reach the continuation");
     CHECK(g->direct_fxe_bpp == 16u && g->direct_fxe_lcd_enabled == 0u, "declined service leaves display state alone");
+    CHECK(gp32_get_fclk_hz(g) == 59250000u, "declined service leaves the clock alone");
     CHECK(s3c2400_debug_read32(g->soc, 0x0c7b0c00u) == 0xdeadbeefu, "declined service leaves launcher fields alone");
     CHECK((gp32_get_cpsr(g) & 0x1fu) == 0x13u && (gp32_get_cpsr(g) & 0x80u) != 0u,
           "ordinary SWI exception still enters supervisor mode with IRQ masked");
@@ -136,10 +144,136 @@ static void check_declined_when_no_continuation(int jit) {
     gp32_destroy(g);
 }
 
+/* Direct loads start from the clock tree the retail BIOS leaves at the first
+ * instruction of a title (FCLK 67.8 MHz, HCLK 33.9 MHz, PCLK 16.95 MHz, REFRESH
+ * counter 0x5fd as read back in BIOS boots), and SWI #0x0d is the clock service
+ * the SDK calls to leave it. r0 points at {FCLK Hz, MPLLCON, CLKDIVN}; the ROM
+ * epilogue (0x1250) hands every register back unchanged. */
+static gp32_t *load_direct(const uint32_t *words, unsigned count, int jit) {
+    uint8_t image[16];
+    for (unsigned i = 0; i < count; ++i) gp32_st32le(image + i * 4u, words[i]);
+    gp32_t *g = gp32_create(NULL);
+    CHECK(g != NULL, "create direct clock core");
+    if (!g) return NULL;
+    gp32_set_jit(g, jit);
+    fxe_image_t img = {0};
+    img.payload = image;
+    img.payload_size = count * 4u;
+    img.load_addr = img.entry_addr = GP32_RAM_BASE + 0x40000u;
+    CHECK(gp32_load_fxe_image_internal(g, &img, 0, 0, 0, 0) == GP32_OK, "direct load");
+    return g;
+}
+
+static uint64_t iis_rate_after(gp32_t *g) {
+    uint32_t rate = 0;
+    uint64_t frames = 0;
+    s3c2400_write32(g->soc, 0x15508010u, 0x00010001u);
+    (void)s3c2400_audio_samples(g->soc, &frames, &rate);
+    return frames ? rate : 0u;
+}
+
+static void check_handoff_clock(int jit) {
+    static const uint32_t park[] = {0xeafffffeu};
+    gp32_t *g = load_direct(park, 1u, jit);
+    if (!g) return;
+    CHECK(gp32_get_fclk_hz(g) == 67800000u && s3c2400_hclk_hz(g->soc) == 33900000u &&
+          s3c2400_pclk_hz(g->soc) == 16950000u && gp32_get_run_clock_hz(g) == 33900000u,
+          "direct load starts at FCLK 67.8 / HCLK 33.9 / PCLK 16.95 MHz");
+    CHECK((s3c2400_debug_read32(g->soc, 0x14000024u) & 0x7ffu) == 0x5fdu, "REFRESH counter of the 33.9 MHz HCLK");
+    CHECK((s3c2400_debug_read32(g->soc, 0x14a00000u) & 0x3ffffu) == 0x377u, "LCD divider 3 of the 33.9 MHz HCLK");
+    direct_sync_fwinfo(g);
+    CHECK(s3c2400_debug_read32(g->soc, direct_fwinfo_addr(g) + 0u) == 67800000u &&
+          s3c2400_debug_read32(g->soc, direct_fwinfo_addr(g) + 4u) == 33900000u &&
+          s3c2400_debug_read32(g->soc, direct_fwinfo_addr(g) + 8u) == 16950000u,
+          "SWI 0x0b selector 4 block holds FCLK, HCLK and PCLK");
+    /* The IIS prescaler the BIOS leaves (0xa5, 256fs) gives 11,035 Hz at that
+       PCLK; a title's own IISPSR 0x42 / IISMOD 0x99 gives 22,070 Hz, where the
+       former 48 MHz direct clock gave 62.5 kHz. */
+    CHECK(iis_rate_after(g) == 11035u, "handoff IIS prescaler yields the BIOS rate");
+    gp32_destroy(g);
+    g = load_direct(park, 1u, jit);
+    if (!g) return;
+    s3c2400_write32(g->soc, 0x15508008u, 0x42u);
+    s3c2400_write32(g->soc, 0x15508004u, 0x99u);
+    CHECK(iis_rate_after(g) == 22070u, "title-programmed IIS prescaler follows PCLK");
+    gp32_destroy(g);
+}
+
+static void check_clock_service(int jit) {
+    static const uint32_t words[] = {
+        0xef00000du, /* svc #0x0d */
+        0xe3a04007u, /* mov r4, #7 */
+        0xeafffffeu, /* b . */
+    };
+    gp32_t *g = load_direct(words, GP32_ARRAY_COUNT(words), jit);
+    if (!g) return;
+    const uint32_t params = GP32_RAM_BASE + 0x1f000u;
+    s3c2400_write32(g->soc, params, 59250000u);
+    s3c2400_write32(g->soc, params + 4u, 0x47022u);
+    s3c2400_write32(g->soc, params + 8u, 1u);
+    arm920t_set_reg(g->cpu, 0u, params);
+    arm920t_set_reg(g->cpu, 1u, 0x12345678u);
+    for (unsigned i = 0; i < 8u && gp32_get_cpu_reg(g, 4u) != 7u; ++i)
+        CHECK(gp32_run_cycles(g, 8u) == GP32_OK, "clock service runs");
+    CHECK(gp32_get_cpu_reg(g, 4u) == 7u, "execution continues after the clock service");
+    CHECK(gp32_get_cpu_reg(g, 0u) == params && gp32_get_cpu_reg(g, 1u) == 0x12345678u, "r0 and r1 preserved");
+    CHECK(gp32_get_fclk_hz(g) == 59250000u && s3c2400_hclk_hz(g->soc) == 59250000u &&
+          s3c2400_pclk_hz(g->soc) == 29625000u && gp32_get_run_clock_hz(g) == 59250000u,
+          "MPLLCON 0x47022 with CLKDIVN 1 gives 59.25 / 59.25 / 29.625 MHz");
+    CHECK((s3c2400_debug_read32(g->soc, 0x14000024u) & 0x7ffu) == 0x47bu, "REFRESH counter follows the new HCLK");
+    CHECK(s3c2400_debug_read32(g->soc, direct_fwinfo_addr(g) + 4u) == 59250000u &&
+          s3c2400_debug_read32(g->soc, direct_fwinfo_addr(g) + 8u) == 29625000u,
+          "clock block published without another SWI 0x0b");
+    /* Display services other than a mode switch keep the panel divider (ROM
+       0x1a64-0x1d44 never touch LCDCON1); the mode switch recomputes it from
+       the clock (ROM 0x1804 via 0x1fd4: 3 at 33.9 MHz, 5 at 59.25 MHz). */
+    direct_set_lcd_8bpp(g, direct_default_surface_addr(0u), 0u, 0);
+    CHECK(((s3c2400_debug_read32(g->soc, 0x14a00000u) >> 8) & 0x3ffu) == 3u, "surface service keeps LCD divider 3");
+    direct_set_lcd_8bpp(g, direct_default_surface_addr(0u), 0u, 1);
+    CHECK(((s3c2400_debug_read32(g->soc, 0x14a00000u) >> 8) & 0x3ffu) == 5u, "mode switch takes LCD divider 5 at 59.25 MHz");
+    /* A parameter block outside RAM leaves the clock alone. */
+    arm920t_set_reg(g->cpu, 0u, 0x40u);
+    arm920t_set_reg(g->cpu, 15u, GP32_RAM_BASE + 0x40000u);
+    arm920t_set_reg(g->cpu, 4u, 0u);
+    for (unsigned i = 0; i < 8u && gp32_get_cpu_reg(g, 4u) != 7u; ++i)
+        CHECK(gp32_run_cycles(g, 8u) == GP32_OK, "clock service with a bad block runs");
+    CHECK(gp32_get_cpu_reg(g, 4u) == 7u && gp32_get_run_clock_hz(g) == 59250000u, "bad parameter block ignored");
+    gp32_destroy(g);
+}
+
+/* GpGraphicModeSet (SWI #8 selector 0) after the clock change reaches ROM
+ * 0x1804 and takes the divider of the new clock; the same call before it leaves 3. */
+static void check_mode_switch_divider(int jit) {
+    static const uint32_t words[] = {
+        0xef00000du, /* svc #0x0d */
+        0xe3a00008u, /* mov r0, #8: bpp */
+        0xe3a01000u, /* mov r1, #0: palette */
+        0xe3a02000u, /* mov r2, #0: selector 0 */
+        0xef000008u, /* svc #8 */
+        0xe3a04007u, /* mov r4, #7 */
+        0xeafffffeu, /* b . */
+    };
+    gp32_t *g = load_direct(words, GP32_ARRAY_COUNT(words), jit);
+    if (!g) return;
+    const uint32_t params = GP32_RAM_BASE + 0x1f000u;
+    s3c2400_write32(g->soc, params, 59250000u);
+    s3c2400_write32(g->soc, params + 4u, 0x47022u);
+    s3c2400_write32(g->soc, params + 8u, 1u);
+    arm920t_set_reg(g->cpu, 0u, params);
+    for (unsigned i = 0; i < 16u && gp32_get_cpu_reg(g, 4u) != 7u; ++i)
+        CHECK(gp32_run_cycles(g, 8u) == GP32_OK, "clock service and mode switch run");
+    CHECK(gp32_get_cpu_reg(g, 4u) == 7u, "execution continues after the mode switch");
+    CHECK(((s3c2400_debug_read32(g->soc, 0x14a00000u) >> 8) & 0x3ffu) == 5u, "GpGraphicModeSet after the clock change takes divider 5");
+    gp32_destroy(g);
+}
+
 int main(void) {
     for (int jit = 0; jit < 2; ++jit) {
         check_reinit_service(jit);
         check_declined_when_no_continuation(jit);
+        check_handoff_clock(jit);
+        check_clock_service(jit);
+        check_mode_switch_divider(jit);
     }
     if (failures) { fprintf(stderr, "%d failure(s)\n", failures); return 1; }
     printf("gp32_swi_1ff: all checks passed\n");

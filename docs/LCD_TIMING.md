@@ -36,8 +36,15 @@ a claim of cycle-exact silicon behavior. STN and invalid TFT CLKVAL=0 retain
 the former fallback timing. Direct HLE no longer relies on it: a directly loaded
 program starts from the words the retail BIOS leaves (LCDCON1 0x377, LCDCON2-4
 0x014fc081/0x0030ef02/0x4, 327 lines of 255 pixel clocks) and the mode setters
-rewrite them, so its panel follows the modelled scanout (about 72 Hz at the
-48 MHz direct clock). HLE vblank waits keep their own 60 Hz deadline.
+rewrite them, so its panel follows the modelled scanout. It also starts from the
+BIOS clock tree (FCLK 67.8 MHz, HCLK 33.9 MHz), where the panel runs 50.82 Hz.
+CLKVAL follows ROM 0x1fd4: HCLK / 10,006,200 rounded from a quarter, minus one
+(3 at 33.9 MHz, 5 at 59.25 MHz). Only a graphics-mode switch recomputes it
+(ROM 0x1804: GpGraphicModeSet and the reinit service); surface flips, LCD
+enable and palette services keep the divider in LCDCON1, as in BIOS boots, where
+a title that changes the clock (SWI 0x0d) after its last mode switch keeps the
+old divider (88.8 Hz at 59.25 MHz). HLE vblank waits keep their own 60 Hz
+deadline.
 
 ## Focused evidence
 
