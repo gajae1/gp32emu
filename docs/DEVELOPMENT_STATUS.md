@@ -46,6 +46,33 @@ result paths below are names on the development machine.
   `<lang>_COMPILER_AR` without an `ar` subcommand and zig rejects `qc`; the
   first attempt (3f19f90, setting those variables to bare `zig`) regressed the
   handheld archive rule and was reverted in 9e77c9b. Keep IPO off by default.
+- Audio resampler (round 168): the continuous crackle over Astonishia Story R's
+  title music was neither guest data nor a host declick case, it was the
+  resampler (round 168; result.md and evidence in
+  `F:/GP32/results/round168/asr-crackle/`). The guest IIS runs at 23144 Hz
+  and the core handed the frontend a bit-exact *linear* interpolation of that
+  stream, whose triangular kernel leaves a mirror image of the source band only
+  9.3 dB below the guest 8-11.572 kHz content, so the delivered stream carried a
+  continuous image layer above guest Nyquist - the steady buzz a handheld
+  listener reports. The existing >=8192-step declick never fires here (guest max
+  step 6915). `gp32_audio_resampler_process` now reconstructs with a
+  Kaiser (beta 6) windowed-sinc polyphase kernel: 65 taps, 256 phases, Q15
+  coefficients, cutoff 0.48*min(src,dst)/src, every phase row normalized to
+  32768 so constants and silence stay exact. A 64-frame per-instance history
+  keeps call boundaries out of the filter, and the new
+  `gp32_audio_resampler_copy()` gives the rate-matched path the same
+  endpoint and history bookkeeping. Kernel group delay is 32 source frames
+  (1.4 ms) and Q15 passband ripple is +/-1 LSB. `LRST_VERSION` is 2: the
+  savestate section carries the kernel rates and history and rebuilds the table
+  when a restored state names other rates. The guest PCM is bit-identical (dump
+  SHA256 unchanged) and the BIOS boot keeps cycles/pc/cpsr/clock and video_hash;
+  the audio the core delivers changes on purpose, and the bench hashes
+  pre-resample guest PCM, so every baseline field still matches. Median PSD above
+  guest Nyquist -106.6 -> -135.2 dBFS/Hz, SNR against a 4096-tap reference
+  24.1 -> 46.9 dB over 12 s of the title theme. ctest 29/29; pc-parity, parity5
+  and parity-boot identical. Open: an on-device listening check (the handheld was
+  offline at the time) and real RetroArch run-ahead, which the new section covers
+  only through the libretro test.
 - Round 166 libretro savestate replay determinism (result.md and evidence in
   `F:/GP32/results/round166/state-replay/`): run-ahead/rewind restored guest
   state but reset host-side delivery state on load, so replaying the same 60
