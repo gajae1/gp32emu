@@ -3351,4 +3351,44 @@ during the round (`FAT-fs (mmcblk0p7): error, corrupted directory`), so the
 benchmark binaries and assets for these runs live under `/data/gp32-dev` on
 the writable ext4 partition.
 
+## Panel-rate HLE vblank deadline (round177, 2026-10-07)
+
+The round169 audit kept the fixed 1/60 s HLE vblank grid because aligning it
+with the panel period would change guest-visible timing and the parity hashes.
+Round177 implements that alignment and measures the outcome: the sampled
+scenes stay bit-identical.
+
+`s3c2400_lcd_frame_period()` (`src/s3c2400.c`) derives the live TFT frame
+period as `period_ns + period_frac/2^20` from `2*(CLKVAL+1)` HCLK per pixel
+times the programmed total line count and returns 0 outside its 5..500 Hz
+sanity window or when ENVID is off, STN mode is selected, or CLKVAL is 0.
+The direct-mode helper `direct_vblank_period60()` converts that period into
+the deadline accumulator's denominator-60 residue format
+(`(scaled*60 + 2^19) >> 20`, the same encoding as the 1e9 numerator of a
+1/60 s slot) and `direct_advance_vblank_deadline()` carries the residue;
+`direct_migrate_vblank_wait()` no longer hard-codes 16,666,666 ns. The
+GP32STATEv0014 wire format is unchanged, and guests that cannot derive a panel
+period (BIOS boot, SWT) keep the exact 1/60 s slot.
+
+Measured: retail CLKVAL 6 at 33.9 MHz HCLK gives 17,687,727.27 ns (56.55 Hz)
+against the fixed 16,666,666 ns (60 Hz). The wait fixture
+(`tests/gp32_wait_test.c`, now deriving its expectations from the panel
+period) drives a CLKVAL reprogram and observes the deadline move from
+17,687,727.29 to 35,375,454.57 ns; it passes for jit=0 and jit=1. All three
+round167 parity scripts report identical on 11 scene/backend combinations
+(princess, ASR title, Blue Angelo dialogue, Her Knights, Little Girl Mill
+state and boot window, ASR cold boot; JIT and interpreter) across cycles, pc,
+cpsr, clock, audio_frames, video_hash and audio_hash. `ctest -E win64_audio`
+is 28/28 (`win64_audio_test` cannot link under the MinGW 8.1 test
+environment; unchanged).
+
+What does not change: the frontend still presents one frame per 1/60 s host
+slot, so 50.8 Hz titles (Her Knights) still report `lcd_repeat_frames` and an
+84.7 Hz boot window still reports unpresented frames. The vblank grid the
+guest sees now follows its own panel programming; the present cadence remains
+a frontend/libretro contract question.
+
+Evidence: `F:/GP32/results/lcd-vblank/` (worktree and build) and
+`F:/GP32/results/round167/parity/pc-parity.json`.
+
 

@@ -1970,6 +1970,23 @@ static uint64_t lcd_panel_frame_cycles(s3c2400_t *s) {
     return s->lcd_cached_frame_cycles;
 }
 
+int s3c2400_lcd_frame_period(const s3c2400_t *soc, uint32_t *period_ns, uint32_t *period_frac) {
+    if (!soc || !(soc->lcd_regs[0] & 1u) || !lcd_is_tft(soc->lcd_regs)) return 0;
+    uint32_t hclk = s3c2400_hclk_hz(soc);
+    if (!hclk) return 0;
+    uint64_t cycles = lcd_tft_line_period(soc->lcd_regs) * lcd_tft_total_lines(soc->lcd_regs);
+    if (!cycles) return 0;
+    /* Sub-nanosecond resolution is enough for any host pacing decision and
+     * keeps the fractional part inside 32 bits. */
+    uint64_t numerator = cycles * 1000000000u;
+    uint64_t ns = numerator / hclk;
+    uint64_t frac = ((numerator % hclk) << 20) / hclk;
+    if (ns < 2000000u || ns > 200000000u) return 0;
+    if (period_ns) *period_ns = (uint32_t)ns;
+    if (period_frac) *period_frac = (uint32_t)frac;
+    return 1;
+}
+
 /* Per-window LCD observation cache. lcd_line_accum and the LCD register image
  * only change in s3c2400_tick() and in the LCD/clock write paths, and all of
  * them clear lcd_line_valid, so the values derived here stay exact while the

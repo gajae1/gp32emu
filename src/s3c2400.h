@@ -59,6 +59,12 @@ void s3c2400_audio_clear(s3c2400_t *soc);
  * diagnostics and direct-HLE software mixers; gp32 enables it for BIOS mode. */
 void s3c2400_set_audio_idle(s3c2400_t *soc, int enabled);
 void s3c2400_render_lcd(s3c2400_t *soc);
+/* Frame period of the live TFT programming, as period_ns + period_frac/2^20 ns.
+ * Returns 0 when no panel frame clock can be derived: ENVID off, STN mode, a
+ * zero divider, or a period outside the 5..500 Hz sanity window. One pixel is
+ * HCLK / (2 * (CLKVAL + 1)) and one frame is the programmed total number of
+ * lines, which is the source the guest polls through LINECNT and VSTATUS. */
+int s3c2400_lcd_frame_period(const s3c2400_t *soc, uint32_t *period_ns, uint32_t *period_frac);
 void s3c2400_tick(s3c2400_t *soc, uint32_t cpu_cycles);
 /* Execute the attached CPU, yielding at clock writes and IIS DMA IRQ deadlines. */
 uint32_t s3c2400_run_cpu(s3c2400_t *soc, uint32_t cpu_cycles);
