@@ -3325,4 +3325,30 @@ scenes, `pacing_probe.c` per-frame cycles/audio/LCD, `pace_probe.c` and
 Gates for the accepted change (bench fields only): `ctest` 29/29 and the three
 round167 parity scripts report identical on every scene, JIT and interpreter.
 
+## Handheld gate: `round166/lgm-load` rejected on a Cortex-A53 measurement (round173, 2026-10-07)
+
+The JIT framed leaf-callee splice (`80bb31d`) looked like a small win on a
+boot-heavy scene, but it does not survive the handheld target. Interleaved ABBA
+runs on the RG SP (H700, Cortex-A53, clock-matched at 1512 MHz) measure Little
+Girl Mill boot (2400/600) at 51.369 -> 52.334 fps (+1.88%) but Her Knights
+state (0/3000) at 185.369 -> 102.897 fps (ratio 0.5551, -44.5%). A second ABBA
+and a direct interleaved A/B against a byte-identical build configuration
+reproduce the loss (candidate 102.1/101.7 fps against base 183.8/184.0 fps at
+1200 frames), while CPU, video and PCM hashes stay bit-identical in every run.
+The splice is functionally exact and purely slower on call-heavy workloads, so
+the branch and its evidence stay out of `main`.
+
+Two other unmerged branches need no cherry-pick. `round166-direct-clock`
+(`901a06d`, `d6dc715`) carries the same SWI selector 1 and BIOS-entry SoC
+state changes that `main` already has as `373526a` and `0477bd6`; the added
+lines of the two pairs are identical. `round167/jit-fallback` (`f6777c5`) only
+finalizes branch-local report metadata in a `result.md` that `main` does not
+track, so no code change is pending from it.
+
+Evidence: `F:/GP32/results/round173-device/` (`REPORT.md`, `lgm-abba.json`,
+`her-abba.json`, `her-abba-2.json`). The device SD card remounted read-only
+during the round (`FAT-fs (mmcblk0p7): error, corrupted directory`), so the
+benchmark binaries and assets for these runs live under `/data/gp32-dev` on
+the writable ext4 partition.
+
 
