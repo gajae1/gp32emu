@@ -54,6 +54,9 @@ struct gp32 {
     arm920t_t *cpu;
     gp32_log_fn log;
     void *log_user;
+    /* Host delivery hook; never part of the machine state. */
+    gp32_host_pump_fn host_pump;
+    void *host_pump_user;
     char error[256];
     gp32_elapsed_time_t elapsed;
     gp32_frame_time_t frame_time;
@@ -4500,6 +4503,11 @@ static gp32_status_t gp32_run(gp32_t *g, uint32_t cycles, int timed) {
                 direct_try_resume_sdk_task(g);
             }
         }
+        /* Host delivery point. PCM produced by the previous slice (guest IIS
+         * DMA, HLE mixing, hardware idle fill) is already in the SoC queue,
+         * so a frontend can release it before this frame retires instead of
+         * waiting out a guest frame that overruns real time. */
+        if (g->host_pump) g->host_pump(g, g->host_pump_user);
         if (timed) remaining = direct_frame_budget(g, g->frame_time.deadline_ns);
         if (!remaining) break;
         if (g->direct_callback.owner) {
@@ -4600,6 +4608,15 @@ gp32_status_t gp32_set_jit(gp32_t *g, int enabled) {
  * Not part of the machine state; a NULL sink leaves the run unchanged. */
 void gp32_set_diag_log(gp32_t *g, gp32_diag_fn fn, void *user) {
     if (g && g->cpu) arm920t_set_diag(g->cpu, fn, user);
+}
+
+/* Transient host delivery hook; unlike the machine state it is not
+ * serialized, so a frontend must reinstall it after a state load if it
+ * replaced the instance. */
+void gp32_set_host_pump(gp32_t *g, gp32_host_pump_fn fn, void *user) {
+    if (!g) return;
+    g->host_pump = fn;
+    g->host_pump_user = user;
 }
 
 gp32_status_t gp32_set_cpu_speed_percent(gp32_t *g, uint32_t percent) {
