@@ -35,10 +35,10 @@ address-window implementation.
 
 Focused tests cover GPIO volume/mute, incomplete-byte savestate restoration,
 DMA gain and elapsed-audio ordering, plus existing PCM, timing, state and
-libretro audio behavior. Those five targets pass on Windows and H700.
-Windows, H700 and Android ARM32/ARM64 release cores build successfully.
+libretro audio behavior. Those five targets pass on Windows and the handheld.
+Windows, handheld and Android ARM32/ARM64 release cores build successfully.
 
-A warmed H700 ABBA comparison against the preceding build on the Astonishia
+A warmed handheld ABBA comparison against the preceding build on the Astonishia
 Story R title savestate measured 177.8715 versus 177.9675 benchmark fps at
 an observed 1512 MHz. CPU, video and audio hashes matched. This is effectively
 unchanged performance on the legacy-state unity path, not an all-game speed
@@ -87,7 +87,7 @@ accurate transitions require additional chip documentation or measurements.
 UDA1330ATS has no RST status bit; the RST layout belongs to UDA1341TS.
 
 The HLE addition passes Windows codec/PCM/timer/state/libretro regressions
-and native H700 codec/PCM/timer tests; all four release targets build.
+and native handheld codec/PCM/timer tests; all four release targets build.
 Cold direct runs of Story of Bug Eyed Monster and Funny Soccer 2002 for
 1,200 frames match the preceding revision's final PC, video hash, audio
 frame count and audio hash. Funny Soccer's observed window has zero PCM,

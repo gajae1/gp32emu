@@ -13,15 +13,17 @@ cmake --build build-core --parallel
 ```
 
 Linux produces `gp32emu_libretro.so`; Windows produces `gp32emu_libretro.dll`.
-For H700 Linux, install Zig 0.13.0 on PATH and use the included toolchain:
+To cross-compile for an AArch64 Linux handheld, install Zig 0.13.0 on PATH and
+use the aarch64 toolchain file in `cmake/toolchains/`:
 
 ```sh
-cmake -S . -B build-h700 -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/h700-zig.cmake -DCMAKE_BUILD_TYPE=Release -DGP32EMU_BUILD_LIBRETRO=ON -DGP32EMU_BUILD_HEADLESS=OFF
-cmake --build build-h700 --parallel
+cmake -S . -B build-aarch64 -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/<aarch64-toolchain>.cmake -DCMAKE_BUILD_TYPE=Release -DGP32EMU_BUILD_LIBRETRO=ON -DGP32EMU_BUILD_HEADLESS=OFF
+cmake --build build-aarch64 --parallel
 ```
 
-This targets Cortex-A53 / aarch64 Linux with glibc >= 2.17. It does not target
-Android. For Android use the NDK CMake toolchain instead (NDK 28.2 tested):
+This targets Cortex-A53 / aarch64 Linux with glibc >= 2.17, and it is a cross
+build only: nothing in this tree has been run on that hardware. It does not
+target Android; use the NDK CMake toolchain for that instead (NDK 28.2 tested):
 
 ```sh
 cmake -S . -B build-android -G Ninja -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake" -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-21 -DCMAKE_BUILD_TYPE=Release -DGP32EMU_BUILD_LIBRETRO=ON -DGP32EMU_BUILD_HEADLESS=OFF
@@ -37,21 +39,16 @@ complex operations and portable acceleration of stable polling loops.
 32-bit ARM hosts use the portable translated interpreter. The JIT option
 does not enable a native 32-bit ARM recompiler.
 
-## SpruceOS H700 installation
+## Installing on a Linux handheld
 
-Copy `packaging/spruce/Emu/GP32/` into the SD card's `Emu/` directory, then put
-the H700 core in `Emu/GP32/`. Copy the package's `RetroArch/.retroarch/info/`
-metadata into the matching SD card directory as well; an info file beside the
-core alone is not the frontend's configured metadata path. Put your own games in
-`Roms/GP32/` and your own `gp32166m.bin` beside them (or in the existing BIOS
-folder). Refresh the frontend game list. The entry uses Spruce's standard
-launcher and its 64-bit H700 RetroArch binary, preserving the normal input,
-menu, save and Game Switcher flow. It adds no global RetroArch configuration.
-The GP32 item defaults to Spruce's Smart CPU mode, without overclocking.
-
-This package requires a Spruce build with `standard_launch.sh`, per-system
-core lookup and the H700 64-bit RetroArch selection. Other firmware versions
-may require a different launcher. BIOS and games are not included.
+Handheld builds install like any other libretro core: put the AArch64
+`gp32emu_libretro.so` where the frontend looks for cores, and put the core-info
+metadata into the frontend's own metadata directory, because an info file beside
+the core is not always picked up. Games and `gp32166m.bin` go wherever that
+frontend keeps its content and BIOS files, and the game list may need a refresh.
+The example packaging in this repository is written for one handheld firmware;
+other firmware versions need different paths and may need a different launcher.
+BIOS and games are not included.
 
 ## Regression checks and measurements
 
@@ -142,7 +139,7 @@ The core exposes these options through RetroArch's Core Options menu:
 - CPU speed: 100% by default. Higher values give the game more CPU time per
   second without changing sound pitch, timers or screen refresh, which can
   shorten CPU-bound loading or slowdown. It needs proportionally more host CPU;
-  on H700-class devices keep 100% unless a scene needs it. See
+  on slow handhelds keep 100% unless a scene needs it. See
   `docs/CPU_SPEED_OPTION.md`.
 - Boot mode: `auto` by default. `auto` uses BIOS when found, `require_bios` fails clearly if the BIOS is missing, and `direct_hle` forces BIOSless direct/HLE loading.
 

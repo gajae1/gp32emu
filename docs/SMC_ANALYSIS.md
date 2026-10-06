@@ -75,14 +75,14 @@ Local warm-file ABBA samples of the complete loader function:
 | Princess Maker 2 | 5938.5 ms | 22.5 ms |
 
 These are Windows direct-loader/inspection times, not gameplay frame rates or
-BIOS/SmartMedia access timing. The normal BIOS path and H700 installation are
+BIOS/SmartMedia access timing. The normal BIOS path and the handheld installation are
 unchanged. Private provenance, corpus hashes, timing samples and captures:
 `results/resume122-loader/`.
 
 The SDK open follow-up is recorded in `results/resume123-hle/`. A ROM-free
 regression exercises relocated entry detection, a near-match rejection, asset
 reading and EOF. It fails on the previous scanner and passes on Windows and
-H700; the H700 check runs from RAM and does not install a core or change volume.
+handheld; the handheld check runs from RAM and does not install a core or change volume.
 
 The follow-up in `results/resume124-display/` also separates real SDK card-detect
 SWI 0x11 from the private display trampoline. Card queries ignore incidental

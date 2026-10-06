@@ -56,7 +56,7 @@ The 1,200-frame continuation captures the field, opposing teams, HUD and a
 90 frames with no input: player positions differ visibly, proving directional
 control rather than merely an attract scene. Both replays produce 44,112
 source PCM frames with identical PCM hashes. This is a short gameplay/input
-and digital-output check, not a complete match, audio-listening or H700
+and digital-output check, not a complete match, audio-listening or handheld
 performance verdict. It does not replace the earlier cold-start evidence.
 
 A fresh 300-frame PC profile records 100 CP15 cache-maintenance events,
@@ -80,7 +80,7 @@ per-title input remapping was necessary; the earlier input sequence assumed
 the wrong confirm button.
 
 This verifies story entry and text advancement from the saved menu state,
-not full-game, cold-boot, H700 or sound compatibility. The final continuation
+not full-game, cold-boot, handheld or sound compatibility. The final continuation
 produces zero source PCM frames; reaching a visible story scene alone does
 not establish whether its silence matches original hardware.
 
@@ -136,7 +136,7 @@ could miss indefinitely. The development core limits a run at the next visible
 line transition only after an actual LCD status read. The captured Pinball state
 now reaches a background/copyright screen after 120 frames. This establishes
 progress past that wait, not gameplay compatibility. The correction is now
-installed on H700 together with counted-poll acceleration (starting with source
+installed on the handheld together with counted-poll acceleration (starting with source
 `e153e45`); its scheduling cost and bounded performance results are documented
 in `GP32_PERFORMANCE_STRATEGY.md`.
 Private evidence: `resume84-lcd/demand-120frames/`, `device-demand.json`, and
@@ -152,7 +152,7 @@ frames 5-16 reaches the **Ignition playfield**, confirmed by viewing the capture
 This establishes progress into the game and a responding selection input;
 ball launch, scoring, flippers, other tables and long-session behavior remain
 untested. It is a state-continuation result, not a new complete cold-boot or
-H700 gameplay acceptance test. No ROM/BIOS modifications or audio playback were
+handheld gameplay acceptance test. No ROM/BIOS modifications or audio playback were
 used. Evidence: `resume90-pinball/FINDINGS.md`,
 `parent-next/{command,input-manifest}.json`, and
 `parent-next/table-select/{command.json,screen.png,end.state}`.
