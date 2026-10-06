@@ -3329,7 +3329,7 @@ round167 parity scripts report identical on every scene, JIT and interpreter.
 
 The JIT framed leaf-callee splice (`80bb31d`) looked like a small win on a
 boot-heavy scene, but it does not survive the handheld target. Interleaved ABBA
-runs on the RG SP (H700, Cortex-A53, clock-matched at 1512 MHz) measure Little
+runs on a Cortex-A53 handheld (clock-matched at 1512 MHz) measure Little
 Girl Mill boot (2400/600) at 51.369 -> 52.334 fps (+1.88%) but Her Knights
 state (0/3000) at 185.369 -> 102.897 fps (ratio 0.5551, -44.5%). A second ABBA
 and a direct interleaved A/B against a byte-identical build configuration
