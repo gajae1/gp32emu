@@ -12,6 +12,11 @@
  * --frame-times adds a frame_times object describing the measured frames'
  * host-time distribution (percentiles, tail counts, slowest frames).
  *
+ * Every measured frame also folds the panel's own frame counter into
+ * lcd_frames/lcd_repeat_frames/lcd_unpresented_frames, so a title whose
+ * panel period differs from the 1/60 s frame interval shows up as repeated
+ * presents instead of only as a hash change.
+ *
  * Portable C11: QueryPerformanceCounter on Windows, CLOCK_MONOTONIC elsewhere.
  * Depends only on libgp32emu (gp32emu/gp32.h) and src/input_script.h.
  */
@@ -255,7 +260,8 @@ static int usage(const char *argv0) {
         "usage: %s --bios bios.bin --smc game.smc [--state file] [--warmup N=2400] [--frames N=600] [--jit] [--input-script script.txt] [--cpu-profile] [--frame-times] [--legacy-cycle-frames] [--force-bios]\n"
         "Times --frames frames after --warmup warmup frames. BIOS+SMC runs without an input script get the same\n"
         "auto A pulses as headless_main. Prints one JSON object: fps, elapsed, cycles, pc, cpsr, clock,\n"
-        "audio_frames, video/audio FNV-1a-64 hashes. --cpu-profile resets CPU workload counters at the\n"
+        "audio_frames, lcd_frames/lcd_repeat_frames/lcd_unpresented_frames, video/audio FNV-1a-64 hashes.\n"
+        "--cpu-profile resets CPU workload counters at the\n"
         "warmup boundary and appends a cpu_profile object (requires a GP32EMU_CPU_PROFILE build).\n"
         "A card whose only executable sits outside GAME\\ (the freeware GPMM\\ layout) cannot boot through\n"
         "the retail BIOS, so it is loaded through the direct SmartMedia boot instead; --state replays and\n"
@@ -458,6 +464,11 @@ int main(int argc, char **argv) {
     uint64_t audio_underrun_risk = 0;
     int64_t audio_credit_q = 0;
     uint32_t audio_play_rate = 0;
+    /* Panel cadence: a frontend presents the newest LCD frame once per host
+     * frame, so a zero counter delta repeats the previous picture and a delta
+     * above one loses every panel frame but the last. */
+    uint64_t lcd_frames = 0, lcd_repeat_frames = 0, lcd_unpresented_frames = 0, lcd_counter = 0;
+    int lcd_have_counter = 0;
     double t0 = 0.0, elapsed = 0.0;
     uint64_t frame_ticks0 = 0;
     frame_counters_t frame_ctr_before;
@@ -490,7 +501,17 @@ int main(int argc, char **argv) {
 
         if (timed) {
             gp32_framebuffer_desc_t fb;
-            if (gp32_get_framebuffer(g, &fb) == GP32_OK) video_hash = hash_framebuffer(video_hash, &fb);
+            if (gp32_get_framebuffer(g, &fb) == GP32_OK) {
+                video_hash = hash_framebuffer(video_hash, &fb);
+                if (lcd_have_counter) {
+                    uint64_t delta = fb.frame_counter - lcd_counter;
+                    lcd_frames += delta;
+                    if (!delta) ++lcd_repeat_frames;
+                    else if (delta > 1u) lcd_unpresented_frames += delta - 1u;
+                }
+                lcd_counter = fb.frame_counter;
+                lcd_have_counter = 1;
+            }
             gp32_audio_desc_t aud;
             uint64_t produced = 0;
             while (gp32_get_audio(g, &aud) == GP32_OK && aud.frame_count) {
@@ -535,11 +556,14 @@ int main(int argc, char **argv) {
            ",\"pc\":\"0x%08" PRIx32 "\",\"cpsr\":\"0x%08" PRIx32 "\""
            ",\"clock\":%" PRIu32 ",\"audio_frames\":%" PRIu64
            ",\"audio_underrun_risk\":%" PRIu64
+           ",\"lcd_frames\":%" PRIu64 ",\"lcd_repeat_frames\":%" PRIu64
+           ",\"lcd_unpresented_frames\":%" PRIu64
            ",\"video_hash\":\"%016" PRIx64 "\",\"audio_hash\":\"%016" PRIx64 "\""
            ",\"jit\":%d",
            fps, elapsed, measured, warmup, gp32_get_cycles(g),
            gp32_get_pc(g), gp32_get_cpsr(g), gp32_get_run_clock_hz(g),
-           audio_frames, audio_underrun_risk, video_hash, audio_hash, jit);
+           audio_frames, audio_underrun_risk, lcd_frames, lcd_repeat_frames,
+           lcd_unpresented_frames, video_hash, audio_hash, jit);
     printf(",\"frame_pacing\":\"%s\"", legacy_cycle_frames ? "legacy_cycles" : "time");
     if (frame_times && frame_times_raw) {
         printf(",\"frame_ms\":[");

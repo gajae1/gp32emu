@@ -3259,3 +3259,70 @@ Princess +2.6%, identical output; a SIGPROF sample of that scene showed 25%
 of host time in `arm_jit_run_portable`. v2 ships; the loading-window cost
 (about -1%) is accepted.
 
+## Frame pacing and present cadence audit (round 169, 2026-10-07)
+
+Pacing model as measured: `gp32_run_frame` advances a 60 Hz deadline in
+emulated time by exactly 16,666,666/16,666,667 ns (carry 40 -> 20 -> 0, so the
+long-run average is 1e9/60 ns), recomputes the cycle budget after every CPU
+or HLE slice at the current run clock, and lets instruction/callback overshoot
+eat into the next frame instead of adding another interval. Frontends keep an
+independent accumulator (microsecond units in win64, nanoseconds in Qt,
+milliseconds in SDL 1.2/3) and run one frame per 1/60 s of host time, with a
+bounded catch-up and a clamped debt; libretro runs exactly one frame per
+`retro_run`. Established by the previous round notes; this round measured it.
+
+Measured on 60,000 frames of the Astonishia Story R title state (1000 s of
+emulated time, JIT, `--frame-times`): every frame retired exactly 987,500
+cycles, i.e. clock/60 with no spread (min = p50 = max), 23,144,000 PCM frames
+were produced (exactly rate/60 per frame), the device-model credit never went
+negative, no clock change occurred, and host frame times stayed at p99 2.3 ms /
+max 17.7 ms. Per-frame counter sampling (900 and 1200 frames, same core)
+retires exactly clock/60 cycles on Her Knights and on the Little Girl Mill
+boot window as well, and their 30,000/20,000-frame benchmarks report no clock
+change and no audio deficit. So the 60 Hz call cadence is stable, drift-free
+and free of jitter or duplicates at the *frame* level.
+
+The *present* cadence is a different question, and it is title-dependent. The
+benchmark now reports it directly: every measured frame folds the panel's own
+frame counter into `lcd_frames`, `lcd_repeat_frames` (host frames whose panel
+produced no new frame, i.e. a repeated present) and `lcd_unpresented_frames`
+(panel frames beyond the first inside one host frame, which no frontend can
+show). The same three runs measure 787/60,000 repeats for Astonishia (1.31%),
+4,591/30,000 repeats for Her Knights (15.3%) and 8,232/20,000 unpresented for
+the Little Girl Mill boot window (41%). The cause is structural: the panel
+period comes from the guest's LCDCON words (HCLK-derived, `2*(CLKVAL+1)` VCLK
+divisor from `lcd_refresh_timing_cache`), while the frame deadline and the
+HLE vblank grid are a fixed 1/60 s. The two clocks agree within 1.3% for
+Astonishia (59.21 Hz panel) but 15% for Her Knights (50.8 Hz at 33.9 MHz HCLK,
+`CLKVAL` 3) and 41% for the boot window (84.7 Hz at 56.5 MHz HCLK). On
+hardware the panel frame *is* the vblank source, so a vblank-driven title runs
+at its own panel rate and no frame is ever repeated; here the game is paced at
+60.000 Hz and the surplus frames are simply never scanned out. The TFT divisor
+in that path (`2*(CLKVAL+1)` HCLK cycles per pixel) matches the VCLK formula
+documented for the S3C2410/S3C2400 TFT controller (secondary citation; the
+manual page itself was not re-read here), so the panel rates follow each
+guest's own programming: two sampled titles sit at 50.8 Hz, one at 59.2 Hz and
+the BIOS boot window at 84.7 Hz. How much of that spread is faithful to the
+physical panel and how much is an HCLK/timing-model artefact stays open, but
+the fixed 60 Hz grid is the odd one out either way, and aligning the HLE
+vblank grid with the panel period would change guest-visible timing (and the
+bench parity hashes), so it is not attempted here.
+
+One host-side pacing change was tried and rejected. The win64 frontend waits
+with `Sleep(1)`, which resolves to the system timer tick (measured 15.98 ms
+p50 here), so an idle wait cannot land on the 16.67 ms frame grid; replacing it
+with a high-resolution waitable timer was measured over 18 s BIOS runs: with
+audio active the precise wait tightened p99 present interval 18.6 -> 17.8 ms
+but without audio (no MMCSS "Pro Audio" task holding the process timer near
+1 ms) it degraded to p99 29.2 ms with 39 intervals above 20 ms against 8 for
+the Sleep version, and 58.7 against 60.0 presents/s. The change was reverted;
+the current wait is adequate because the audio thread keeps the process timer
+resolution fine, and the coarse fallback quantizes without losing the average.
+Evidence: `F:/GP32/results/round169/pacing-audit/` (bench JSON for the three
+scenes, `pacing_probe.c` per-frame cycles/audio/LCD, `pace_probe.c` and
+`wait_probe.c` host wait measurements, `gui-base`/`gui-fixed` present logs).
+
+Gates for the accepted change (bench fields only): `ctest` 29/29 and the three
+round167 parity scripts report identical on every scene, JIT and interpreter.
+
+
