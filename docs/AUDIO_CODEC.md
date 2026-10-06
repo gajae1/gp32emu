@@ -93,6 +93,19 @@ Cold direct runs of Story of Bug Eyed Monster and Funny Soccer 2002 for
 frame count and audio hash. Funny Soccer's observed window has zero PCM,
 so that comparison does not establish working audio or full gameplay.
 
+## Pinball Dreams (Europe)
+
+Its start-up code (0x0c22a464 and 0x0c22a630) sends status 0x08 (512fs,
+MSB-justified), then volume VC 0x3f, then data 0x90 (44.1 kHz de-emphasis,
+unmuted) through bit-banged L3 routines (0x0c22a20c address, 0x0c22a30c data;
+about 1.8 us per CLOCK cycle against the 500 ns minimum). VC 0x3f is
+-infinity in UDA1330ATS Table 11 and nothing raises it afterwards, so the
+PCM is silent in direct boot and in a BIOS boot of the 2003-05-21 BIOS
+(3,600 frames). A scratch build with unity gain produces PCM from the same
+run; the model follows the datasheet, and no BIOS routine (0x5530, 0x54a8,
+0x54fc) or datasheet rule changes the volume. Whether a real GP32 is audible
+is not known.
+
 Protocol and gain references: NXP
 [UDA1330ATS](https://www.nxp.com/docs/en/data-sheet/UDA1330ATS.pdf),
 L3 interface/register tables, and

@@ -305,12 +305,107 @@ static void direct_install_stubs(gp32_t *g) {
     for (unsigned i = 0; i < GP32_ARRAY_COUNT(legacy_wait); ++i)
         s3c2400_write32(g->soc, a + 0x80u + i * 4u, legacy_wait[i]);
 }
+/* The firmware clock service (retail ROM 0x200c) as the launch path (ROM
+ * 0x20ec-0x210c), the reinit service (0x6b3c-0x6b5c) and SWI 0x0d (ROM 0x1398)
+ * call it. All three pass the LOCKTIME word of the default clock table (ROM
+ * 0x1090; SWI 0x0d loads it at 0x13ac) with their own MPLLCON and CLKDIVN. It
+ * writes CLKDIVN, LOCKTIME and MPLLCON in that order (0x204c-0x2054), stores the
+ * {FCLK, HCLK, PCLK} block SWI 0x0b selector 4 returns (0x2064-0x2094), then sets
+ * the REFRESH counter to 2049 - (HCLK / 1024 * 156) / 10000 (0x2098-0x20d0:
+ * 0x5fd at the BIOS 33.9 MHz). The SoC model switches clocks atomically, so the
+ * ROM's PLL settling step (0x2024-0x203c) has no equivalent, and the block's
+ * FCLK comes from the PLL register where the ROM copies the caller's word. */
+#define DIRECT_FW_LOCKTIME 0x007d07d0u
+static void direct_publish_fw_clocks(gp32_t *g);
+static void direct_apply_fw_clock(gp32_t *g, uint32_t mpllcon, uint32_t clkdivn) {
+    s3c2400_write32(g->soc, 0x14800014u, clkdivn & 3u);
+    s3c2400_write32(g->soc, 0x14800000u, DIRECT_FW_LOCKTIME);
+    s3c2400_write32(g->soc, 0x14800004u, mpllcon);
+    uint32_t drop = (uint32_t)(((uint64_t)(s3c2400_hclk_hz(g->soc) >> 10) * 156u) / 10000u);
+    uint32_t refresh = s3c2400_debug_read32(g->soc, 0x14000024u);
+    s3c2400_write32(g->soc, 0x14000024u, (refresh & ~0x7ffu) | ((0x801u - drop) & 0x7ffu));
+    direct_publish_fw_clocks(g);
+}
+
+/* The default clock table at ROM 0x1090, which the launch path and the reinit
+ * service hand to the clock service: CLKCON 0x4768, then MPLLCON 0x69032 with
+ * CLKDIVN 3 (FCLK 67.8 MHz, HCLK 33.9 MHz, PCLK 16.95 MHz). */
+static void direct_apply_fw_default_clock(gp32_t *g) {
+    s3c2400_write32(g->soc, 0x1480000cu, 0x00004768u);
+    direct_apply_fw_clock(g, 0x00069032u, 3u);
+}
+
+/* Register state the retail firmware leaves at the first instruction of a
+ * title.  Read back at game entry in BIOS boots of ten cards: Her Knights,
+ * Blue Angelo, Dungeon & Guarder EU, Little Wizard EU, Funny Soccer, Holeman,
+ * Super Plusha, Tales of Windy Land and Topy Topy Gogo under BIOS 1.6.6, and
+ * Pinball Dreams under the 2003-05-21 BIOS (BIOS 1.6.6 never launches it).
+ * Every value below was identical on all of them.  ROM addresses are BIOS 1.6.6.
+ * Not reproduced: card-dependent leftovers (pending interrupts, DMA pointers,
+ * GPBDAT readback, phase counters), the BIOS tick (timers 0, 1 and 4 running
+ * with ROM ISRs that direct mode does not have), CP15/MMU and the codec
+ * latches (status 0x10, VC 0, control 0x80), which change no modelled output.
+ * Every write goes through the register model, so rates derived from the
+ * clock tree follow it. */
+static void direct_init_soc_handoff(gp32_t *g) {
+    if (!g || !g->soc) return;
+    /* Memory controller: BWSCON through MRSRB7, reset code ROM 0x1b8 (literals
+     * 0x2ac/0x2b0); the REFRESH counter bits come from the clock below. */
+    static const uint32_t memcon[13] = {
+        0x11111110u, 0x00000400u, 0x00000f00u, 0x11111110u, 0x11111110u, 0x11111110u, 0x11111110u,
+        0x00018000u, 0x00018000u, 0x00890543u, 0x00000016u, 0x00000020u, 0x00000020u,
+    };
+    for (unsigned i = 0; i < GP32_ARRAY_COUNT(memcon); ++i)
+        s3c2400_write32(g->soc, 0x14000000u + i * 4u, memcon[i]);
+    /* Clock tree: UPLLCON from the reset literal at ROM 0x2bc (stm at 0x1d4),
+     * CLKSLOW never written, CLKCON and the PLL/divider from the default
+     * clock table at ROM 0x1090 that the launch path (0x20ec-0x210c) feeds to
+     * the clock service: FCLK 67.8 MHz, HCLK 33.9 MHz, PCLK 16.95 MHz. */
+    s3c2400_write32(g->soc, 0x14800008u, 0x00058042u);
+    s3c2400_write32(g->soc, 0x14800010u, 0x00000000u);
+    direct_apply_fw_default_clock(g);
+    /* Interrupt controller (int_init, ROM 0x15e0): INTMOD 0, PRIORITY
+     * 0x18002b (0x1608), and the sources the ROM unmasks for its own ISRs:
+     * EINT2 (0x164c), TIMER0 (0x1684), TIMER4 (0x16b8), USBD (0x16f0); DMA3
+     * follows through the SWI 9 service (0x1260-0x1284). */
+    s3c2400_write32(g->soc, 0x14400004u, 0x00000000u);
+    s3c2400_write32(g->soc, 0x1440000cu, 0x0018002bu);
+    s3c2400_write32(g->soc, 0x14400008u, 0xfdefbbfbu);
+    /* PWM prescaler 1 = 0x63 and MUX4 = 3 from the timer-4 init (ROM 0x3c2c,
+     * 0x3c3c); prescaler 0 = 0x33 and MUX0/1 = 3 are the menu's leftovers. */
+    s3c2400_write32(g->soc, 0x15100000u, 0x00006333u);
+    s3c2400_write32(g->soc, 0x15100004u, 0x00030033u);
+    /* IIS: the launch-path stop (ROM 0x7804) leaves IISCON 0x0e and IISFCON
+     * 0xa00 (0x7818, 0x7824); the sound routine at ROM 0x3dcc leaves IISMOD
+     * 0x89 (IIS format, 16 bit, 256fs) and IISPSR 0xa5 (0x3de4, 0x3df4):
+     * 11,035 Hz at the BIOS PCLK. */
+    s3c2400_write32(g->soc, 0x15508008u, 0x000000a5u);
+    s3c2400_write32(g->soc, 0x15508004u, 0x00000089u);
+    s3c2400_write32(g->soc, 0x15508000u, 0x0000000eu);
+    s3c2400_write32(g->soc, 0x1550800cu, 0x00000a00u);
+    /* GPIO: port init ROM 0x1704, SmartMedia pins 0x66b4 (GPBCON low half
+     * 0x5555, GPDCON 0x15000, GPECON 0x560), L3 pins 0x5530 (GPEDAT idle
+     * level 0x600 with MODE and CLOCK high, GPEUP 0xe00, GPECON 0x540000) and
+     * EXTINT 0x700 (0x1668). GPDDAT 0x3c0 is the SmartMedia driver's
+     * deselected level.  GPEDAT goes before GPECON so the L3 decoder never
+     * sees the idle level as an edge. */
+    static const uint32_t gpio[][2] = {
+        {0x15600000u, 0x000004ffu}, {0x15600008u, 0x00005555u}, {0x15600010u, 0x00000000u},
+        {0x15600014u, 0xaaaaaaaau}, {0x1560001cu, 0x0000ffffu}, {0x15600020u, 0x000150aau},
+        {0x15600024u, 0x000003c0u}, {0x15600028u, 0x0000000fu}, {0x15600030u, 0x000006c8u},
+        {0x1560002cu, 0x00540560u}, {0x15600034u, 0x00000e00u}, {0x15600038u, 0x00000aaau},
+        {0x15600040u, 0x0000003fu}, {0x15600044u, 0x00003caau}, {0x1560004cu, 0x0000006fu},
+        {0x15600058u, 0x00000700u},
+    };
+    for (unsigned i = 0; i < GP32_ARRAY_COUNT(gpio); ++i)
+        s3c2400_write32(g->soc, gpio[i][0], gpio[i][1]);
+}
+
+/* SmartMedia loads also park the data bus high; the control pins already hold
+ * the firmware's idle levels from direct_init_soc_handoff. */
 static void direct_init_smc_gpio(gp32_t *g) {
     if (!g || !g->soc) return;
-    s3c2400_write32(g->soc, 0x15600008u, 0x00000001u);
     s3c2400_write32(g->soc, 0x1560000cu, 0x000000ffu);
-    s3c2400_write32(g->soc, 0x15600024u, 0x000001c0u);
-    s3c2400_write32(g->soc, 0x15600030u, 0x00000008u);
 }
 
 static void direct_install_smc_callbacks(gp32_t *g) {
@@ -511,12 +606,18 @@ static void direct_migrate_vblank_wait(gp32_t *g, uint64_t cycles) {
     g->direct_vblank_time = (gp32_frame_time_t){deadline + 16666666u, 40u, 1u};
 }
 
-static void direct_sync_fwinfo(gp32_t *g) {
+/* SWI 0x0b selector 4 returns the firmware's clock block {FCLK, HCLK, PCLK}
+ * in Hz (ROM 0x1340 returns its address, 0x2064-0x2094 fill it). */
+static void direct_publish_fw_clocks(gp32_t *g) {
     uint32_t info = direct_fwinfo_addr(g);
-    uint32_t hz = direct_firmware_clock_hz(g);
-    direct_write32_if_ram(g, info + 0u, hz);
-    direct_write32_if_ram(g, info + 4u, hz);
-    direct_write32_if_ram(g, info + 8u, hz);
+    uint32_t fclk = direct_firmware_clock_hz(g);
+    direct_write32_if_ram(g, info + 0u, fclk);
+    direct_write32_if_ram(g, info + 4u, g->soc ? s3c2400_hclk_hz(g->soc) : fclk);
+    direct_write32_if_ram(g, info + 8u, g->soc ? s3c2400_pclk_hz(g->soc) : fclk);
+}
+
+static void direct_sync_fwinfo(gp32_t *g) {
+    direct_publish_fw_clocks(g);
     direct_update_fw_tick(g);
 }
 
@@ -729,7 +830,7 @@ static uint32_t direct_read_surface_buffer(gp32_t *g, uint32_t surf) {
     return 0u;
 }
 
-static void direct_set_lcd_8bpp(gp32_t *g, uint32_t fb_addr, uint32_t pal_addr);
+static void direct_set_lcd_8bpp(gp32_t *g, uint32_t fb_addr, uint32_t pal_addr, int follow_clock);
 
 static void direct_fill_lcd_surface(gp32_t *g, uint32_t surf, uint32_t page) {
     if (!direct_ram_range(g, surf, 28u)) return;
@@ -834,7 +935,7 @@ static void direct_select_visible_surface(gp32_t *g) {
         }
     }
     if (best != 4u && g->direct_fxe_lcd_surface[best] != g->direct_fxe_fb_addr) {
-        direct_set_lcd_8bpp(g, g->direct_fxe_lcd_surface[best], 0u);
+        direct_set_lcd_8bpp(g, g->direct_fxe_lcd_surface[best], 0u, 0);
     }
 }
 
@@ -868,8 +969,29 @@ static void direct_select_visible_surface(gp32_t *g) {
 #define DIRECT_LCDCON3_RETAIL       0x0030ef02u
 #define DIRECT_LCDCON4_RETAIL       0x00000004u
 #define DIRECT_LCDCON5_RETAIL_8BPP  0x00000702u
-#define DIRECT_LCDCON1_RETAIL_8BPP  (1u | (0x0bu << 1) | (3u << 5) | (3u << 8))
-#define DIRECT_LCDCON1_RETAIL_16BPP (1u | (0x0cu << 1) | (3u << 5) | (3u << 8))
+
+/* CLKVAL (ROM 0x1fd4): the HCLK of the firmware's clock block divided by
+ * 10,006,200, rounded up from a quarter, minus one - 3 at the BIOS's 33.9 MHz,
+ * 4 at 48 MHz, 5 at 59.25 MHz.  Only a graphics-mode switch (ROM 0x1804, reached
+ * by GpGraphicModeSet and the reinit service) recomputes it.  Every other display
+ * service leaves the divider in LCDCON1 alone, so a title that changed the clock
+ * after its last mode switch keeps the old one: BIOS boots show 59.2 Hz panels at
+ * 59.25 MHz for titles that switch modes after the clock change (Again,
+ * Astonishia Story R, Tomak) and 88.8 Hz for the ones that do not (Dungeon &
+ * Guarder, Kimchiman, Woody & Kunta).  A live LCDCON1 that is not a TFT setup
+ * with a divider (a fresh load, a guest's STN or CLKVAL 0 program) takes the
+ * computed value. */
+static uint32_t direct_lcdcon1(const gp32_t *g, uint32_t bppmode, int follow_clock) {
+    uint32_t live = s3c2400_debug_read32(g->soc, 0x14a00000u);
+    uint32_t clkval = GP32_BITS(live, 17, 8);
+    if (follow_clock || GP32_BITS(live, 6, 5) != 3u || clkval == 0u) {
+        const uint32_t unit = 10006200u;
+        uint32_t hclk = s3c2400_hclk_hz(g->soc);
+        uint32_t n = hclk / unit + (hclk % unit >= unit / 4u ? 1u : 0u);
+        clkval = n > 1u ? n - 1u : 1u; /* the ROM's CLKVAL 0 is outside the TFT range */
+    }
+    return 1u | (bppmode << 1) | (3u << 5) | (clkval << 8);
+}
 
 static void direct_write_lcd_timing(gp32_t *g) {
     s3c2400_write32(g->soc, 0x14a00004u, DIRECT_LCDCON2_RETAIL);
@@ -877,7 +999,7 @@ static void direct_write_lcd_timing(gp32_t *g) {
     s3c2400_write32(g->soc, 0x14a0000cu, DIRECT_LCDCON4_RETAIL);
 }
 
-static void direct_set_lcd_16bpp(gp32_t *g, uint32_t fb_addr) {
+static void direct_set_lcd_16bpp(gp32_t *g, uint32_t fb_addr, int follow_clock) {
     if (!g || !direct_ram_range(g, fb_addr, 240u * 320u * 2u)) return;
     g->direct_fxe_fb_addr = fb_addr;
     direct_update_stub_framebuffer(g);
@@ -893,10 +1015,10 @@ static void direct_set_lcd_16bpp(gp32_t *g, uint32_t fb_addr) {
     s3c2400_write32(g->soc, 0x14a00018u, end & 0x001fffffu);
     s3c2400_write32(g->soc, 0x14a0001cu, 240u);
     g->direct_fxe_bpp = 16u;
-    s3c2400_write32(g->soc, 0x14a00000u, DIRECT_LCDCON1_RETAIL_16BPP);
+    s3c2400_write32(g->soc, 0x14a00000u, direct_lcdcon1(g, 0x0cu, follow_clock));
 }
 
-static void direct_set_lcd_8bpp(gp32_t *g, uint32_t fb_addr, uint32_t pal_addr) {
+static void direct_set_lcd_8bpp(gp32_t *g, uint32_t fb_addr, uint32_t pal_addr, int follow_clock) {
     /* Direct-loaded GPSDK programs do not have the BIOS display service behind
        SWI #0x16.  This installs an 8-bit TFT LCD view over the app's active
        portrait framebuffer and copies the caller-supplied 256-entry GP32
@@ -939,7 +1061,7 @@ static void direct_set_lcd_8bpp(gp32_t *g, uint32_t fb_addr, uint32_t pal_addr) 
     } else if (!g->direct_fxe_palette_initialized) {
         direct_fill_default_palette(g);
     }
-    s3c2400_write32(g->soc, 0x14a00000u, DIRECT_LCDCON1_RETAIL_8BPP);
+    s3c2400_write32(g->soc, 0x14a00000u, direct_lcdcon1(g, 0x0bu, follow_clock));
 }
 
 /* The state the firmware leaves for a title it has just started: 8 bpp over the
@@ -952,7 +1074,7 @@ static void direct_init_lcd_handoff(gp32_t *g) {
     s3c2400_write32(g->soc, 0x14a00014u, fb >> 1);
     s3c2400_write32(g->soc, 0x14a00018u, ((fb + 240u * 320u) >> 1) & 0x001fffffu);
     s3c2400_write32(g->soc, 0x14a0001cu, 120u);
-    s3c2400_write32(g->soc, 0x14a00000u, DIRECT_LCDCON1_RETAIL_8BPP);
+    s3c2400_write32(g->soc, 0x14a00000u, direct_lcdcon1(g, 0x0bu, 1));
 }
 
 static void direct_reset_hle_runtime(gp32_t *g, int preserve_hle_options) {
@@ -3347,24 +3469,26 @@ static int direct_gxb_place_image(gp32_t *g, uint32_t hdr, uint32_t *out_hdr, ui
  *
  * Direct-FXE HLE previously declined 0x1FF, so the CPU took the ordinary SWI
  * exception into the zero-filled direct-mode vector page and walked memory
- * until it reached RAM again.  Two deviations from the ROM routine are
+ * until it reached RAM again.  One deviation from the ROM routine is
  * deliberate: the guest's banked stacks stay untouched because direct mode has
- * no firmware stack table and the trampoline continues on its own frame, and
- * the clock registers keep the guest's own programming because the direct-mode
- * clock model derives everything from the guest's PLL writes. */
+ * no firmware stack table and the trampoline continues on its own frame.  The
+ * clock goes back to the default table (67.8 / 33.9 MHz) as in the ROM
+ * (0x6b3c-0x6b5c), and the mode switch that follows takes its LCD divider
+ * from that clock. */
 static int direct_handle_swi_reinit(gp32_t *g, arm920t_t *cpu) {
     arm920t_register_context_t ctx;
     arm920t_get_register_context(cpu, &ctx);
     uint32_t resume = ctx.bank_fiq[4]; /* r12_fiq is the firmware's continuation slot. */
     if (!resume) return 0;             /* No published continuation: ordinary SWI semantics. */
     uint32_t entry_cpsr = ctx.cpsr;
+    direct_apply_fw_default_clock(g);
     /* Default display state: 8 bpp over surface page 0 with the standard palette. */
     g->direct_fxe_bpp = 8u;
     g->direct_fxe_lcd_enabled = 1u;
     g->direct_fxe_lcd_explicit = 0u;
     g->direct_fxe_fb_addr = 0u;
     direct_fill_default_palette(g);
-    direct_set_lcd_8bpp(g, direct_default_surface_addr(0u), 0u);
+    direct_set_lcd_8bpp(g, direct_default_surface_addr(0u), 0u, 1);
     /* Launcher fields the firmware clears before handing control back. */
     direct_write32_if_ram(g, 0x0c7b0c00u, 0u);
     direct_write32_if_ram(g, 0x0c7b0d00u, 0u);
@@ -3441,8 +3565,8 @@ static int direct_fxe_swi(void *user, arm920t_t *cpu, uint32_t imm, uint32_t pc,
             uint32_t bpp = (a0 == 16u) ? 16u : 8u;
             g->direct_fxe_bpp = bpp;
             g->direct_fxe_lcd_enabled = 1u;
-            if (bpp == 16u) direct_set_lcd_16bpp(g, g->direct_fxe_fb_addr ? g->direct_fxe_fb_addr : direct_default_surface_addr(0));
-            else direct_set_lcd_8bpp(g, g->direct_fxe_fb_addr ? g->direct_fxe_fb_addr : direct_default_surface_addr(0), a1);
+            if (bpp == 16u) direct_set_lcd_16bpp(g, g->direct_fxe_fb_addr ? g->direct_fxe_fb_addr : direct_default_surface_addr(0), 1);
+            else direct_set_lcd_8bpp(g, g->direct_fxe_fb_addr ? g->direct_fxe_fb_addr : direct_default_surface_addr(0), a1, 1);
             arm920t_set_reg(cpu, 0, (bpp == 16u) ? 2u : 4u);
             return 1;
         }
@@ -3451,8 +3575,8 @@ static int direct_fxe_swi(void *user, arm920t_t *cpu, uint32_t imm, uint32_t pc,
             if (direct_ram_range(g, a0, 28u)) {
                 direct_fill_lcd_surface(g, a0, page);
                 if (g->direct_fxe_fb_addr == 0u || page == 0u) {
-                    if (g->direct_fxe_bpp == 16u) direct_set_lcd_16bpp(g, direct_surface_addr_for_bpp(g, page));
-                    else direct_set_lcd_8bpp(g, direct_surface_addr_for_bpp(g, page), 0u);
+                    if (g->direct_fxe_bpp == 16u) direct_set_lcd_16bpp(g, direct_surface_addr_for_bpp(g, page), 0);
+                    else direct_set_lcd_8bpp(g, direct_surface_addr_for_bpp(g, page), 0u, 0);
                 }
             }
             arm920t_set_reg(cpu, 0, 0u);
@@ -3464,8 +3588,8 @@ static int direct_fxe_swi(void *user, arm920t_t *cpu, uint32_t imm, uint32_t pc,
         case 3u: /* GpLcdEnable */
             g->direct_fxe_lcd_enabled = 1u;
             if (g->direct_fxe_fb_addr) {
-                if (g->direct_fxe_bpp == 16u) direct_set_lcd_16bpp(g, g->direct_fxe_fb_addr);
-                else direct_set_lcd_8bpp(g, g->direct_fxe_fb_addr, 0u);
+                if (g->direct_fxe_bpp == 16u) direct_set_lcd_16bpp(g, g->direct_fxe_fb_addr, 0);
+                else direct_set_lcd_8bpp(g, g->direct_fxe_fb_addr, 0u, 0);
             }
             arm920t_set_reg(cpu, 0, 0u);
             return 1;
@@ -3524,8 +3648,8 @@ static int direct_fxe_swi(void *user, arm920t_t *cpu, uint32_t imm, uint32_t pc,
         uint32_t fb = direct_read_surface_buffer(g, a0);
         if (fb) {
             uint32_t bpp = s3c2400_debug_read32(g->soc, a0 + 4u);
-            if (bpp == 16u) direct_set_lcd_16bpp(g, fb);
-            else direct_set_lcd_8bpp(g, fb, 0u);
+            if (bpp == 16u) direct_set_lcd_16bpp(g, fb, 0);
+            else direct_set_lcd_8bpp(g, fb, 0u, 0);
             g->direct_fxe_lcd_explicit = 1u;
         }
         direct_request_vblank_wait(g, fb != 0u);
@@ -3729,7 +3853,7 @@ static int direct_fxe_swi(void *user, arm920t_t *cpu, uint32_t imm, uint32_t pc,
             return 1;
         }
         case 6u:
-            direct_set_lcd_8bpp(g, g->direct_fxe_fb_addr ? g->direct_fxe_fb_addr : direct_default_surface_addr(0), arg1);
+            direct_set_lcd_8bpp(g, g->direct_fxe_fb_addr ? g->direct_fxe_fb_addr : direct_default_surface_addr(0), arg1, 0);
             arm920t_set_reg(cpu, 0, 1u);
             return 1;
         default:
@@ -3773,9 +3897,20 @@ static int direct_fxe_swi(void *user, arm920t_t *cpu, uint32_t imm, uint32_t pc,
         arm920t_set_reg(cpu, 0, 0u);
         return 1;
     }
+    case 0x0d: { /* Firmware clock service (retail ROM 0x1104 -> 0x1398 -> clock service
+                  * 0x200c): r0 points at {FCLK Hz, MPLLCON, CLKDIVN}. Direct mode takes
+                  * FCLK from MPLLCON (titles pass the matching value), and the ROM
+                  * epilogue (0x1250) restores r0 and r1, so the caller sees every
+                  * register unchanged. */
+        uint32_t params = arm920t_get_reg(cpu, 0);
+        if (direct_ram_range(g, params, 12u))
+            direct_apply_fw_clock(g, s3c2400_debug_read32(g->soc, params + 4u),
+                                  s3c2400_debug_read32(g->soc, params + 8u));
+        return 1;
+    }
     default:
         if (imm == 0x02u || imm == 0x07u ||
-            imm == 0x0du || imm == 0x0eu ||
+            imm == 0x0eu ||
             (imm >= 0x100u && imm <= 0x120u)) {
             arm920t_set_reg(cpu, 0, 0u);
             return 1;
@@ -3988,6 +4123,7 @@ static gp32_status_t gp32_load_fxe_image_internal(gp32_t *g, fxe_image_t *img, i
         return GP32_ERR_BAD_IMAGE;
     }
     direct_set_fxe_mode(g, 1u);
+    direct_init_soc_handoff(g);
     g->direct_fxe_entry = img->entry_addr;
     g->direct_fxe_stack = GP32_RAM_BASE + (uint32_t)s3c2400_ram_size(g->soc);
     g->direct_fxe_fb_addr = 0u;

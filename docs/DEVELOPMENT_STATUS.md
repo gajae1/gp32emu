@@ -15,6 +15,24 @@ result paths below are names on the development machine.
 
 ## Current accepted work
 
+- Round 166 direct-boot hardware handoff (result.md and evidence in
+  `F:/GP32/results/round166/direct-clock/`): a direct load now starts from the
+  SoC state retail BIOS 1.6.6 leaves at the first game instruction (read back
+  in ten BIOS boots, identical on all): clock tree FCLK 67.8 / HCLK 33.9 /
+  PCLK 16.95 MHz and REFRESH 0x5fd (default table ROM 0x1090 through the clock
+  service 0x200c), memory controller (0x1b8), interrupt masks (0x15e0), PWM
+  prescalers, IIS (IISPSR 0xa5, 11,035 Hz) and the GPIO/L3 pin levels (0x1704,
+  0x5530, 0x66b4). Direct panel 71.96 -> 50.82 Hz; Pinball's own IIS prescaler
+  62,500 -> 22,070 Hz. SWI 0x0d is now the ROM clock service (20 of 40 cards
+  call it, reaching 39.5-67.5 MHz), the reinit service (0x1ff) restores the
+  default clock, and the panel divider follows ROM 0x1fd4 at a graphics-mode
+  switch only (59.2 or 88.8 Hz at 59.25 MHz, as in BIOS boots). 26 of the 35
+  cards with a BIOS-boot reference now match its clock and panel rate. Not
+  reproduced: CP15/MMU, the BIOS tick timers and ISRs, pending/DMA/USB/UART
+  leftovers, codec latches. Pinball's silence is its own request: its only L3
+  volume write is VC 0x3f, -infinity in UDA1330ATS Table 11, and a 2003-BIOS
+  boot is equally silent, so the codec is unchanged. ctest 29/29; pc-parity,
+  parity5 and parity-boot identical. H700 and real hardware not measured.
 - `60d09c5` (libretro): guest PCM is handed to the frontend between guest slices
   through an optional core host pump (`gp32_set_host_pump`), so a frame that
   overruns 1/60 s no longer leaves the frontend audio FIFO dry for its whole
@@ -166,16 +184,16 @@ result paths below are names on the development machine.
   panel, but Pinball spins on LCDCON1 LINECNT and derives its TIMER4 period from
   LCDCON1-4. Direct loads and the mode setters now write the retail BIOS words
   (LCDCON1 0x377/0x379, LCDCON2-4 0x014fc081/0x0030ef02/0x4, LCDCON5
-  0x702/0x701, read back at game entry in four BIOS boots); the guest panel runs
-  about 72 Hz at the 48 MHz direct clock. Direct bench 123 -> 888 fps, 78
+  0x702/0x701, read back at game entry in four BIOS boots); the guest panel ran
+  about 72 Hz at the 48 MHz direct clock (50.82 Hz at the BIOS clock since
+  round 166). Direct bench 123 -> 888 fps, 78
   distinct video hashes in 1800 frames (title, PRESS START, then IGNITION and
   the playfield with START/A). ctest 29/29; pc-parity, parity5 and parity-boot
   identical. Of 40 cards the 600-frame direct CPU/audio state matches on 39;
   video differs on four titles stuck in startup (blank panel -> default surface)
   and in 1-2 of 19 sampled frames on six others (transient colour flash or fade
-  phase). Open: Pinball's PCM is silent (its own codec init writes volume 0x3f
-  and nothing raises it); direct IIS runs 62.5 kHz where the
-  BIOS boot gives 22.05 kHz; ASR, Little Wizard EU and Princess Maker 2 keep a
+  phase). Open (round 166 explains Pinball's silence and fixes its IIS rate):
+  ASR, Little Wizard EU and Princess Maker 2 keep a
   mis-keyed decode and stall in direct boot, but run past the stall when fed the
   BIOS-matching payload (`SMC_ANALYSIS.md`).
 - Guest audio audit (round 163, F:/GP32/results/round163/w-asrguest/): no
