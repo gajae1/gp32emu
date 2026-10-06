@@ -41,7 +41,8 @@ result paths below are names on the development machine.
   leftovers, codec latches. Pinball's silence is its own request: its only L3
   volume write is VC 0x3f, -infinity in UDA1330ATS Table 11, and a 2003-BIOS
   boot is equally silent, so the codec is unchanged. ctest 29/29; pc-parity,
-  parity5 and parity-boot identical. H700 and real hardware not measured.
+  parity5 and parity-boot identical. The Cortex-A53 handheld and real hardware
+  were not measured.
 - `60d09c5` (libretro): guest PCM is handed to the frontend between guest slices
   through an optional core host pump (`gp32_set_host_pump`), so a frame that
   overruns 1/60 s no longer leaves the frontend audio FIFO dry for its whole
@@ -673,7 +674,7 @@ emitter reads all source and accumulate words before either result write,
 stores RdLo before RdHi, preserves C/V, derives N from the high word and Z from
 the complete 64-bit result, and leaves PC operands on the precise helper path.
 Existing A64 emission in src/arm920t_jit_a64.inc already covers the same four
-forms and was verified by the H700 cross-build; no shared translator change was
+forms and was verified by the Cortex-A53 cross-build; no shared translator change was
 needed. SWI remains a helper because its callback, exception, IRQ and run-limit
 boundaries can re-enter the dispatcher and must retain their exact side effects.
 
@@ -708,8 +709,8 @@ build-h700-path2/gp32emu_libretro.so. Four rejected configuration attempts
 were recorded: omitting CMAKE_MAKE_PROGRAM failed because Ninja was not found;
 -DGP32_ZIG=<zig.exe> failed because the toolchain discovers zig through
 find_program; CMAKE_PROGRAM_PATH alone still failed discovery; and adding the
-Zig directory to PATH fixed it. The A64 binaries cannot run on this PC. H700
-focused and four-scene runtime checks remain pending while the device is
+Zig directory to PATH fixed it. The A64 binaries cannot run on this PC. Focused
+and four-scene runtime checks remain pending while that target is
 offline; the exact commands are recorded in the round 167 result report.
 
 ## Broader remaining evidence
