@@ -583,7 +583,8 @@ static void test_state_buffers(const char *state_path) {
           "memory serialization must append the versioned delivery section");
 
     CHECK(!retro_unserialize(state, 8u), "truncated state header must fail");
-    CHECK(!retro_unserialize(state, size - 1u), "truncated state body must fail");
+    /* The reported size is an upper bound; cut inside the delivery body. */
+    CHECK(!retro_unserialize(state, guest + 32u), "truncated state body must fail");
     gp32_reset(emu);
     CHECK(retro_unserialize(state, size + 16u), "padded complete state must load");
     CHECK(retro_serialize(again, size) && !memcmp(state, again, size),

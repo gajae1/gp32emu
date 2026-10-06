@@ -514,6 +514,15 @@ static size_t lrst_size(void) {
     return size;
 }
 
+/* Largest section lrst_write can produce. Frontends size run-ahead and rewind
+ * buffers from one retro_serialize_size call, so report the bound instead of
+ * the current queue depth. */
+static size_t lrst_capacity(void) {
+    return sizeof(lrst_header_t) + sizeof(lrst_body_t) +
+           (size_t)GP32_AUDIO_QUEUE_LIMIT * 2u * sizeof(int16_t) +
+           2u * (size_t)GP32_VIDEO_EFFECTS_PIXELS * sizeof(uint32_t);
+}
+
 /* Appends the delivery section at dst. Returns the section length, or 0 when
  * it does not fit the remaining room. */
 static size_t lrst_write(uint8_t *dst, size_t room) {
@@ -1301,9 +1310,8 @@ size_t retro_serialize_size(void) {
      * holds, which puts the whole image back into the section. Take the largest
      * value seen so a frontend buffer always fits what we write. */
     size_t guest = gp32_state_size(emu);
-    size_t wrapper = lrst_size();
-    if (!guest || !wrapper) return 0;
-    size_t size = guest + wrapper;
+    if (!guest) return 0;
+    size_t size = guest + lrst_capacity();
     if (size > state_capacity) state_capacity = size;
     return state_capacity;
 }
