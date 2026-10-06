@@ -6,6 +6,17 @@ performance, audio and input correctness across the library, not boot-only tests
 
 ## Current accepted work
 
+- Verified (round 169): Android build. `jni/Android.mk` drives the whole core
+  through ndk-build; with NDK 28.2.13676358 and APP_PLATFORM android-21 all
+  three declared ABIs link: arm64-v8a 425256 B, armeabi-v7a 247344 B,
+  x86_64 497144 B, each as `libs/<abi>/libretro.so`, exporting only the
+  libretro API through `src/libretro/libretro.map` with `--no-undefined`.
+  arm64 and x86_64 also carry the 16 KB page-size flags Android 15 requires.
+  Disassembly line counts confirm the native backend is really compiled in per
+  target: arm64 91895 lines against armeabi-v7a's 54173, which carries no host
+  backend, and x86_64 104114. Unverified: no Android device or emulator is
+  available here, and no qemu-aarch64 user-mode binary is installed, so the
+  A64 backend still has no executed test outside the H700/Sol test builds.
 - Rejected (round 169): whole-program `-flto` (the existing
   `GP32EMU_ENABLE_IPO` option) as a performance lever. On the LGM card-loading
   window (warmup 2400, 600 measured frames, 4 alternating runs each) it moved
