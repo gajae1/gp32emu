@@ -1,8 +1,8 @@
 # GP32emu
 
 An emulator for the Game Park GP32 (2001, ARM920T handheld), written in C. It is a fork of
-[gameblabla/gp32emu](https://github.com/gameblabla/gp32emu), aimed at running GP32 games smoothly on
-cheap ARM handhelds (Allwinner H700, Rockchip RK3326 and similar) through RetroArch.
+[gameblabla/gp32emu](https://github.com/gameblabla/gp32emu) with a focus on speed, so that it also
+runs well on low-end ARM devices such as budget retro handhelds and phones.
 
 No BIOS, games or other copyrighted files are included. Bring your own dumps.
 
@@ -18,8 +18,9 @@ No BIOS, games or other copyrighted files are included. Bring your own dumps.
 
 ## Where it stands
 
-Measured on an RG35XX SP class device (H700, Cortex-A53 at 1.5 GHz), real BIOS boot, JIT on,
-core only (RetroArch's own video and audio drivers are not included in these numbers):
+Speed was tuned on a Cortex-A53 at 1.5 GHz (Allwinner H700), which is about the slowest hardware
+aimed at. Numbers from that device, real BIOS boot, JIT on, core only (RetroArch's own video and
+audio drivers are not included):
 
 | Scene | Frames per second |
 | --- | --- |
@@ -30,8 +31,8 @@ core only (RetroArch's own video and audio drivers are not included in these num
 
 All 28 commercial cards that were available for testing start and run for 3600 frames of scripted
 input with no crash, and the JIT and the interpreter produce identical output on each of them. Most
-games run at 110 to 240 fps on the same device. That is a check that games run and agree with the
-interpreter, not proof that every game is playable from start to finish.
+games run at 110 to 240 fps on that device; the real console runs at 60. That is a check that games
+run and agree with the interpreter, not proof that every game is playable from start to finish.
 
 Known gaps:
 
@@ -55,7 +56,8 @@ Korean manual: [docs/MANUAL.ko.md](docs/MANUAL.ko.md). Short version for RetroAr
 2. Copy your BIOS to the system folder under the name `gp32166m.bin`.
 3. Load a `.smc`, `.fxe` or `.fpk` file with the GP32emu core.
 
-For SpruceOS on H700 devices see [packaging/spruce/README.md](packaging/spruce/README.md).
+Platform notes: [SpruceOS handhelds](packaging/spruce/README.md), [Android](docs/ANDROID_BUILD.md).
+Core options (JIT, boot mode, CPU speed, screen effects) are explained in the manual.
 
 ## Building
 
@@ -68,9 +70,10 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DGP32EMU_BUILD_LIBRETRO=ON -DGP3
 cmake --build build --parallel
 ```
 
-H700 and other AArch64 Linux handhelds can be cross compiled with Zig 0.13.0 using
-`cmake/toolchains/h700-zig.cmake`. Android steps are in [docs/ANDROID_BUILD.md](docs/ANDROID_BUILD.md).
-Full libretro notes are in [docs/libretro/README_LIBRETRO.md](docs/libretro/README_LIBRETRO.md).
+AArch64 Linux handhelds can be cross compiled from another machine with Zig 0.13.0 using
+`cmake/toolchains/h700-zig.cmake` (Cortex-A53, glibc 2.17 or newer). Android steps are in
+[docs/ANDROID_BUILD.md](docs/ANDROID_BUILD.md). Full libretro notes are in
+[docs/libretro/README_LIBRETRO.md](docs/libretro/README_LIBRETRO.md).
 
 Other frontends:
 
