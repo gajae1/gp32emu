@@ -6,7 +6,7 @@ RetroArch용 GP32 코어를 쓰는 방법을 적은 문서입니다. 빌드 방�
 
 - 코어 파일: `gp32emu_libretro.so`(리눅스, 안드로이드는 `_android.so`) 또는 `gp32emu_libretro.dll`(윈도우)
 - GP32 BIOS 1.6.6: 파일 이름을 `gp32166m.bin`으로 바꿔서 사용합니다.
-- 게임 파일: `.smc`, `.fxe`, `.fpk`(`.zip`으로 묶은 것도 됩니다)
+- 게임 파일: `.smc`, `.fxe`, `.fpk`
 
 BIOS와 게임은 이 저장소에 들어 있지 않습니다. 직접 갖고 있는 덤프를 쓰세요.
 

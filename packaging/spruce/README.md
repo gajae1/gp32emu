@@ -5,7 +5,7 @@ holds the core metadata. Install an AArch64 Linux `gp32emu_libretro.so` next to 
 Keep any settings you already changed when you update an existing GP32 entry.
 
 Put your own games in `Roms/GP32` and `gp32166m.bin` in the BIOS folder. Supported extensions are
-`smc`, `fxe`, `fpk` and `zip`. No games, BIOS or saves are included here.
+`smc`, `fxe` and `fpk`. No games, BIOS or saves are included here.
 
 The entry uses Spruce's stock 64-bit RetroArch (`ra64.h700`), so the normal menu, Game Switcher and
 button handling keep working. Nothing in the package changes global RetroArch settings, the CPU
