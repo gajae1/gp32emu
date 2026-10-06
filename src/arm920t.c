@@ -2726,6 +2726,12 @@ static void x64_bt_r32_imm(x64_emit_t *e, int reg, unsigned bit) { x64_rex(e, 0,
 static void x64_cmc(x64_emit_t *e) { x64_u8(e, 0xf5); }
 static void x64_cmovcc_r32_r32(x64_emit_t *e, uint8_t cc, int dst, int src) { x64_rex(e, 0, dst, 0, src); x64_u8(e, 0x0f); x64_u8(e, (uint8_t)(0x40u | (cc & 15u))); x64_modrm(e, 3, dst, src); }
 static void x64_imul_r32_r32(x64_emit_t *e, int dst, int src) { x64_rex(e, 0, dst, 0, src); x64_u8(e, 0x0f); x64_u8(e, 0xaf); x64_modrm(e, 3, dst, src); }
+static void x64_mul_r32_r32_implicit(x64_emit_t *e, int signed_mul, int src) {
+    /* EAX is the implicit low operand and EDX:EAX receives the product. */
+    x64_rex(e, 0, 0, 0, src);
+    x64_u8(e, 0xf7);
+    x64_modrm(e, 3, signed_mul ? 5 : 4, src); /* imul / mul r/m32 */
+}
 static void x64_movzx_ecx_ah(x64_emit_t *e) { x64_u8(e, 0x0f); x64_u8(e, 0xb6); x64_u8(e, 0xcc); }
 static void x64_movzx_esi_dl(x64_emit_t *e) { x64_u8(e, 0x0f); x64_u8(e, 0xb6); x64_u8(e, 0xf2); }
 static void x64_call_abs(x64_emit_t *e, uintptr_t fn) {
@@ -3314,9 +3320,42 @@ static int x64_emit_ram_block_dt(x64_emit_t *e, const arm_jit_op_t *op, uint32_t
 
 static int x64_emit_mul(x64_emit_t *e, const arm_jit_op_t *op) {
     const uint32_t insn = op->insn;
-    if (insn & (1u << 23)) return 0; /* long multiply stays on precise C path */
     unsigned rd = (insn >> 16) & 0xfu, rn = (insn >> 12) & 0xfu, rs = (insn >> 8) & 0xfu, rm = insn & 0xfu;
     if (rd == 15u || rn == 15u || rs == 15u || rm == 15u) return 0;
+    if (insn & (1u << 23)) {
+        /* ARM920T long multiply writes RdLo before RdHi. Load both source
+         * words before either destination so all architecturally permitted
+         * source/destination aliases observe the old values. */
+        int accum = !!(insn & (1u << 21));
+        int signed_mul = !!(insn & (1u << 22));
+        x64_emit_load_arm_reg(e, X64_EAX, rm, op->pc);
+        x64_emit_load_arm_reg(e, X64_ECX, rs, op->pc);
+        x64_mul_r32_r32_implicit(e, signed_mul, X64_ECX);
+        if (accum) {
+            x64_emit_load_arm_reg(e, X64_ECX, rn, op->pc);
+            x64_alu_r32_r32(e, 0x01, X64_EAX, X64_ECX); /* add low, RdLo */
+            x64_emit_load_arm_reg(e, X64_ECX, rd, op->pc);
+            x64_alu_r32_r32(e, 0x11, X64_EDX, X64_ECX); /* adc high, RdHi */
+        }
+        x64_emit_store_arm_reg(e, rn, X64_EAX);
+        x64_emit_store_arm_reg(e, rd, X64_EDX);
+        if (insn & (1u << 20)) {
+            /* First derive Z from the complete 64-bit result. The N bit is
+             * corrected below from the high word because low bit 31 must not
+             * affect ARM's 64-bit sign flag. */
+            x64_mov_r32_r32(e, X64_ECX, X64_EAX);
+            x64_alu_r32_r32(e, 0x09, X64_ECX, X64_EDX);
+            x64_emit_set_nz(e, X64_ECX, 0);
+            x64_mov_r32_r32(e, X64_EAX, X64_EDX);
+            x64_shift_r32_imm(e, 5, X64_EAX, 31);
+            x64_shift_r32_imm(e, 4, X64_EAX, 31);
+            x64_mov_r32_mem_cpu(e, X64_ECX, cpsr_off());
+            x64_alu_r32_imm(e, 4, X64_ECX, ~N_FLAG);
+            x64_alu_r32_r32(e, 0x09, X64_ECX, X64_EAX);
+            x64_mov_mem_cpu_r32(e, cpsr_off(), X64_ECX);
+        }
+        return 1;
+    }
     x64_emit_load_arm_reg(e, X64_EAX, rm, op->pc);
     x64_emit_load_arm_reg(e, X64_ECX, rs, op->pc);
     x64_imul_r32_r32(e, X64_EAX, X64_ECX);

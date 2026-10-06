@@ -638,6 +638,53 @@ not ship alone; that worker is now integrating the wide guest wait and state
 compatibility. Their IDs are in the private dispatch JSON files. Record final
 outcomes before a handoff.
 
+## Round 167 JIT fallback reduction
+
+Round 167 adds x64 native emission for ARM920T long multiply instructions in
+src/arm920t.c: UMULL, SMULL, UMLAL and SMLAL, including the S flag forms. The
+emitter reads all source and accumulate words before either result write,
+stores RdLo before RdHi, preserves C/V, derives N from the high word and Z from
+the complete 64-bit result, and leaves PC operands on the precise helper path.
+Existing A64 emission in src/arm920t_jit_a64.inc already covers the same four
+forms and was verified by the H700 cross-build; no shared translator change was
+needed. SWI remains a helper because its callback, exception, IRQ and run-limit
+boundaries can re-enter the dispatcher and must retain their exact side effects.
+
+The profile build measured the four requested PC scenes. Dynamic helper work
+fell from 1,693,452 to 1,635,097 operations, entirely from 58,355 Blue Angelo
+MUL operations. Native bail calls and all measured slow_bail_* counters were
+zero before and after; jit_misses were 5,263 / 5,229 / 4,688 / 784 for
+Astonishia Story R / Little Girl Mill / Blue Angelo / Princess Maker 2 and did
+not change. The Blue Angelo classified helper breakdown before the change was
+MUL 58,355, SINGLE_DT 49,210, PSR 26,995, BLOCK_DT 19,522, SWI 1,879 and
+COPROC 118; after the change MUL was zero and the other classes were unchanged.
+This ranks long MUL as the only removed class in this pass; the remaining
+SINGLE_DT, PSR and BLOCK_DT paths are the next measured helper-heavy targets.
+
+The x64 profile-off ABBA medians were: Astonishia Story R 874.630 -> 799.440
+fps (-8.597%), Little Girl Mill 2,276.971 -> 2,257.394 (-0.860%), Blue Angelo
+719.119 -> 712.553 (-0.913%) and Princess Maker 2 1,284.538 -> 1,272.520
+(-0.936%). These host runs show fallback reduction and exactness, but no PC
+throughput improvement claim is made.
+
+Validation for this round: the focused Windows long-multiply PSR case passed;
+CTest passed 29/29; copied pc-parity.py, parity5.py and parity-boot.py passed
+with only their hardcoded build paths changed; and JIT/interpreter plus
+base/candidate scene outputs were identical for cycles, PC, CPSR, clock,
+audio_frames, video_hash and audio_hash. The profile-on candidate build is
+F:/GP32/results/round167/jit-fallback/build.
+
+The A64 cross-build completed 84/84 with cmake/toolchains/h700-zig.cmake and
+F:/GP32/.tools/zig-windows-x86_64-0.13.0/zig.exe, producing
+build-h700-path2/arm_jit_test, build-h700-path2/gp32_bench and
+build-h700-path2/gp32emu_libretro.so. Four rejected configuration attempts
+were recorded: omitting CMAKE_MAKE_PROGRAM failed because Ninja was not found;
+-DGP32_ZIG=<zig.exe> failed because the toolchain discovers zig through
+find_program; CMAKE_PROGRAM_PATH alone still failed discovery; and adding the
+Zig directory to PATH fixed it. The A64 binaries cannot run on this PC. H700
+focused and four-scene runtime checks remain pending while the device is
+offline; the exact commands are recorded in the round 167 result report.
+
 ## Broader remaining evidence
 
 See `PC_LIBRARY_COVERAGE.md` for bounded scenes, not blanket compatibility.

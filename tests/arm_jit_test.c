@@ -2256,10 +2256,13 @@ static void case_native_longmul_psr(void) {
         0xe0d65291u, /* SMULLS r5,r6,r1,r2 */
         0xe0f65291u, /* SMLALS r5,r6,r1,r2 */
         0xe0b81291u, /* UMLALS r1,r8,r1,r2: source/destination alias */
+        0xe0da9291u, /* SMULLS r9,r10,r1,r2: N from the high word */
         0xeafffffeu
     };
     current_case = "native-longmul";
     setup_pair();
+    arm920t_set_cpsr(cpu_jit, arm920t_get_cpsr(cpu_jit) | 0x30000000u);
+    arm920t_set_cpsr(cpu_ref, arm920t_get_cpsr(cpu_ref) | 0x30000000u);
     set_reg_both(1, 0xffffffffu);
     set_reg_both(2, 2u);
     set_reg_both(8, 7u);
@@ -2268,6 +2271,16 @@ static void case_native_longmul_psr(void) {
     CHECK(ref_reg(3) == 0xfffffffcu && ref_reg(4) == 3u, "unsigned accumulate");
     CHECK(ref_reg(5) == 0xfffffffcu && ref_reg(6) == 0xffffffffu, "signed accumulate");
     CHECK(ref_reg(1) == 0xfffffffdu && ref_reg(8) == 9u, "multiply input alias");
+    CHECK(ref_reg(9) == 0xfffffffau && ref_reg(10) == 0xffffffffu, "signed high-word sign");
+    CHECK((arm920t_get_cpsr(cpu_ref) & 0xf0000000u) == 0xb0000000u,
+          "long multiply flags set N/Z and preserve C/V");
+    gp32_cpu_profile_t profile;
+    arm920t_get_cpu_profile(cpu_jit, &profile);
+    if (profile.supported && profile.native_backend) {
+        CHECK(profile.helper_op_kinds[3u] == 0u,
+              "long multiply forms must stay out of the classified MUL helper");
+        CHECK(profile.native_arm_insns > 0u, "long multiply forms must execute natively");
+    }
     teardown_pair();
 }
 
