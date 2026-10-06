@@ -47,6 +47,10 @@ static size_t audio_resample_cap;
 static size_t audio_pending_frames;
 static int16_t audio_last_sent[2], audio_gap_from[2];
 static unsigned audio_gap_left;
+/* Set once this frame's own PCM has been released to the frontend, whether by
+ * the mid-frame pump or by the frame-end drain. The idle fill at the frame
+ * boundary then stays out of a frame that produced sound. */
+static int audio_guest_pcm_this_frame;
 
 /* Output declick state. Guest PCM can legitimately contain hard level jumps:
  * the BIOS's own assets step to and from the -32768 rail (menu tick), IIS
@@ -1084,6 +1088,32 @@ static void flush_audio(void) {
     }
 }
 
+/* Release every queued guest PCM span into the delivery queue. Each borrowed
+ * span is consumed only once its output is retained, so a frontend that
+ * refuses this call keeps the samples for the next one. */
+static void drain_guest_audio(gp32_t *g, const gp32_audio_desc_t *first) {
+    gp32_audio_desc_t aud = *first;
+    while (aud.frame_count) {
+        audio_guest_pcm_this_frame = 1;
+        if (!submit_audio_resampled(&aud)) break;
+        if (gp32_consume_audio(g, aud.frame_count) != GP32_OK) break;
+        if (gp32_get_audio(g, &aud) != GP32_OK) break;
+    }
+}
+
+/* Host pump installed on the core (gp32_set_host_pump). It runs between guest
+ * slices, so PCM the guest has already produced reaches the frontend while the
+ * frame is still executing. A frame that overruns 1/60 s no longer leaves the
+ * frontend FIFO dry for its whole duration: the same PCM is delivered in
+ * partial blocks on the way instead of only at the frame boundary. */
+static void pump_audio_delivery(gp32_t *g, void *user) {
+    (void)user;
+    if (!g) return;
+    gp32_audio_desc_t aud;
+    if (gp32_get_audio(g, &aud) == GP32_OK && aud.frame_count) drain_guest_audio(g, &aud);
+    flush_audio();
+}
+
 /* libretro only accepts a NULL frame when the frontend returned true from
  * RETRO_ENVIRONMENT_GET_CAN_DUPE. Other frontends must be handed real pixels
  * again; after an effect pass those pixels live in effect_rgb, so the last
@@ -1115,6 +1145,12 @@ void retro_run(void) {
     if (!emu) { present_duplicate_frame(); return; }
     if (input_poll_cb) input_poll_cb();
     gp32_set_buttons(emu, read_buttons());
+    audio_guest_pcm_this_frame = 0;
+    /* The pump releases produced PCM between guest slices; the frame-boundary
+     * drain below picks up whatever it left. Reinstalling it per run is
+     * deliberate: the hook is frontend state, not machine state, and every
+     * core instance in this file goes through this single run path. */
+    gp32_set_host_pump(emu, pump_audio_delivery, NULL);
     gp32_run_frame(emu);
     gp32_framebuffer_desc_t fb;
     int have_fb = gp32_get_framebuffer(emu, &fb) == GP32_OK;
@@ -1139,13 +1175,10 @@ void retro_run(void) {
     gp32_audio_desc_t aud;
     if (gp32_get_audio(emu, &aud) == GP32_OK) {
         if (aud.frame_count) {
-            /* Each span has its own source rate. Release it only after the
-             * delivery queue retains its output, even under backpressure. */
-            do {
-                if (!submit_audio_resampled(&aud)) break;
-                if (gp32_consume_audio(emu, aud.frame_count) != GP32_OK) break;
-            } while (gp32_get_audio(emu, &aud) == GP32_OK && aud.frame_count);
-        } else {
+            /* Each span has its own source rate; drain_guest_audio releases it
+             * only after the delivery queue retains its output. */
+            drain_guest_audio(emu, &aud);
+        } else if (!audio_guest_pcm_this_frame) {
             /* Keep audio-driven frontend pacing alive while emulated audio is
              * idle. Never pad short active blocks or alter their sample rate. */
             /* Silence occupies the same source sample grid as active audio,

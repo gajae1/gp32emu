@@ -48,6 +48,16 @@ typedef void (*gp32_log_fn)(void *user, const char *message);
  * default behaviour identical. Install with gp32_set_diag_log after create. */
 typedef void (*gp32_diag_fn)(void *user, const char *message);
 
+/* Optional host hook invoked between guest run slices while a frame is being
+ * executed (gp32_run_frame and gp32_run_cycles). A frontend installs one to
+ * hand already-produced PCM to its own audio sink before the frame boundary:
+ * a guest frame that takes longer than real time then keeps the frontend FIFO
+ * fed while it runs instead of leaving it dry until the whole frame retires.
+ * The hook only inspects host-side data (for example gp32_get_audio /
+ * gp32_consume_audio); it must not re-enter the emulator or read guest state.
+ * A NULL hook (the default) leaves execution unchanged. */
+typedef void (*gp32_host_pump_fn)(gp32_t *gp32, void *user);
+
 typedef struct gp32_options {
     const char *bios_path;         /* optional; can be loaded later */
     const char *smartmedia_path;   /* optional; can be loaded later */
@@ -128,6 +138,8 @@ gp32_status_t gp32_run_cycles(gp32_t *gp32, uint32_t cycles);
 gp32_status_t gp32_run_frame(gp32_t *gp32);
 gp32_status_t gp32_set_jit(gp32_t *gp32, int enabled);
 void gp32_set_diag_log(gp32_t *gp32, gp32_diag_fn fn, void *user);
+/* Install the host pump; see gp32_host_pump_fn. Independent of savestates. */
+void gp32_set_host_pump(gp32_t *gp32, gp32_host_pump_fn fn, void *user);
 /* Optional guest CPU speed, 50..400 percent of the clock the game programs
  * (default 100). Only instruction throughput changes; audio pitch, timers and
  * LCD refresh keep real time. Savestates are portable between speeds. */
