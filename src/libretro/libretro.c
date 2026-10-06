@@ -464,14 +464,17 @@ static uint32_t audio_idle_rate;
  * without it still loads (previous builds, path/guest-only savestates) and
  * keeps the old reset behavior; the guest loader ignores trailing bytes. */
 #define LRST_MAGIC "LRST"
-#define LRST_VERSION 1u
+#define LRST_VERSION 2u
 #define LRST_FLAG_PREV_RAW 1u
 #define LRST_FLAG_PREV_LCD 2u
 
 enum { LRST_VIDEO_NONE = 0, LRST_VIDEO_FRAME = 1, LRST_VIDEO_EFFECT = 2 };
 
 /* Fixed-width mirror of gp32_audio_resampler_t so the section layout does not
- * depend on the in-memory struct. */
+ * depend on the in-memory struct.  The anti-imaging coefficient table is
+ * deliberately absent: it is rebuilt from the two rates when the key does not
+ * match, which keeps every rewind or run-ahead state ~33 KB smaller than the
+ * engine struct. */
 typedef struct lrst_resampler {
     uint32_t src_rate, dst_rate;
     uint64_t phase_q32;
@@ -480,6 +483,9 @@ typedef struct lrst_resampler {
     int16_t last_out_l, last_out_r;
     int32_t have_last_out;
     uint32_t fade_left, fade_total;
+    uint32_t poly_src_rate, poly_dst_rate;
+    int16_t poly_hist_l[GP32_AUDIO_POLY_HISTORY];
+    int16_t poly_hist_r[GP32_AUDIO_POLY_HISTORY];
 } lrst_resampler_t;
 
 typedef struct lrst_body {
@@ -567,6 +573,12 @@ static size_t lrst_write(uint8_t *dst, size_t room) {
     body.resampler.have_last_out = audio_resampler.have_last_out;
     body.resampler.fade_left = audio_resampler.fade_left;
     body.resampler.fade_total = audio_resampler.fade_total;
+    body.resampler.poly_src_rate = audio_resampler.poly_src_rate;
+    body.resampler.poly_dst_rate = audio_resampler.poly_dst_rate;
+    memcpy(body.resampler.poly_hist_l, audio_resampler.poly_hist_l,
+           sizeof(body.resampler.poly_hist_l));
+    memcpy(body.resampler.poly_hist_r, audio_resampler.poly_hist_r,
+           sizeof(body.resampler.poly_hist_r));
     uint8_t *p = dst;
     memcpy(p, &head, sizeof(head));
     p += sizeof(head);
@@ -647,19 +659,29 @@ static int lrst_read(const uint8_t *src, size_t room) {
     memcpy(audio_declick_left, body.audio_declick_left, sizeof(audio_declick_left));
     audio_idle_fraction = body.audio_idle_fraction;
     audio_idle_rate = body.audio_idle_rate;
-    audio_resampler = (gp32_audio_resampler_t){
-        .src_rate = body.resampler.src_rate,
-        .dst_rate = body.resampler.dst_rate,
-        .phase_q32 = body.resampler.phase_q32,
-        .prev_l = body.resampler.prev_l,
-        .prev_r = body.resampler.prev_r,
-        .have_prev = body.resampler.have_prev,
-        .last_out_l = body.resampler.last_out_l,
-        .last_out_r = body.resampler.last_out_r,
-        .have_last_out = body.resampler.have_last_out,
-        .fade_left = body.resampler.fade_left,
-        .fade_total = body.resampler.fade_total,
-    };
+    /* Keep the coefficient table when it already names the restored rates;
+     * invalidate the key otherwise so the next resample rebuilds it. */
+    uint32_t table_src = audio_resampler.poly_src_rate;
+    uint32_t table_dst = audio_resampler.poly_dst_rate;
+    int table_kept = table_src == body.resampler.poly_src_rate &&
+                     table_dst == body.resampler.poly_dst_rate;
+    audio_resampler.src_rate = body.resampler.src_rate;
+    audio_resampler.dst_rate = body.resampler.dst_rate;
+    audio_resampler.phase_q32 = body.resampler.phase_q32;
+    audio_resampler.prev_l = body.resampler.prev_l;
+    audio_resampler.prev_r = body.resampler.prev_r;
+    audio_resampler.have_prev = body.resampler.have_prev;
+    audio_resampler.last_out_l = body.resampler.last_out_l;
+    audio_resampler.last_out_r = body.resampler.last_out_r;
+    audio_resampler.have_last_out = body.resampler.have_last_out;
+    audio_resampler.fade_left = body.resampler.fade_left;
+    audio_resampler.fade_total = body.resampler.fade_total;
+    audio_resampler.poly_src_rate = table_kept ? table_src : 0u;
+    audio_resampler.poly_dst_rate = table_kept ? table_dst : 0u;
+    memcpy(audio_resampler.poly_hist_l, body.resampler.poly_hist_l,
+           sizeof(audio_resampler.poly_hist_l));
+    memcpy(audio_resampler.poly_hist_r, body.resampler.poly_hist_r,
+           sizeof(audio_resampler.poly_hist_r));
     effects.have_prev_raw = 0;
     effects.have_prev_lcd = 0;
     if (head.flags & LRST_FLAG_PREV_RAW) {
@@ -1009,19 +1031,12 @@ static int submit_audio_resampled(const gp32_audio_desc_t *aud) {
                                                   out,
                                                   need);
     } else {
-        gp32_audio_resampler_reset(&audio_resampler);
-        memcpy(out, aud->samples_s16_interleaved, in_frames * 2u * sizeof(int16_t));
         /* Direct copies have already emitted their final sample. Retain that
-         * endpoint with the next output one tick ahead for a later rate change. */
-        audio_resampler.src_rate = src_rate;
-        audio_resampler.dst_rate = dst_rate;
-        audio_resampler.prev_l = out[(in_frames - 1u) * 2u];
-        audio_resampler.prev_r = out[(in_frames - 1u) * 2u + 1u];
-        audio_resampler.have_prev = 1;
-        audio_resampler.phase_q32 = UINT64_C(1) << 32;
-        audio_resampler.last_out_l = audio_resampler.prev_l;
-        audio_resampler.last_out_r = audio_resampler.prev_r;
-        audio_resampler.have_last_out = 1;
+         * endpoint with the next output one tick ahead for a later rate
+         * change, and keep the kernel history so a resumed resample joins the
+         * stream instead of starting from an empty window. */
+        gp32_audio_resampler_copy(&audio_resampler, aud->samples_s16_interleaved,
+                                  in_frames, src_rate, out);
     }
     smooth_audio_delivery(out, out_frames);
     audio_pending_frames += out_frames;
