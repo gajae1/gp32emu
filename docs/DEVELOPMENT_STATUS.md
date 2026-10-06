@@ -26,8 +26,17 @@ result paths below are names on the development machine.
   62,500 -> 22,070 Hz. SWI 0x0d is now the ROM clock service (20 of 40 cards
   call it, reaching 39.5-67.5 MHz), the reinit service (0x1ff) restores the
   default clock, and the panel divider follows ROM 0x1fd4 at a graphics-mode
-  switch only (59.2 or 88.8 Hz at 59.25 MHz, as in BIOS boots). 26 of the 35
-  cards with a BIOS-boot reference now match its clock and panel rate. Not
+  switch only (59.2 or 88.8 Hz at 59.25 MHz, as in BIOS boots). SWI 0x0f
+  selector 1 stores the path length through r0 as ROM 0x1488 does; without it
+  Holeman, Windy and Topy ran the SDK stub's byte copy off the end of RAM into
+  the SoC registers (MPLLCON 0xffffffff, 3.03 MHz), and now start. 28 of the 35
+  cards with a BIOS-boot reference match its clock and panel rate. Open: the
+  BIOS exec service (SWI 5, ROM 0x2298) redoes the launch path (interrupt
+  init, IIS stop, default clock, pin tables 0x2170, 8 bpp mode switch) before
+  each stage of a packed card and direct SWI 5 jumps without it, so Topy's
+  panel runs 50.97 Hz where the BIOS boot gives 89.19 Hz; Blue Angelo's LZ
+  decompressor (0x0c0234a0) runs past RAM into the SoC registers at about
+  1.4e9 cycles, as it did before. Not
   reproduced: CP15/MMU, the BIOS tick timers and ISRs, pending/DMA/USB/UART
   leftovers, codec latches. Pinball's silence is its own request: its only L3
   volume write is VC 0x3f, -infinity in UDA1330ATS Table 11, and a 2003-BIOS

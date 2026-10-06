@@ -3733,6 +3733,14 @@ static int direct_fxe_swi(void *user, arm920t_t *cpu, uint32_t imm, uint32_t pc,
         if ((selector == 1u || selector == 0u) && g->direct_smc_game_dir[0]) {
             uint32_t dst = direct_app_arg_addr(g);
             direct_write_cstr_if_ram(g, dst, g->direct_smc_game_dir);
+            /* Selector 1 (ROM 0x1458-0x1490) also stores the string length, at
+             * most 0xff, through r0 when that is not null.  The SDK startup stub
+             * reads it back as the count of its byte-copy loop; left at a stale
+             * stack word the copy runs off the end of RAM into the SoC registers. */
+            if (selector == 1u && direct_ram_range(g, argp, 4u)) {
+                size_t len = strlen(g->direct_smc_game_dir);
+                s3c2400_write32(g->soc, argp, (uint32_t)(len > 0xffu ? 0xffu : len));
+            }
             arm920t_set_reg(cpu, 0, dst);
             return 1;
         }
@@ -3862,7 +3870,10 @@ static int direct_fxe_swi(void *user, arm920t_t *cpu, uint32_t imm, uint32_t pc,
             return 1;
         }
     }
-    case 0x05: { /* Execute a decrunched GXB image when a packer passes one; otherwise firmware display service no-op. */
+    case 0x05: { /* Execute a decrunched GXB image when a packer passes one; otherwise firmware display service no-op.
+                  * The retail exec service (ROM 0x2298) also redoes the launch path before it starts the image:
+                  * int_init 0x15e0, IIS stop 0x7804, default clock 0x22d0-0x22f0, pin tables and 8 bpp mode
+                  * switch 0x2170. Direct mode does not, so a stage that changed the clock hands it on. */
         uint32_t target = arm920t_get_reg(cpu, 0);
         uint32_t stack = arm920t_get_reg(cpu, 1);
         if (direct_ram_range(g, target, 8u)) {

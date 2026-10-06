@@ -1,7 +1,8 @@
 /* Firmware services of direct-FXE HLE on real CPU/hardware and both execution
  * backends: SWI #0x1FF (the SDK CRT trampoline against the selector-0xFF
- * service) and SWI #0x0D plus the clock tree a direct load starts from (the
- * retail BIOS clock service, ROM 0x200c).
+ * service), SWI #0x0D plus the clock tree a direct load starts from (the
+ * retail BIOS clock service, ROM 0x200c) and SWI #0x0F selector 1 (the
+ * application path query).
  *
  * SWI #0x1FF:
  *
@@ -267,6 +268,36 @@ static void check_mode_switch_divider(int jit) {
     gp32_destroy(g);
 }
 
+/* SWI #0x0F selector 1 (ROM 0x1458-0x1490) returns the application directory and
+ * stores its length through r0. The SDK startup stub (b 0x32c-0x338) copies
+ * length + 1 bytes with that count, so a word left untouched ran the copy off the
+ * end of RAM. */
+static void check_app_path_query(int jit) {
+    static const uint32_t words[] = {
+        0xef00000fu, /* svc #0x0f */
+        0xe3a05007u, /* mov r5, #7 */
+        0xeafffffeu, /* b . */
+    };
+    gp32_t *g = load_direct(words, GP32_ARRAY_COUNT(words), jit);
+    if (!g) return;
+    const char *path = "gp:\\game\\TEST";
+    snprintf(g->direct_smc_game_dir, sizeof(g->direct_smc_game_dir), "%s", path);
+    const uint32_t buf = GP32_RAM_BASE + 0x1f000u;
+    s3c2400_write32(g->soc, buf, 0x7fffffffu);
+    arm920t_set_reg(g->cpu, 0u, buf);
+    arm920t_set_reg(g->cpu, 4u, 1u);
+    for (unsigned i = 0; i < 8u && gp32_get_cpu_reg(g, 5u) != 7u; ++i)
+        CHECK(gp32_run_cycles(g, 8u) == GP32_OK, "path query runs");
+    CHECK(gp32_get_cpu_reg(g, 5u) == 7u, "execution continues after the path query");
+    CHECK(s3c2400_debug_read32(g->soc, buf) == (uint32_t)strlen(path), "string length stored through r0");
+    uint32_t str = gp32_get_cpu_reg(g, 0u);
+    CHECK(str == direct_app_arg_addr(g), "r0 points at the application directory");
+    int same = 1;
+    for (size_t i = 0; i <= strlen(path); ++i) same &= s3c2400_read8(g->soc, str + (uint32_t)i) == (uint8_t)path[i];
+    CHECK(same, "string and its terminator are in RAM");
+    gp32_destroy(g);
+}
+
 int main(void) {
     for (int jit = 0; jit < 2; ++jit) {
         check_reinit_service(jit);
@@ -274,6 +305,7 @@ int main(void) {
         check_handoff_clock(jit);
         check_clock_service(jit);
         check_mode_switch_divider(jit);
+        check_app_path_query(jit);
     }
     if (failures) { fprintf(stderr, "%d failure(s)\n", failures); return 1; }
     printf("gp32_swi_1ff: all checks passed\n");
