@@ -21,6 +21,31 @@ performance, audio and input correctness across the library, not boot-only tests
   guest/video/audio identity after save-load-replay. ctest 29/29; pc-parity,
   parity5 and parity-boot identical. Open: real RetroArch run-ahead/rewind and
   the H700 build remain unverified.
+- Round 166 GXC key selection (result.md and evidence in
+  `F:/GP32/results/round166/gxc-keys/`): the opcode score still mis-keyed three
+  cards whose real profile was already in the table. A zero plaintext byte
+  encrypts to the keystream byte, so a card shows its own key wherever its
+  padding is zero; every candidate with a valid scatter header is now ranked by
+  the zero bytes its decryption restores minus the zeros it destroys, and the
+  opcode score only breaks exact ties. The same measure replaced the GXE
+  descriptor table that picked the stripped payloads, which left two Korean
+  cards undecrypted when their descriptor named a key the table did not hold.
+  Astonishia Story R now uses 0001/3000 rotation 32 stride 0xc00 (was 0001/2500
+  rotation 64), Little Wizard EU 0001/2500 rotation 0 stride 0x2c00 (was
+  0001/3000 rotation 64), Princess Maker 2 0001/3000 rotation 0 stride 0x1c00
+  (was 0001/2500 rotation 32), Dungeon & Guarder KR 1001/1110 stride 0x1000 and
+  Dyhard Infinity KR 1002/1127 stride 0x1800 (the first returned ciphertext, the
+  second a wrong key); 1001/3500 is now an ordinary table entry. 31 of the 33
+  cards with a GXC decode byte-identically to the BIOS read-only image at game
+  entry (26 before; the seven mismatches were these five cards, Hany and Super Plusha). BIOS-boot identity is unchanged on all 40 cards at 600
+  frames in JIT and interpreter; ctest 29/29 and the pc-parity, parity5 and
+  parity-boot scenes are identical; the 600-frame direct boot changes only on
+  the five re-keyed cards and Super Plusha. Open: Hany and Super Plusha carry
+  payloads larger than their card file (packed images the direct loader does not
+  decrunch) and are the two remaining BIOS mismatches; ASR still stalls in
+  direct boot at 0x0c008a9c walking a guest task list whose next pointer is
+  0xffffffff, with its decoded image already equal to the BIOS's (see
+  `SMC_ANALYSIS.md`).
 - Round 165 Pinball Dreams direct boot (result.md and evidence in
   `F:/GP32/results/round165/pinball/`): two defects. (1) The GXC stage-1 score
   picked 0001/3000 at stride 0x400 over the real 1001/3500 at 0x1400 (the first

@@ -113,3 +113,20 @@ spins at 0x0c0742dc, Princess Maker 2 leaves SDRAM, Little Wizard EU stays black
 near 0x0c086fb0); fed the BIOS-matching payload through `gp32_headless --fxe` they
 got past those points in a 300-frame check (not played further). Whether the same
 evidence ranks their true keys first has not been tested.
+
+Round 166 (`results/round166/gxc-keys/`) replaced that rule with the direct
+measurement.  A zero plaintext byte encrypts to the keystream byte, so a card
+shows its own key wherever its padding is zero; every candidate with a valid
+scatter header is now ranked by the zero bytes its decryption restores minus the
+zeros it destroys, and the opcode score only breaks exact ties.  That fixes the
+three cards above (ASR 0001/3000 rotation 32 stride 0xc00, Little Wizard EU
+0001/2500 rotation 0 stride 0x2c00, Princess Maker 2 0001/3000 rotation 0 stride
+0x1c00) and lets 1001/3500 become an ordinary table entry.  The same ranking
+replaced the GXE descriptor table that selected the stripped payloads: Dungeon &
+Guarder (KR) decodes with 1001/1110 at stride 0x1000 and Dyhard Infinity (KR)
+with 1002/1127 at 0x1800, the same keys as their European releases, where the
+descriptor named a key the table did not hold.  31 of the 33 cards with a GXC
+now decode byte-identically to the BIOS read-only image at game entry.  Open:
+Hany and Super Plusha hold payloads larger than the card file (packed images the
+direct loader does not decrunch), and ASR's direct boot still stalls at
+0x0c008a9c in a guest task-list walk even with a BIOS-identical decode.

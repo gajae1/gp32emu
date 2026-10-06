@@ -439,6 +439,93 @@ typedef struct gxc_key_profile {
     size_t key_len;
 } gxc_key_profile_t;
 
+/*
+ * Commercial key profiles.  Each is a 96-byte text cycle: a four digit id
+ * followed by a four letter word, repeated.  Cards published with one id can
+ * also be decoded by a profile whose ids differ in single bits, which is why
+ * the loader decides between them with the keystream evidence below.
+ */
+
+static const uint8_t key_0001[] =
+    "0001yang3000home0001sist3000know0001jsta3000oos!"
+    "0001gun73000ehye0001nado3000achi0001gp323000bing";
+static const uint8_t key_1023[] =
+    "1023mola1202joaa1023game1202park1023go321202kigo"
+    "1023nopa1202babo102377211202prom1023jang12021cut";
+static const uint8_t key_1009_0604[] =
+    "06041cut1009mola0604joaa1009game0604park1009go320604kigo"
+    "1009nopa0604babo100977210604prom1009jang";
+static const uint8_t key_1001_1110[] =
+    "1110prom1001jang11101cut1001mola1110joaa1001game1110park"
+    "1001go321110kigo1001nopa1110babo10017721";
+static const uint8_t key_1002_1127[] =
+    "1002jang11271cut1002mola1127joaa1002game1127park1002go32"
+    "1127kigo1002nopa1127babo100277211127prom";
+static const uint8_t key_1010_0605[] =
+    "0605kigo1010nopa0605babo101077210605prom1010jang06051cut"
+    "1010mola0605joaa1010game0605park1010go32";
+static const uint8_t key_1008_0319[] =
+    "1008game0319park1008go320319kigo1008nopa0319babo10087721"
+    "0319prom1008jang03191cut1008mola0319joaa";
+static const uint8_t key_1008_0428[] =
+    "0428park1008go320428kigo1008nopa0428babo100877210428prom"
+    "1008jang04281cut1008mola0428joaa1008game";
+static const uint8_t key_1006_0125[] =
+    "1006nopa0125babo100677210125prom1006jang01251cut1006mola"
+    "0125joaa1006game0125park1006go320125kigo";
+static const uint8_t key_1018_0327[] =
+    "1018game0327park1018go320327kigo1018nopa0327babo10187721"
+    "0327prom1018jang03271cut1018mola0327joaa";
+/* Recovered against BIOS-decoded RO bytes: 0x100 encrypted bytes per
+ * 0x800-byte span. The existing stride scorer selects that layout. */
+static const uint8_t key_1020_0903[] =
+    "1020go320903kigo1020nopa0903babo102077210903prom1020jang"
+    "09031cut1020mola0903joaa1020game0903park";
+static const uint8_t key_1111[] =
+    "1111nopa1111babo111177211111prom1111jang11111cut1111mola"
+    "1111joaa1111game1111park1111go321111kigo";
+static const uint8_t key_0003_3000[] =
+    "0003nado3000achi0003gp323000bing0003yang3000home0003sist"
+    "3000know0003jsta3000oos!0003gun73000ehye";
+static const uint8_t key_0002_3000[] =
+    "3000achi0002gp323000bing0002yang3000home0002sist3000know"
+    "0002jsta3000oos!0002gun73000ehye0002nado";
+static const uint8_t key_0004_2500[] =
+    "0004gun72500ehye0004nado2500achi0004gp322500bing0004yang"
+    "2500home0004sist2500know0004jsta2500oos!";
+static const uint8_t key_0001_2500[] =
+    "0001nado2500achi0001gp322500bing0001yang2500home0001sist"
+    "2500know0001jsta2500oos!0001gun72500ehye";
+static const uint8_t key_0003_2500[] =
+    "0003nado2500achi0003gp322500bing0003yang2500home0003sist"
+    "2500know0003jsta2500oos!0003gun72500ehye";
+static const uint8_t key_1001_3500[] =
+    "3500know1001jsta3500oos!1001gun73500ehye1001nado3500achi1001gp32"
+    "3500bing1001yang3500home1001sist";
+static const gxc_key_profile_t gxc_keys[] = {
+    { "0001/3000", key_0001, sizeof(key_0001) - 1u },
+    { "1023/1202", key_1023, sizeof(key_1023) - 1u },
+    { "1009/0604", key_1009_0604, sizeof(key_1009_0604) - 1u },
+    { "1001/1110", key_1001_1110, sizeof(key_1001_1110) - 1u },
+    { "1002/1127", key_1002_1127, sizeof(key_1002_1127) - 1u },
+    { "1010/0605", key_1010_0605, sizeof(key_1010_0605) - 1u },
+    { "1008/0319", key_1008_0319, sizeof(key_1008_0319) - 1u },
+    { "1008/0428", key_1008_0428, sizeof(key_1008_0428) - 1u },
+    { "1006/0125", key_1006_0125, sizeof(key_1006_0125) - 1u },
+    { "1018/0327", key_1018_0327, sizeof(key_1018_0327) - 1u },
+    { "1020/0903", key_1020_0903, sizeof(key_1020_0903) - 1u },
+    { "1111/1111", key_1111, sizeof(key_1111) - 1u },
+    { "0003/3000", key_0003_3000, sizeof(key_0003_3000) - 1u },
+    { "0002/3000", key_0002_3000, sizeof(key_0002_3000) - 1u },
+    { "0004/2500", key_0004_2500, sizeof(key_0004_2500) - 1u },
+    { "0001/2500", key_0001_2500, sizeof(key_0001_2500) - 1u },
+    { "0003/2500", key_0003_2500, sizeof(key_0003_2500) - 1u },
+    /* 1001/3500 differs from the 0001 profiles only in bits the opcode
+     * score never sees (ASR scores 5684 against 5685 for it), so it is an
+     * ordinary table entry here: the keystream evidence below decides. */
+    { "1001/3500", key_1001_3500, sizeof(key_1001_3500) - 1u },
+};
+
 static void gxc_xor_region(uint8_t *buf, size_t size, size_t off, size_t n, const gxc_key_profile_t *kp, size_t key_start) {
     if (!buf || !kp || !kp->key_len || off >= size) return;
     if (n > size - off) n = size - off;
@@ -535,78 +622,125 @@ static int gxc_try_decrypt(const smc_file_buf_t *gxc, uint32_t payload_size, con
 }
 
 /*
- * Keystream evidence for one candidate (key, rotation, stride).  A plain zero
- * byte encrypts to the keystream byte itself, so zero padding inside an
- * encrypted window shows the key in the card image.  The right candidate turns
- * those windows back into zeros (exact counts the windows that decode to 0x100
- * zero bytes).  A stride that is too short also XORs windows that were never
- * encrypted and destroys the zeros they held, which makes zero_gain negative.
+ * Keystream evidence.  A plain zero byte encrypts to the keystream byte itself,
+ * so a card shows its own key wherever the plaintext is zero.  Counting, over
+ * the spans one candidate decrypts, the bytes that decryption turns into zeros
+ * minus the zeros it destroys tells the publisher's profile from the near-miss
+ * profiles whose ids differ in bits the opcode score never sees: the right
+ * profile restores that zero padding, while a stride that is too short also
+ * XORs spans that were never encrypted and destroys the zeros they held.  The
+ * same measure ranks the stripped payloads, whose first span is in clear text.
  */
-typedef struct gxc_evidence {
-    int64_t zero_gain; /* zero bytes after decrypting minus before, over all windows */
-    uint32_t exact;
-    uint32_t windows;
-} gxc_evidence_t;
-
-static gxc_evidence_t gxc_zero_evidence(const smc_file_buf_t *gxc, uint32_t payload_size, const gxc_key_profile_t *kp,
-                                        size_t periodic_chunk, size_t key_start) {
+static int64_t gxc_zero_gain(const uint8_t *raw, const uint8_t *dec, size_t size, size_t periodic_chunk) {
     const size_t enc = 0x100u;
-    const uint8_t *raw = gxc->data + 20u;
-    uint8_t ks[0x100];
-    gxc_evidence_t ev = { 0, 0u, 0u };
-    for (size_t i = 0; i < enc; ++i) ks[i] = kp->key[(key_start + i) % kp->key_len];
-    for (size_t off = 0; off + enc <= payload_size; off += periodic_chunk ? periodic_chunk : payload_size) {
-        uint32_t before = 0u, after = 0u;
-        for (size_t i = 0; i < enc; ++i) {
-            before += raw[off + i] == 0u;
-            after += raw[off + i] == ks[i];
-        }
-        ev.zero_gain += (int64_t)after - (int64_t)before;
-        ev.exact += after == enc;
-        ++ev.windows;
+    const size_t step = periodic_chunk ? periodic_chunk : size;
+    int64_t gain = 0;
+    if (!raw || !dec || !step) return 0;
+    for (size_t off = 0; off < size; off += step) {
+        const size_t n = enc < size - off ? enc : size - off;
+        for (size_t i = 0; i < n; ++i) gain += (dec[off + i] == 0u) - (raw[off + i] == 0u);
     }
-    return ev;
+    return gain;
 }
 
-/* A few key bytes landing on plain data cannot cost an encrypted window more
- * than the zeros it held; losing more than one zero per window on average
- * means the stride decrypts windows that were never encrypted. */
-static int gxc_evidence_contradicts(const gxc_evidence_t *ev) {
-    return ev->zero_gain < -(int64_t)ev->windows;
-}
+/* Candidates that restore exactly the same zero padding are left to the opcode
+ * shapes, which is all the previous selection ever looked at. */
+#define GXC_STRIDE_TIE_LIMIT 8u
+
+typedef struct gxc_stride_choice {
+    size_t chunk;     /* span stride of the decryption */
+    size_t key;       /* index into the key table */
+    size_t key_start; /* rotation into the key cycle */
+} gxc_stride_choice_t;
 
 /*
- * The stage-1 score samples opcode shapes in the first 128 KiB.  When that
- * sample is data it can prefer a short stride that decrypts windows which were
- * never encrypted.  Called only after the winner is contradicted by the
- * evidence above: rank every candidate with a valid header by exact keystream
- * windows (then zero gain), skip contradicted ones, and require at least one
- * confirmed window so a candidate without evidence never replaces the winner.
+ * Choose the (stride, key, rotation) of a payload whose first span is stored in
+ * clear text.  Every candidate is ranked by the zero padding it restores (see
+ * gxc_zero_gain), so no key id from the GXE descriptor is needed: cards whose
+ * descriptor names a key the table does not have still decode.
  */
-static int gxc_rescue_candidate(const smc_file_buf_t *gxc, uint32_t payload_size,
-                                const gxc_key_profile_t *keys, size_t key_count,
-                                const size_t *modes, size_t mode_count,
-                                size_t *out_key, size_t *out_mode, size_t *out_start) {
-    int found = 0;
-    gxc_evidence_t best = { 0, 0u, 0u };
-    for (size_t pass = 0; pass < mode_count; ++pass) {
-        for (size_t i = 0; i < key_count; ++i) {
-            for (size_t key_start = 0u; key_start < keys[i].key_len; ++key_start) {
-                uint32_t gxb_size = 0u;
-                if (!gxc_header_valid(gxc, payload_size, &keys[i], modes[pass], key_start, &gxb_size)) continue;
-                gxc_evidence_t ev = gxc_zero_evidence(gxc, payload_size, &keys[i], modes[pass], key_start);
-                if (ev.exact == 0u || gxc_evidence_contradicts(&ev)) continue;
-                if (!found || ev.exact > best.exact || (ev.exact == best.exact && ev.zero_gain > best.zero_gain)) {
-                    found = 1;
-                    best = ev;
-                    *out_key = i;
-                    *out_mode = modes[pass];
-                    *out_start = key_start;
+static int gxc_choose_strip_stride(const uint8_t *buf, size_t size,
+                                   const size_t *chunks, size_t chunk_count,
+                                   const gxc_key_profile_t *table, size_t key_count,
+                                   gxc_stride_choice_t *out) {
+    const size_t enc = 0x100u;
+    if (!buf || !out || !chunks || !table || !size || !chunk_count || !key_count) return 0;
+    size_t max_len = 0u;
+    for (size_t i = 0; i < key_count; ++i) {
+        if (table[i].key_len > max_len) max_len = table[i].key_len;
+    }
+    if (!max_len) return 0;
+    int64_t *acc = (int64_t *)calloc(key_count * max_len, sizeof(*acc));
+    if (!acc) return 0;
+    gxc_stride_choice_t ties[GXC_STRIDE_TIE_LIMIT];
+    size_t tie_count = 0u;
+    int have = 0;
+    int64_t best_gain = 0;
+    for (size_t ci = 0; ci < chunk_count; ++ci) {
+        const size_t chunk = chunks[ci];
+        if (!chunk || chunk >= size) continue;
+        for (size_t j = 0; j < key_count * max_len; ++j) acc[j] = 0;
+        int64_t before = 0;
+        for (size_t i = 0; i < enc; ++i) {
+            uint32_t hist[256];
+            memset(hist, 0, sizeof(hist));
+            for (size_t off = chunk; off < size; off += chunk) {
+                const size_t pos = off + i;
+                if (pos >= size) break;
+                ++hist[buf[pos]];
+                before += buf[pos] == 0u;
+            }
+            for (size_t k = 0; k < key_count; ++k) {
+                const size_t kl = table[k].key_len;
+                for (size_t r = 0; r < kl; ++r) {
+                    acc[k * max_len + r] += (int64_t)hist[table[k].key[(r + i) % kl]];
+                }
+            }
+        }
+        for (size_t k = 0; k < key_count; ++k) {
+            const size_t kl = table[k].key_len;
+            for (size_t r = 0; r < kl; ++r) {
+                const int64_t gain = acc[k * max_len + r] - before;
+                if (!have || gain > best_gain) {
+                    have = 1;
+                    best_gain = gain;
+                    tie_count = 1u;
+                    ties[0].chunk = chunk;
+                    ties[0].key = k;
+                    ties[0].key_start = r;
+                } else if (gain == best_gain && tie_count < GXC_STRIDE_TIE_LIMIT) {
+                    ties[tie_count].chunk = chunk;
+                    ties[tie_count].key = k;
+                    ties[tie_count].key_start = r;
+                    ++tie_count;
                 }
             }
         }
     }
-    return found;
+    free(acc);
+    /* No candidate restores any zero padding: leave the payload as it is rather
+     * than replace it with a guess that the evidence does not support. */
+    if (!have || best_gain <= 0) return 0;
+    size_t pick = 0u;
+    if (tie_count > 1u) {
+        uint8_t *cand = (uint8_t *)malloc(size);
+        if (cand) {
+            int best_score = -0x7fffffff;
+            for (size_t i = 0; i < tie_count; ++i) {
+                memcpy(cand, buf, size);
+                gxc_decrypt_periodic_from(cand, size, &table[ties[i].key], ties[i].chunk, ties[i].key_start, ties[i].chunk);
+                const int score = gxc_candidate_score(cand, size) +
+                                  gxc_candidate_arm_score_range(cand, size, ties[i].chunk, ties[i].chunk);
+                if (score > best_score) {
+                    best_score = score;
+                    pick = i;
+                }
+            }
+            free(cand);
+        }
+    }
+    *out = ties[pick];
+    return 1;
 }
 
 static uint32_t gxc_payload_size_bytes(const smc_file_buf_t *gxc) {
@@ -629,7 +763,7 @@ static int gxc_payload_has_gp32_crt_stub(const uint8_t *p, size_t size) {
     return 1;
 }
 
-static int gxc_rebuild_stripped_gxb(const smc_file_buf_t *gxe, const smc_file_buf_t *gxc, uint32_t payload_size, uint8_t **out, size_t *out_size) {
+static int gxc_rebuild_stripped_gxb(const smc_file_buf_t *gxc, uint32_t payload_size, uint8_t **out, size_t *out_size) {
     if (!gxc || !out || !out_size || payload_size < 0x200u || (size_t)payload_size > gxc->size - 20u) return 0;
     const uint8_t *src = gxc->data + 20u;
     if (!gxc_payload_has_gp32_crt_stub(src, (size_t)payload_size)) return 0;
@@ -713,91 +847,17 @@ static int gxc_rebuild_stripped_gxb(const smc_file_buf_t *gxe, const smc_file_bu
     memcpy(buf + 0x100u, src, (size_t)payload_size);
 
     {
-        static const uint8_t key_0001_2500[] =
-            "0001nado2500achi0001gp322500bing0001yang2500home0001sist"
-            "2500know0001jsta2500oos!0001gun72500ehye";
-        static const uint8_t key_0003_2500[] =
-            "0003nado2500achi0003gp322500bing0003yang2500home0003sist"
-            "2500know0003jsta2500oos!0003gun72500ehye";
-        static const uint8_t key_0001_3000[] =
-            "0001yang3000home0001sist3000know0001jsta3000oos!"
-            "0001gun73000ehye0001nado3000achi0001gp323000bing";
-        static const uint8_t key_0003_3000[] =
-            "0003nado3000achi0003gp323000bing0003yang3000home0003sist"
-            "3000know0003jsta3000oos!0003gun73000ehye";
-        static const gxc_key_profile_t strip_keys[] = {
-            { "0001/2500", key_0001_2500, sizeof(key_0001_2500) - 1u },
-            { "0003/2500", key_0003_2500, sizeof(key_0003_2500) - 1u },
-            { "0001/3000", key_0001_3000, sizeof(key_0001_3000) - 1u },
-            { "0003/3000", key_0003_3000, sizeof(key_0003_3000) - 1u },
+        /* Spans the publisher may have encrypted: the stride is the span size
+         * and the first span stays in clear text, so the spans that can carry a
+         * keystream are the ones after it (gxc_decrypt_periodic_from). */
+        static const size_t strip_chunks[] = {
+            0x0400u, 0x0800u, 0x0c00u, 0x1000u, 0x1400u, 0x1800u, 0x1c00u,
+            0x2000u, 0x2400u, 0x2800u, 0x2c00u, 0x3000u, 0x3800u
         };
-        static const size_t strip_chunks[] = { 0x0c00u, 0x1400u, 0x1800u, 0x1c00u, 0x2c00u, 0x3000u };
-        char family_id[5] = {0};
-        char key_id[5] = {0};
-        int base_score = gxc_candidate_score(buf, total);
-        uint8_t *best = NULL;
-        int best_score = base_score;
-        int applied_descriptor_profile = 0;
-
-        if (gxe && gxe->data && gxe->size >= 12u) {
-            for (size_t i = 0u; i < 4u; ++i) {
-                unsigned char c0 = gxe->data[4u + i];
-                unsigned char c1 = gxe->data[8u + i];
-                family_id[i] = (c0 >= '0' && c0 <= '9') ? (char)c0 : '\0';
-                key_id[i] = (c1 >= '0' && c1 <= '9') ? (char)c1 : '\0';
-            }
-            if (key_id[0]) best_score = -0x7fffffff;
-        }
-
-        /*
-         * Stripped commercial GXCs keep the first launcher chunk in clear text
-         * and encrypt the first 0x100 bytes of each following stride.  BIOS
-         * decrypts those slices before branching into the C runtime; direct HLE
-         * must do the same or later SDK thunks fall through random data.  The
-         * GXE descriptor carries the family/key ids in bytes 4..11; prefer those
-         * descriptor-level profiles when known, and fall back to scoring only for
-         * unrecognised variants.
-         */
-        if (family_id[0] && key_id[0]) {
-            if (strncmp(family_id, "1001", 4u) == 0 && strncmp(key_id, "0001", 4u) == 0) {
-                gxc_decrypt_periodic_from(buf, total, &strip_keys[0], 0x2c00u, 0u, 0x2c00u);
-                applied_descriptor_profile = 1;
-            } else if (strncmp(family_id, "1001", 4u) == 0 && strncmp(key_id, "0003", 4u) == 0) {
-                gxc_decrypt_periodic_from(buf, total, &strip_keys[1], 0x0c00u, 8u, 0x0c00u);
-                applied_descriptor_profile = 1;
-            } else if (strncmp(family_id, "1003", 4u) == 0 && strncmp(key_id, "0001", 4u) == 0) {
-                gxc_decrypt_periodic_from(buf, total, &strip_keys[2], 0x1400u, 40u, 0x1400u);
-                applied_descriptor_profile = 1;
-            }
-        }
-
-        if (!applied_descriptor_profile) {
-            for (size_t ci = 0u; ci < GP32_ARRAY_COUNT(strip_chunks); ++ci) {
-                size_t chunk = strip_chunks[ci];
-                for (size_t ki = 0u; ki < GP32_ARRAY_COUNT(strip_keys); ++ki) {
-                    if (key_id[0] && strncmp(strip_keys[ki].name, key_id, 4u) != 0) continue;
-                    for (size_t key_start = 0u; key_start < strip_keys[ki].key_len; ++key_start) {
-                        uint8_t *cand = (uint8_t *)malloc(total ? total : 1u);
-                        if (!cand) { free(best); free(buf); return -1; }
-                        memcpy(cand, buf, total);
-                        gxc_decrypt_periodic_from(cand, total, &strip_keys[ki], chunk, key_start, chunk);
-                        int score = gxc_candidate_score(cand, total) + gxc_candidate_arm_score_range(cand, total, chunk, chunk);
-                        if (score > best_score) {
-                            free(best);
-                            best = cand;
-                            best_score = score;
-                        } else {
-                            free(cand);
-                        }
-                    }
-                }
-            }
-            if (best && (key_id[0] || best_score > base_score + 64)) {
-                free(buf);
-                buf = best;
-            } else {
-                free(best);
-            }
+        gxc_stride_choice_t choice;
+        if (gxc_choose_strip_stride(buf, total, strip_chunks, GP32_ARRAY_COUNT(strip_chunks),
+                                    gxc_keys, GP32_ARRAY_COUNT(gxc_keys), &choice)) {
+            gxc_decrypt_periodic_from(buf, total, &gxc_keys[choice.key], choice.chunk, choice.key_start, choice.chunk);
         }
     }
 
@@ -913,91 +973,6 @@ static int gxc_rebuild_xor256_selfloader(const smc_file_buf_t *gxc, uint32_t pay
 }
 
 static int decrypt_commercial_gxc(const smc_file_buf_t *gxe, const smc_file_buf_t *gxc, uint8_t **out, size_t *out_size, char *err, size_t err_len) {
-    static const uint8_t key_0001[] =
-        "0001yang3000home0001sist3000know0001jsta3000oos!"
-        "0001gun73000ehye0001nado3000achi0001gp323000bing";
-    static const uint8_t key_1023[] =
-        "1023mola1202joaa1023game1202park1023go321202kigo"
-        "1023nopa1202babo102377211202prom1023jang12021cut";
-    static const uint8_t key_1009_0604[] =
-        "06041cut1009mola0604joaa1009game0604park1009go320604kigo"
-        "1009nopa0604babo100977210604prom1009jang";
-    static const uint8_t key_1001_1110[] =
-        "1110prom1001jang11101cut1001mola1110joaa1001game1110park"
-        "1001go321110kigo1001nopa1110babo10017721";
-    static const uint8_t key_1002_1127[] =
-        "1002jang11271cut1002mola1127joaa1002game1127park1002go32"
-        "1127kigo1002nopa1127babo100277211127prom";
-    static const uint8_t key_1010_0605[] =
-        "0605kigo1010nopa0605babo101077210605prom1010jang06051cut"
-        "1010mola0605joaa1010game0605park1010go32";
-    static const uint8_t key_1008_0319[] =
-        "1008game0319park1008go320319kigo1008nopa0319babo10087721"
-        "0319prom1008jang03191cut1008mola0319joaa";
-    static const uint8_t key_1008_0428[] =
-        "0428park1008go320428kigo1008nopa0428babo100877210428prom"
-        "1008jang04281cut1008mola0428joaa1008game";
-    static const uint8_t key_1006_0125[] =
-        "1006nopa0125babo100677210125prom1006jang01251cut1006mola"
-        "0125joaa1006game0125park1006go320125kigo";
-    static const uint8_t key_1018_0327[] =
-        "1018game0327park1018go320327kigo1018nopa0327babo10187721"
-        "0327prom1018jang03271cut1018mola0327joaa";
-    /* Recovered against BIOS-decoded RO bytes: 0x100 encrypted bytes per
-     * 0x800-byte span. The existing stride scorer selects that layout. */
-    static const uint8_t key_1020_0903[] =
-        "1020go320903kigo1020nopa0903babo102077210903prom1020jang"
-        "09031cut1020mola0903joaa1020game0903park";
-    static const uint8_t key_1111[] =
-        "1111nopa1111babo111177211111prom1111jang11111cut1111mola"
-        "1111joaa1111game1111park1111go321111kigo";
-    static const uint8_t key_0003_3000[] =
-        "0003nado3000achi0003gp323000bing0003yang3000home0003sist"
-        "3000know0003jsta3000oos!0003gun73000ehye";
-    static const uint8_t key_0002_3000[] =
-        "3000achi0002gp323000bing0002yang3000home0002sist3000know"
-        "0002jsta3000oos!0002gun73000ehye0002nado";
-    static const uint8_t key_0004_2500[] =
-        "0004gun72500ehye0004nado2500achi0004gp322500bing0004yang"
-        "2500home0004sist2500know0004jsta2500oos!";
-    static const uint8_t key_0001_2500[] =
-        "0001nado2500achi0001gp322500bing0001yang2500home0001sist"
-        "2500know0001jsta2500oos!0001gun72500ehye";
-    static const uint8_t key_0003_2500[] =
-        "0003nado2500achi0003gp322500bing0003yang2500home0003sist"
-        "2500know0003jsta2500oos!0003gun72500ehye";
-    /* Recovered from the keystream that zero padding leaves in the card image
-     * (see gxc_zero_evidence) and checked against BIOS-decoded RAM: the decoded
-     * read-only image is byte-identical.  It is kept out of the table below
-     * because its digits differ from the 0001 profiles only in bits the stage-1
-     * score never sees (ASR scores 5684 against 5685 for this key), so in the
-     * main table it would silently re-key cards that already decode. */
-    static const uint8_t key_1001_3500[] =
-        "3500know1001jsta3500oos!1001gun73500ehye1001nado3500achi1001gp32"
-        "3500bing1001yang3500home1001sist";
-    static const gxc_key_profile_t keys[] = {
-        { "0001/3000", key_0001, sizeof(key_0001) - 1u },
-        { "1023/1202", key_1023, sizeof(key_1023) - 1u },
-        { "1009/0604", key_1009_0604, sizeof(key_1009_0604) - 1u },
-        { "1001/1110", key_1001_1110, sizeof(key_1001_1110) - 1u },
-        { "1002/1127", key_1002_1127, sizeof(key_1002_1127) - 1u },
-        { "1010/0605", key_1010_0605, sizeof(key_1010_0605) - 1u },
-        { "1008/0319", key_1008_0319, sizeof(key_1008_0319) - 1u },
-        { "1008/0428", key_1008_0428, sizeof(key_1008_0428) - 1u },
-        { "1006/0125", key_1006_0125, sizeof(key_1006_0125) - 1u },
-        { "1018/0327", key_1018_0327, sizeof(key_1018_0327) - 1u },
-        { "1020/0903", key_1020_0903, sizeof(key_1020_0903) - 1u },
-        { "1111/1111", key_1111, sizeof(key_1111) - 1u },
-        { "0003/3000", key_0003_3000, sizeof(key_0003_3000) - 1u },
-        { "0002/3000", key_0002_3000, sizeof(key_0002_3000) - 1u },
-        { "0004/2500", key_0004_2500, sizeof(key_0004_2500) - 1u },
-        { "0001/2500", key_0001_2500, sizeof(key_0001_2500) - 1u },
-        { "0003/2500", key_0003_2500, sizeof(key_0003_2500) - 1u },
-    };
-    /* Tried only through gxc_rescue_candidate. */
-    static const gxc_key_profile_t rescue_keys[] = {
-        { "1001/3500", key_1001_3500, sizeof(key_1001_3500) - 1u },
-    };
     if (!gxc || !out || !out_size) return 0;
     *out = NULL;
     *out_size = 0;
@@ -1010,8 +985,10 @@ static int decrypt_commercial_gxc(const smc_file_buf_t *gxe, const smc_file_buf_
      * The firmware XORs the first 0x100 bytes of each encrypted span, but the
      * span stride differs by profile: the validated 0001/3000 Korean profile
      * uses 0x1c00-byte spans, while the validated 1023/1202 European profile
-     * uses 0x1800-byte spans.  Try the BIOS key/profile set in GXE-profile order
-     * and accept only candidates that reconstruct a valid GXB scatter header.
+     * uses 0x1800-byte spans.  Every key profile and stride whose first span
+     * reconstructs a valid GXB scatter header is decrypted; the keystream
+     * evidence below picks the one the publisher used, and the GXE profile only
+     * orders the tries.
      */
     static const size_t mode_profile_1[] = { 0x1800u, 0x0c00u, 0x1400u, 0x1c00u, 0x2c00u, 0u, 0x0400u, 0x0800u, 0x1000u, 0x2000u, 0x2400u, 0x2800u, 0x3000u, 0x3800u };
     static const size_t mode_profile_4[] = { 0x1c00u, 0x1800u, 0x0c00u, 0x1400u, 0x2c00u, 0u, 0x0400u, 0x0800u, 0x1000u, 0x2000u, 0x2400u, 0x2800u, 0x3000u, 0x3800u };
@@ -1020,25 +997,25 @@ static int decrypt_commercial_gxc(const smc_file_buf_t *gxe, const smc_file_buf_
     const size_t mode_count = (profile == 1u) ? (sizeof(mode_profile_1) / sizeof(mode_profile_1[0])) : (sizeof(mode_profile_4) / sizeof(mode_profile_4[0]));
     uint8_t *best = NULL;
     size_t best_size = 0u;
+    int64_t best_gain = 0;
     int best_score = -0x7fffffff;
-    size_t best_key = 0u, best_mode = 0u, best_start = 0u;
+    const uint8_t *raw = gxc->data + 20u;
     for (size_t pass = 0; pass < mode_count; ++pass) {
-        for (size_t i = 0; i < sizeof(keys) / sizeof(keys[0]); ++i) {
-            for (size_t key_start = 0u; key_start < keys[i].key_len; ++key_start) {
+        for (size_t i = 0; i < GP32_ARRAY_COUNT(gxc_keys); ++i) {
+            for (size_t key_start = 0u; key_start < gxc_keys[i].key_len; ++key_start) {
                 uint8_t *cand = NULL;
                 size_t cand_size = 0u;
                 int cand_score = 0;
-                int r = gxc_try_decrypt(gxc, payload_size, &keys[i], modes[pass], key_start, &cand, &cand_size, &cand_score);
+                int r = gxc_try_decrypt(gxc, payload_size, &gxc_keys[i], modes[pass], key_start, &cand, &cand_size, &cand_score);
                 if (r < 0) { free(best); serr(err, err_len, "out of memory decrypting %s", gxc->path); return 0; }
                 if (r > 0) {
-                    if (!best || cand_score > best_score) {
+                    const int64_t cand_gain = gxc_zero_gain(raw, cand, (size_t)payload_size, modes[pass]);
+                    if (!best || cand_gain > best_gain || (cand_gain == best_gain && cand_score > best_score)) {
                         free(best);
                         best = cand;
                         best_size = cand_size;
+                        best_gain = cand_gain;
                         best_score = cand_score;
-                        best_key = i;
-                        best_mode = modes[pass];
-                        best_start = key_start;
                     } else {
                         free(cand);
                     }
@@ -1047,29 +1024,6 @@ static int decrypt_commercial_gxc(const smc_file_buf_t *gxe, const smc_file_buf_
         }
     }
     if (best) {
-        /* Second opinion: the stage-1 winner must not destroy zero padding.
-         * When it does, rank every profile (including the rescue-only ones)
-         * by keystream evidence instead. */
-        gxc_evidence_t ev = gxc_zero_evidence(gxc, payload_size, &keys[best_key], best_mode, best_start);
-        if (gxc_evidence_contradicts(&ev)) {
-            gxc_key_profile_t all_keys[GP32_ARRAY_COUNT(keys) + GP32_ARRAY_COUNT(rescue_keys)];
-            memcpy(all_keys, keys, sizeof(keys));
-            memcpy(all_keys + GP32_ARRAY_COUNT(keys), rescue_keys, sizeof(rescue_keys));
-            size_t rescue_key = 0u, rescue_mode = 0u, rescue_start = 0u;
-            if (gxc_rescue_candidate(gxc, payload_size, all_keys, GP32_ARRAY_COUNT(all_keys), modes, mode_count,
-                                     &rescue_key, &rescue_mode, &rescue_start)) {
-                uint8_t *cand = NULL;
-                size_t cand_size = 0u;
-                int cand_score = 0;
-                int r = gxc_try_decrypt(gxc, payload_size, &all_keys[rescue_key], rescue_mode, rescue_start, &cand, &cand_size, &cand_score);
-                if (r < 0) { free(best); serr(err, err_len, "out of memory decrypting %s", gxc->path); return 0; }
-                if (r > 0) {
-                    free(best);
-                    best = cand;
-                    best_size = cand_size;
-                }
-            }
-        }
         *out = best;
         *out_size = best_size;
         return 1;
@@ -1078,7 +1032,7 @@ static int decrypt_commercial_gxc(const smc_file_buf_t *gxe, const smc_file_buf_
     {
         uint8_t *rebuilt = NULL;
         size_t rebuilt_size = 0u;
-        int rr = gxc_rebuild_stripped_gxb(gxe, gxc, payload_size, &rebuilt, &rebuilt_size);
+        int rr = gxc_rebuild_stripped_gxb(gxc, payload_size, &rebuilt, &rebuilt_size);
         if (rr < 0) { serr(err, err_len, "out of memory rebuilding stripped GXC %s", gxc->path); return 0; }
         if (rr > 0) {
             *out = rebuilt;
