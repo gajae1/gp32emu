@@ -151,7 +151,9 @@ static void check_declined_when_no_continuation(int jit) {
  * the SDK calls to leave it. r0 points at {FCLK Hz, MPLLCON, CLKDIVN}; the ROM
  * epilogue (0x1250) hands every register back unchanged. */
 static gp32_t *load_direct(const uint32_t *words, unsigned count, int jit) {
-    uint8_t image[16];
+    static uint8_t image[256]; /* the largest fixture is 7 words; the buffer must
+                                  outlive the payload copy and never overlap img */
+    if (count * 4u > sizeof image) return NULL;
     for (unsigned i = 0; i < count; ++i) gp32_st32le(image + i * 4u, words[i]);
     gp32_t *g = gp32_create(NULL);
     CHECK(g != NULL, "create direct clock core");
