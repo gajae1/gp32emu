@@ -6,6 +6,21 @@ performance, audio and input correctness across the library, not boot-only tests
 
 ## Current accepted work
 
+- Round 166 libretro savestate replay determinism (result.md and evidence in
+  `F:/GP32/results/round166/state-replay/`): run-ahead/rewind restored guest
+  state but reset host-side delivery state on load, so replaying the same 60
+  frames after a state produced different video or audio on 9 of 14 sampled
+  commercial cards while guest cycles/PC/CPSR/clock/RAM stayed identical. The
+  output queue and resampler, declick/gap ramps, the idle-silence budget, the
+  duplicate-frame decision and the video-effect histories now travel in a
+  versioned `LRST` section appended after the guest payload;
+  `gp32_load_state_data_ex` reports the guest length so the core finds it.
+  States without the section, including all previously written files, keep the
+  historical reset. Replayed PCM and duplicate decisions now equal the
+  uninterrupted run, and the 14-card BIOS-boot probe reports identical
+  guest/video/audio identity after save-load-replay. ctest 29/29; pc-parity,
+  parity5 and parity-boot identical. Open: real RetroArch run-ahead/rewind and
+  the H700 build remain unverified.
 - Round 165 Pinball Dreams direct boot (result.md and evidence in
   `F:/GP32/results/round165/pinball/`): two defects. (1) The GXC stage-1 score
   picked 0001/3000 at stride 0x400 over the real 1001/3500 at 0x1400 (the first

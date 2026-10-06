@@ -5326,7 +5326,7 @@ gp32_status_t gp32_save_state_data(gp32_t *g, void *data, size_t size) {
     return GP32_OK;
 }
 
-gp32_status_t gp32_load_state_data(gp32_t *g, const void *data, size_t size) {
+static gp32_status_t gp32_state_load_data(gp32_t *g, const void *data, size_t size, size_t *consumed) {
     if (!g || !data || !size) return GP32_ERR_INVALID_ARGUMENT;
     state_io_t io = state_io_reader(data, size);
     gp32_state_image_t direct;
@@ -5337,9 +5337,18 @@ gp32_status_t gp32_load_state_data(gp32_t *g, const void *data, size_t size) {
         seterr(g, "load savestate buffer failed or unsupported version");
         return GP32_ERR_IO;
     }
+    if (consumed) *consumed = io.pos;
     gp32_state_loaded(g, &direct, &resume);
     gp32_cpu_speed_restore(g, percent);
     return GP32_OK;
+}
+
+gp32_status_t gp32_load_state_data(gp32_t *g, const void *data, size_t size) {
+    return gp32_state_load_data(g, data, size, NULL);
+}
+
+gp32_status_t gp32_load_state_data_ex(gp32_t *g, const void *data, size_t size, size_t *consumed) {
+    return gp32_state_load_data(g, data, size, consumed);
 }
 
 gp32_status_t gp32_save_state(gp32_t *g, const char *path) {
