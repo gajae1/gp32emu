@@ -13,16 +13,15 @@ The [MAME GP32 driver](https://github.com/mamedev/mame/blob/master/src/mame/game
 is a hardware reference, not a demonstrated compatibility oracle. No new MAME
 code was copied during this work.
 
-The tested handheld is an H700 / Cortex-A53 aarch64 device running SpruceOS on
-Linux 4.9.170, with a 720x480 panel and 1 GiB-class RAM. The UI identifies its
-platform as AnbernicXX720480NoStick. Exact retail model was not assumed from
-"RG SP". SSH and USB ADB both work. Do not package BIOS or ROMs.
+The tested handheld is a Cortex-A53 (aarch64) device running vendor firmware on
+Linux 4.9.170, with a 720x480 panel and 1 GiB-class RAM. No particular retail
+model was assumed. SSH and USB ADB both work. Do not package BIOS or ROMs.
 
 ## Implemented
 
 - CMake shared libretro builds for Windows, Linux aarch64 and Android arm64-v8a /
   armeabi-v7a; Android uses the required `_libretro_android.so` filename.
-- H700 cross toolchain using Zig 0.13.0 and glibc 2.17.
+- handheld cross toolchain using Zig 0.13.0 and glibc 2.17.
 - Cached LCD line calculation, invalidated on peripheral ticks/register writes/reset/state load.
 - LCD scanout specializes the pixel format once per frame and reads contiguous
   in-RAM DMA words in one operation, retaining the original wrap/bounds fallback.
@@ -36,7 +35,7 @@ platform as AnbernicXX720480NoStick. Exact retail model was not assumed from
   lifecycle resets and a 250 ms bounded queue during sustained backpressure.
 - Persisted SmartMedia restored on later loads, and flushed on content replacement;
   corrupt persisted images cause an explicit load failure.
-- Additive Spruce GP32 entry using the existing standard launcher and 64-bit RA.
+- Additive handheld GP32 entry using the existing standard launcher and 64-bit RA.
 
 ## Evidence so far
 
@@ -45,7 +44,7 @@ Guarder and Astonishia Story R) match the original portable core's video/PCM
 hashes, cycle count, PC and CPSR after 2400 warmup + 300 measured frames on
 Windows. This does not cover whole games or their most demanding scenes.
 
-On H700, same BIOS/content/input schedule and no manually forced CPU governor:
+On the handheld, same BIOS/content/input schedule and no manually forced CPU governor:
 
 | Scene | Original portable | Polling optimization | AArch64 native candidate |
 | --- | ---: | ---: | ---: |
@@ -58,7 +57,7 @@ On H700, same BIOS/content/input schedule and no manually forced CPU governor:
 These are single final-build measurements. Earlier repeated Wizard runs were
 27.0-27.7 fps; the later scanout change has not established a material Wizard
 speedup. The benchmark excludes warmup, includes pixel/PCM hashing, and has no RetroArch
-render/audio driver overhead. H700 hashes and CPU state match Windows for all
+render/audio driver overhead. Handheld hashes and CPU state match Windows for all
 five windows. The first native candidate intermittently crashed in Little
 Wizard. Fault context and disassembly exposed an incomplete instruction-cache
 flush sequence in the linked helper. After adding the completion barrier,
@@ -69,7 +68,7 @@ core is installed in the GP32-specific UI directory with the previous
 portable core backed up under `gp32-dev/core-portable-ui-backup.so`.
 
 Focused audio, persistence, polling and native-vs-portable CPU differential tests
-have passed on H700. The native memory test uses the full 8 MiB direct RAM window.
+have passed on the handheld. The native memory test uses the full 8 MiB direct RAM window.
 Android artifacts have linked and export the libretro API; no Android runtime
 has been tested.
 
@@ -78,7 +77,7 @@ has been tested.
 The `gp32_bench --state` option can start from a native GP32emu state. We
 extracted the core payload from a copy of RetroArch's compressed Game Switcher
 state, leaving the original save untouched. With Blue Angelo already in its
-opening gameplay, 60 untimed plus 180 measured frames on H700 produced 19.46
+opening gameplay, 60 untimed plus 180 measured frames on the handheld produced 19.46
 fps with native JIT and 15.84 fps with the portable CPU. Both executions had
 the same final PC/CPSR/cycle count and video/PCM hashes. This window is much
 slower than the Blue Angelo boot/menu window above and is now the primary
@@ -91,8 +90,8 @@ not a precise per-component time breakdown.
 
 The 2026-10-02 TLB candidate matched the previous core's CPU state, video and
 PCM hashes in the Blue Angelo gameplay state and all five fixed boot/menu
-windows on H700. Native-vs-portable CPU, polling, libretro audio and persistence
-tests also passed on H700. A clean interleaved Blue gameplay comparison at an
+windows on the handheld. Native-vs-portable CPU, polling, libretro audio and persistence
+tests also passed on the handheld. A clean interleaved Blue gameplay comparison at an
 observed 1512 MHz CPU frequency measured 35.503 fps for the candidate and
 33.242 fps for the prior native build (about 6.8%); it is one matched-clock
 pair, not a whole-game speedup guarantee. Earlier runs in the same sequence
@@ -102,12 +101,12 @@ but its 13.467 fps run had uncontrolled CPU frequency and does not establish
 a portable-path speed change. The gameplay window remains below 60 fps even
 without RetroArch presentation overhead.
 
-## Spruce integration
+## Device integration
 
 The live UI lists GP32 and both test games. Launching Blue Angelo from that list
 runs `ra64.h700` with the existing platform configuration and the GP32-local core.
 The BIOS menu and Blue Angelo media-selection screen have rendered correctly.
-The existing Spruce in-game menu opens with the Menu button. Saving to slot 0
+The existing handheld in-game menu opens with the Menu button. Saving to slot 0
 created a state file; after advancing to media selection, loading the
 same slot returned to the saved BIOS screen with the frontend's load-success
 message and the same RetroArch process still running.
@@ -122,7 +121,7 @@ The normal UI reload operation was used to refresh the systems list.
 The 2026-10-02 candidate replaced only `Emu/GP32/gp32emu_libretro.so` after
 backing the previous native core up as `gp32-dev/core-before-20261002.so`.
 Installed SHA-256: `71ba3cccb67e5427b631b4e820b39f4c4f29f7f775ce2a2ba93329ed21520efe`.
-Launching Blue Angelo from the unchanged Spruce GP32 list resumed its gameplay
+Launching Blue Angelo from the unchanged handheld GP32 list resumed its gameplay
 in `ra64.h700`; later framebuffer capture showed an advancing animated scene
 while the process was still alive. The common platform RetroArch config hash
 remained `34a9a68e9425ba800d6383735c7f59fd9fe4d9ac5bf9ad646e8028bba51d4864`.
@@ -130,7 +129,7 @@ Speaker sound was not judged by listening, and long-play stability is untested.
 
 No Codex global model/provider settings or common RetroArch configuration values
 were manually edited. The platform RetroArch configuration was byte-identical
-before and after the native UI save/load checks. The standard Spruce launcher naturally applies its usual
+before and after the native UI save/load checks. The standard handheld launcher naturally applies its usual
 runtime CPU/network/save hooks. The GP32 item defaults to Smart CPU mode.
 
 Remaining: sustained gameplay/audio acceptance and further Little
@@ -138,7 +137,7 @@ Wizard optimization. No worst-case-game ranking or full-speed guarantee is estab
 
 ## C23 and native JIT follow-up (2026-10-03)
 
-Builds request the C23 dialect where the local compiler supports it. H700
+Builds request the C23 dialect where the local compiler supports it. Handheld
 Zig/Clang 18 and Android NDK Clang 19 linked the libretro core in that mode;
 legacy MinGW GCC 8 explicitly falls back to C11. `GP32EMU_REQUIRE_C23=ON`
 turns that downgrade into a configure failure. The language selection itself
@@ -147,7 +146,7 @@ has no established speed benefit.
 The AArch64 JIT now emits ordinary MUL/MLA, a safe RAM subset of
 LDRH/LDRSB/LDRSH/STRH, and a guarded RAM subset of block transfers. The block
 path falls back before changing guest state for PC/user-bank/base-alias,
-unaligned, MMU page-crossing, non-RAM and other unsupported cases. On H700 the
+unaligned, MMU page-crossing, non-RAM and other unsupported cases. On the handheld, the
 expanded interpreter-vs-JIT differential, polling, audio and persistence tests
 passed. Blue Angelo gameplay, Little Wizard selection and four other fixed
 boot/menu windows matched earlier cycle count, PC/CPSR and video/PCM hashes.
@@ -163,7 +162,7 @@ The resulting core SHA-256 is
 `b1f445632280f6bd9f70aea179940c07eb32f38f851e17c194a915f94d023b62`.
 It briefly replaced only `Emu/GP32/gp32emu_libretro.so`; the previous core was
 backed up at `gp32-dev/core-before-20261003-block.so`. The GP32 platform config
-hash was unchanged. A direct SSH invocation of the Spruce launcher started
+hash was unchanged. A direct SSH invocation of the handheld launcher started
 Blue Angelo in `ra64.h700`, and two framebuffer captures five seconds apart
 showed advancing gameplay. The user then reported that the device OS was
 corrupted and rebooted it. The current boot's recent kernel log has no matching
@@ -186,7 +185,7 @@ libretro duplicate-frame presentation for unchanged LCD frames were added.
 The table is published once with C11 atomics so concurrent core creation
 cannot expose a partially filled table. The changed build passed Windows
 `libretro_audio`, `libretro_persistence`, `arm_poll` and `arm_jit` tests and the
-same four H700 tests as standalone binaries. The H700 benchmark was run only
+same four handheld tests as standalone binaries. The handheld benchmark was run only
 as a separate `/tmp` binary; the installed RetroArch core remained on the
 previous SHA-256 above.
 
@@ -222,7 +221,7 @@ is a real latent defect, but was not the cause of these scenes' slowdown.
 The native arena now recycles at dispatcher translation boundaries before
 binding the new block slot. Generation invalidation precedes memory reuse,
 including generation wrap. A 128 KiB forced-churn regression failed on the
-prior source and passes on x86-64 and H700 after the fix. Eligible polling
+prior source and passes on x86-64 and the handheld after the fix. Eligible polling
 blocks no longer generate native code that the dispatcher would never call.
 
 AArch64 LDM can now load an even PC from a guarded contiguous RAM span.
@@ -244,12 +243,12 @@ matched-clock pair; its block-helper calls barely changed. Earlier Blue runs
 in that sequence ramped in frequency and are excluded from speed attribution.
 These remain core benchmarks, below 60 fps, with no frontend presentation cost.
 
-Six Windows regression tests pass; all six standalone H700 tests pass, with
-the final modified-return case additionally checked on H700. Five fixed
+Six Windows regression tests pass; all six standalone handheld tests pass, with
+the final modified-return case additionally checked on the handheld. Five fixed
 Windows game windows still match prior CPU/video/PCM results. Android arm64
-and armv7 rebuild and link with actual `-std=c23` (NDK Clang 19); the H700
+and armv7 rebuild and link with actual `-std=c23` (NDK Clang 19); the handheld
 build uses C23 (Clang 18). The older GCC 8 Windows build explicitly falls back
-to C11. Android runtime and sustained Spruce gameplay/audio remain unverified.
+to C11. Android runtime and sustained handheld gameplay/audio remain unverified.
 
 Libretro now negotiates `GET_CAN_DUPE` before sending NULL video frames and
 otherwise resends the last presented buffer, including video effects. The
@@ -259,7 +258,7 @@ Raw evidence: `leaf-wizard-ab.json`, `leaf-blue-ab.json`,
 `resume-win-scenes.json` under `F:/GP32/results/`. Candidate artifacts are in
 `F:/GP32/artifacts/c23-leaf-candidate-20261003/`.
 
-The final H700 build also matched the prior hashes and CPU state for Her
+The final handheld build also matched the prior hashes and CPU state for Her
 Knights, Dungeon & Guarder and Astonishia (`resume-h700-scenes.json`). Their
 single-run core rates are not interleaved optimization comparisons. The live
 core and both the GP32 launcher and common RetroArch configuration hashes
@@ -268,7 +267,7 @@ were checked again after the isolated runs; no device setting was changed.
 ## Resume 2: AArch64 correctness and memory dispatch (2026-10-03)
 
 The resumed tree contained unvalidated AArch64 block-transfer changes. Running
-its existing regression on H700 reproduced 154 mismatches. Corrections cover
+its existing regression on the handheld reproduced 154 mismatches. Corrections cover
 scaled load/store offsets, second-page physical mapping and pointer bias,
 PC/base-register aliasing, and bounds/condition checks. MRS SPSR now uses the
 checked path instead of reading CPSR, and MSR flags replaces the entire top
@@ -283,10 +282,10 @@ aliasing, PSR/MRC, and LDM/STM across independently mapped pages, PC/base
 register lists, tiny pages and non-RAM fragments. Invalid newly drafted test
 encodings/oracles were rejected and replaced; they are not counted as core
 bugs. The corrected tests pass on x86-64 (29,299 JIT events, zero fallbacks)
-and H700 (29,299 events, four fallbacks). The other five standalone H700
+and the handheld (29,299 events, four fallbacks). The other five standalone handheld
 regressions also pass, including audio callback backpressure and persistence.
 
-The strict H700 harness now requires a full ABBA, matching guest/video/PCM
+The strict handheld harness now requires a full ABBA, matching guest/video/PCM
 results and at least two identical frequency samples per run, all at the
 same observed frequency, before marking a performance comparison successful.
 It records binary and harness hashes, exact commands and monitor failures.
@@ -306,7 +305,7 @@ before designing another safe fast path. Cross-page block transfers are no
 longer automatically classified as slow; both translations and RAM bounds
 are checked by the diagnostic classifier, without modifying the TLB.
 
-Five Windows fixed windows retain prior CPU/cycle/video/PCM results. H700
+Five Windows fixed windows retain prior CPU/cycle/video/PCM results. Handheld
 Her Knights, Dungeon & Guarder, Astonishia and Blue boot windows also match,
 as do Wizard and the separate Blue gameplay state. These are bounded scenes,
 not full-game completion or physical-GP32 accuracy evidence.
@@ -328,7 +327,7 @@ bytes without file I/O; memory save/load makes no temporary file. Short save
 buffers reject before writing, and larger buffers receive zero padding.
 The per-game reported capacity is stable; unexpected growth fails safely.
 
-Windows and H700 focused tests cover real synthetic NAND roundtrip, file vs
+Windows and the handheld focused tests cover real synthetic NAND roundtrip, file vs
 memory byte equality, oversized buffer guards, truncated headers/bodies,
 short save rejection, deterministic repeated serialization and the existing
 audio/reset/load lifecycle. The untouched pre-change Windows file fixture
@@ -339,9 +338,9 @@ the existing partial-mutation semantics; this is not transactional loading.
 The full NAND image remains in the payload, so full-speed rewind/run-ahead
 is not proven merely by removing disk I/O.
 
-Final H700 and Android ARM64/ARMv7 libretro cores rebuild in C23 mode; the
+Final handheld and Android ARM64/ARMv7 libretro cores rebuild in C23 mode; the
 Windows GCC 8 validation build uses its explicit C11 fallback. The installed
-Spruce core, GP32 config and common RetroArch config hashes remain unchanged
+handheld core, GP32 config and common RetroArch config hashes remain unchanged
 (resume2-final-snapshot.json). New development artifacts are kept locally in
 F:/GP32/artifacts/c23-a64-state-candidate-20261003/, with source/binary hashes
 in manifest.json. They have not replaced the installed core. Full-library
@@ -369,7 +368,7 @@ Its body, masks and every gp32_smc_update call are unchanged; this does not
 skip edges, latch updates or guest instructions. A synthetic NAND GPIO test
 checks ID, program/readback, data-latch stability, read advancement and 16/32-bit
 control writes. It passes against the pre-change Windows static library and
-the changed Windows/H700 libraries. The existing LCD/timer test also passes.
+the changed Windows/handheld libraries. The existing LCD/timer test also passes.
 
 The non-LTO Wizard ABBA is 45.301 / 45.682 / 45.549 / 45.186 fps, all at
 observed 1512 MHz, with matching cycles, CPU state, pixels and PCM.
@@ -393,7 +392,7 @@ so the full ABBA is disqualified (resume3-lto-blue-abba.json). Do not quote
 its aggregate ratio or claim a whole-library LTO win. Both runs retained
 exact CPU/video/PCM output. LTO is still experimental and not the default.
 
-The current non-LTO H700 core and both Android ABI cores rebuild. The GPIO
+The current non-LTO handheld core and both Android ABI cores rebuild. The GPIO
 change is retained as a small measured optimization, with the above focused
 regressions; core-only measurements do not prove frontend presentation/audio.
 The candidate is F:/GP32/artifacts/c23-gpio-candidate-20261003/. Installed
@@ -421,7 +420,7 @@ for all 1,302 distinct W-form masks; 4,098 additional inputs checked rejection
 and unchanged output on failure (resume4-encoder-check.json). A new native
 program records every immediate result and CPSR to RAM across zero, carry and
 signed-overflow seeds, small/shifted12/large immediates, and flag/nonflag
-arithmetic and moves. Windows passes; the old and changed H700 backends both
+arithmetic and moves. Windows passes; the old and changed handheld backends both
 pass with 30,163 JIT events and four fallback events. Existing native edge
 cases remain in that test. Raw runs: resume4-jit-before.json and
 resume4-jit-after.json. Android ARM64 rebuilds with C23; the ARMv7 backend is
@@ -473,7 +472,7 @@ The next justified targets are block execution/transition costs and Blue's
 framebuffer reads. Internal block chaining still needs proof of budget,
 interrupt, MMU and invalidation exits; no such chaining is enabled here.
 Candidate artifacts: F:/GP32/artifacts/c23-native-immediates-candidate-20261003/.
-H700 and Android ARM64 cores rebuild; unchanged ARMv7 is carried forward.
+Handheld and Android ARM64 cores rebuild; unchanged ARMv7 is carried forward.
 Installed core and global settings remain unchanged. All-title 60 fps,
 sustained RetroArch audio/presentation and Android runtime remain unverified.
 
@@ -490,11 +489,11 @@ retains the old final-byte read behavior; mapping requires whole-word coverage.
 
 The focused gp32_shadow test uses synthetic LUTs/surfaces, not game assets.
 It passes against the saved old source and new source on Windows, and the new
-source on H700. Fixtures cover unpaired/paired LUTs, public framebuffer access,
+source on the handheld. Fixtures cover unpaired/paired LUTs, public framebuffer access,
 connected versus isolated yellow, forward and reverse propagation including
 the eight-pass limit, corner/row boundaries, non-indexed mode, invalid surfaces
 and an incomplete final RAM word. The Command Code test agent did not deliver
-a patch; the parent completed this verification. H700 raw result:
+a patch; the parent completed this verification. Handheld raw result:
 F:/GP32/results/resume5-shadow-h700.json.
 
 Against resume-4, final matched-clock ABBA at 1512 MHz measured Blue's 600/300
@@ -504,7 +503,7 @@ runs. Evidence: resume5-shadow-final-{blue,wizard}-abba.json. Benchmark SHA256:
  307387c4bf5839a4802f43ecc71a67e965c6174a0d824eb1ae1df91e6c424309.
 The earlier draft without the custom-RAM fallback is retained only as an
 experiment: its first Blue baseline changed clocks, so its aggregate speed
-ratio is not qualified (resume5-shadow-blue-abba.json). H700 and both Android
+ratio is not qualified (resume5-shadow-blue-abba.json). Handheld and both Android
 ABI cores rebuild; installed device core/settings remain untouched.
 
 The follow-up Blue 600/300 sampler retained exact output and collected 557
@@ -518,15 +517,15 @@ Sol supplied one separate dispatch candidate combining the allocated block
 header's valid/PC/CPSR/generation boolean checks. The null check remains
 short-circuited. It encourages a single vector header load/reduction on
 Cortex-A53 instead of repeated address calculations and branches. No budget,
-IRQ/FIQ, polling or invalidation guard was removed. Windows and H700 JIT and
-polling tests pass; the native H700 corpus reports 30,163 events and four
+IRQ/FIQ, polling or invalidation guard was removed. Windows and the handheld JIT and
+polling tests pass; the native handheld corpus reports 30,163 events and four
 fallbacks. Independent matched-clock ABBA against the verified framebuffer
 candidate measured Wizard 46.9575 -> 47.8455 fps (+1.89%) and Blue 54.092 ->
 54.7045 fps (+1.13%), with exact CPU/video/PCM and 1512 MHz samples throughout.
 Both changes are retained. Evidence: resume5-dispatch-{wizard,blue}-abba.json;
 patch: resume5-dispatch.patch. Final benchmark SHA256:
  86a99d2b6e33fb75a37a6d8afc053a728e2ab5048a1c4324809cffd062f5506c.
-The dispatcher change also rebuilds for H700 and both Android ABIs. Candidate
+The dispatcher change also rebuilds for the handheld and both Android ABIs. Candidate
 artifacts are F:/GP32/artifacts/c23-shadow-dispatch-candidate-20261003/.
 
 Device testing deferred when RetroArch was detected, then resumed after the
@@ -543,7 +542,7 @@ in W2 into the next instruction's operands, retaining all guest/CPSR stores.
 It invalidated across conditional/control-flow/helper/memory/PSR/regshift paths.
 An adversarial native/interpreter fixture records results across those
 boundaries, aliases, carry, shifts, SWP and mid-block entry. It passed before
-and after the change on H700 (30,235 JIT events, four fallbacks), and its
+and after the change on the handheld (30,235 JIT events, four fallbacks), and its
 pre-change Windows oracle also passed.
 
 The change was rejected: matched-clock ABBA showed Wizard 47.834 -> 47.464 fps
@@ -558,10 +557,10 @@ Input source review found polling and gp32_set_buttons occur before CPU work
 in retro_run. The new libretro_input fixture goes further: a synthetic ARM
 program reads the actual GPIO A-button bit into RAM, and the video callback
 observes that guest-written value. Press and release reach it in the same
-retro_run with JIT off and on, on Windows and H700. No core-added one-frame
+retro_run with JIT off and on, on Windows and the handheld. No core-added one-frame
 input queue was observed in this fixture. This is not a physical controller-
 to-display latency measurement or proof every game polls input immediately.
-Raw H700 result: resume6-input-h700.json.
+Raw handheld result: resume6-input-h700.json.
 
 Audio recovery now attempts to drain pending PCM before the overflow path
 discards old samples to admit a new block. The ordinary non-overflow path and
@@ -570,19 +569,19 @@ fully recovered still lost the oldest retained block; partial recovery could
 also discard samples that the callback was ready to accept. Tests cover both
 cases with ordered stereo PCM, bounded storage, and no duplicate delivery.
 The updated fixture failed four assertions against the pre-change source,
-then passed on Windows and H700 after the fix. H700 test SHA256:
+then passed on Windows and the handheld after the fix. Handheld test SHA256:
 669bda2a1c5b68f475dbd5441706415560550f7811c5014fbc47ae152601037c.
 Evidence: resume6-audio-before.txt, resume6-audio-after.txt and
 resume6-audio-h700.json. This fixes avoidable loss during recovery, not a host
 that persistently generates audio more slowly than real time. No sound-device
-or RetroArch settings were changed. H700 and Android arm64/armv7 cores rebuild.
+or RetroArch settings were changed. Handheld and Android arm64/armv7 cores rebuild.
 Packaged candidate: F:/GP32/artifacts/c23-audio-recovery-candidate-20261003/.
 This candidate is not installed on the device.
 
 ## Resume 7: direct execution feasibility (2026-10-03)
 
 A freestanding static AArch32 Linux EABI program ran successfully on the actual
-Spruce H700 without OS changes. Its ordinary LDR of bytes 11 22 33 44 returned
+handheld without OS changes. Its ordinary LDR of bytes 11 22 33 44 returned
 0x44332211; an LDR from the next byte returned 0x55443322. The ARM920T legacy
 unaligned-load rule, with alignment checking disabled, instead rotates the
 aligned word to 0x11443322. This establishes both usable 32-bit execution and
@@ -594,7 +593,7 @@ f307e3467ae954e02310dbfd3f991636ef0af5df35ee6f42dcd94505aca4fc10.
 
 An independent DeepSeek staging microbenchmark tested cache-tiled rotation
 against the current libretro loop, including padded strides and alpha/channel
-patterns. All output comparisons passed on H700. At the actual 240-pixel stride,
+patterns. All output comparisons passed on the handheld. At the actual 240-pixel stride,
 the baseline median was about 267 microseconds per frame and the best tiled
 variants about 253-255 microseconds (roughly 5-6% for this loop only). The PC
 probe regressed at this stride. Larger gains at synthetic stride 256 do not
@@ -620,7 +619,7 @@ cycle-accurate PWM or implement the missing count-buffer latch semantics.
 A new test runs all five timers at the same count/divider with differing duty
 values and changes a duty buffer mid-period, checking coincident countdown
 and repeated IRQ events against timer 4 (which has no compare register).
-It failed the old core at cycle 2 and passes on Windows and H700 after the
+It failed the old core at cycle 2 and passes on Windows and the handheld after the
 correction. Evidence: resume7-pwm-before.txt, resume7-pwm-after.txt,
 resume7-pwm-h700.json. The real-game checks and JIT optimization measurements
 are kept separate so a timing change cannot masquerade as a speedup.
@@ -640,7 +639,7 @@ existing minimum; no source/API minimum was changed for this build.
 Sol's next AArch64 experiment kept guest registers in fixed W0-W14 mappings
 inside contiguous, unconditional, flagless, non-PC, non-shift ALU regions.
 It flushed every written register before observable boundaries, and its new
-SWI/exception-banking fixture passed on Windows and H700 (30,319 JIT events,
+SWI/exception-banking fixture passed on Windows and the handheld (30,319 JIT events,
 four fallbacks). The stable-poll test passed too. A synthetic 17-ALU region
 used 15 instead of 36 guest loads/stores, but that is not game-wide evidence.
 The candidate was rejected: matched-clock Wizard ABBA was 46.982 -> 47.145 fps
@@ -671,7 +670,7 @@ simply allocating more than the current 64 MiB code arena does not address it.
 Any reuse must still detect modified guest instructions and preserve exception,
 MMU and cache-maintenance semantics. No invalidation guard was removed.
 
-Final audio/PWM candidate builds for H700, Android arm64/armv7 and Windows x64
+Final audio/PWM candidate builds for the handheld, Android arm64/armv7 and Windows x64
 are packaged under F:/GP32/artifacts/c23-audio-pwm-candidate-20261003/ with
 source/artifact hashes. They are development candidates, not installed cores.
 
@@ -719,10 +718,10 @@ Evidence: resume8-win-blue-abba.json, resume8-scenes-win-exact.json.
 Wizard's matched-clock 2400/300 ABBA remains essentially unchanged:
 47.7595 -> 47.757 core fps (-0.005%, within run variation), all exactness fields
 match. The cache-reuse gain is title/workload dependent. Evidence:
-resume8-cache-wizard-abba.json. H700 native differential, arena-churn/generation
+resume8-cache-wizard-abba.json. Handheld native differential, arena-churn/generation
 wrap and stable-poll checks pass in resume8-{jit,recycle,poll}-h700.json;
 Windows C23 arm_jit and arm_jit_recycle also pass. Android arm64/armv7 and
-Windows x64/H700 libretro builds succeed. Android runtime is not tested.
+Windows x64/handheld libretro builds succeed. Android runtime is not tested.
 
 
 The first scan-all-slots candidate above is not the final implementation:
@@ -764,8 +763,8 @@ candidate uses a distinct binary/evidence series, resume8-lazy-*.
 
 
 Lazy candidate source review found no new lifetime/epoch/mapping blocker. Its
-Windows and H700 JIT differential and arena/epoch-wrap tests pass, and all four
-C23 libretro targets build. H700 benchmark SHA256:
+Windows and the handheld JIT differential and arena/epoch-wrap tests pass, and all four
+C23 libretro targets build. Handheld benchmark SHA256:
 491015a7631f892c4b3c70b0f669cc7c45c9576ab9fd1d40239e333885cbf4d4.
 The final qualified measurements below supersede the discarded scan variants.
 
@@ -793,7 +792,7 @@ Final lazy Blue 60/180 profiling confirms 67,529 ->
 8,041 compiled blocks, with the same 90 cache operations and
 identical CPU/video/PCM and native instruction/call counts. Its arena occupancy
 is 29,079,868 bytes in that window, within the unchanged 64 MiB
-cap. Evidence: resume8-lazy-profile-comparison.json. Final H700 Her Knights and
+cap. Evidence: resume8-lazy-profile-comparison.json. Final handheld Her Knights and
 Astonishia 2400/300 hashes also match the pre-change Windows reference; these
 single runs are compatibility evidence, not qualified speedup measurements.
 Final stable-poll regression passes in resume8-lazy-poll-h700.json.
@@ -810,7 +809,7 @@ The user's `Her Knights - All for Princess - Deadline (Korea).smc` matches
 MAME's Korean **그녀의 기사단 강행돌파** entry by size and SHA-1. Earlier Her
 results used Europe/boot-menu windows. A separate first-palace combat state and
 scripted movement/attacks now provide a visually checked gameplay workload.
-Qualified H700 1.512-GHz ABBA measures 81.986 -> 90.5365 core fps (+10.43%) for
+Qualified handheld 1.512-GHz ABBA measures 81.986 -> 90.5365 core fps (+10.43%) for
 the retained lazy cache candidate, with all seven CPU/video/PCM fields exact.
 
 The same 20-emulated-second window produces PCM on all 1200 frames, with zero
@@ -834,7 +833,7 @@ earlier OS incident is established. Details and raw evidence pointers are in
 A bounded candidate paired adjacent registers in single-page, ordinary LDM/STM
 transfers using W-form LDP/STP for RAM and the guest register array. Existing
 alignment, mapping, bounds, PC, writeback and two-page handling stayed intact.
-The H700 native differential suite, including eight representative contiguous,
+The handheld native differential suite, including eight representative contiguous,
 gapped, odd-tail and base-overlap cases, passed. However matched 1.512-GHz ABBA
 showed no useful end-to-end gain: Wizard 2400/600 50.6645 -> 50.706 fps (+0.08%),
 Blue state 1200/600 66.7215 -> 66.5205 fps (-0.30%). Both were output-exact.
@@ -859,7 +858,7 @@ as candidate.reused=false/true. Measurement/exactness/clock logic is unchanged.
 The Korean battle exposed a real cross-host input-replay bug. Its input script
 contained two frame-zero SETs, RIGHT then RIGHT+A. Sorting by frame/action alone
 allowed qsort to reverse these equal keys on Windows while retaining their order
-on H700. A trace-interpreter state probe identified the first difference as a
+on the handheld. A trace-interpreter state probe identified the first difference as a
 single SoC.buttons byte (0x200 versus 0x201); CPU, RAM, timer, audio and all other
 state bytes were still identical. The later video/PCM discrepancy was caused by
 different input, not by a demonstrated JIT or timer defect.
@@ -867,9 +866,9 @@ different input, not by a demonstrated JIT or timer defect.
 Input events now carry their insertion sequence as a final comparison key.
 Existing frame/action precedence remains; equal-frame/action events retain
 authored order. A focused replay fixture fails before the change on Windows and
-passes after it on Windows and H700. Replaying the original Korean combat script
+passes after it on Windows and the handheld. Replaying the original Korean combat script
 for 1200 warmup + 1200 measured frames now matches all seven CPU/video/PCM fields
-across both hosts and the prior H700 candidate. H700's single corrected run is
+across both hosts and the prior handheld candidate. the device's single corrected run is
 90.236 fps, not a qualified performance-improvement claim. Evidence:
 F:/GP32/results/resume10-input-{test-h700,fixed-win,fixed-h700,cross-host-exact}.json;
 diagnosis: resume10-portability-findings.md. The rebuilt Windows headless runner
@@ -877,9 +876,9 @@ also contains the fix. This affects recorded/scripted input order, not physical
 controller latency. Actual speaker output and input-to-display latency remain
 open requirements.
 
-## Resume11: normal Spruce audio path and real battle scene capture
+## Resume11: normal device audio path and real battle scene capture
 
-The Korean Her Knights candidate now passes normal Spruce app launch, ALSA
+The Korean Her Knights candidate now passes normal handheld app launch, ALSA
 PLAYBACK initialization and automatic return to MainUI. The prior direct-SSH
 audio failure was menu ownership of the PCM device. A temporary developer app
 uses the normal exit/respawn flow; no menu process kill or installed core/settings
@@ -906,35 +905,35 @@ CommandCode's separate local scene exploration reached actual Little Wizard
 combat. F:/GP32/results/resume11-wizard-combat-entry.state (frame 3350) and
 resume11-wizard-combat-x3900.state have corresponding inspected combat captures;
 resume11-wizard-combat.txt reproduces entry from boot. The old 2700-frame
-benchmark was character selection. Real-combat H700 throughput is still to be
+benchmark was character selection. Real-combat the handheld throughput is still to be
 measured. Repeated identical intermediate captures were a headless dump-at
 scheduling defect in frame mode, not evidence of an emulation hang.
 
 ## Resume12: descriptive status of the current optimization candidates
 
 The integrated CPU, LCD, audio and presentation changes build on Windows,
-H700 Linux, and Android ARM64/ARMv7. The existing Windows CTest suite passes
+handheld Linux, and Android ARM64/ARMv7. The existing Windows CTest suite passes
 12/12. This does not establish all-game 60-fps operation or physical audio quality.
 
 **AArch64 JIT RAM-page handling.** src/arm920t.c, src/arm920t_jit_a64.inc,
 tests/arm_jit_test.c. Windows differential: baseline and candidate both PASS
 with the expanded test (36,110 JIT events, 0 fallbacks each; the original
-baseline test had 30,524 events). H700 cross-build PASS (Zig 0.13.0,
+baseline test had 30,524 events). Handheld cross-build PASS (Zig 0.13.0,
 aarch64-linux-gnu.2.17, cortex_a53, C23, O3; test binary SHA-256
 237eaa247c0fe2e4405fa45f32d5b0efb7bc7638cce28ce5d9a16ca0df428629). The native
-H700 full gate FAILED on mapped-page-RAM-end (CP15[5] = 5 vs 0,
+handheld full gate FAILED on mapped-page-RAM-end (CP15[5] = 5 vs 0,
 CP15[6] = 0c7fffff vs 0). Root cause was a pre-existing classified halfword
 physical fallback that translated an already-physical address again and mutated
 CP15 fault registers; the repair probes physical fastmem and calls the physical
 bus callbacks directly. Bounded baseline bytecode fails the same two CP15
 mismatches while bounded fixed bytecode passes (events = 30, fallbacks = 0).
-The repaired native H700 RAM-end case and full differential gate now pass
+The repaired native handheld RAM-end case and full differential gate now pass
 (36,108 JIT events, 4 fallbacks in the full run). Evidence:
 `resume12-jit-final-h700.json`, binary SHA-256
 `f5b79f4e2de20b7a3a3c7f4a3db859caf19fbc47d55020890c488aae139b93f1`.
 The candidate adds 32 KiB transient A64 metadata plus derived TLB fill/flush work.
 
-The integrated resume12 H700 battle comparison is exact across CPU, video and
+The integrated resume12 handheld battle comparison is exact across CPU, video and
 PCM: Her Knights Korea improves from 90.098 to 101.2165 core fps (+12.34%) in
 ABBA order at matched 1.512 GHz. This combines CPU/LCD changes; it does not
 isolate the JIT cache's contribution or measure the whole libretro audio path.
@@ -945,7 +944,7 @@ OFFSIZE == 0, the width is aligned to pixels-per-word, and the whole consumed
 word run is inside RAM; every other case keeps the untouched per-halfword path.
 Host equivalence harness: 468 cases, 0 failed, colour LUT 0 mismatches over
 65,536 entries, plus 400 fixed-seed random cases. Host proxy timings (x86_64,
-mingw gcc 8.1.0 -O2, not H700): about 2.5-3.7x for the common 16-bpp 240x320
+mingw gcc 8.1.0 -O2, not handheld): about 2.5-3.7x for the common 16-bpp 240x320
 PAGEWIDTH=240 OFFSIZE=0 format and about 1.8-2.6x for aligned 8/4/2-bpp; the
 fallback cases are the same source and their 0.7-1.2x swings are host noise. The
 integrated candidate builds through the project's CMake/Zig path. A title with
@@ -966,7 +965,7 @@ boot/menu/attract window, not gameplay; the table and dedup method are in
 docs/GP32_LOCAL_GAME_MATRIX.md.
 
 **Presentation and optional effects.** The libretro portrait rotation uses
-8 x 8 tiles. Its H700 harness matches pixels for five dimension/stride cases;
+8 x 8 tiles. Its handheld harness matches pixels for five dimension/stride cases;
 average staging cost is 0.628 ms before versus 0.572 ms after (about 9% less
 time). This is a component measurement, not an overall game speedup.
 Packed RGB arithmetic and specialized loops speed up the optional persistence
@@ -981,13 +980,13 @@ steps. Physical SDL audio and starvation-free operation remain unverified.
 
 **Packaging and library.** The Android helper builds both ABIs with NDK
 28.2.13676358 and C23, and emits a SHA-256 manifest. Runtime testing on Android
-remains open. Spruce's GP32 tile is 120 x 130 pixels and was visually checked
+remains open. the device's GP32 tile is 120 x 130 pixels and was visually checked
 after MainUI reloaded its texture cache. Twenty unique locally supplied Korean
 releases were installed and hash-verified; the two previous European releases
 were preserved separately. No ROM or BIOS is included in this repository.
 
-**Installed H700 build.** The integrated libretro core ran through the normal
-Spruce app exit/respawn path for 1800 frontend frames. ALSA PLAYBACK initialized,
+**Installed handheld build.** The integrated libretro core ran through the normal
+handheld app exit/respawn path for 1800 frontend frames. ALSA PLAYBACK initialized,
 the idle battle capture showed 60.27 fps, and RetroArch exited successfully
 after 29 seconds of content runtime (1782 video frames pushed, 19 dropped).
 This run had no ALSA interposer or physical audio recording and is not a
@@ -1011,7 +1010,7 @@ across 14 cases; all 10 expected normal PCM-producing cases actually emitted
 audio. Three small streams also matched independently generated sample order
 and FIFO carry expectations. Evidence: `resume13-iis/iis-parent-final.json`.
 
-Two H700 A/B/B/A comparisons used dynamic guest clocks, 1200 warmup and 1200
+Two handheld A/B/B/A comparisons used dynamic guest clocks, 1200 warmup and 1200
 measured frames with scripted gameplay. All seven CPU/video/PCM fields matched
 in every run. Observed measurement clocks were consistently 1.512 GHz (44 and
 46 samples respectively); no governor or audio setting was changed.
@@ -1047,7 +1046,7 @@ Validation: the existing full Windows suite passed 12/12 during integration;
 after the final IIS memory-bound changes, the six affected peripheral and
 libretro audio/input/persistence cases passed. Android ARM64 and ARMv7 core
 builds passed again. No Android runtime or physical input-latency measurement
-was performed. The installed Spruce core remains the previously validated
+was performed. The installed handheld core remains the previously validated
 resume12 build; resume13 binaries are development candidates.
 
 ## resume14: compact JIT dispatch and LCD loop specialization
@@ -1059,7 +1058,7 @@ essentially unchanged. Decoded instruction addresses remain stable for native
 helpers; state serialization, generation checks and cache-maintenance semantics
 are unchanged. Allocation failure frees the header table before falling back.
 
-With this change alone, matched-clock H700 A/B/B/A comparisons against `2a9f64b`
+With this change alone, matched-clock handheld A/B/B/A comparisons against `2a9f64b`
 produced the following core throughput. Both comparisons matched all seven
 CPU/video/PCM fields and all measured frequency samples were 1.512 GHz:
 
@@ -1091,12 +1090,12 @@ was rejected during review and was never applied to the repository.
 
 For contiguous 16-bpp LCD output, four specialized loops select the fixed byte
 order once per frame. Odd widths, OFFSIZE gaps and unbacked RAM keep their
-existing paths. H700 execution of the independent LCD comparison passed all
+existing paths. Handheld execution of the independent LCD comparison passed all
 468 cases and all 65,536 color-table entries. Host-only component measurements
 showed roughly 19-24% less time for the two full-frame 16-bpp cases; that is not
-an H700 or whole-game speedup claim.
+the device or whole-game speedup claim.
 
-Integrated validation: H700 native differential passed 36,108 events with four
+Integrated validation: handheld native differential passed 36,108 events with four
 expected fallbacks, Windows CTest passed 12/12, and Android ARM64/ARMv7 builds
 passed. The libretro audio callback investigation found no reproduced ordering
 or loss defect when the frontend could accept data. Partial/blocked callbacks
@@ -1111,7 +1110,7 @@ high-address XOR hash increased true collisions to 7,947 and translations from
 PC-fold experiment rechecks Wizard on the current core; see the dated
 JIT cache section in GP32_PERFORMANCE_STRATEGY.md.
 
-The integrated core then ran through Spruce's normal command handoff and menu
+The integrated core then ran through the device's normal command handoff and menu
 return for 1800 frontend frames. The capture shows the expected Her Knights
 battle and 60.29 fps; ALSA initialized, RetroArch exited with status zero and
 reported 1784 video frames pushed / 17 dropped. This idle-scene run is not a
@@ -1127,7 +1126,7 @@ and no diagnostic app was added to the menu. Local records:
 
 ## resume15: Korean library and active-combat audio delivery
 
-The live Spruce menu shows 20 Korean-region releases and the GP32 system tile
+The live handheld menu shows 20 Korean-region releases and the GP32 system tile
 at the same scale as its neighbors. The existing 120 x 130 icon matches the
 repository hash; no additional image resize or device setting change was needed.
 Six catalogued Korean releases remain absent from the supplied assets, as listed
@@ -1141,7 +1140,7 @@ silently select the first entry. One-ROM archives retain their existing behavior
 ### Tomak Korean combat: core-to-frontend and ALSA counters
 
 A diagnostic-only wrapper of the installed `42876cf` core ran the existing
-Tomak Korean stage-one state through the normal Spruce/RetroArch launch path.
+Tomak Korean stage-one state through the normal handheld/RetroArch launch path.
 It replayed the same 2,400-frame firing and vertical movement pattern as the
 resume13 headless scene. The wrapper counted audio batch acceptance; the
 previous ALSA interposer counted actual libasound errors and recovery calls.
@@ -1177,7 +1176,7 @@ input behavior are unchanged. This reduces callback overhead; it is not a
 measured controller-to-display latency reduction or whole-game speedup.
 
 The focused input, audio and persistence tests pass in the C23 Windows build.
-The input test also passes natively on H700 with the interpreter and JIT, including
+The input test also passes natively on the handheld with the interpreter and JIT, including
 bitmask negotiation, fallback, combined buttons and sign-extended unused high
 bits. Android ARM64 and ARMv7 cores build successfully; device runtime on Android
 remains unverified. The separate resampler investigation found no actionable
@@ -1189,7 +1188,7 @@ with all 220,418 audio frames accepted and no ALSA errors or recovery. This is a
 short integration check, not an additional performance benchmark. Evidence:
 `resume15-pad-runtime-verified.json`.
 
-The production H700 core with the input change is now installed, SHA-256
+The production handheld core with the input change is now installed, SHA-256
 `69c519d25a9de1d83dbf9b2dce6ffea6db331fecd99e78037bd7d968b2587df6`.
 The previous core is retained at `gp32-dev/resume15-installed-core-before.so`;
 settings are unchanged. The diagnostic wrappers remain separate developer
@@ -1203,7 +1202,7 @@ block compilation, removing its per-access control-register load and branch.
 CP15 control writes, reset and state loads invalidate the generation; checked
 helpers leave the block after a generation change. Memory blocks now use paired
 x19/x20 callee saves while preserving the aligned frame and x29/LR chain.
-Matched-clock H700 ABBA core throughput improved 2.88% in Her Knights, 3.16% in
+Matched-clock handheld ABBA core throughput improved 2.88% in Her Knights, 3.16% in
 Little Wizard and 4.20% in Mill; see [the measured windows and qualifications](GP32_PERFORMANCE_STRATEGY.md).
 
 The new same-VA/different-physical-page regression exposed an existing x86-64
@@ -1222,9 +1221,9 @@ ARM state. The fix covers both the interpreter and classified JIT helpers.
 The reproducer failed 22 assertions on the original core and now passes for
 MOVS PC,LR, SUBS PC,LR,#4 and LDM {...,PC}^ with JIT disabled/enabled.
 
-Final integrated validation: Windows CTest 13/13; native H700 exception return
+Final integrated validation: Windows CTest 13/13; native handheld exception return
 test and ARM differential test (36,392 events, four expected fallbacks) pass;
-Android ARM64/ARMv7 builds pass. One final H700 replay each of the measured Her,
+Android ARM64/ARMv7 builds pass. One final handheld replay each of the measured Her,
 Wizard and Mill windows preserves all seven CPU/video/PCM fields after the
 exception fixes. These last replays are exactness checks, not another ABBA
 performance claim. Evidence: `resume16-final-exception-h700.json`,
@@ -1237,10 +1236,10 @@ change observations from public bus callbacks. No production audio policy or
 device clock setting was changed in this batch.
 
 
-### Mill through the actual Spruce/RetroArch path
+### Mill through the actual handheld/RetroArch path
 
 A diagnostic-only wrapper of the final core replayed the 1,700-frame Mill input
-script through Spruce's normal command handoff. The captured final frame shows
+script through the device's normal command handoff. The captured final frame shows
 the village and Korean resident dialogue at 60.27 OSD fps. This is one endpoint
 reading, not a minimum or a full-game claim; it also does not prove that every
 headless dialogue tap advanced identically through the frontend.
@@ -1277,7 +1276,7 @@ Exception entry now honors CP15 c1.V (bit 13): the selected base is zero or
 [ARM920T TRM DDI 0151C, table 2-10, printed page 2-12](https://documentation-service.arm.com/static/5e8e2a5b88295d1e18d381bb).
 The previous core failed both JIT modes of the high-vector SWI oracle by
 entering 0x00000008 instead of 0xffff0008. The fixed low/high-vector and
-Thumb exception-return cases pass on H700 (`resume17-vector-h700.json`).
+Thumb exception-return cases pass on the handheld (`resume17-vector-h700.json`).
 Reset still follows the existing explicit reset-vector API; this change does
 not claim full MMU fault/abort accuracy or enable a new guest-clock setting.
 
@@ -1321,19 +1320,19 @@ A 100-million-guest-cycle MMU RAM loop was compared in eight alternating A/B
 pairs against the pre-fast-path x86 emitter. Median throughput was 301.97 vs
 889.34 million guest cycles/s (2.95x). Every timing run matched the interpreter's
 complete CPU state, RAM and BIOS image. This is a synthetic memory-loop gain,
-not an H700 or whole-game speed claim. Artifacts:
+not the device or whole-game speed claim. Artifacts:
 `F:/GP32/results/resume17-x64-build/mmu-loop-ab.json` and `x64-emitter.patch`.
 
 Integrated Windows CTest passed twelve tests on its first run. The remaining
 ARM JIT case exposed another old ARMv5-style mapped-PC fixture; after correcting
 its ARM target and adding state/alignment assertions, the affected test passed.
-No production code or assertion was relaxed to make that fixture pass. H700
+No production code or assertion was relaxed to make that fixture pass. Handheld
 native differential passes 40,459 events with four expected fallbacks; the
 expanded instruction/exception oracle passes too. Android ARM64/ARMv7 builds
 pass. Final Windows GP Fight input replay matches the earlier 49ae3d5 endpoint
 image byte-for-byte (SHA-256 `2aa4aae04e6461c28ae70a5c1def1fba0966a01cf000519d905287b8f6ba2a3c`).
 
-The final H700 bench also reproduced all seven CPU/video/PCM fields for the
+The final handheld bench also reproduced all seven CPU/video/PCM fields for the
 existing Her Knights, Korean Little Wizard and Mill scripts. These were one
 exactness replay each, not new A/B performance claims
 (`F:/GP32/results/resume17-final-scenes.json`). GP Fight's separately measured
@@ -1378,10 +1377,10 @@ introduced. The focused differential adds all fourteen conditions over six
 operand pairs and intervening logical, RAM, helper and predicated paths, storing
 each decision to RAM so later writes cannot hide a mismatch.
 
-H700 differential passed before and after the optimization: 42,769 events,
+Handheld differential passed before and after the optimization: 42,769 events,
 four expected fallbacks. Windows ARM JIT regression passed, and Android ARM64
 built successfully. Existing compiler warnings remain. Evidence:
-`F:/GP32/results/resume18-condition-{before,after}.json`. Qualified H700 ABBA
+`F:/GP32/results/resume18-condition-{before,after}.json`. Qualified handheld ABBA
 improves Her Knights combat by 3.42% and the slower Wizard selection window by
 3.71%, with identical CPU/video/PCM fields; the latter reaches 60.319 core fps
 but still lacks frontend headroom. See [performance strategy](GP32_PERFORMANCE_STRATEGY.md).
@@ -1405,7 +1404,7 @@ No resampler change or audio speedup is claimed. External evidence is under
 
 ### Her Knights runtime (resume18)
 
-The CPU candidate ran 2400 scripted combat frames through Spruce's normal
+The CPU candidate ran 2400 scripted combat frames through the device's normal
 MainUI/RetroArch handoff, exiting successfully after 43 seconds including
 startup/shutdown (39 seconds of content runtime). The final capture shows an
 attack hitting enemies; the OSD reads 60.64 fps. All 1,763,445 offered stereo
@@ -1439,7 +1438,7 @@ other instruction shapes retain the existing full frame. If a supposedly leaf
 trace reaches the helper emitter, compilation fails before native publication.
 Guest state commits, condition flags and cycle accounting are unchanged.
 
-The native H700 differential passed (42,769 events, four expected fallbacks),
+The native handheld differential passed (42,769 events, four expected fallbacks),
 as did arena churn/generation wrap and a direct insufficient-budget native call
 that checks no guest state changes. The pre/post-index stack opcodes were
 checked against assembler output. Android ARM64 built successfully; this is
@@ -1460,7 +1459,7 @@ measured +2.60% core throughput for Her Knights combat and +0.89% for the
 Little Wizard selection window; see the performance strategy for exact inputs,
 binaries and clock evidence.
 
-The candidate completed 2400 combat frames through Spruce/RetroArch, exiting
+The candidate completed 2400 combat frames through handheld/RetroArch, exiting
 successfully in 43 seconds including startup/shutdown (39 content seconds).
 All 1,763,445 offered stereo frames were accepted, with zero partial/zero
 returns or queued tails; ALSA reported zero errors/recoveries. Threaded video
@@ -1484,9 +1483,9 @@ Translation and the classified fallback are outlined from native dispatch.
 The hot loop also omits two conditions already guaranteed at native publication
 and postpones stable-read bookkeeping until portable execution. Sol reviewed
 outlining; a separate CommandCode review checked every native-pointer writer,
-cache invalidation and immutable bus callback lifetime. H700's outlining
+cache invalidation and immutable bus callback lifetime. the device's outlining
 candidate passed the 42,769-event differential, polling and recycle tests.
-After the dispatch simplification, Windows arm_jit/arm_poll/recycle and H700
+After the dispatch simplification, Windows arm_jit/arm_poll/recycle and the handheld
 poll/recycle passed. The corrected polling test also passes on both hosts.
 
 The polling regression had a real setup flaw: its callback-absent variant
@@ -1504,7 +1503,7 @@ removes two per-unit pointer probes.
 
 The worker initially rejected the small candidate after mixed x86 Clang -O2
 results. Parent validation used the actual release optimization level (-O3)
-and target hardware: nine alternating timing rounds on H700 measured candidate
+and target hardware: nine alternating timing rounds on the handheld measured candidate
 runtime ratios 0.7788/0.7664/0.7916 for whole 32/16-bit stream/burst, and
 0.8096/0.7846 for single-service 32/16-bit; the untouched byte control was 1.0000.
 Thus the measured PCM DMA cases take roughly 19-23% less time. These are isolated
@@ -1515,7 +1514,7 @@ worker's -O2 run; short workstation timings are not a global PC speed claim.
 The worker's differential harness compared PCM, SoC snapshots and DMA/IIS/IRQ
 state across ordinary and boundary cases. Parent's existing s3c2400_timing and
 libretro_audio regressions passed on the integrated source. Android ARM64 and
-ARMv7 release builds passed. The integrated H700 binary matches all seven
+ARMv7 release builds passed. The integrated handheld binary matches all seven
 CPU/video/PCM fields in both Wizard selection and Her Knights combat:
 `F:/GP32/results/resume21-final-exactness.json`. Final benchmark SHA-256:
 `834553a87ff73c75d3cace98520263c704aba8f8c864eb9a29099952d2b3648b`.
@@ -1538,7 +1537,7 @@ The follow-up runtime uses the existing Korean Wizard combat state and its
 explicit `frame:=A` / `frame:=NONE` input script.
 
 The saved-state Wizard run successfully loaded the combat state and completed
-2400 frames through Spruce/RetroArch: exit 0, 44 seconds including startup and
+2400 frames through handheld/RetroArch: exit 0, 44 seconds including startup and
 shutdown, 39 content seconds. All 1,762,933 offered stereo frames were accepted;
 there were no zero/partial returns or queued tails. ALSA reported zero errors
 and recoveries. Unlike the excluded BIOS run, most output contains nonzero PCM.
@@ -1569,7 +1568,7 @@ word load emits two fewer instructions and a word store three fewer; these
 counts are not whole-game speed claims.
 
 Parent assembled `ubfiz w11, w0, #3, #2` and verified encoding `0x531d040b`.
-The H700 candidate passes the existing 42,769-event JIT differential (4 expected
+The handheld candidate passes the existing 42,769-event JIT differential (4 expected
 fallbacks) and native arena churn/generation-wrap regression. The existing
 memory tests exercise rotation, byte/halfword extensions, writeback and mapped
 RAM/MMIO boundary behavior. No new duplicate test suite was added.
@@ -1588,7 +1587,7 @@ manufacturer policy restrictions and actual Android execution remain untested.
 
 SWE's standalone source-audio probe identified a deliberate guest audio stop:
 IISCON changes from 0x27 to 0x0e, clearing the start bit after DMA2 drains.
-The same standalone replay on H700 produces 407,434 source stereo frames;
+The same standalone replay on the handheld produces 407,434 source stereo frames;
 its last nonzero frame is 2231 and silence begins at 2232, matching the PC
 probe. This explains that replay's source silence but does not establish
 physical speaker quality or explain other games' dropouts.
@@ -1608,7 +1607,7 @@ Evidence: `F:/GP32/results/resume22-audio-h700.json`,
 The corrected runtime completed 2401 frontend runs (2400 after auto-state
 load). Every replay frame matches the standalone PC probe's guest PC, source
 stereo-frame count, nonzero-frame count and IISCON. Its final 5,559,005,000 guest
-cycles / PC 0x0c07788c match the H700 benchmark endpoint; total source frames
+cycles / PC 0x0c07788c match the handheld benchmark endpoint; total source frames
 are 407,434 and the final nonzero source frame is 2231 relative to state load.
 This confirms that the earlier source-audio timing difference was diagnostic
 input phase, not a demonstrated x64/A64 or audio transport discrepancy.
@@ -1655,7 +1654,7 @@ The decision uses the accepted contiguous span in the renderer itself, without
 duplicating its range/stride checks. The existing LCD differential harness
 passes 868 cases with identical framebuffer and DMA/frame state.
 
-H700 passes the complete existing JIT differential with the new leaf cases
+Handheld passes the complete existing JIT differential with the new leaf cases
 (110,818 JIT events), native arena churn/generation wrap, and stable-poll
 regressions. Sol's focused x64 leaf differential and exception/cache checks
 also pass. Windows and Android ARM64/ARMv7 cores build; Android runtime remains
@@ -1741,7 +1740,7 @@ in the trace; returns at a trace boundary retain their guarded path. Review
 rejected an earlier PC-store-elision prototype because x64 MMU-off MMIO
 callbacks could observe a stale PC. That prototype was never installed.
 
-The final H700 candidate improves qualified Wizard late-window ABBA median
+The final handheld candidate improves qualified Wizard late-window ABBA median
 throughput from 91.3025 to 92.999 fps (+1.86%), with all seven CPU/video/audio
 fields matching and twelve measured clock samples at 1512 MHz. The earlier
 2.58% prototype result is superseded and is not a shipped speedup. The full
@@ -1755,7 +1754,7 @@ each byte transfer already pushes a FIFO halfword, but the scheduler requested
 four transfers per stereo-frame tick. It now requests two, as in halfword DMA.
 This prevents two output frames per declared sample period and an early
 terminal-count IRQ. A focused regression demonstrates the old 8 frames/2 IRQs
-versus the expected 4 frames/1 IRQ after four ticks. H700 passes the corrected
+versus the expected 4 frames/1 IRQ after four ticks. Handheld passes the corrected
 case and the prior LCD/PLL trace remains 47779e5037cd7b27. No state layout or
 16/32-bit DMA pacing changed; this is not a claim that the measured games'
 audible issues were caused by byte DMA. Evidence:
@@ -1768,7 +1767,7 @@ the helper branches, leaving direct RAM/BIOS hits unchanged. A callback that
 returns/records the CPU PC reproduced 26 baseline mismatches; the fixed
 sequence matches exec_arm_at for all eight load/store variants after both
 MOV and BX leaf returns. The full x64 differential passes 110,874 events;
-H700's affected callback subset also passes. Evidence:
+the device's affected callback subset also passes. Evidence:
 `F:/GP32/results/resume24-x64/{callback-before,callback-after,differential-after}.log`,
 `resume24-callback-pc-h700.json`.
 
@@ -1798,7 +1797,7 @@ instruction's fallthrough rather than its branch target. A 128-branch chain
 that skips ADD traps reproduces r1=1 in native execution versus r1=0 in the
 interpreter. The epilogue now commits the unconditional branch target, matching
 the existing A64 behavior. The full x64 differential including this regression
-passes (110,940 events), and the new chain case passes on the current H700
+passes (110,940 events), and the new chain case passes on the current handheld
 baseline. This fixes control flow; it is not a game-level speedup claim.
 Evidence: `F:/GP32/results/resume25-native/NOTES.md`, `chain-before.exe`,
 `chain-after.exe`, and `resume25-chain-h700.json`.
@@ -1826,7 +1825,7 @@ SoC image on the default Windows thread stack (identified in SWE review). The re
 file loader does not report a completed state as rejected merely because
 closing the already-consumed input stream fails.
 
-The existing H700 Korean Little Wizard combat state loads and replays with all
+The existing handheld Korean Little Wizard combat state loads and replays with all
 seven CPU/video/audio exactness fields unchanged. Android ARM64 and ARMv7 core
 builds pass. Evidence: `F:/GP32/results/resume25-state/summary.json` (pre-fix
 reproduction), `resume25-state-wizard-h700.json` (valid existing state replay).
@@ -1848,11 +1847,11 @@ The synthetic whole-machine regression uses different CPU progress, RAM,
 SmartMedia data/device state, and nonempty queued PCM. The frozen baseline
 fails state preservation for a RAM truncation and the post-card audio gap;
 the final loader passes all component-boundary/mid-audio truncations and both
-memory/file valid-load round trips on H700. Evidence:
+memory/file valid-load round trips on the handheld. Evidence:
 `F:/GP32/results/resume25-state-regression-before-h700.json`,
 `resume25-state-regression-h700.json`.
 
-The final fixed-snapshot regression passes on both Windows and H700; Windows
+The final fixed-snapshot regression passes on both Windows and the handheld; Windows
 libretro audio and persistence tests also pass. Windows/Android ARM64/ARMv7
 cores rebuild after the staging-buffer allocation change. Evidence:
 `F:/GP32/results/resume25-state-regression-final-h700.json`,
@@ -1871,7 +1870,7 @@ Record: `F:/GP32/results/resume25-core-installed.json`.
 
 Two external A64 candidates were compared with 4143c95. Retaining proven
 host-NZCV equivalence across flagless ALU/branch operations passes the full
-H700 differential (113,128 events, 21 fallbacks), including additional RRX,
+handheld differential (113,128 events, 21 fallbacks), including additional RRX,
 ADC and conditional flagless joins. Its first Wizard ABBA baseline ramps
 1320-1512 MHz, disqualifying a percentage claim. Steady candidates are
 93.411/93.366 fps against the final steady baseline 93.010: insufficient
@@ -1897,8 +1896,8 @@ same. Libretro's equal-rate memcpy path is already separate and unchanged.
 C23 Clang -O3 baseline/candidate comparisons match all PCM and complete
 resampler state across 3,000 varied capacity/rate/fade/carry calls; a separate
 scripted session matches 35,208 stereo frames. Windows libretro-audio and
-win64-audio tests pass, as do H700/Windows and both Android ABI core builds.
-The initial cold H700 timing varies with frequency and is not used for a
+win64-audio tests pass, as do handheld/Windows and both Android ABI core builds.
+The initial cold handheld timing varies with frequency and is not used for a
 percentage claim. A subsequent workload warmup reaches 1512 MHz without
 changing the governor; every measured A/B/B/A endpoint reports that frequency:
 
@@ -1915,7 +1914,7 @@ is kept separate from the device table. Evidence:
 `F:/GP32/results/resume26-resample-clocked-h700.json`,
 `resume26-resample/clang-final-win.log`, `resume26-resample/bench-clocked.c`.
 
-The integrated candidate also completes a real Spruce RetroArch Korean Wizard
+The integrated candidate also completes a real handheld RetroArch Korean Wizard
 combat replay (2,401 frontend runs, correctly aligned after auto-state load).
 Every replay frame's guest PC/source PCM count/nonzero count/IISCON matches
 the prior standalone reference. All 1,763,356 offered stereo frames are
@@ -1980,7 +1979,7 @@ addresses that measured regression. Intermediate exact/clock-qualified results
 remain in `F:/GP32/results/resume27-loop-wizard-abba.json`,
 `resume27-loop-v2-wizard-abba.json`, and `resume27-loop-v2-her-abba.json`.
 
-The final native differential suite passes on H700 (7,744 dispatch events,
+The final native differential suite passes on the handheld (7,744 dispatch events,
 21 existing fallbacks), including ragged budgets, callback cache flush/patch,
 IRQ, tracing, framed calls and a callback-replaced stack return. Arena churn,
 short native entry and generation/cache wrap checks also pass. The earlier
@@ -1996,9 +1995,9 @@ instructions now exit after completing their writes when a callback enabled
 tracing, and dispatch resumes in the logging interpreter. Focused Windows
 loop-fence and callback-PC checks pass. This adds a trace check after x64
 memory instructions; no PC performance improvement is claimed. Windows,
-H700, Android arm64-v8a and armeabi-v7a production core builds pass.
+handheld, Android arm64-v8a and armeabi-v7a production core builds pass.
 
-The final H700 CPU object and measured candidate are byte-identical after
+The final handheld CPU object and measured candidate are byte-identical after
 stripping debug metadata (SHA-256
 `1b4f949394764a4390eb2a8fab59337500ea0f51ebf29cd24085853593481b26`).
 
@@ -2060,13 +2059,13 @@ candidate 641.9925 fps (-1.89%). Baseline itself drifted from
 a reliable causal regression estimate. All seven architectural/audio/video
 fields match. Evidence: `F:/GP32/results/resume28-winperf/wizard-abba.json`.
 
-Windows, H700, Android arm64-v8a and armeabi-v7a builds pass. H700's stripped
+Windows, handheld, Android arm64-v8a and armeabi-v7a builds pass. the device's stripped
 CPU object is unchanged from resume27 (1b4f949394764a4390eb2a8fab59337500ea0f51ebf29cd24085853593481b26),
 so its verified installed core remains ec4477077d9e9b53f8f0ee635d4dccbda0ee0c238ae8492b24d7d110294b27df.
 No device setting or core replacement was needed for this x64-only change.
 
 The Korean library gained 20 current visual captures and three additional
-PC/H700 scene comparisons; details and unresolved screens are recorded in
+PC/handheld scene comparisons; details and unresolved screens are recorded in
 GP32_LOCAL_GAME_MATRIX.md. All three new scene comparisons preserve all seven
 fields. A stalled SFTP transfer was isolated to an unchanged partial developer
 state file with ample disk space; after stopping only the owned local transfer,
@@ -2088,9 +2087,9 @@ scalar tail, so partial rows do not overread. Indexed formats, gap/fallback
 scanout, DMA cursor/page accounting and non-AArch64 lookup rendering retain
 their existing behavior. The path is limited to little-endian AArch64.
 
-On H700, the existing LCD differential harness passes 868 cases, comparing
+On the handheld, the existing LCD differential harness passes 868 cases, comparing
 the whole framebuffer and DMA state against the original renderer. Windows
-scalar rendering passes 168 cases. Windows, H700 and both Android ARM targets
+scalar rendering passes 168 cases. Windows, handheld and both Android ARM targets
 build successfully. Evidence: `F:/GP32/results/resume29-lcd/`.
 
 The 20 saved library scenes explain where this helps: 17 use 8-bpp, whereas
@@ -2119,7 +2118,7 @@ MainUI resumes normally, and both user configuration hashes remain unchanged.
 Evidence: `F:/GP32/results/resume29-audio-runtime-verified.json`,
 `resume29-audio-summary.json`, `resume29-audio-runtime.png`.
 
-Production H700 core SHA-256:
+Production the handheld core SHA-256:
 `37dd671a416531ddca6a77ad09e52596d2759c504f11eca2902535799deaf411`.
 The previous core is backed up at
 `/mnt/SDCARD/gp32-dev/resume29-installed-core-before.so`.
@@ -2134,9 +2133,9 @@ The contiguous 8-bpp path now converts four indexed bytes directly, selecting
 the DMA byte order once per row span. It no longer runs a variable-width
 shift loop for every pixel. Palette contents are still expanded for each
 scanout; partial rows, DMA counters and other formats keep their semantics.
-Existing LCD differential checks pass 868 H700 cases and 168 Windows cases.
+Existing LCD differential checks pass 868 handheld cases and 168 Windows cases.
 
-In a clock-qualified H700 Little Wizard ABBA comparison, baseline
+In a clock-qualified handheld Little Wizard ABBA comparison, baseline
 111.566/111.888 fps becomes 112.525/112.440 fps: means 111.7270 -> 112.4825,
 **+0.68%**. This is a small core-throughput improvement, not a new frame-rate
 guarantee. All seven CPU/video/audio fields match. Tomak also matches all
@@ -2181,7 +2180,7 @@ variation, so this unqualified sample supports neither a reliable speedup
 nor a causal regression estimate. Evidence:
 `F:/GP32/results/resume30-winperf/wizard-abba.json`.
 
-Windows, H700, Android arm64-v8a and armeabi-v7a builds pass. The later x64
+Windows, handheld, Android arm64-v8a and armeabi-v7a builds pass. The later x64
 source change leaves the stripped AArch64 CPU object byte-identical
 (`1b4f949394764a4390eb2a8fab59337500ea0f51ebf29cd24085853593481b26`),
 so the tested and installed LCD core above is retained. Full-game, physical
@@ -2200,8 +2199,8 @@ The existing eight single-transfer IRQ and 48 block-transfer callback cases
 now also run with native JIT disabled. Profile assertions require decoded
 portable instructions and zero native calls. Before the fix they expose 112
 mismatches; the patched cases pass, including callback-triggered tracing.
-The final portable-focused mode passes on Windows and native H700. The full
-H700 differential passed with 9,067 dispatch events and 21 fallbacks while
+The final portable-focused mode passes on Windows and native handheld. The full
+handheld differential passed with 9,067 dispatch events and 21 fallbacks while
 the temporary helper candidate below was present; removing that candidate
 restores the previously validated native helper, and the final portable mode
 was rerun. All four build targets pass. Evidence:
@@ -2250,7 +2249,7 @@ source stride handling, and the scalar path on targets without NEON. The
 landscape and unusual-size paths, callback order, guest CPU, and audio code
 are unchanged. This is a frontend conversion optimization, not a JIT gain.
 
-On H700, a same-process ABBA component comparison after a 30-second warmup
+On the handheld, a same-process ABBA component comparison after a 30-second warmup
 measured scalar 242.349/242.795 microseconds and NEON 214.878/215.651
 microseconds per frame: means 242.572 -> 215.2645 us, an 11.26% reduction
 (0.0273 ms per frame). All eight boundary clock readings were 1512 MHz.
@@ -2263,9 +2262,9 @@ Evidence: `F:/GP32/results/resume32-video/bench.c`, `h700.json`,
 
 The existing libretro audio/video test now covers portrait rotation with both
 packed and padded source rows, an offset source pointer, RGB/alpha fidelity,
-and destination guards. The focused suite passed on Windows and native H700;
-Windows, H700, Android arm64 and Android ARMv7 production builds succeeded.
-H700 test record: `F:/GP32/results/resume32-video/audio-test-h700.json`.
+and destination guards. The focused suite passed on Windows and native handheld;
+Windows, handheld, Android arm64 and Android ARMv7 production builds succeeded.
+Handheld test record: `F:/GP32/results/resume32-video/audio-test-h700.json`.
 
 The real RetroArch Tomak Korea replay completed 901 runs (900 state-replay
 frames), with every guest PC, source PCM count/nonzero count and IISCON matching
@@ -2286,7 +2285,7 @@ No input patch was warranted. The independent audio-state agent failed with
 HTTP 429 before yielding findings; no successful audio-state review is claimed.
 Review: `F:/GP32/results/resume32-input-review.md`.
 
-The production H700 core SHA-256 is
+The production handheld core SHA-256 is
 `2b6b9883a53da4529bfd0f99936c62766a982cf98c5ce9281f7f8041a2920dd1`.
 Installation record: `F:/GP32/results/resume32-core-installed.json`; the previous
 core is retained as `/mnt/SDCARD/gp32-dev/resume32-installed-core-before.so`.
@@ -2343,7 +2342,7 @@ including the capture path sharing the same structure. The original source
 matches official 69a4f0e byte for byte, and applying the patch was checked.
 The barrier-controlled model reproduced an available-space timeout on the old
 protocol; the corrected write and shutdown modes passed on Windows winpthreads
-and native H700 Linux pthreads. This is a synchronization-model result, not a
+and native handheld Linux pthreads. This is a synchronization-model result, not a
 full patched RetroArch build or a demonstrated gameplay pacing fix.
 Native evidence: `F:/GP32/results/resume33-alsa-review/native-check.json`;
 source/patch evidence: `REPORT.md`, `source-manifest.json`, `verification.json`
@@ -2352,8 +2351,8 @@ in the same directory. A rebuilt frontend comparison remains outstanding.
 ### Full frontend backport build and ABBA playback (resume34, 2026-10-03)
 
 The outstanding resume33 build comparison is now complete for one Tomak Korea
-scene. A Sol sidecar identified the official historical Spruce H700 build recipe
-at spruceUI/RA de0d03cbbe77936e1b590d68677858547b299e2f and its four common
+scene. A Sol sidecar identified the official historical handheld build recipe
+at upstream frontend revision de0d03cbbe77936e1b590d68677858547b299e2f and its four common
 vendor patches. Both baseline and corrected RetroArch builds include those
 patches and use the recipe's feature selection. The private Windows build uses
 Zig 0.13.0 / Clang 18.1.6, `aarch64-linux-gnu.2.17`, Cortex-A53 and LTO, with
@@ -2393,7 +2392,7 @@ showed approximately 17 ms p99, and no direct observation attributes every
 long interval to the lost-wakeup race. Physical audio/input and full-game
 acceptance remain open.
 
-The installed frontend differs from the published Spruce v4.4.0 binary in only
+The installed frontend differs from the published handheld v4.4.0 binary in only
 61 bytes across eight `.rodata` ranges, all Korean menu-label substitutions;
 executable code is identical. The rebuilt pair does not yet retain those local
 translations, so neither replaces the normal frontend. Production core SHA-256
@@ -2419,14 +2418,14 @@ joypad on initialization. Reconnection uses current input on the next run.
 The minimal libretro header now includes the standard NONE and device-mask
 constants.
 
-The existing input suite passed on Windows and native H700 with JIT off/on,
+The existing input suite passed on Windows and native handheld with JIT off/on,
 bitmask and individual-button protocols, disconnect/reconnect and unrelated
-port changes. Windows, H700, Android arm64 and ARMv7 core builds succeeded.
+port changes. Windows, handheld, Android arm64 and ARMv7 core builds succeeded.
 This is controller configuration correctness, not a measured physical input
 latency reduction. Native evidence:
 `F:/GP32/results/resume35-frontend/input-h700.json`.
 
-The production H700 core was backed up and replaced after verification.
+The production handheld core was backed up and replaced after verification.
 Installed SHA-256:
 `7f6111e5d492682ec2be3301cb9bdf007337843892febb4102e7d30e02ef243e`;
 backup: `/mnt/SDCARD/gp32-dev/resume35-installed-core-before.so`.
@@ -2441,7 +2440,7 @@ recompiled before linking the already ALSA-corrected frontend. The resulting
 binary SHA-256 is
 `e4a4ea8feebe9776b867a23f61380c7fb2b78605a4bcf6d8e31b6144d70e4b50`.
 
-A real H700 screenshot confirms legible Korean title, six labels and numbered
+A real handheld screenshot confirms legible Korean title, six labels and numbered
 save/load slots at 720x480. The network menu hotkey opened and closed the menu;
 714 subsequent core runs confirm gameplay resumed. All 863 state-replay frames
 matched the standalone PC/source-audio/IIS reference prefix, and all 634,806
@@ -2474,11 +2473,11 @@ reproduced and implemented by the parent.
 The localized ALSA-corrected frontend is now installed as
 `/mnt/SDCARD/RetroArch/ra64.gp32.h700`, SHA-256
 `e4a4ea8feebe9776b867a23f61380c7fb2b78605a4bcf6d8e31b6144d70e4b50`.
-A seven-line selector in Spruce's existing `run_retroarch` function activates
-it only for system GP32, core gp32emu, and original frontend ra64.h700, with
+A seven-line selector in the device's existing `run_retroarch` function activates
+it only for system GP32, core gp32emu, and the original frontend build, with
 an executable-file check. Other systems/cores and 32-bit/generic frontends
 retain their original selection; removing the optional binary restores the
-original H700 selection. The source patch is provided under
+original handheld selection. The source patch is provided under
 `packaging/spruce/retroarch-patches/gp32-h700-frontend-selection.patch`.
 
 On-device shell syntax and seven routing cases passed, including missing-file
@@ -2497,7 +2496,7 @@ the installed binary through a timed wrapper. It loaded the actual production
 core `7f6111e5d492682ec2be3301cb9bdf007337843892febb4102e7d30e02ef243e`.
 The first private HOME omitted the normal joypad profile path. The corrected
 run explicitly referenced the existing autoconfig/assets directories; the
-ANBERNIC-keys profile matched with affinity 50 and the unconfigured warning
+handheld key profile matched with affinity 50 and the unconfigured warning
 disappeared. The initial verifier incorrectly expected a filename in the log;
 that RetroArch build reports profile affinity instead, so the check was
 corrected against the captured output without rerunning gameplay.
@@ -2512,13 +2511,13 @@ bookkeeping. Production settings hashes were again verified after the run.
 
 A SWE worker updated `scripts/bench_h700.py` to defer while any of the six
 known RetroArch binaries is running, including the new name, and updated
-`scripts/h700_snapshot.py` to capture both H700 frontend names without changing
+`scripts/h700_snapshot.py` to capture both handheld frontend names without changing
 its JSON shape. Python syntax validation passed. A live snapshot found the
 new process but it exited during subsequent `/proc` reads, which were recorded
 as errors; the second run's in-launch capture establishes its executable and
 CPU mask without relying on that incomplete snapshot.
 
-One separate Spruce issue remains: `DEVICE_MAX_CORES_ONLINE=0123` is shortened
+One separate handheld issue remains: `DEVICE_MAX_CORES_ONLINE=0123` is shortened
 to `23` by `pin_to_dedicated_cores`, but the bundled `pin_cpu` explicitly expects
 `2,3` (or a range), so it reports invalid affinity. Captured frontend affinity
 remains CPUs 0-3. The selection patch leaves this existing helper untouched;
@@ -2530,9 +2529,9 @@ installed.json,routing.txt,live-snapshot.json}` and
 `F:/GP32/results/resume36-launch2/{runtime-verified.json,frontend.exit,
 active-exe.txt,active-status.txt,runtime.log,function.log,final.png}`.
 
-### H700 affinity tradeoff and GP32-only bypass (resume37, 2026-10-04)
+### Device affinity tradeoff and GP32-only bypass (resume37, 2026-10-04)
 
-The bundled `pin_cpu` help text confirms comma/range CPU-list syntax. Spruce
+The bundled `pin_cpu` help text confirms comma/range CPU-list syntax. Handheld
 shortens `DEVICE_MAX_CORES_ONLINE=0123` to `23`, which requests CPU 23 instead
 of CPUs 2 and 3. A GP32-scoped candidate converted that argument to `2,3`.
 Four interleaved real RetroArch Tomak runs compared the original helper with
@@ -2633,9 +2632,9 @@ preserve the computed base separately; register-offset shifts, unaligned word
 rotation, RAM/MMU guards, callback exits and instruction accounting are
 unchanged. The non-flag-setting W operations retain 32-bit address wrap.
 
-The existing full native H700 JIT differential passes, including memory,
+The existing full native handheld JIT differential passes, including memory,
 mapped pages, flags, alias/writeback, callbacks, budgets and loop fences:
-9,067 JIT events and 21 fallbacks. H700 and Android arm64-v8a libretro builds
+9,067 JIT events and 21 fallbacks. Handheld and Android arm64-v8a libretro builds
 pass. Windows/x64 and ARM32 backends are not changed by this emitter patch.
 
 Initial interleaved measurements were guest-exact but disqualified because
@@ -2665,8 +2664,8 @@ The production core was installed with SHA-256
 `37884295e3f0a6c149be1ea1c91e835aa997325eff7e1615394e2ec21a3a6b0f`.
 Its previous version is preserved at
 `/mnt/SDCARD/gp32-dev/resume39-installed-core-before.so`. A bounded run through
-the installed Spruce frontend-selection/platform-setup functions loaded this
-core, matched the ANBERNIC controller profile, exited normally and returned
+the installed handheld frontend-selection/platform-setup functions loaded this
+core, matched the gamepad controller profile, exited normally and returned
 to MainUI. ALSA accepted 1,032 full writes with zero errors or recoveries.
 This used private save/config bookkeeping and no scripted gameplay input;
 it is an integration check, not another comparable audio-quality replay.
@@ -2687,11 +2686,11 @@ with explicit endpoint/midpoint expected values and reversed stereo channel
 polarity. Both real conversion translation units were compiled with C23,
 `-O1 -fsanitize=shift -fsanitize-trap=shift`: the pre-change Windows binary
 trapped with status `0xc000001d`; the corrected binary passes. The fixture also
-passes as a normal CMake target on Windows and native H700. The existing
-libretro audio test passes. Windows, H700, Android arm64-v8a and armeabi-v7a
+passes as a normal CMake target on Windows and native handheld. The existing
+libretro audio test passes. Windows, handheld, Android arm64-v8a and armeabi-v7a
 libretro builds pass. No unrelated full test suite was rerun.
 
-The optimized H700 production core still has SHA-256
+The optimized handheld production core still has SHA-256
 `37884295e3f0a6c149be1ea1c91e835aa997325eff7e1615394e2ec21a3a6b0f`
 and the benchmark still has
 `4a59071c413c76f5b3a2a9db465c7673afe7e043c1022e31f65e01d10cb7ba0f`.
@@ -2723,7 +2722,7 @@ testing output granularity rather than attributing the stalls to guest CPU
 execution. It does not establish the entire presentation/input-latency path.
 
 A diagnostic frontend now allows a four-versus-sixteen period request while
-retaining the requested buffer time. The H700 negotiated four versus eight
+retaining the requested buffer time. The handheld negotiated four versus eight
 periods (16 versus 8 ms), both with 3,072-frame hardware/software buffers.
 The 2,400-frame Her Knights ABBA replay reduced interval p99 from
 31.893/31.902 ms to 24.016/24.020 ms, but intervals over 20 ms increased from
@@ -2775,7 +2774,7 @@ residue passed 21,152 bounded arithmetic cases and preserves 1:1 accounting.
 This is design evidence only: idle/HLE integration and save-state semantics
 remain unresolved, and no 166/200 MHz option is implemented or validated.
 
-### H700 GP32-only low-delay presentation profile (resume43)
+### Device-side GP32-only low-delay presentation profile (resume43)
 
 The previous grace experiment's FIFO starvation was resolved in an isolated
 Her Knights replay by widening RetroArch's audio rate-control bound from 0.5%
@@ -2789,7 +2788,7 @@ practical outcome. The custom completion-wait code was archived locally and
 the external source restored; no new thread/queue mechanism is shipped.
 `packaging/spruce/h700/gp32emu.cfg` contains only the existing video setting and
 `audio_rate_control_delta = 0.020000`. It is scoped to the gp32emu core on the
-tested H700, retaining the device's global config and other emulator policies.
+tested handheld, retaining the device's global config and other emulator policies.
 
 Her Knights' 2,400-frame replay retained exact per-frame guest/source-audio
 fields and final pixels. In its late 1,200 frames, the native-video diagnostic
@@ -2813,7 +2812,7 @@ Evidence: `F:/GP32/results/resume43-rate/`, particularly `installed-profile.json
 `n1-integrity.json`, `t1-integrity.json`, and the matching runtime logs.
 
 The installed override was then exercised with the existing production frontend
-and a private Tomak replay. The Korean Spruce in-game menu opened, closed and
+and a private Tomak replay. The Korean handheld in-game menu opened, closed and
 returned to moving gameplay; normal exit restored MainUI. Guest/source-audio
 fields match the corresponding reference prefix, all audio was accepted, and
 protected file hashes remained unchanged. Menu pause affects the number of
@@ -2825,7 +2824,7 @@ comparison (`installed-menu.json`, `p2-menu.png`).
 A native MMU-on prototype cached the last validated 4 KiB VA tag and RAM XOR
 offset in callee-saved x26/x27. It seeded an invalid tag at block entry and
 after every continuing helper, preserving the current-table lookup on misses.
-The native differential suite passed on H700 (9,067 JIT events, 21 fallbacks),
+The native differential suite passed on the handheld (9,067 JIT events, 21 fallbacks),
 including existing colliding-page, MMU-mode, state-load and loop-fence cases.
 The focused review found no concrete frame/invalidation defect, but these tests
 do not directly require the new helper-continuation seed or independently check
@@ -2869,8 +2868,8 @@ callback now selects the caller's CPU mode before restoring its registers.
 The test verifies all sixteen caller registers and CPSR after callback return.
 Both failures were reproduced before their respective fixes.
 
-The focused Windows timer/PCM checks and native H700 timer regression passed;
-Windows, H700 and Android arm64-v8a/armeabi-v7a libretro builds succeeded.
+The focused Windows timer/PCM checks and native handheld timer regression passed;
+Windows, handheld and Android arm64-v8a/armeabi-v7a libretro builds succeeded.
 Android runtime was not exercised. A BIOS-backed Her Knights Korea replay
 (1,200 warmup plus 1,200 measured frames) retained all seven CPU/video/audio
 result fields, including video hash `5a5e0fa9bcc8b1e0` and audio hash
@@ -2878,7 +2877,7 @@ result fields, including video hash `5a5e0fa9bcc8b1e0` and audio hash
 or evidence that every direct-mode game now works.
 
 Evidence and reproducible deployment record: `F:/GP32/results/resume45-timer/`.
-The H700 core SHA-256 is
+The handheld core SHA-256 is
 `7bad89507a776fb2d58cff672747b95f811d32640dc0e711279761ad1a745c1f`.
 No CPU multiplier or save-state format change is included.
 
@@ -2893,9 +2892,9 @@ instructions and returns through the ARM firmware trap; the waiting caller's
 registers and CPSR must still be restored.
 
 The new callback case failed with both interpreter and JIT before the fix.
-Afterward the expanded timer regression passed on Windows and native H700,
+Afterward the expanded timer regression passed on Windows and native handheld,
 including existing disabled/split-period and IRQ/FIQ cases. The Windows PCM
-regression and Windows/H700/Android arm64-v8a/armeabi-v7a libretro builds passed.
+regression and Windows/handheld/Android arm64-v8a/armeabi-v7a libretro builds passed.
 This proves the shared callback-entry mechanism, not a complete Thumb SDK
 application or Android runtime. Evidence: `F:/GP32/results/resume46-callback/`.
 
@@ -2917,7 +2916,7 @@ function and rate. Without that identity check, the two-phase implementation
 incorrectly invoked an expiry belonging to the replaced timer; this was also
 reproduced and corrected before deployment.
 
-Expanded Windows and native H700 timer tests pass for both slot orders,
+Expanded Windows and native handheld timer tests pass for both slot orders,
 same-function/rate replacement, ARM/Thumb entry and interpreter/JIT execution.
 The Windows save-state regression and all four libretro target builds pass.
 Dispatch identities are transient and are not added to the serialized state;
@@ -2933,10 +2932,10 @@ The shared CPU poll accelerator now recognizes balanced register-only leaf
 returns and idempotent immediate word stores to writable RAM. Each store
 must already match memory before execution; intermediate writes, MMIO and
 read-only mappings are excluded. Existing state, timing and invalidation
-checks remain in force. Windows/H700 poll regressions and the native H700
+checks remain in force. Windows/handheld poll regressions and the native handheld
 JIT differential passed; all four libretro target builds succeeded.
 
-Qualified H700 comparisons improved Little Wizard Korea's measured late
+Qualified handheld comparisons improved Little Wizard Korea's measured late
 window from 113.05 to 399.96 core fps (3.54x), with exact CPU, video and PCM
 results. Her Knights and Tomak stayed within measurement variation. The
 2,401-run real-RetroArch replay retained source timing and audio counts,
@@ -2958,13 +2957,13 @@ A real guest-code regression reaches the caller's halfword PC by executing
 a Thumb instruction, then invokes the shared HLE callback path. A preceding
 `BX lr` makes the wrong callback entry return without its RAM write. Both
 the entry and restored-PC assertions failed before the fix with JIT enabled
-and disabled; both now pass on Windows and native H700. ARM PC alignment
+and disabled; both now pass on Windows and native handheld. ARM PC alignment
 remains checked. Existing Windows PCM and save-state tests pass, and Windows,
-H700, Android ARM64 and ARMv7 libretro builds succeed. This is a correctness
+handheld, Android ARM64 and ARMv7 libretro builds succeed. This is a correctness
 fix; no new speedup or whole-game compatibility result is claimed.
 
 Evidence: `F:/GP32/results/resume48-thumb/` (red/green test logs and native
-H700 result). Nested callback cycle accounting remains unresolved; this
+handheld result). Nested callback cycle accounting remains unresolved; this
 change does not alter it.
 
 The same investigation reproduced a separate callback dispatch inefficiency:
@@ -2977,7 +2976,7 @@ the request, without adding a per-instruction callback-flag poll.
 
 The guest Thumb regression consumed 4,096 cycles before this change and now
 consumes exactly its three instructions plus the ARM return trap. It also
-checks subsequent caller execution. Windows/H700 regressions and all four
+checks subsequent caller execution. Windows/handheld regressions and all four
 libretro builds passed again after this separate code change. A private
 one-timer probe improved from 52,096 CPU cycles for a 48,000-cycle idle budget
 to 48,002: the redundant 4,094 instructions are gone, while the actual two
@@ -2992,7 +2991,7 @@ Previously that branch immediately discarded the backlog even after the
 frontend resumed accepting samples. A scripted `retro_run` regression queues
 735 frames under backpressure, recovers in 17-frame callback chunks, then
 supplies an oversized source. It failed before the one-line drain fix and
-passes afterward on Windows and H700, preserving the exact queued samples.
+passes afterward on Windows and the handheld, preserving the exact queued samples.
 Normal steady blocks do not use this exceptional path; no audible improvement
 in an ordinary game is established by this regression. Source/buffer size
 limits and sustained-stall discard behavior remain bounded. Final evidence:
@@ -3014,10 +3013,10 @@ CPU field layout and save-state wire format are unchanged.
 A guest ARM callback writes RAM, changes SVC/FIQ/ABT/UND/IRQ saved status and
 banked registers, then returns through the normal private trap. Both SVC and
 FIQ caller cases failed before the fix in interpreter and JIT modes. The
-expanded test now passes on Windows and native H700, including exact bank
+expanded test now passes on Windows and native handheld, including exact bank
 restoration and preservation of the guest RAM write and executed cycles.
 Existing Thumb/return-yield/timer cases, Windows PCM/save-state checks, and
-Windows/H700/Android ARM64/ARMv7 libretro builds pass. This fixes a concrete
+Windows/handheld/Android ARM64/ARMv7 libretro builds pass. This fixes a concrete
 state-corruption path, not the still separate callback time-accounting issue.
 Evidence: `F:/GP32/results/resume49-banks/`.
 
@@ -3025,10 +3024,10 @@ Evidence: `F:/GP32/results/resume49-banks/`.
 
 The native emitter precomputes immediate PC-relative addresses and their
 alignment/rotation while preserving runtime memory reads and mapping guards.
-H700 native differential and two qualified Korean-game ABBA comparisons
+Handheld native differential and two qualified Korean-game ABBA comparisons
 passed with exact CPU/video/PCM results. Measured core throughput improved
 0.46% in Her Knights and 0.82% in Tomak; no displayed-FPS guarantee is implied.
-H700 and Android ARM64 cores build successfully. See the resume50 section in
+Handheld and Android ARM64 cores build successfully. See the resume50 section in
 `GP32_PERFORMANCE_STRATEGY.md` for evidence, scope and the deferred LCD idea.
 
 ### Nested call and loaded-return optimization (resume51)
@@ -3040,10 +3039,10 @@ AArch64 now continues matching single-transfer returns through the same
 trace. Speculative framed-callee reads use mapped code peeks, with every
 recorded fetch retained for cache revalidation.
 
-Final qualified H700 ABBA gives Her Knights +11.40% core throughput and Tomak
+Final qualified handheld ABBA gives Her Knights +11.40% core throughput and Tomak
 essentially unchanged (+0.40%, overlapping run ranges), with exact CPU/video/
 PCM outputs. Broader nested STM traces were excluded after measured Tomak
-slowdowns. Windows nested-call differential and Windows/H700/Android ARM64/
+slowdowns. Windows nested-call differential and Windows/handheld/Android ARM64/
 ARMv7 builds pass. This does not change guest clocks, input or audio scheduling,
 and is not an all-games frame-rate or speaker-quality guarantee.
 Evidence: `F:/GP32/results/resume51-inline/`.
@@ -3056,16 +3055,16 @@ existing native budget and interrupt/cache fences; x64 also emits the precise
 not-taken PC+4 exit. Plain loops retain the previous layout after the broader
 prototype caused a measured Tomak slowdown.
 
-Qualified H700 comparisons give Her Knights +12.75% relative to resume51,
+Qualified handheld comparisons give Her Knights +12.75% relative to resume51,
 Tomak -0.43% and Little Wizard -0.21%. The controls are near parity, not claimed
-speedups; all three retain exact CPU/video/PCM results. Native H700 full JIT
-and stable-poll checks, Windows forward-loop differential, and Windows/H700/
+speedups; all three retain exact CPU/video/PCM results. Native handheld full JIT
+and stable-poll checks, Windows forward-loop differential, and Windows/handheld/
 Android ARM64/ARMv7 builds pass. Actual speaker continuity and input latency
 were not newly measured. Evidence: `F:/GP32/results/resume52-branch/`.
 
 ### Active-audio playback and input timing (resume53)
 
-Two actual H700 RetroArch replays of Korean Her Knights combat complete with
+Two actual handheld RetroArch replays of Korean Her Knights combat complete with
 the resume52 core. All 2,400 state-replay frames match in CPU/source-audio
 fields, and final RGB screenshots match. All 1,764,180 offered audio frames
 are accepted, with no ALSA error/recovery or core queue backlog. A private
@@ -3092,9 +3091,9 @@ or new ROM installation was needed in this step.
 Native loop traces now reuse an already-saved host register for the address
 of CPU control fields after the TLB arrays. IRQ/FIQ and cache/generation
 guards still read current values at each edge; no guest operations or guard
-checks are removed. Qualified exact H700 comparisons show Her Knights +3.89%
+checks are removed. Qualified exact handheld comparisons show Her Knights +3.89%
 and Tomak +1.14% core throughput, with Little Wizard near parity (+0.46%).
-H700 full native differential and stable-poll checks pass, and Android ARM64
+Handheld full native differential and stable-poll checks pass, and Android ARM64
 builds. The new core is installed with a backup; protected settings match.
 See the resume55 performance section for hashes and measurement limits.
 
@@ -3108,7 +3107,7 @@ lack supplied dumps. No ROM or user save was changed.
 
 AArch64 self-loop edges use one 64-bit load to recognize two inactive
 interrupt lines. Nonzero IRQ/FIQ values retain the previous independent
-mask checks; all other edge fences remain intact. H700 native differential
+mask checks; all other edge fences remain intact. Handheld native differential
 and stable-poll checks pass. Three qualified exact game comparisons are near
 parity (+0.21% to +0.68% observed core throughput); no robust speedup is
 claimed. Android ARM64 builds. The core is installed with a backup and
@@ -3129,7 +3128,7 @@ stage state show the player near center without input and at the right side
 after holding RIGHT. No Hangul appears in these captures; cumulative language
 coverage remains 14 of 20. See the game matrix for exact commands and limits.
 
-A separate AArch64 ALU operand-pairing candidate passes H700 native and
+A separate AArch64 ALU operand-pairing candidate passes handheld native and
 stable-poll checks and preserves exact game outputs. Qualified measurements
 are mixed and small (Her +0.86%, Tomak +0.78%, Wizard -0.58%), so it is not
 promoted. The source and rebuilt production artifacts are restored exactly
@@ -3145,8 +3144,8 @@ comparison to prevent maximum-counter wraparound. The SWI sleep path still
 advances exactly one tick. Saved-state layout is unchanged.
 
 The old implementation fails the new batch-versus-split timer regression.
-The fix passes Windows/H700 timer, PCM and state tests, builds for Android
-ARM64/ARMv7, and retains exact Her Knights/Tomak replay outputs. The H700
+The fix passes Windows/handheld timer, PCM and state tests, builds for Android
+ARM64/ARMv7, and retains exact Her Knights/Tomak replay outputs. The handheld
 core is installed with a backup and unchanged protected settings. This is a
 scheduler correctness/cost improvement, not a measured whole-game FPS gain.
 Nested guest callbacks still advance CPU time without fully settling the
@@ -3163,9 +3162,9 @@ produce different PCM for the same time partitioned differently. Metadata
 is rechecked after callbacks; no new saved-state fields are required.
 
 A guest ARM refill fixture verifies sample-identical batch/split rendering
-and expected fresh data for 32-, 64- and 70-sample halves. Windows/H700 PCM,
+and expected fresh data for 32-, 64- and 70-sample halves. Windows/handheld PCM,
 timer and state checks pass, Android ARM64/ARMv7 builds pass, and the existing
-Her Knights/Tomak replay fields remain exact. The H700 core is installed
+Her Knights/Tomak replay fields remain exact. The handheld core is installed
 with a backup and unchanged settings. Actual speaker continuity, whole-game
 SDK coverage and nested-callback peripheral time accounting remain open.
 Evidence: `F:/GP32/results/resume59-refill/` and the resume59 performance
@@ -3178,15 +3177,15 @@ by runtime code. GPOS dispatch and the saved-state field remain intact. The
 necessary PCM refill search now reads a validated RAM window directly, with
 the guarded fallback at RAM boundaries and no pointer cached across calls.
 
-In a H700 synthetic stream with no legacy timer table, 2,205,000 PCM frames
+In a handheld synthetic stream with no legacy timer table, 2,205,000 PCM frames
 take about 3.59 seconds versus 52.74 seconds previously at observed 1,512 MHz.
 PCM and callback results match exactly. The roughly 14.7x improvement applies
 to this discovery-heavy mixer fixture, not game FPS; the final measurements
 are sequential relative to the prior baseline. See the performance section
 for all runs and qualification limits.
 
-Windows/H700 PCM, timer and state checks pass, Android ARM64/ARMv7 builds
-pass, and Her Knights/Tomak replay outputs remain exact. The H700 core is
+Windows/handheld PCM, timer and state checks pass, Android ARM64/ARMv7 builds
+pass, and Her Knights/Tomak replay outputs remain exact. The handheld core is
 installed with a backup and unchanged protected settings. Callback-time
 settlement and whole-game/physical-audio acceptance remain open. Evidence:
 `F:/GP32/results/resume60-scan/`.
@@ -3200,7 +3199,7 @@ stereo frames in 10 ms. Using the run clock makes three clock ratios yield
 the same 441 frames and identical mixed SEF/PCM data through the real tick
 path. Guest clock selection and saved-state layout are unchanged.
 
-Windows/H700 PCM, timer and state checks pass, Android ARM64/ARMv7 builds
+Windows/handheld PCM, timer and state checks pass, Android ARM64/ARMv7 builds
 pass, and Her Knights/Tomak replay outputs remain exact. The checked core
 is installed with a backup and unchanged protected settings. This does not
 establish whole-game performance or speaker continuity. Forced guest-clock
@@ -3215,18 +3214,18 @@ while continuing to read live channel words and perform the same ordered
 writes. Partial tables retain guarded access. Complete 16-bit sample reads
 avoid duplicate HLE range checks; partial edge samples keep zero-fill.
 
-The H700 synthetic streaming fixture improves from roughly 3.60 to 2.12
+The handheld synthetic streaming fixture improves from roughly 3.60 to 2.12
 seconds for 2,205,000 stereo frames, with identical PCM and callback results.
 The qualified ABBA runs all observe 1,512 MHz; earlier ramping runs are
 excluded. This 1.694x mixer throughput does not establish a game FPS gain.
 
-Windows/H700 PCM, timer and state checks pass, including new multichannel,
+Windows/handheld PCM, timer and state checks pass, including new multichannel,
 loop/one-shot and RAM-boundary coverage. Android ARM64/ARMv7 builds pass;
 Her Knights/Tomak replay fields remain exact. Evidence is in the resume62
 performance section and `F:/GP32/results/resume62-mixer/`. Guest clock-change
 continuity, callback-time settlement and whole-game acceptance remain open.
 
-The core is installed on H700 with a backup and unchanged protected settings;
+The core is installed on the handheld with a backup and unchanged protected settings;
 the performance section records the deployed SHA-256 and backup path.
 
 ### Continuous firmware milliseconds and state v3 (resume63)
@@ -3243,8 +3242,8 @@ they contain no historical clock information. New v0003 states cannot be
 opened by older cores. Truncated or invalid elapsed-time data is rejected
 without mutating the running machine.
 
-Windows/H700 clock-transition, callback, PCM and state checks pass. Native
-H700 JIT/poll/SoC timing and libretro audio/persistence checks pass; Android
+Windows/handheld clock-transition, callback, PCM and state checks pass. Native
+handheld JIT/poll/SoC timing and libretro audio/persistence checks pass; Android
 ARM64/ARMv7 builds pass. Her Knights/Tomak old-state replays retain exact
 CPU/video/PCM fields. This is a firmware-time correction, not a complete
 peripheral-timing or whole-game acceptance claim. Post-slice peripheral
@@ -3264,7 +3263,7 @@ or after a save/load. No new saved-state fields are needed.
 A real callback regression previously produced 43 PCM frames instead of 21.
 HLE PCM and SDK audio now produce the expected 21/22/45-frame sequence across
 clock decrease/increase and a state roundtrip, with correct separate timer
-expiry. Windows/H700 PCM, timer and state checks pass; Android ARM64/ARMv7
+expiry. Windows/handheld PCM, timer and state checks pass; Android ARM64/ARMv7
 builds pass, and Her Knights/Tomak replay outputs remain exact. Evidence:
 `F:/GP32/results/resume64-hle-phase/`. SoC ordering and nested-callback event
 settlement remain open; this is not a whole-game or speaker acceptance claim.
@@ -3279,7 +3278,7 @@ boundaries in both divider directions, plus IIS sample boundaries through a
 state roundtrip. Both new cases fail against the previous library. The LCD
 trace and state format are unchanged.
 
-Windows/H700 PWM, timing, PCM, timer and state checks pass, as do Android
+Windows/handheld PWM, timing, PCM, timer and state checks pass, as do Android
 ARM64/ARMv7 builds. Her Knights/Tomak CPU/video/PCM replay fields remain exact.
 The verified core is installed with a backup and unchanged protected settings.
 Evidence: `F:/GP32/results/resume65-soc-phase/`; deployment details are in the
@@ -3296,8 +3295,8 @@ periods are applied. Callback instructions also advance hardware time. Host
 setup writes remain immediate, and the saved-state layout is unchanged.
 
 New guest-code PWM/IIS regressions fail on the previous core and pass with
-interpreter/JIT execution on Windows and H700, including a callback hardware
-IRQ. Existing Windows peripheral/PCM/timer/state checks and seven native H700
+interpreter/JIT execution on Windows and the handheld, including a callback hardware
+IRQ. Existing Windows peripheral/PCM/timer/state checks and seven native handheld
 checks pass; Android ARM64/ARMv7 builds pass. Her Knights/Tomak replay fields
 remain exact. Evidence is in `F:/GP32/results/resume66-soc-boundary/`.
 
@@ -3312,7 +3311,7 @@ the performance section records its hash and backup path.
 Clock changes now preserve the LCD's fractional frame position instead of
 reinterpreting all past CPU cycles. The regression covers a long elapsed
 history, both clock directions, no spurious frame, the exact next-frame
-boundary and state restore. Windows/H700 timing, PWM and state checks pass;
+boundary and state restore. Windows/handheld timing, PWM and state checks pass;
 Android ARM64/ARMv7 builds pass. The corrected trace is independently derived
 and intentionally differs from the earlier phase-jump trace.
 
@@ -3335,7 +3334,7 @@ fast DMA appends record the configured rate only when complete samples are
 actually stored. The 32-bit fast DMA path now matches generic bus writes in
 sample order, including an already pending halfword.
 
-Old-code regressions demonstrate both defects. Windows/H700 PCM, SoC timing,
+Old-code regressions demonstrate both defects. Windows/handheld PCM, SoC timing,
 state and libretro audio checks pass; Android ARM64/ARMv7 builds pass. Her
 Knights/Tomak replay fields remain exact. These shared core changes apply to
 PC as well as RetroArch, without a state-format change. Evidence:
@@ -3348,11 +3347,11 @@ The verified core is installed with a backup and unchanged protected settings;
 the performance section records its hash and backup path.
 
 
-### Restore Spruce menu and exit routing (resume70, 2026-10-04)
+### Restore device menu and exit routing (resume70, 2026-10-04)
 
 The user reported that GP32's physical menu tap and hold-to-exit both failed,
 including after reboot. The GP32-specific frontend name was missing from
-Anbernic's menu process gate and Spruce's standard-emulator termination list.
+the firmware's menu process gate and its standard-emulator termination list.
 The previous network-command menu check bypassed that gate and did not prove
 physical-button integration. Poweroff and HDMI process lists had the same
 omission.
@@ -3365,7 +3364,7 @@ UDP output and termination signals were stubbed, so these checks did not
 interact with a user's game. The four installed scripts passed shell syntax
 and byte readback checks. Originals are backed up under
 `/mnt/SDCARD/gp32-dev/resume70-menu/`. Home/button/HDMI watchdogs were restarted
-using Spruce's existing scoped helper and confirmed running without reported
+using the device's existing scoped helper and confirmed running without reported
 startup errors. Core/frontend binaries and RetroArch settings were not edited.
 Physical tap/hold acceptance is pending the user's check; no game benchmark
 was run for this OS integration fix. Evidence: `F:/GP32/results/resume70-menu/`.
@@ -3378,7 +3377,7 @@ Mixed-rate audio development is deferred while the menu incident is resolved.
 
 ### Restore the original RetroArch frontend (resume71, 2026-10-04)
 
-The user reported that the RG SP physical menu still did not open Spruce's
+The user reported that the device's physical menu still did not open the
 menu for GP32 after the process-list correction, while other systems worked.
 This contradicts treating the resume70 routing checks as sufficient user-flow
 acceptance. The optional GP32-specific frontend is no longer selected.
@@ -3453,7 +3452,7 @@ host-facing queued audio to avoid replaying stale sound.
 
 Windows: 16 existing tests pass, including added mixed-span, partial-delivery,
 source-phase, unread-state/refill and legacy-state regressions. Four focused
-H700 checks pass. Blue Angelo's user slot-0 NPC replay (360 frames) and Little
+handheld checks pass. Blue Angelo's user slot-0 NPC replay (360 frames) and Little
 Wizard Korea combat (300 frames) preserve all seven CPU/video/PCM comparison
 fields against the previously installed build. These short cold comparisons
 are correctness checks, not speedup claims. Android ARM64/ARMv7 link; Win64,
@@ -3470,14 +3469,14 @@ settings retain their verified hashes. Speaker quality still needs live use.
 ### Blue Angelo NPC transition diagnosis (resume73)
 
 The user's slot 0 was copied without modifying its original file. Holding left
-for 180 frames reaches the NPC and dialogue. PC and H700 produce the same
+for 180 frames reaches the NPC and dialogue. PC and the handheld produce the same
 360-frame PC/clock/PCM-count/rate/video-change trace with the prior core.
 Frames 85-149 produce no PCM, and frames 85-150 show no new pixels: approximately
 1.1 seconds of guest time. PC processes the zero-PCM interval in 75.676 ms,
 so host CPU exhaustion alone cannot explain the pause. It may be guest resource
 loading or an emulated timing discrepancy; real-hardware behavior is unverified.
 
-H700 takes 1510.460 ms for that interval, but its frequency ramps from 720 MHz
+Handheld takes 1510.460 ms for that interval, but its frequency ramps from 720 MHz
 before the run to 1104 MHz after. No peak-throughput or optimization ratio is
 claimed from it. Next diagnosis should trace guest resource/audio stop/start
 behavior in frames 84-151. Evidence: `F:/GP32/results/resume73-blue-dialogue/`.

@@ -84,7 +84,7 @@ it has no game-specific conditions. An erased all-0xff chip concealed the bug.
   Before that correction, the two reads of written data were shifted by one.
 - Private probes and results: `results/resume127-compat/` outside the checkout.
 - Focused EEPROM, existing timing and transactional state checks pass on
-  Windows. The EEPROM regression also passes natively on H700 from `/tmp`;
+  Windows. The EEPROM regression also passes natively on the handheld from `/tmp`;
   installed core/config hashes are unchanged and physical volume is untouched.
 
 This is a compatibility/data-integrity correction, not measured FPS improvement.

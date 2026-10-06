@@ -2,7 +2,7 @@
 
 ## Current frontend audio evidence (2026-10-04, resume40)
 
-A bounded 2,400-frame scripted combat replay used the corrected Spruce
+A bounded 2,400-frame scripted combat replay used the corrected handheld
 frontend plus the explicit FIFO-padding diagnostic from resume38. The current
 core's final PC/cycles and last-1,200-frame source count match the standalone
 replay: `0x0c00a6a0`, 6,441,235,000 cycles and 220,631 stereo source frames.
@@ -28,7 +28,7 @@ Separately, unsigned 8-bit PCM conversion no longer left-shifts negative
 signed values in the SoC append and HLE PCM/SEF paths. A C23 shift-sanitized
 fixture traps before the correction and passes afterwards. This is a
 portability fix, not the identified cause of this BIOS/IIS playback's pacing.
-The optimized H700 core and benchmark remain byte-identical to resume39, so
+The optimized handheld core and benchmark remain byte-identical to resume39, so
 the installed production core was not needlessly replaced.
 
 Evidence: `F:/GP32/results/resume40-audio/{before.json,after.json,
@@ -63,7 +63,7 @@ Reproduction assets are outside the repository under `F:/GP32/results/`:
 - `resume9-her{9000,-fight1500,-fight2400}.png`: inspected scene captures.
 - `resume9-scene.c`: external headless helper with state-save support.
 
-The H700 developer copies live in `/mnt/SDCARD/gp32-dev/resume9-her/`.
+The handheld developer copies live in `/mnt/SDCARD/gp32-dev/resume9-her/`.
 Benchmark arguments, from `/mnt/SDCARD/gp32-dev`:
 
 ```text
@@ -72,7 +72,7 @@ Benchmark arguments, from `/mnt/SDCARD/gp32-dev`:
 --warmup 1200 --frames 1200 --jit
 ```
 
-## H700 core throughput
+## Core throughput on the device
 
 The integrated resume12 optimization batch improves the same battle workload
 from **90.098 to 101.2165 core fps (+12.34%)**, in one alternating ABBA comparison.
@@ -83,7 +83,7 @@ own animation run at 101 fps. Evidence: `resume12-her-final-abba.json`.
 Candidate benchmark SHA-256:
 `8638208da39fdb292ced0da83e4cfa33c8e1330da326f492a87f24abb56c1b51`.
 
-The integrated core also completed an 1800-frame normal Spruce/RetroArch idle
+The integrated core also completed an 1800-frame normal handheld/RetroArch idle
 battle run with ALSA PLAYBACK initialized and exit code 0. The mid-run capture
 showed 60.27 fps; shutdown reported 1782 video frames pushed and 19 dropped.
 No physical listening or ALSA interposer was used in this final run. Evidence:
@@ -142,25 +142,25 @@ artifacts elsewhere in the pipeline.
 
 Evidence: `resume9-her-audio-h700.{json,csv}` and
 `resume9-verify-evidence.py` under `F:/GP32/results/`.
-Harness: `resume9-her-audio-bench.c`; H700 executable SHA-256
+Harness: `resume9-her-audio-bench.c`; handheld executable SHA-256
 `02e066452df2a0f3a635a8de4935480732513c76d8644b6039d261cfbb6c5b5d`.
 
 ### Cross-host replay follow-up
 
 The script contains two frame-zero SETs. A subsequent investigation found that
 the original input parser did not preserve the ordering of equal frame/action
-events: Windows initially applied RIGHT while H700 applied RIGHT+A. The parser
+events: Windows initially applied RIGHT while handheld applied RIGHT+A. The parser
 now uses insertion order to break that tie. The original script then produces
 identical CPU/video/PCM results on both hosts over the 1200/1200 run, matching
-the H700 hashes above. Thus these H700 measurements remain valid, while older
+the handheld hashes above. Thus these handheld measurements remain valid, while older
 Windows runs of the duplicate-event script must not be treated as identical
 input before that fix. Evidence: F:/GP32/results/resume10-input-cross-host-exact.json.
 
 ## Actual RetroArch attempt and remaining limit
 
-### Normal Spruce launch follow-up (resume11)
+### Normal device launch follow-up (resume11)
 
-A temporary `GP32 Audio Bench` app now launches through Spruce's normal menu
+A temporary `GP32 Audio Bench` app now launches through the device's normal menu
 exit/respawn path. This releases MainUI's PCM device before RetroArch starts.
 The separate candidate core and developer configuration above were used; the
 installed core, platform configuration, common RetroArch configuration and
@@ -249,7 +249,7 @@ Shutdown logged 1794 video frames pushed and 7 dropped. This was an idle combat
 scene, not the scripted attack workload above.
 
 **This run is not audio validation:** ALSA returned `Device or resource busy`,
-and RetroArch continued without audio. `/dev/snd/pcmC0D0p` was owned by Spruce
+and RetroArch continued without audio. `/dev/snd/pcmC0D0p` was owned by handheld
 MainUI (process 10400, audio thread 10511). No menu process was killed/stopped.
 An OSD underrun value of zero with a failed audio driver proves nothing.
 Raw evidence: `resume9-her-ra-run.json`, `resume9-her-ra.log`, and

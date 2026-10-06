@@ -9,7 +9,7 @@ device.
 ## Installed Korean library (2026-10-04)
 
 The current local inventory contains 20 unique Korea-tagged game payloads.
-The H700 library contains exactly those 20 payloads, with no missing or extra
+The handheld library contains exactly those 20 payloads, with no missing or extra
 games; the fresh comparison uses SHA-256, not filenames alone. Raw and ZIP
 copies of the same local game count once. BIOS files are excluded from the
 game menu. Evidence: `F:/GP32/results/resume53-diag/korean-library.json`,

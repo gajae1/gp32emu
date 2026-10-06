@@ -47,7 +47,7 @@ read-only status bits, fractional tick partitioning and save/load, clock
 changes, and actual interpreter/JIT mixed LINECNT/HSTATUS polling. Existing
 timer and PCM tests also pass. The state fixture covers legacy migration and
 rejected malformed/truncated tails without live-machine mutation.
-Both LCD and state fixtures also pass natively on H700. H700 release core,
+Both LCD and state fixtures also pass natively on the handheld. Handheld release core,
 Windows libretro/GUI and Android arm64/armeabi-v7a builds pass. The native test
 run left protected frontend files and the installed core unchanged.
 

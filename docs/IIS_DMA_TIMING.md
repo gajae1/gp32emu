@@ -39,9 +39,9 @@ games. Advancing IRQ service intentionally changes some CPU/video/PCM hashes;
 old/new timings are therefore not an exact-output speed comparison.
 
 Focused PC timing, PCM, state and libretro-audio checks pass. The new IRQ test,
-PCM test and libretro-audio test also pass on H700, staged only in RAM. Release
-cores build for Windows x64, H700, Android arm64 and armv7; Android runtime was
-not tested. One H700 Princess replay (600 warmup, 1200 measured frames) reached
+PCM test and libretro-audio test also pass on the handheld, staged only in RAM. Release
+cores build for Windows x64, handheld, Android arm64 and armv7; Android runtime was
+not tested. One handheld Princess replay (600 warmup, 1200 measured frames) reached
 91.875 headless fps, with measured-window clock observations varying from
 1104 to 1512 MHz. This is bounded emulation throughput, not game animation fps
 or a before/after performance gain. Device settings and installed core remain

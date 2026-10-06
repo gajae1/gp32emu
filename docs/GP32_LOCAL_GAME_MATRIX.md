@@ -334,7 +334,7 @@ The input sequence below starts from `resume13-mil-stage.state` (SHA-256
 
 Local evidence: `F:/GP32/results/resume16-mill/README.md`,
 `canonical.txt`, `can-d1000.png`, `can-d1450.png`, and `can-village.state`.
-States and game content remain outside Git. The measured H700 run and its
+States and game content remain outside Git. The measured handheld run and its
 limits are recorded in [the performance strategy](GP32_PERFORMANCE_STRATEGY.md).
 
 ## resume17: GP Fight Korean match entry
@@ -378,7 +378,7 @@ it uses the resume17 match-entry state above. Exact commands and results are in
 in `resume18-gpfight/parent-comparison.json`.
 
 The same 1200-frame repeated-A workload also matched between the Windows x86-64
-and native H700 benchmark in all seven CPU/video/PCM fields. Both ended at
+and native handheld benchmark in all seven CPU/video/PCM fields. Both ended at
 cycles 3729235000, PC `0x0c035efc`, CPSR `0x60000053`, with 216684 audio frames,
 video hash `e78f9b6c4c98722c` and audio hash `235a169c190050c9`. This was one
 unprimed exactness run per host without measured-clock qualification; its timing
@@ -416,14 +416,14 @@ whole-game translation or completion claim is made.
 
 ## Open items
 
-- Korean Her Knights and Little Wizard now have H700 combat measurements;
+- Korean Her Knights and Little Wizard now have handheld combat measurements;
   see the resume14-16 entries in [portability progress](PORTABILITY_PROGRESS.md)
   and [performance strategy](GP32_PERFORMANCE_STRATEGY.md). The older character
   selection and European combat-entry figures above are historical, distinct
   scenes. Do not combine states and ROMs from different releases.
 - Homebrew and app enumeration is outside these asset roots (catalog doc section 4).
 - Six catalogued Korean releases remain absent from supplied local assets, listed
-  in [Spruce packaging](../packaging/spruce/README.md). Add owned dumps when
+  in [handheld packaging](../packaging/spruce/README.md). Add owned dumps when
   supplied; catalog entries alone do not establish availability or compatibility.
 - Later areas, bosses, complete playthroughs and physical audio/input latency
   remain unverified.
@@ -490,15 +490,15 @@ Screenshots and exact replay commands: `F:/GP32/results/resume28-korea/`
 Eight titles have direct Hangul evidence in this pass; it does not prove all
 of their content is localized. The other labels alone are not language proof.
 
-New PC/H700 replays begin from observed Kimchiman, Tomak and Wizard Slayer
+New PC/handheld replays begin from observed Kimchiman, Tomak and Wizard Slayer
 action scenes. With the same state/input and 300 warmup + 600 measured frames,
-all seven CPU/video/audio fields match on all three. H700 raw throughput was
+all seven CPU/video/audio fields match on all three. Handheld raw throughput was
 90.787/71.320/120.741 fps respectively, but clocks ramped during the runs: these
 are neither a controlled ranking nor proof of stable real-frontend 60fps.
 Audio delivery/physical input latency and later-game compatibility remain open.
 Evidence: `F:/GP32/results/resume28-korea/combat-equivalence.json`. Kimchiman
 uses the f46ddac Windows core; Tomak/Wizard Slayer use the callback-exit candidate.
-The H700 executable is f46ddac for all three.
+The handheld executable is f46ddac for all three.
 
 The six missing Korean releases listed above still need owned game files.
 
@@ -526,9 +526,9 @@ still required for the six catalog gaps above.
 
 ## Tomak real frontend audio (resume31, 2026-10-03)
 
-The observed Tomak shooting scene now has a bounded real H700 RetroArch
+The observed Tomak shooting scene now has a bounded real handheld RetroArch
 replay: 900 emulated frames from `resume28-korea/17/advance.state`, using the
-same movement/attack script as the PC/H700 comparison. The unmodified
+same movement/attack script as the PC/handheld comparison. The unmodified
 resume30 core produces 347,032 source stereo frames and nonzero samples in
 every replay frame. Guest PC, source frame count, nonzero count and IIS state
 match the PC diagnostic frame by frame; the CPU endpoint matches the prior
@@ -557,7 +557,7 @@ initial position. This establishes visible movement response and adds one
 title to the cumulative Hangul evidence, not complete-game acceptance.
 The endpoint alone does not prove that the A presses inflicted damage.
 
-This was a Windows headless replay using the resume45 core, not an H700
+This was a Windows headless replay using the resume45 core, not a handheld
 frontend/audio-latency measurement. The captures include generated PCM, but
 physical audio quality was not evaluated. Exact commands, private states,
 PCM and images (`advance.png`, `dialog.png`, `move.png`, `idle.png`) are under
@@ -591,7 +591,7 @@ entry, not complete-game compatibility or movement/attack validation.
 No visible Hangul appears in these captures. Raphael remains language-
 unverified, so cumulative Hangul evidence stays at 14 of 20 titles. This
 uses the existing Windows executable; it does not measure the new AArch64
-shortcut, H700 frontend audio or physical input latency.
+shortcut, handheld frontend audio or physical input latency.
 
 Evidence: `F:/GP32/results/resume56-raphael/start.json` and `menu.json` retain
 the commands, with private states and screenshots including `menu-0.png`,
@@ -618,6 +618,6 @@ The cumulative language count therefore remains 14 of 20.
 Evidence: `F:/GP32/results/resume57-hany/` contains `start.json`, `easy.json`,
 `stage.json`, `idle.json`, `right.json`, the exact input scripts and private
 states/images. Compare `idle-120.png` with `right-120.png`. The existing
-Windows executable was used; no H700/audio test is implied. ROM SHA-256 is
+Windows executable was used; no handheld/audio test is implied. ROM SHA-256 is
 `73da9b61c576504088b92a168a35d39eeb91ba739721c1805bd43127b3b8af00`.
 No ROM, device library, user save or configuration was modified.

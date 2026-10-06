@@ -6,14 +6,14 @@ PCs can coexist without growing those allocations. PC, generation and fetch
 epoch checks remain mandatory. Native arena retirement and guest code-change
 invalidation are unchanged. This applies to all titles; there are no ROM checks.
 
-The initial worker candidate scanned both ways twice and regressed H700
+The initial worker candidate scanned both ways twice and regressed handheld
 Astonishia title throughput from 188.3 to 180.3 benchmark frames/s (~4.2%).
 It was not promoted. The integrated version preserves the original first-way
 hit path and consults the second way only after a miss. A follow-up at stable
 1.512 GHz measured 188.4 baseline versus 188.2 candidate; the cold-start samples
 were excluded from that comparison because the stock governor was ramping.
 
-## Bounded H700 evidence
+## Bounded device evidence
 
 Final source, stock conservative governor, no volume/mixer/config changes.
 Each scene reloaded the same native state and inputs, warmed up for 1,200
@@ -33,12 +33,12 @@ Eight protected device-file hashes matched before/after. Installed core was
 not replaced. This does not establish a fix for the NPC dialogue pause.
 
 Final PC JIT differential and arena-recycle checks pass. The initial two-way
-candidate also passed both on H700; the changed first-way fast path then passed
+candidate also passed both on the handheld; the changed first-way fast path then passed
 the native recycle check and the two real-state replays above. The fixture forces
 three colliding PCs, searches the correct way and rejects a missing native
 block explicitly rather than returning an unrelated set base.
 
-Final Windows x64, Linux/H700 AArch64 and Android arm64-v8a/armeabi-v7a libretro
+Final Windows x64, Linux/handheld AArch64 and Android arm64-v8a/armeabi-v7a libretro
 cores build in C23 mode. Android runtime and physical input/audio remain
 unverified. Local raw evidence and reproducible device runner:
 `F:/GP32/results/round135-cache/` (`device-ab.json`, `device-ab-fast.json`,

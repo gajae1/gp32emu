@@ -87,7 +87,7 @@ the fixture distinguishes a guest exception from an actual callback return.
 The handler now requires an active callback and the exact private return-stub
 address. The callback reaches its tail before returning through that stub.
 PC timer, PCM, file and state checks pass; the timer regression also passes on
-the H700 native backend from RAM with protected files unchanged. This is a return-identity fix; the
+the handheld native backend from RAM with protected files unchanged. This is a return-identity fix; the
 larger resumable-callback and interruptible-display-wait work remains open.
 
 
@@ -112,7 +112,7 @@ Evidence: the e89e85c display reproduction fails on both backends and passes
 after integration; a 1.2M-cycle callback completes. All 26 PC tests pass,
 including new `gp32_callback` and `gp32_wait` fixtures (nested IRQ/FIQ waits,
 wraps, clock changes, save/load). The callback, wait, timer, PCM, state and
-file tests pass natively on H700. Princess, Astonishia, Blue Angelo and Her
+file tests pass natively on the handheld. Princess, Astonishia, Blue Angelo and Her
 Knights SMC scenes are identical to `ee3a2de` in JIT and interpreter (600
 frames). DynaMate v2.0 runs 60 frames identically on both backends. WinterSports
 Eins alpha still leaves RAM at `06cc4dec`, exactly as before. Raw evidence:

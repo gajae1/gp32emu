@@ -170,16 +170,16 @@ this pass; a dash in cloneof means the set is not a clone.
 ## 5. Priority heavy targets and their actual scenes
 
 Measured numbers are core-only headless throughput from this repository's own
-docs (docs/PORTABILITY_PROGRESS.md, docs/HER_KNIGHTS_KOREA_BENCHMARK.md) on H700
+docs (docs/PORTABILITY_PROGRESS.md, docs/HER_KNIGHTS_KOREA_BENCHMARK.md) on the handheld
 at a matched 1.512 GHz observation, all for the retained lazy cache epoch. They
 are not RetroArch presentation fps, not game animation rates, and not game-wide
 minima.
 
 | Priority | Title (MAME set) | Actual scene | Evidence status |
 | --- | --- | --- | --- |
-| 1 | Her Knights: All for Princess - Deadline (herknite) | first palace battle against Lynnerd, 1200 warmup / 1200 measured frames, scripted move and attack input | measured 90.5365 core fps on H700 in matched-clock ABBA (81.986 before the lazy epoch, +10.43%); later stages with more enemies unmeasured |
-| 2 | Little Wizard (ltwizard) | character selection, 2400/300 frames | measured 50.493 core fps in matched-clock ABBA (47.7405 before the lazy epoch, +5.77%); real combat entry state now exists (F:/GP32/results/resume11-wizard-combat-entry.state frame 3350 and resume11-wizard-combat-x3900.state) with inspected captures, but H700 throughput for actual combat is not yet measured |
-| 3 | Blue Angelo - Angels from the Shrine (blueangl) | extracted gameplay state; 1200/300 window for the retained H700 number; boss and large-sprite scenes unmeasured | measured 66.806 core fps on H700 (54.7035 before the lazy epoch, +22.12%, all exactness fields matching); 532.537 core fps on a 9800X3D Win64 run with matching CPU, video and PCM hashes |
+| 1 | Her Knights: All for Princess - Deadline (herknite) | first palace battle against Lynnerd, 1200 warmup / 1200 measured frames, scripted move and attack input | measured 90.5365 core fps on the handheld in matched-clock ABBA (81.986 before the lazy epoch, +10.43%); later stages with more enemies unmeasured |
+| 2 | Little Wizard (ltwizard) | character selection, 2400/300 frames | measured 50.493 core fps in matched-clock ABBA (47.7405 before the lazy epoch, +5.77%); real combat entry state now exists (F:/GP32/results/resume11-wizard-combat-entry.state frame 3350 and resume11-wizard-combat-x3900.state) with inspected captures, but handheld throughput for actual combat is not yet measured |
+| 3 | Blue Angelo - Angels from the Shrine (blueangl) | extracted gameplay state; 1200/300 window for the retained handheld number; boss and large-sprite scenes unmeasured | measured 66.806 core fps on the handheld (54.7035 before the lazy epoch, +22.12%, all exactness fields matching); 532.537 core fps on a 9800X3D Win64 run with matching CPU, video and PCM hashes |
 | 4 | Tomak - Save the Earth, Again (tomak / tomake / tomake2) | stage 1 opening plus a mid-stage effect and bullet wall, Korean v2.0 dump first | hypothesis: per-frame sprite workload of a 2002 shooter; no measurement or per-title demand source found in this pass |
 | 5 | Funny Soccer 2002 (funnysoc) | one full 11-a-side match in progress | hypothesis: sports AI and sprite scene workload; shares the 34,604,032-byte card class with Astonishia Story R; no measurement found in this pass |
 
@@ -220,6 +220,6 @@ comparison.
 5. File-level local inventory is produced by scripts/bench_catalog.py into
    F:/GP32/results/resume12-catalog-inventory.* and summarised in
    docs/GP32_LOCAL_GAME_MATRIX.md; this catalog document does not duplicate it.
-6. Measure the two existing gameplay states on H700 with the frozen runner, one at
+6. Measure the two existing gameplay states on the handheld with the frozen runner, one at
    a time (--limit 1 --state): the Her Knights combat state and the new Little
    Wizard combat-entry state.
