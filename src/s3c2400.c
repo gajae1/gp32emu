@@ -1926,7 +1926,8 @@ static uint32_t lcd_visible_lines(const s3c2400_t *s) {
 
 static int lcd_is_tft(const uint32_t *regs) {
     /* CLKVAL=0 is outside the documented TFT range. Keep the legacy fallback
-     * for STN and the synthetic direct-HLE framebuffer configuration. */
+     * for STN and for guests that program it anyway; direct HLE itself writes
+     * the retail TFT words (CLKVAL 3). */
     return GP32_BITS(regs[0], 6, 5) == 3u && GP32_BITS(regs[0], 17, 8) >= 1u;
 }
 

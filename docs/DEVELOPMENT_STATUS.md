@@ -6,6 +6,29 @@ performance, audio and input correctness across the library, not boot-only tests
 
 ## Current accepted work
 
+- Round 165 Pinball Dreams direct boot (result.md and evidence in
+  `F:/GP32/results/round165/pinball/`): two defects. (1) The GXC stage-1 score
+  picked 0001/3000 at stride 0x400 over the real 1001/3500 at 0x1400 (the first
+  128 KiB it samples are data), corrupting the header and entry. A winner that
+  destroys zero padding is now replaced by the valid-header candidate whose
+  windows decode to the most all-zero blocks (1001/3500 is tried only there);
+  of 50 local SMC files only Pinball's payload changes, and its read-only image
+  equals BIOS RAM at game entry. (2) Direct mode programmed a synthetic CLKVAL-0
+  panel, but Pinball spins on LCDCON1 LINECNT and derives its TIMER4 period from
+  LCDCON1-4. Direct loads and the mode setters now write the retail BIOS words
+  (LCDCON1 0x377/0x379, LCDCON2-4 0x014fc081/0x0030ef02/0x4, LCDCON5
+  0x702/0x701, read back at game entry in four BIOS boots); the guest panel runs
+  about 72 Hz at the 48 MHz direct clock. Direct bench 123 -> 888 fps, 78
+  distinct video hashes in 1800 frames (title, PRESS START, then IGNITION and
+  the playfield with START/A). ctest 29/29; pc-parity, parity5 and parity-boot
+  identical. Of 40 cards the 600-frame direct CPU/audio state matches on 39;
+  video differs on four titles stuck in startup (blank panel -> default surface)
+  and in 1-2 of 19 sampled frames on six others (transient colour flash or fade
+  phase). Open: Pinball's PCM is silent (its own codec init writes volume 0x3f
+  and nothing raises it); direct IIS runs 62.5 kHz where the
+  BIOS boot gives 22.05 kHz; ASR, Little Wizard EU and Princess Maker 2 keep a
+  mis-keyed decode and stall in direct boot, but run past the stall when fed the
+  BIOS-matching payload (`SMC_ANALYSIS.md`).
 - Guest audio audit (round 163, F:/GP32/results/round163/w-asrguest/): no
   emulation defect. ASR's 238 large steps (max -15616) during the specification
   boot are inside continuous guest PCM spans, not DMA start/reload/stop
@@ -142,8 +165,8 @@ performance, audio and input correctness across the library, not boot-only tests
   (paths only, no file data) and start such cards through the direct loader
   with the card mounted; require_bios keeps the BIOS path. Commercial cards
   are frame-identical on all three boot settings; the five cards match the
-  pristine direct boot frame by frame (Pinball Dreams still presents one
-  frame on direct boot, a separate open issue). Evidence
+  pristine direct boot frame by frame (Pinball Dreams presented one frame on
+  direct boot until round 165). Evidence
   `F:/GP32/results/round159/w-gpmm/` (verify.py, verify-r161.log).
 - Round 160 chunked two-region A64 arena: the arena is split into 512 KiB
   chunks; hot bodies grow up from a chunk's start, cold chains down from its

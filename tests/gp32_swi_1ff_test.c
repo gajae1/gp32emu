@@ -99,9 +99,10 @@ static void check_reinit_service(int jit) {
     CHECK(ctx.spsr_svc == 0x90000013u, "pre-service CPSR left in SPSR_svc");
     CHECK(g->direct_fxe_bpp == 8u && g->direct_fxe_lcd_enabled == 1u, "display reset to 8 bpp and enabled");
     CHECK(g->direct_fxe_fb_addr == direct_default_surface_addr(0u), "default LCD surface restored");
-    /* LCDCON1 read-back carries the live line count in bits 27:18. */
-    CHECK((s3c2400_debug_read32(g->soc, 0x14a00000u) & 0x3ffffu) == 0x17u, "LCDCON1 shows enabled 8-bpp mode");
-    CHECK(s3c2400_debug_read32(g->soc, 0x14a00010u) == 2u, "8-bpp TFT LCDCON5 restored");
+    /* The retail firmware's 8-bpp TFT words. LCDCON1 read-back carries the live
+       line count in bits 27:18 and LCDCON5 the live VSTATUS/HSTATUS in 20:17. */
+    CHECK((s3c2400_debug_read32(g->soc, 0x14a00000u) & 0x3ffffu) == 0x377u, "LCDCON1 shows enabled 8-bpp TFT mode");
+    CHECK((s3c2400_debug_read32(g->soc, 0x14a00010u) & ~(0xfu << 17)) == 0x702u, "8-bpp TFT LCDCON5 restored");
     CHECK(g->direct_fxe_palette_initialized == 1u, "standard palette installed");
     CHECK(s3c2400_debug_read32(g->soc, direct_palette_sw_addr(g) + 255u * 4u) != 0u, "palette entries are non-zero");
     CHECK(s3c2400_debug_read32(g->soc, 0x0c7b0c00u) == 0u && s3c2400_debug_read32(g->soc, 0x0c7b0d00u) == 0u &&
