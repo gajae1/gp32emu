@@ -3842,7 +3842,12 @@ static int x64_emit_one(x64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
     }
     case ARM_JIT_OP_COPROC:
         if (x64_emit_coproc_local(e, op, done)) return 1;
-        [[fallthrough]]; /* a non-local CP15 op uses the shared helper dispatch */
+        /* a non-local CP15 op uses the shared helper dispatch */
+#if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 202311L
+        [[fallthrough]];
+#elif defined(__GNUC__) || defined(__clang__)
+        __attribute__((fallthrough));
+#endif
     case ARM_JIT_OP_UNDEFINED:
     case ARM_JIT_OP_INTERP:
     case ARM_JIT_OP_SWP:
