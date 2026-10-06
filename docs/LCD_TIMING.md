@@ -44,7 +44,12 @@ CLKVAL follows ROM 0x1fd4: HCLK / 10,006,200 rounded from a quarter, minus one
 enable and palette services keep the divider in LCDCON1, as in BIOS boots, where
 a title that changes the clock (SWI 0x0d) after its last mode switch keeps the
 old divider (88.8 Hz at 59.25 MHz). HLE vblank waits keep their own 60 Hz
-deadline.
+deadline only as a fallback: the direct-mode deadline advances by
+`s3c2400_lcd_frame_period()` (period_ns + period_frac/2^20, mapped onto the
+existing denominator-60 accumulator, so the save-state wire format is
+unchanged) whenever a panel frame period can be derived. STN mode, ENVID off,
+CLKVAL 0 and periods outside the 5..500 Hz sanity window keep the exact 1/60 s
+slot, which is what BIOS-boot and SWT guests continue to observe.
 
 ## Focused evidence
 

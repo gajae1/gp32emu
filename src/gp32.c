@@ -176,7 +176,7 @@ struct gp32 {
         uint32_t copied;
         uint32_t tries;
     } direct_hle_asset_autoload[16];
-    gp32_frame_time_t direct_vblank_time; /* next unreserved 60 Hz deadline */
+    gp32_frame_time_t direct_vblank_time; /* next unreserved panel-rate deadline */
     int direct_vblank_wait_requested; /* dispatch only: valid/invalid surface */
 };
 
@@ -546,25 +546,46 @@ static void direct_request_vblank_wait(gp32_t *g, int valid_surface) {
     arm920t_stop_run(g->cpu);
 }
 
+/* The guest takes LINECNT/VSTATUS from the LCD controller as its frame
+ * boundary, so the direct-mode vblank deadline must run at the rate the panel
+ * is actually programmed to instead of a fixed 60 Hz. gp32_frame_time_t
+ * already carries the period numerator over a denominator-60 residue, so a
+ * panel period of ns + frac/2^20 maps onto that accumulator with no wire
+ * change. Returns the legacy 1e9/60 ns numerator when no TFT frame clock can
+ * be derived, which keeps BIOS/STN guests on the exact 60 Hz pacing. */
+static uint64_t direct_vblank_period60(gp32_t *g) {
+    uint32_t ns = 0u, frac = 0u;
+    if (g && g->soc && s3c2400_lcd_frame_period(g->soc, &ns, &frac)) {
+        uint64_t scaled = ((uint64_t)ns << 20) | frac;
+        uint64_t period60 = (scaled * 60u + (1u << 19)) >> 20;
+        if (period60 >= 60u) return period60;
+    }
+    return 1000000000u;
+}
+
+static void direct_advance_vblank_deadline(gp32_t *g, uint64_t period60) {
+    gp32_frame_time_t *v = &g->direct_vblank_time;
+    uint64_t acc = period60 + v->remainder;
+    v->deadline_ns += acc / 60u;
+    v->remainder = (uint32_t)(acc % 60u);
+}
+
 static void direct_schedule_vblank_wait(gp32_t *g) {
     if (!g || !g->cpu || !g->direct_vblank_wait_requested) return;
     uint64_t deadline = g->elapsed.nanoseconds;
     if (g->direct_vblank_wait_requested == 1) {
         gp32_frame_time_t *v = &g->direct_vblank_time;
+        uint64_t period60 = direct_vblank_period60(g);
         /* A missed reservation rebases to a full interval from emulated now.
          * Host suspension advances no time. Clock writes do not rescale it. */
         if (!v->valid || !direct_time_pending(v->deadline_ns, deadline)) {
             v->deadline_ns = deadline;
             v->remainder = 0u;
             v->valid = 1u;
-            uint32_t ns = 1000000000u + v->remainder;
-            v->deadline_ns += ns / 60u;
-            v->remainder = ns % 60u;
+            direct_advance_vblank_deadline(g, period60);
         }
         deadline = v->deadline_ns;
-        uint32_t ns = 1000000000u + v->remainder;
-        v->deadline_ns += ns / 60u;
-        v->remainder = ns % 60u;
+        direct_advance_vblank_deadline(g, period60);
     }
     arm920t_set_reg(g->cpu, 1u, (uint32_t)deadline);
     arm920t_set_reg(g->cpu, 2u, (uint32_t)(deadline >> 32));
@@ -603,7 +624,8 @@ static void direct_migrate_vblank_wait(gp32_t *g, uint64_t cycles) {
     arm920t_set_reg(g->cpu, 1u, (uint32_t)deadline);
     arm920t_set_reg(g->cpu, 2u, (uint32_t)(deadline >> 32));
     arm920t_set_reg(g->cpu, 15u, direct_stub_addr(g) + 0x80u);
-    g->direct_vblank_time = (gp32_frame_time_t){deadline + 16666666u, 40u, 1u};
+    g->direct_vblank_time = (gp32_frame_time_t){deadline, 0u, 1u};
+    direct_advance_vblank_deadline(g, direct_vblank_period60(g));
 }
 
 /* SWI 0x0b selector 4 returns the firmware's clock block {FCLK, HCLK, PCLK}

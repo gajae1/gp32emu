@@ -50,6 +50,19 @@ static int arm_wait(gp32_t *g) {
 static uint64_t call_deadline(gp32_t *g) {
     return ((uint64_t)gp32_get_cpu_reg(g, 2u) << 32) | gp32_get_cpu_reg(g, 1u);
 }
+/* Direct-mode display deadlines follow the programmed TFT panel frame, not a
+ * fixed 60 Hz. The rational accumulator rounds to 1/60 ns, so an interval is
+ * compared against the panel period with an explicit slack in nanoseconds; a
+ * guest that never programmed a TFT frame keeps the legacy 1e9/60 fallback. */
+static uint64_t display_period_ns(gp32_t *g) {
+    uint32_t ns = 0u, frac = 0u;
+    if (s3c2400_lcd_frame_period(g->soc, &ns, &frac)) return ns;
+    return 16666666u;
+}
+static int display_interval(gp32_t *g, uint64_t interval, uint32_t periods, uint64_t slack) {
+    uint64_t target = (uint64_t)periods * display_period_ns(g);
+    return interval + slack >= target && interval <= target + slack;
+}
 static uint8_t *save(gp32_t *g, size_t *size) {
     gp32_clear_audio(g); *size = gp32_state_size(g); uint8_t *data = malloc(*size);
     CHECK(data && gp32_save_state_data(g, data, *size) == GP32_OK, "save suspended wait"); return data;
@@ -72,7 +85,7 @@ static void check_callback_wait(int jit, uint64_t origin, int change_clock, cons
     if (!g || !clone) { gp32_destroy(g); gp32_destroy(clone); return; }
     wait_callback(g, 0); start_timer(g); CHECK(arm_wait(g), "display wait inside callback is legal");
     uint64_t armed = g->elapsed.nanoseconds, deadline = call_deadline(g);
-    CHECK(deadline - armed == 16666666u, "deadline starts after actual SWI time");
+    CHECK(display_interval(g, deadline - armed, 1u, 1u), "deadline starts one panel frame after actual SWI time");
     uint64_t cycles = gp32_get_cycles(g);
     CHECK(gp32_run_cycles(g, 64u) == GP32_OK && gp32_get_cycles(g) - cycles < 100u &&
           g->direct_hle_callback_running && !s3c2400_debug_read32(g->soc, marker), "public budget suspends wait without false success");
@@ -92,7 +105,7 @@ static void check_callback_wait(int jit, uint64_t origin, int change_clock, cons
               "guest tail executes once on both machines");
         CHECK(gp32_get_cycles(g) == gp32_get_cycles(clone) && g->elapsed.nanoseconds == clone->elapsed.nanoseconds,
               "suspension/restore neither loses nor repeats wait time");
-        CHECK(g->elapsed.nanoseconds - armed >= 16666666u && g->elapsed.nanoseconds - armed < 17000000u,
+        CHECK(display_interval(g, g->elapsed.nanoseconds - armed, 1u, 333334u),
               "wide deadline works across low/full counter wrap");
         CHECK(gp32_get_cpsr(g) == 0xa00000d3u && gp32_get_cpu_reg(g, 8u) == 0x11110008u,
               "real trap restores foreground flags/registers");
@@ -124,8 +137,10 @@ static void check_foreground_and_invalid(int jit) {
               gp32_get_cpu_reg(g, 3u) == 0x11110003u && gp32_get_cpu_reg(g, 12u) == 0x1111000cu &&
               gp32_get_cpu_reg(g, 13u) == GP32_RAM_BASE + 0x1f000u && gp32_get_cpsr(g) == 0xa00000d3u,
               "trampoline preserves ABI scratch contract, stack and flags");
-        CHECK(invalid ? g->elapsed.nanoseconds - start < 10000u : g->elapsed.nanoseconds - start >= 16666666u,
-              "invalid surface returns promptly; valid foreground executes a full wait");
+        /* The bounded foreground drain polls in 4096-cycle public budgets, so
+         * the observed interval carries up to one host poll of overshoot. */
+        CHECK(invalid ? g->elapsed.nanoseconds - start < 10000u : display_interval(g, g->elapsed.nanoseconds - start, 1u, 70000u),
+              "invalid surface returns promptly; valid foreground executes a full panel frame");
         gp32_destroy(g);
     }
 }
@@ -201,7 +216,7 @@ static void check_interrupt_wait(int jit, int fiq) {
     CHECK((gp32_get_cpsr(g) & 31u) == (fiq ? 0x11u : 0x12u) &&
           gp32_get_pc(g) == direct_stub_addr(g) + 0x30u && s3c2400_debug_read32(g->soc, flag) == 1u,
           "hardware IRQ/FIQ owns a nested guest display call");
-    CHECK(call_deadline(g) - outer == 16666667u, "nested display gets its own following deadline");
+    CHECK(display_interval(g, call_deadline(g) - outer, 1u, 1u), "nested display gets its own following deadline");
     size_t size = 0; uint8_t *image = save(g, &size);
     if (image) {
         CHECK(gp32_load_state_data(clone, image, size) == GP32_OK, "restore callback in real interrupt/nested wait");
@@ -316,6 +331,7 @@ static void check_wrapped_frame(int jit) {
     if (!g || !clone) { gp32_destroy(g); gp32_destroy(clone); return; }
     wait_callback(g, 0); start_timer(g);
     uint64_t start = g->elapsed.nanoseconds;
+    /* gp32_run_frame is host frame pacing, which stays on its own 60 Hz slot. */
     CHECK(gp32_run_frame(g) == GP32_OK && g->direct_hle_callback_running &&
           g->elapsed.nanoseconds - start >= 16666666u && g->elapsed.nanoseconds - start < 16666700u,
           "frame deadline wraps and suspends callback display wait within caller time");
@@ -339,7 +355,7 @@ static void check_display_cadence(int jit) {
         CHECK(arm_wait(g), "arm successive foreground display calls");
         uint64_t target = call_deadline(g);
         if (!call) first = target;
-        else CHECK(target - previous == 16666667u, "reserve next cadence slot despite guest return overhead");
+        else CHECK(display_interval(g, target - previous, 1u, 1u), "reserve next cadence slot despite guest return overhead");
         previous = target;
         for (unsigned i = 0; i < 1000u && direct_time_pending(target, g->elapsed.nanoseconds); ++i)
             CHECK(gp32_run_cycles(g, 4096u) == GP32_OK, "execute cadence wait with bounded public budget");
@@ -347,10 +363,11 @@ static void check_display_cadence(int jit) {
             CHECK(gp32_run_cycles(g, 1u) == GP32_OK, "complete cadence epilogue");
         CHECK(gp32_get_pc(g) == caller, "cadence call returns normally");
     }
-    CHECK(previous - first == 33333334u && g->direct_vblank_time.remainder < 60u, "rational nanosecond phase is carried");
+    CHECK(display_interval(g, previous - first, 2u, 2u) && g->direct_vblank_time.remainder < 60u,
+          "rational nanosecond phase is carried");
     CHECK(gp32_run_cycles(g, 6600000u) == GP32_OK, "advance guest beyond missed reservation");
     arm920t_set_reg(g->cpu, 0u, surface); arm920t_set_reg(g->cpu, 15u, direct_stub_addr(g));
-    CHECK(arm_wait(g) && call_deadline(g) - g->elapsed.nanoseconds == 16666666u,
+    CHECK(arm_wait(g) && display_interval(g, call_deadline(g) - g->elapsed.nanoseconds, 1u, 1u),
           "missed cadence rebases from emulated now, without catch-up host skipping");
     printf("display-cadence jit=%d target=%" PRIu64 "\n", jit, previous);
     gp32_destroy(g);
@@ -383,8 +400,8 @@ static void check_legacy_request(int jit) {
         size_t legacy_size = size - GP32_CONTINUATION_BYTES;
         ((gp32_state_image_t *)(legacy + 16u))->direct_vblank_wait_requested = 1;
         CHECK(gp32_load_state_data(clone, legacy, legacy_size) == GP32_OK && gp32_get_run_clock_hz(clone) == 48000000u &&
-              call_deadline(clone) - clone->elapsed.nanoseconds == 16666666u,
-              "legacy unscheduled request uses one frame at incoming 48 MHz, not a fixed 66 MHz cycle count");
+              display_interval(clone, call_deadline(clone) - clone->elapsed.nanoseconds, 1u, 1u),
+              "legacy unscheduled request rebases on the incoming panel frame, not a fixed cycle count");
         arm920t_state_image_t *cpu = (arm920t_state_image_t *)(legacy + off);
         cpu->r[13] = GP32_RAM_BASE + 64u * 1024u * 1024u;
         CHECK(gp32_load_state_data(g, legacy, legacy_size) == GP32_ERR_IO, "migration stack must fit incoming RAM before commit");
@@ -394,6 +411,36 @@ static void check_legacy_request(int jit) {
     }
     printf("legacy-request jit=%d clock=%u\n", jit, gp32_get_run_clock_hz(clone));
     free(pristine); free(legacy); gp32_destroy(g); gp32_destroy(clone);
+}
+
+/* A guest that reprograms the TFT divider must see the vblank deadline move
+ * with the panel, and a guest that never programs one keeps the 60 Hz
+ * fallback. This is the direct-mode pacing contract. */
+static void check_panel_rate(int jit) {
+    gp32_t *g = fixture(jit, 0u); if (!g) return;
+    /* Retail handoff state: the timing words a title sees before its first
+     * mode switch, programmed through the same helper direct mode uses. */
+    direct_write_lcd_timing(g);
+    s3c2400_write32(g->soc, 0x14a00000u, direct_lcdcon1(g, 0x0bu, 1u));
+    uint32_t base_ns = 0u, base_frac = 0u;
+    CHECK(s3c2400_lcd_frame_period(g->soc, &base_ns, &base_frac) == 1u, "fixture programs an enabled TFT panel");
+    /* LINECNT is read-only status in the top bits of LCDCON1; strip it before
+     * writing a new CLKVAL back, exactly like a driver that owns the word. */
+    uint32_t lcd0 = s3c2400_debug_read32(g->soc, 0x14a00000u) & ~0xfffc0000u;
+    uint32_t clkval = (lcd0 >> 8) & 0x3ffu;
+    CHECK(clkval + 1u <= 0x1ffu, "fixture TFT divider can be doubled");
+    s3c2400_write32(g->soc, 0x14a00000u, (lcd0 & ~(0x3ffu << 8)) | ((clkval * 2u + 1u) << 8));
+    uint32_t slow_ns = 0u, slow_frac = 0u;
+    CHECK(s3c2400_lcd_frame_period(g->soc, &slow_ns, &slow_frac) == 1u && slow_ns > base_ns * 3u / 2u,
+          "doubling the divider slows the panel frame");
+    arm920t_set_reg(g->cpu, 0u, surface); arm920t_set_reg(g->cpu, 15u, direct_stub_addr(g));
+    CHECK(arm_wait(g), "arm a display wait on the reprogrammed panel");
+    uint64_t delta = call_deadline(g) - g->elapsed.nanoseconds;
+    printf("panel-rate jit=%d base=%u.%u slow=%u.%u delta=%" PRIu64 "\n",
+           jit, base_ns, base_frac, slow_ns, slow_frac, delta);
+    CHECK(display_interval(g, delta, 1u, 1u), "vblank deadline follows the programmed panel frame");
+    CHECK(delta > base_ns + base_ns / 2u, "reprogrammed panel is not paced by the previous retail slot");
+    gp32_destroy(g);
 }
 
 int main(int argc, char **argv) {
@@ -408,6 +455,7 @@ int main(int argc, char **argv) {
         check_state_reset_and_watchdog(jit);
         check_wrapped_frame(jit);
         check_display_cadence(jit);
+        check_panel_rate(jit);
         check_mirror_pair(jit); check_legacy_request(jit);
     }
     printf("guest wait regression: %s (%d failures)\n", failures ? "FAIL" : "PASS", failures);
