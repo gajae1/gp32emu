@@ -46,6 +46,48 @@ performance, audio and input correctness across the library, not boot-only tests
   direct boot at 0x0c008a9c walking a guest task list whose next pointer is
   0xffffffff, with its decoded image already equal to the BIOS's (see
   `SMC_ANALYSIS.md`).
+- Round 166 libretro memory-safety and leak audit (result.md and evidence in
+  `F:/GP32/results/round166/leaks/`): no core defect found, no source change.
+  The core plus a dlopen harness of `retro_*` (adapted from round 164's
+  lrharness.c) was built with clang 22.1.3 ASan+UBSan under WSL and run over
+  Astonishia Story R, Little Girl Mill, Blue Angelo, Princess Maker 2 and
+  Pinball Dreams for 1200 frames each with JIT enabled and disabled, including
+  serialize/unserialize and retro_reset: all ten configurations clean, with
+  `state_ok` and `reset_deterministic` true and identical replay video/audio
+  hashes (Princess Maker 2 reports `replay_identical=false` only through the
+  legitimate libretro duplicate-frame NULL pointer). 100 load/unload cycles in
+  one process, 60 frames each: RSS/VmSize/VmData and live allocator bytes are
+  flat (mean of first 25 == mean of last 25, delta 0), `unmatched_frees=0`, and
+  the 64 MiB JIT arena is mmap+munmap once per cycle with `exec_anon_after=0`
+  (0 mmaps with JIT disabled). The only growth is a one-time warm-up of
+  313080 bytes inside the first `retro_run()` that is bounded (identical from
+  cycle 2 onward) and LSan-clean at exit. The steady path (frames 2..1200) has
+  zero malloc/calloc/free, zero mmap/mprotect and zero file I/O; the two
+  reallocs it does take are one-time audio capacity growth through
+  `audio_reserve_frames` src/s3c2400.c:763, `submit_audio_resampled`
+  src/libretro/libretro.c:754 and `audio_prepare_rate` src/s3c2400.c:785, plus
+  the first-frame `file_list_add` src/smc_direct.c:296. Guest identity is
+  unchanged: per-card video/audio hashes, audio_frames and the 10379062-byte
+  state match across JIT, interpreter, ASan and release. ctest 29/29 on the
+  Windows zig C23 build and 28/28 under WSL clang; pc-parity, parity5 and
+  parity-boot all exit 0.
+- Rejected (round 166): `-fsanitize=function` on the JIT build. clang 22
+  traps at the native block call (`arm920t_run` src/arm920t.c:4331 into the
+  arena mapped at src/arm920t.c:628) because the C++-style type check is not
+  part of the emulated ARM calling convention; the audit ran with
+  `-fno-sanitize=function` and every other ASan/UBSan check enabled.
+- Rejected (round 166): Windows-native ASan. The zig C23 link fails on
+  `__asan_init` and the rest of the `__asan_*` set (no compiler-rt ASan
+  runtime for that target), and the Docker/WSL1 fallbacks were unavailable, so
+  sanitizer evidence is Linux-only; the Windows build stayed on zig C23.
+- Rejected (round 166): two allocator-hook measurement bugs. `realloc` was
+  over-counted while `malloc_usable_size` was used for sizing, and musl's
+  `calloc` calls the inner `malloc` through the PLT, double-attributing
+  allocations. Per-frame numbers came from the fixed hook with per-class
+  counters, nesting/duplicate detection and a freeze-at-dump protocol; the
+  rejected hook reported spurious `live_blocks` that the raw traces show were
+  harness buffers.
+
 - Round 165 Pinball Dreams direct boot (result.md and evidence in
   `F:/GP32/results/round165/pinball/`): two defects. (1) The GXC stage-1 score
   picked 0001/3000 at stride 0x400 over the real 1001/3500 at 0x1400 (the first
