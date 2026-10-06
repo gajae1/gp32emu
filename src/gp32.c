@@ -835,14 +835,52 @@ static void direct_select_visible_surface(gp32_t *g) {
     }
 }
 
+/*
+ * LCD controller state of the retail firmware.  Every graphics-mode switch in
+ * the BIOS (ROM 0x1804) programs the panel from the same words: ROM
+ * 0x1868-0x18ec composes and writes LCDCON1-5 (CLKVAL comes from the current
+ * clock through ROM 0x1fd4 and is 3 at the BIOS's own clock) and ROM
+ * 0x1a48-0x1a58 clears ENVID, writes LCDSADDR1-3 and sets ENVID again.  A title
+ * starts with them in place.  The 8 bpp words were read back at the first
+ * instruction of the game in BIOS boots (BIOS 1.6.6: Her Knights, Blue Angelo,
+ * Little Wizard; 2003-05-21 BIOS: Pinball Dreams).  The 16 bpp words are the
+ * ones the same routine writes for the BIOS's own 16 bpp screens (BPP code 0xc,
+ * LCDCON5 low nibble 1); they were not read back at a 16 bpp game.
+ *
+ *             8 bpp       16 bpp
+ *   LCDCON1   0x377       0x379       TFT, CLKVAL 3, ENVID; LINECNT reads back live
+ *   LCDCON2   0x014fc081  same        VBPD 1, 320 lines, VFPD 2, VSPW 1
+ *   LCDCON3   0x0030ef02  same        HBPD 6, 240 pixels, HFPD 2
+ *   LCDCON4   0x00000004  same        HSPW 4
+ *   LCDCON5   0x702       0x701       BSWP / HWSWP; the status bits are read-only
+ *   LCDSADDR3 0x78        0xf0        halfwords per line
+ *
+ * Direct mode used to program a synthetic non-TFT panel (CLKVAL 0, no porches)
+ * instead.  Titles read these registers for themselves: Pinball Dreams waits on
+ * LCDCON1 LINECNT before it calls any display service and derives its TIMER4
+ * frame period from LCDCON1-4, so a panel that is off or timed differently from
+ * the retail one leaves it spinning in its palette-fade loop.
+ */
+#define DIRECT_LCDCON2_RETAIL       0x014fc081u
+#define DIRECT_LCDCON3_RETAIL       0x0030ef02u
+#define DIRECT_LCDCON4_RETAIL       0x00000004u
+#define DIRECT_LCDCON5_RETAIL_8BPP  0x00000702u
+#define DIRECT_LCDCON1_RETAIL_8BPP  (1u | (0x0bu << 1) | (3u << 5) | (3u << 8))
+#define DIRECT_LCDCON1_RETAIL_16BPP (1u | (0x0cu << 1) | (3u << 5) | (3u << 8))
+
+static void direct_write_lcd_timing(gp32_t *g) {
+    s3c2400_write32(g->soc, 0x14a00004u, DIRECT_LCDCON2_RETAIL);
+    s3c2400_write32(g->soc, 0x14a00008u, DIRECT_LCDCON3_RETAIL);
+    s3c2400_write32(g->soc, 0x14a0000cu, DIRECT_LCDCON4_RETAIL);
+}
+
 static void direct_set_lcd_16bpp(gp32_t *g, uint32_t fb_addr) {
     if (!g || !direct_ram_range(g, fb_addr, 240u * 320u * 2u)) return;
     g->direct_fxe_fb_addr = fb_addr;
     direct_update_stub_framebuffer(g);
     uint32_t start = fb_addr >> 1;
     uint32_t end = (fb_addr + 240u * 320u * 2u) >> 1;
-    s3c2400_write32(g->soc, 0x14a00004u, (319u << 14));
-    s3c2400_write32(g->soc, 0x14a00008u, (239u << 8));
+    direct_write_lcd_timing(g);
     /* BIOS/GPSDK 16-bpp surfaces use LCDCON5 HWSWP.  Without it, the LCD DMA
        consumes each 32-bit word in the wrong halfword order.  Latin/UI shapes
        can still look mostly plausible, but Hangul glyphs become visually
@@ -852,7 +890,7 @@ static void direct_set_lcd_16bpp(gp32_t *g, uint32_t fb_addr) {
     s3c2400_write32(g->soc, 0x14a00018u, end & 0x001fffffu);
     s3c2400_write32(g->soc, 0x14a0001cu, 240u);
     g->direct_fxe_bpp = 16u;
-    s3c2400_write32(g->soc, 0x14a00000u, 1u | (0x0cu << 1));
+    s3c2400_write32(g->soc, 0x14a00000u, DIRECT_LCDCON1_RETAIL_16BPP);
 }
 
 static void direct_set_lcd_8bpp(gp32_t *g, uint32_t fb_addr, uint32_t pal_addr) {
@@ -865,9 +903,8 @@ static void direct_set_lcd_8bpp(gp32_t *g, uint32_t fb_addr, uint32_t pal_addr) 
     direct_update_stub_framebuffer(g);
     uint32_t start = fb_addr >> 1;
     uint32_t end = (fb_addr + 240u * 320u) >> 1;
-    s3c2400_write32(g->soc, 0x14a00004u, (319u << 14));
-    s3c2400_write32(g->soc, 0x14a00008u, (239u << 8));
-    s3c2400_write32(g->soc, 0x14a00010u, 2u);
+    direct_write_lcd_timing(g);
+    s3c2400_write32(g->soc, 0x14a00010u, DIRECT_LCDCON5_RETAIL_8BPP);
     s3c2400_write32(g->soc, 0x14a00014u, start);
     s3c2400_write32(g->soc, 0x14a00018u, end & 0x001fffffu);
     s3c2400_write32(g->soc, 0x14a0001cu, 120u);
@@ -899,9 +936,21 @@ static void direct_set_lcd_8bpp(gp32_t *g, uint32_t fb_addr, uint32_t pal_addr) 
     } else if (!g->direct_fxe_palette_initialized) {
         direct_fill_default_palette(g);
     }
-    s3c2400_write32(g->soc, 0x14a00000u, 1u | (0x0bu << 1));
+    s3c2400_write32(g->soc, 0x14a00000u, DIRECT_LCDCON1_RETAIL_8BPP);
 }
 
+/* The state the firmware leaves for a title it has just started: 8 bpp over the
+ * default surface with the panel enabled.  Only controller registers change;
+ * the HLE's own mode bookkeeping stays "not selected yet" until the title asks. */
+static void direct_init_lcd_handoff(gp32_t *g) {
+    uint32_t fb = direct_default_surface_addr(0u);
+    direct_write_lcd_timing(g);
+    s3c2400_write32(g->soc, 0x14a00010u, DIRECT_LCDCON5_RETAIL_8BPP);
+    s3c2400_write32(g->soc, 0x14a00014u, fb >> 1);
+    s3c2400_write32(g->soc, 0x14a00018u, ((fb + 240u * 320u) >> 1) & 0x001fffffu);
+    s3c2400_write32(g->soc, 0x14a0001cu, 120u);
+    s3c2400_write32(g->soc, 0x14a00000u, DIRECT_LCDCON1_RETAIL_8BPP);
+}
 
 static void direct_reset_hle_runtime(gp32_t *g, int preserve_hle_options) {
     if (!g) return;
@@ -3954,6 +4003,7 @@ static gp32_status_t gp32_load_fxe_image_internal(gp32_t *g, fxe_image_t *img, i
     direct_install_stubs(g);
     direct_sync_fwinfo(g);
     direct_fill_default_palette(g);
+    direct_init_lcd_handoff(g);
     snprintf(g->direct_fxe_title, sizeof(g->direct_fxe_title), "%s", img->title[0] ? img->title : "FXE");
     arm920t_reset(g->cpu, img->entry_addr);
     arm920t_set_cpsr(g->cpu, ARM_MODE_SVC | ARM_I_FLAG | ARM_F_FLAG);

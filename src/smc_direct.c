@@ -504,18 +504,23 @@ static int gxc_candidate_arm_score_range(const uint8_t *buf, size_t size, size_t
     return score;
 }
 
-static int gxc_try_decrypt(const smc_file_buf_t *gxc, uint32_t payload_size, const gxc_key_profile_t *kp,
-                           size_t periodic_chunk, size_t key_start, uint8_t **out, size_t *out_size, int *out_score) {
-    /* Every candidate shares the same scatter-header acceptance rule. Reject
-     * incompatible keys before allocating/copying/decrypting megabytes of
-     * body data for each key rotation and stride. */
+/* Every candidate shares the same scatter-header acceptance rule. Reject
+ * incompatible keys before allocating/copying/decrypting megabytes of
+ * body data for each key rotation and stride. */
+static int gxc_header_valid(const smc_file_buf_t *gxc, uint32_t payload_size, const gxc_key_profile_t *kp,
+                            size_t periodic_chunk, size_t key_start, uint32_t *out_gxb_size) {
     uint8_t header[32];
     if (payload_size < sizeof(header)) return 0;
     memcpy(header, gxc->data + 20u, sizeof(header));
     if (periodic_chunk) gxc_decrypt_periodic(header, sizeof(header), kp, periodic_chunk, key_start);
     else gxc_decrypt_prefix(header, sizeof(header), kp, key_start);
+    return valid_gxb_header(header, sizeof(header), payload_size, out_gxb_size);
+}
+
+static int gxc_try_decrypt(const smc_file_buf_t *gxc, uint32_t payload_size, const gxc_key_profile_t *kp,
+                           size_t periodic_chunk, size_t key_start, uint8_t **out, size_t *out_size, int *out_score) {
     uint32_t gxb_size = 0;
-    if (!valid_gxb_header(header, sizeof(header), payload_size, &gxb_size)) return 0;
+    if (!gxc_header_valid(gxc, payload_size, kp, periodic_chunk, key_start, &gxb_size)) return 0;
 
     uint8_t *buf = (uint8_t *)malloc((size_t)payload_size);
     if (!buf) return -1;
@@ -527,6 +532,81 @@ static int gxc_try_decrypt(const smc_file_buf_t *gxc, uint32_t payload_size, con
     *out_size = (size_t)gxb_size;
     if (out_score) *out_score = gxc_candidate_score(buf, (size_t)payload_size);
     return 1;
+}
+
+/*
+ * Keystream evidence for one candidate (key, rotation, stride).  A plain zero
+ * byte encrypts to the keystream byte itself, so zero padding inside an
+ * encrypted window shows the key in the card image.  The right candidate turns
+ * those windows back into zeros (exact counts the windows that decode to 0x100
+ * zero bytes).  A stride that is too short also XORs windows that were never
+ * encrypted and destroys the zeros they held, which makes zero_gain negative.
+ */
+typedef struct gxc_evidence {
+    int64_t zero_gain; /* zero bytes after decrypting minus before, over all windows */
+    uint32_t exact;
+    uint32_t windows;
+} gxc_evidence_t;
+
+static gxc_evidence_t gxc_zero_evidence(const smc_file_buf_t *gxc, uint32_t payload_size, const gxc_key_profile_t *kp,
+                                        size_t periodic_chunk, size_t key_start) {
+    const size_t enc = 0x100u;
+    const uint8_t *raw = gxc->data + 20u;
+    uint8_t ks[0x100];
+    gxc_evidence_t ev = { 0, 0u, 0u };
+    for (size_t i = 0; i < enc; ++i) ks[i] = kp->key[(key_start + i) % kp->key_len];
+    for (size_t off = 0; off + enc <= payload_size; off += periodic_chunk ? periodic_chunk : payload_size) {
+        uint32_t before = 0u, after = 0u;
+        for (size_t i = 0; i < enc; ++i) {
+            before += raw[off + i] == 0u;
+            after += raw[off + i] == ks[i];
+        }
+        ev.zero_gain += (int64_t)after - (int64_t)before;
+        ev.exact += after == enc;
+        ++ev.windows;
+    }
+    return ev;
+}
+
+/* A few key bytes landing on plain data cannot cost an encrypted window more
+ * than the zeros it held; losing more than one zero per window on average
+ * means the stride decrypts windows that were never encrypted. */
+static int gxc_evidence_contradicts(const gxc_evidence_t *ev) {
+    return ev->zero_gain < -(int64_t)ev->windows;
+}
+
+/*
+ * The stage-1 score samples opcode shapes in the first 128 KiB.  When that
+ * sample is data it can prefer a short stride that decrypts windows which were
+ * never encrypted.  Called only after the winner is contradicted by the
+ * evidence above: rank every candidate with a valid header by exact keystream
+ * windows (then zero gain), skip contradicted ones, and require at least one
+ * confirmed window so a candidate without evidence never replaces the winner.
+ */
+static int gxc_rescue_candidate(const smc_file_buf_t *gxc, uint32_t payload_size,
+                                const gxc_key_profile_t *keys, size_t key_count,
+                                const size_t *modes, size_t mode_count,
+                                size_t *out_key, size_t *out_mode, size_t *out_start) {
+    int found = 0;
+    gxc_evidence_t best = { 0, 0u, 0u };
+    for (size_t pass = 0; pass < mode_count; ++pass) {
+        for (size_t i = 0; i < key_count; ++i) {
+            for (size_t key_start = 0u; key_start < keys[i].key_len; ++key_start) {
+                uint32_t gxb_size = 0u;
+                if (!gxc_header_valid(gxc, payload_size, &keys[i], modes[pass], key_start, &gxb_size)) continue;
+                gxc_evidence_t ev = gxc_zero_evidence(gxc, payload_size, &keys[i], modes[pass], key_start);
+                if (ev.exact == 0u || gxc_evidence_contradicts(&ev)) continue;
+                if (!found || ev.exact > best.exact || (ev.exact == best.exact && ev.zero_gain > best.zero_gain)) {
+                    found = 1;
+                    best = ev;
+                    *out_key = i;
+                    *out_mode = modes[pass];
+                    *out_start = key_start;
+                }
+            }
+        }
+    }
+    return found;
 }
 
 static uint32_t gxc_payload_size_bytes(const smc_file_buf_t *gxc) {
@@ -886,6 +966,15 @@ static int decrypt_commercial_gxc(const smc_file_buf_t *gxe, const smc_file_buf_
     static const uint8_t key_0003_2500[] =
         "0003nado2500achi0003gp322500bing0003yang2500home0003sist"
         "2500know0003jsta2500oos!0003gun72500ehye";
+    /* Recovered from the keystream that zero padding leaves in the card image
+     * (see gxc_zero_evidence) and checked against BIOS-decoded RAM: the decoded
+     * read-only image is byte-identical.  It is kept out of the table below
+     * because its digits differ from the 0001 profiles only in bits the stage-1
+     * score never sees (ASR scores 5684 against 5685 for this key), so in the
+     * main table it would silently re-key cards that already decode. */
+    static const uint8_t key_1001_3500[] =
+        "3500know1001jsta3500oos!1001gun73500ehye1001nado3500achi1001gp32"
+        "3500bing1001yang3500home1001sist";
     static const gxc_key_profile_t keys[] = {
         { "0001/3000", key_0001, sizeof(key_0001) - 1u },
         { "1023/1202", key_1023, sizeof(key_1023) - 1u },
@@ -904,6 +993,10 @@ static int decrypt_commercial_gxc(const smc_file_buf_t *gxe, const smc_file_buf_
         { "0004/2500", key_0004_2500, sizeof(key_0004_2500) - 1u },
         { "0001/2500", key_0001_2500, sizeof(key_0001_2500) - 1u },
         { "0003/2500", key_0003_2500, sizeof(key_0003_2500) - 1u },
+    };
+    /* Tried only through gxc_rescue_candidate. */
+    static const gxc_key_profile_t rescue_keys[] = {
+        { "1001/3500", key_1001_3500, sizeof(key_1001_3500) - 1u },
     };
     if (!gxc || !out || !out_size) return 0;
     *out = NULL;
@@ -928,6 +1021,7 @@ static int decrypt_commercial_gxc(const smc_file_buf_t *gxe, const smc_file_buf_
     uint8_t *best = NULL;
     size_t best_size = 0u;
     int best_score = -0x7fffffff;
+    size_t best_key = 0u, best_mode = 0u, best_start = 0u;
     for (size_t pass = 0; pass < mode_count; ++pass) {
         for (size_t i = 0; i < sizeof(keys) / sizeof(keys[0]); ++i) {
             for (size_t key_start = 0u; key_start < keys[i].key_len; ++key_start) {
@@ -942,6 +1036,9 @@ static int decrypt_commercial_gxc(const smc_file_buf_t *gxe, const smc_file_buf_
                         best = cand;
                         best_size = cand_size;
                         best_score = cand_score;
+                        best_key = i;
+                        best_mode = modes[pass];
+                        best_start = key_start;
                     } else {
                         free(cand);
                     }
@@ -950,6 +1047,29 @@ static int decrypt_commercial_gxc(const smc_file_buf_t *gxe, const smc_file_buf_
         }
     }
     if (best) {
+        /* Second opinion: the stage-1 winner must not destroy zero padding.
+         * When it does, rank every profile (including the rescue-only ones)
+         * by keystream evidence instead. */
+        gxc_evidence_t ev = gxc_zero_evidence(gxc, payload_size, &keys[best_key], best_mode, best_start);
+        if (gxc_evidence_contradicts(&ev)) {
+            gxc_key_profile_t all_keys[GP32_ARRAY_COUNT(keys) + GP32_ARRAY_COUNT(rescue_keys)];
+            memcpy(all_keys, keys, sizeof(keys));
+            memcpy(all_keys + GP32_ARRAY_COUNT(keys), rescue_keys, sizeof(rescue_keys));
+            size_t rescue_key = 0u, rescue_mode = 0u, rescue_start = 0u;
+            if (gxc_rescue_candidate(gxc, payload_size, all_keys, GP32_ARRAY_COUNT(all_keys), modes, mode_count,
+                                     &rescue_key, &rescue_mode, &rescue_start)) {
+                uint8_t *cand = NULL;
+                size_t cand_size = 0u;
+                int cand_score = 0;
+                int r = gxc_try_decrypt(gxc, payload_size, &all_keys[rescue_key], rescue_mode, rescue_start, &cand, &cand_size, &cand_score);
+                if (r < 0) { free(best); serr(err, err_len, "out of memory decrypting %s", gxc->path); return 0; }
+                if (r > 0) {
+                    free(best);
+                    best = cand;
+                    best_size = cand_size;
+                }
+            }
+        }
         *out = best;
         *out_size = best_size;
         return 1;

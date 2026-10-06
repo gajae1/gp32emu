@@ -90,3 +90,26 @@ surface-like pointers and report either an extracted virtual card or mounted
 SmartMedia. The private trampoline retains its display/flip behavior. New buffer
 placement takes effect when initialized; already-corrupted old states are not
 reconstructed. BIOS-based execution and its memory allocation are unchanged.
+
+Key choice second opinion (round 165, `results/round165/pinball/`). Stage-1 scoring
+samples opcode shapes in the first 128 KiB. For Pinball Dreams that sample is data,
+and it preferred 0001/3000 rotation 24 at stride 0x400 (score 1876 against 495 for
+the real candidate), which corrupted the scatter header and entry (0x0c00145c). A
+zero byte encrypts to the keystream byte, so a correct candidate turns zero padding
+back into 0x100 zero bytes, while a stride that is too short also XORs windows that
+were never encrypted and destroys their zeros. A stage-1 winner that loses more than
+one zero per window on average is now replaced by the valid-header candidate with the
+most all-zero windows; the 1001/3500 profile (rotation 0, stride 0x1400 for Pinball)
+is tried only there, because in the main table it flips ASR's stage-1 winner. Of the 40 unique
+local cards (50 files) only Pinball's payload changes (entry 0x0c00005c); its decoded
+read-only image equals the BIOS-decoded RAM at game entry byte for byte (2003-05-21
+BIOS). Left unchanged on purpose, because output identity for the other cards was a
+requirement: against BIOS-decoded RAM the stage-1 picks for ASR (true key 0001/3000,
+rotation 32), Little Wizard EU (0001/2500, rotation 0) and Princess Maker 2 (0001/3000,
+rotation 0) still differ in 5216, 2432 and 5344 bytes, and Super Plusha (true key
+1001/3500, rotation 24, stride 0x1400) still decodes as the 1232-byte loader.
+ASR, Princess Maker 2 and Little Wizard EU also stall in direct SMC boot (ASR
+spins at 0x0c0742dc, Princess Maker 2 leaves SDRAM, Little Wizard EU stays black
+near 0x0c086fb0); fed the BIOS-matching payload through `gp32_headless --fxe` they
+got past those points in a 300-frame check (not played further). Whether the same
+evidence ranks their true keys first has not been tested.

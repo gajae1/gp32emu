@@ -33,7 +33,11 @@ changes restart scanout; other timing writes retain the current HCLK position
 modulo the new geometry. These live-write/re-enable rules and blanking LINECNT
 readback are integration choices awaiting hardware confirmation. They are not
 a claim of cycle-exact silicon behavior. STN and invalid TFT CLKVAL=0 retain
-the former fallback timing, including the direct-HLE synthetic display.
+the former fallback timing. Direct HLE no longer relies on it: a directly loaded
+program starts from the words the retail BIOS leaves (LCDCON1 0x377, LCDCON2-4
+0x014fc081/0x0030ef02/0x4, 327 lines of 255 pixel clocks) and the mode setters
+rewrite them, so its panel follows the modelled scanout (about 72 Hz at the
+48 MHz direct clock). HLE vblank waits keep their own 60 Hz deadline.
 
 ## Focused evidence
 
