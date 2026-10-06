@@ -6,6 +6,19 @@ performance, audio and input correctness across the library, not boot-only tests
 
 ## Current accepted work
 
+- Rejected (round 169): whole-program `-flto` (the existing
+  `GP32EMU_ENABLE_IPO` option) as a performance lever. On the LGM card-loading
+  window (warmup 2400, 600 measured frames, 4 alternating runs each) it moved
+  p50 from 1.842 ms to 1.807 ms and p90 from 2.245 ms to 1.987 ms, i.e. inside
+  the run-to-run spread of the non-LTO build; the binary shrank 653824 to
+  593408 bytes but no frame-time win survived. The bulk of the workload is
+  data-dependent JIT block dispatch and generated native code, which LTO
+  cannot see, so the interpreter/dispatch paths it would fold are not the ones
+  that dominate. Guest identity was unaffected. Enabling it per target still
+  needs a fix: on both zig toolchains CMake 4.x's `CheckIPOSupported` calls
+  `<lang>_COMPILER_AR` without an `ar` subcommand and zig rejects `qc`; the
+  first attempt (3f19f90, setting those variables to bare `zig`) regressed the
+  H700 archive rule and was reverted in 9e77c9b. Keep IPO off by default.
 - Round 166 libretro savestate replay determinism (result.md and evidence in
   `F:/GP32/results/round166/state-replay/`): run-ahead/rewind restored guest
   state but reset host-side delivery state on load, so replaying the same 60
