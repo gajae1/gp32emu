@@ -448,6 +448,223 @@ void retro_get_system_av_info(struct retro_system_av_info *info) {
 static uint64_t audio_idle_fraction;
 static uint32_t audio_idle_rate;
 
+/* Delivery state that the guest savestate cannot describe. Run-ahead and
+ * rewind replay the same guest frames from a state, so everything this file
+ * carries *between* runs has to be restored as well, or the replayed output
+ * differs from the uninterrupted run: the duplicate/LCD-identity decision
+ * (last_video_frame/have_last_video), the output queue and its resampler,
+ * declick/gap ramps anchored on already delivered samples, the idle-silence
+ * time budget, and the effect histories when a filter is enabled.
+ *
+ * It travels in a versioned section appended after the guest payload. A state
+ * without it still loads (previous builds, path/guest-only savestates) and
+ * keeps the old reset behavior; the guest loader ignores trailing bytes. */
+#define LRST_MAGIC "LRST"
+#define LRST_VERSION 1u
+#define LRST_FLAG_PREV_RAW 1u
+#define LRST_FLAG_PREV_LCD 2u
+
+enum { LRST_VIDEO_NONE = 0, LRST_VIDEO_FRAME = 1, LRST_VIDEO_EFFECT = 2 };
+
+/* Fixed-width mirror of gp32_audio_resampler_t so the section layout does not
+ * depend on the in-memory struct. */
+typedef struct lrst_resampler {
+    uint32_t src_rate, dst_rate;
+    uint64_t phase_q32;
+    int16_t prev_l, prev_r;
+    int32_t have_prev;
+    int16_t last_out_l, last_out_r;
+    int32_t have_last_out;
+    uint32_t fade_left, fade_total;
+} lrst_resampler_t;
+
+typedef struct lrst_body {
+    uint64_t last_video_frame;
+    int32_t last_video_source;
+    int32_t have_last_video;
+    int16_t audio_last_sent[2];
+    int16_t audio_raw_tail[2];
+    int32_t audio_have_raw_tail;
+    int16_t audio_gap_from[2];
+    uint32_t audio_gap_left;
+    int32_t audio_declick_anchor[2];
+    uint32_t audio_declick_left[2];
+    uint64_t audio_idle_fraction;
+    uint32_t audio_idle_rate;
+    uint32_t reserved;
+    lrst_resampler_t resampler;
+} lrst_body_t;
+
+typedef struct lrst_header {
+    char magic[4];
+    uint32_t version;
+    uint32_t total_size;      /* header + body + trailing sample/pixel arrays */
+    uint32_t body_size;       /* sizeof(lrst_body_t) */
+    uint32_t pending_frames;  /* stereo frames after the body */
+    uint32_t flags;           /* LRST_FLAG_* pixel histories after those */
+    uint32_t reserved;
+} lrst_header_t;
+
+static size_t lrst_size(void) {
+    size_t size = sizeof(lrst_header_t) + sizeof(lrst_body_t);
+    if (audio_pending_frames > GP32_AUDIO_QUEUE_LIMIT) return 0;
+    size += audio_pending_frames * 2u * sizeof(int16_t);
+    if (effects.have_prev_raw) size += (size_t)GP32_VIDEO_EFFECTS_PIXELS * sizeof(uint32_t);
+    if (effects.have_prev_lcd) size += (size_t)GP32_VIDEO_EFFECTS_PIXELS * sizeof(uint32_t);
+    return size;
+}
+
+/* Appends the delivery section at dst. Returns the section length, or 0 when
+ * it does not fit the remaining room. */
+static size_t lrst_write(uint8_t *dst, size_t room) {
+    size_t size = lrst_size();
+    if (!dst || !size || room < size) return 0;
+    lrst_header_t head;
+    lrst_body_t body;
+    memset(&head, 0, sizeof(head));
+    memset(&body, 0, sizeof(body));
+    memcpy(head.magic, LRST_MAGIC, sizeof(head.magic));
+    head.version = LRST_VERSION;
+    head.total_size = (uint32_t)size;
+    head.body_size = (uint32_t)sizeof(body);
+    head.pending_frames = (uint32_t)audio_pending_frames;
+    body.last_video_frame = last_video_frame;
+    body.have_last_video = have_last_video;
+    body.last_video_source = have_last_video
+        ? (last_video_ptr == effect_rgb ? LRST_VIDEO_EFFECT
+           : last_video_ptr == frame_rgb ? LRST_VIDEO_FRAME : LRST_VIDEO_NONE)
+        : LRST_VIDEO_NONE;
+    memcpy(body.audio_last_sent, audio_last_sent, sizeof(body.audio_last_sent));
+    memcpy(body.audio_raw_tail, audio_raw_tail, sizeof(body.audio_raw_tail));
+    body.audio_have_raw_tail = audio_have_raw_tail;
+    memcpy(body.audio_gap_from, audio_gap_from, sizeof(body.audio_gap_from));
+    body.audio_gap_left = audio_gap_left;
+    memcpy(body.audio_declick_anchor, audio_declick_anchor, sizeof(body.audio_declick_anchor));
+    memcpy(body.audio_declick_left, audio_declick_left, sizeof(body.audio_declick_left));
+    body.audio_idle_fraction = audio_idle_fraction;
+    body.audio_idle_rate = audio_idle_rate;
+    body.resampler.src_rate = audio_resampler.src_rate;
+    body.resampler.dst_rate = audio_resampler.dst_rate;
+    body.resampler.phase_q32 = audio_resampler.phase_q32;
+    body.resampler.prev_l = audio_resampler.prev_l;
+    body.resampler.prev_r = audio_resampler.prev_r;
+    body.resampler.have_prev = audio_resampler.have_prev;
+    body.resampler.last_out_l = audio_resampler.last_out_l;
+    body.resampler.last_out_r = audio_resampler.last_out_r;
+    body.resampler.have_last_out = audio_resampler.have_last_out;
+    body.resampler.fade_left = audio_resampler.fade_left;
+    body.resampler.fade_total = audio_resampler.fade_total;
+    uint8_t *p = dst;
+    memcpy(p, &head, sizeof(head));
+    p += sizeof(head);
+    memcpy(p, &body, sizeof(body));
+    p += sizeof(body);
+    if (audio_pending_frames) {
+        memcpy(p, audio_resample_buf, audio_pending_frames * 2u * sizeof(int16_t));
+        p += audio_pending_frames * 2u * sizeof(int16_t);
+    }
+    if (effects.have_prev_raw) {
+        head.flags |= LRST_FLAG_PREV_RAW;
+        memcpy(p, effects.prev_raw, (size_t)GP32_VIDEO_EFFECTS_PIXELS * sizeof(uint32_t));
+        p += (size_t)GP32_VIDEO_EFFECTS_PIXELS * sizeof(uint32_t);
+    }
+    if (effects.have_prev_lcd) {
+        head.flags |= LRST_FLAG_PREV_LCD;
+        memcpy(p, effects.prev_lcd, (size_t)GP32_VIDEO_EFFECTS_PIXELS * sizeof(uint32_t));
+        p += (size_t)GP32_VIDEO_EFFECTS_PIXELS * sizeof(uint32_t);
+    }
+    /* flags are part of the header; rewrite it now that they are known. */
+    memcpy(dst, &head, sizeof(head));
+    return size;
+}
+
+/* Restores a section written by lrst_write. Returns 1 when the section was
+ * present and applied, 0 when the state predates it (or carries an unknown
+ * version), and -1 when a section of this version is present but truncated or
+ * malformed. */
+static int lrst_read(const uint8_t *src, size_t room) {
+    lrst_header_t head;
+    lrst_body_t body;
+    if (!src || room < sizeof(head)) return 0;
+    memcpy(&head, src, sizeof(head));
+    if (memcmp(head.magic, LRST_MAGIC, sizeof(head.magic)) != 0) return 0;
+    if (head.version != LRST_VERSION) {
+        lr_log(RETRO_LOG_WARN, "[gp32emu] savestate carries delivery section v%u; ignoring it.\n", head.version);
+        return 0;
+    }
+    if (head.body_size != sizeof(body) || head.pending_frames > GP32_AUDIO_QUEUE_LIMIT) return -1;
+    uint64_t want = (uint64_t)sizeof(head) + sizeof(body) +
+                    (uint64_t)head.pending_frames * 2u * sizeof(int16_t);
+    if (head.flags & ~(uint32_t)(LRST_FLAG_PREV_RAW | LRST_FLAG_PREV_LCD)) return -1;
+    if (head.flags & LRST_FLAG_PREV_RAW) want += (uint64_t)GP32_VIDEO_EFFECTS_PIXELS * sizeof(uint32_t);
+    if (head.flags & LRST_FLAG_PREV_LCD) want += (uint64_t)GP32_VIDEO_EFFECTS_PIXELS * sizeof(uint32_t);
+    if (want != head.total_size || (uint64_t)room < want) return -1;
+    const uint8_t *p = src + sizeof(head);
+    memcpy(&body, p, sizeof(body));
+    p += sizeof(body);
+    if (body.last_video_source != LRST_VIDEO_NONE && body.last_video_source != LRST_VIDEO_FRAME &&
+        body.last_video_source != LRST_VIDEO_EFFECT) return -1;
+    if (body.audio_have_raw_tail != 0 && body.audio_have_raw_tail != 1) return -1;
+    if (head.pending_frames) {
+        if (audio_resample_cap < head.pending_frames) {
+            int16_t *grown = (int16_t *)realloc(audio_resample_buf,
+                                                (size_t)head.pending_frames * 2u * sizeof(int16_t));
+            if (!grown) {
+                lr_log(RETRO_LOG_ERROR, "[gp32emu] savestate audio queue restore failed.\n");
+                return -1;
+            }
+            audio_resample_buf = grown;
+            audio_resample_cap = head.pending_frames;
+        }
+        memcpy(audio_resample_buf, p, (size_t)head.pending_frames * 2u * sizeof(int16_t));
+        p += (size_t)head.pending_frames * 2u * sizeof(int16_t);
+    }
+    audio_pending_frames = head.pending_frames;
+    last_video_frame = body.last_video_frame;
+    have_last_video = body.have_last_video ? 1 : 0;
+    last_video_ptr = have_last_video
+        ? (body.last_video_source == LRST_VIDEO_EFFECT ? effect_rgb : frame_rgb)
+        : NULL;
+    memcpy(audio_last_sent, body.audio_last_sent, sizeof(audio_last_sent));
+    memcpy(audio_raw_tail, body.audio_raw_tail, sizeof(audio_raw_tail));
+    audio_have_raw_tail = body.audio_have_raw_tail;
+    memcpy(audio_gap_from, body.audio_gap_from, sizeof(audio_gap_from));
+    audio_gap_left = body.audio_gap_left;
+    memcpy(audio_declick_anchor, body.audio_declick_anchor, sizeof(audio_declick_anchor));
+    memcpy(audio_declick_left, body.audio_declick_left, sizeof(audio_declick_left));
+    audio_idle_fraction = body.audio_idle_fraction;
+    audio_idle_rate = body.audio_idle_rate;
+    audio_resampler = (gp32_audio_resampler_t){
+        .src_rate = body.resampler.src_rate,
+        .dst_rate = body.resampler.dst_rate,
+        .phase_q32 = body.resampler.phase_q32,
+        .prev_l = body.resampler.prev_l,
+        .prev_r = body.resampler.prev_r,
+        .have_prev = body.resampler.have_prev,
+        .last_out_l = body.resampler.last_out_l,
+        .last_out_r = body.resampler.last_out_r,
+        .have_last_out = body.resampler.have_last_out,
+        .fade_left = body.resampler.fade_left,
+        .fade_total = body.resampler.fade_total,
+    };
+    effects.have_prev_raw = 0;
+    effects.have_prev_lcd = 0;
+    if (head.flags & LRST_FLAG_PREV_RAW) {
+        if (effects.prev_raw) {
+            memcpy(effects.prev_raw, p, (size_t)GP32_VIDEO_EFFECTS_PIXELS * sizeof(uint32_t));
+            effects.have_prev_raw = 1;
+        }
+        p += (size_t)GP32_VIDEO_EFFECTS_PIXELS * sizeof(uint32_t);
+    }
+    if (head.flags & LRST_FLAG_PREV_LCD) {
+        if (effects.prev_lcd) {
+            memcpy(effects.prev_lcd, p, (size_t)GP32_VIDEO_EFFECTS_PIXELS * sizeof(uint32_t));
+            effects.have_prev_lcd = 1;
+        }
+    }
+    return 1;
+}
+
 static void reset_audio(void) {
     audio_pending_frames = 0;
     audio_idle_fraction = 0;
@@ -469,6 +686,14 @@ static void invalidate_last_video(void) {
     last_video_frame = UINT64_MAX;
     last_video_ptr = NULL;
     have_last_video = 0;
+}
+
+/* Historical post-load delivery reset, kept for savestates that carry no
+ * delivery section (or an unreadable one) so old files behave as before. */
+static void reset_loaded_delivery_state(void) {
+    gp32_video_effects_reset(&effects);
+    reset_audio();
+    invalidate_last_video();
 }
 
 static void refresh_input_bitmask_support(void);
@@ -1075,7 +1300,10 @@ size_t retro_serialize_size(void) {
      * that grows is a guest that rewrites more card pages than the budget
      * holds, which puts the whole image back into the section. Take the largest
      * value seen so a frontend buffer always fits what we write. */
-    size_t size = gp32_state_size(emu);
+    size_t guest = gp32_state_size(emu);
+    size_t wrapper = lrst_size();
+    if (!guest || !wrapper) return 0;
+    size_t size = guest + wrapper;
     if (size > state_capacity) state_capacity = size;
     return state_capacity;
 }
@@ -1083,16 +1311,37 @@ bool retro_serialize(void *data, size_t size) {
     if (!emu || !data) return false;
     size_t capacity = retro_serialize_size();
     if (!capacity || size < capacity) return false;
-    return gp32_save_state_data(emu, data, size) == GP32_OK;
+    size_t guest = gp32_state_size(emu);
+    if (!guest || guest > size) return false;
+    if (gp32_save_state_data(emu, data, guest) != GP32_OK) return false;
+    /* The frontend delivery section follows the guest payload; old loaders
+     * stop after the guest sections and ignore it. */
+    size_t written = lrst_write((uint8_t *)data + guest, size - guest);
+    if (!written) return false;
+    if (guest + written < size)
+        memset((uint8_t *)data + guest + written, 0, size - guest - written);
+    return true;
 }
 bool retro_unserialize(const void *data, size_t size) {
     if (!emu || !data || !size) return false;
-    if (gp32_load_state_data(emu, data, size) != GP32_OK) return false;
-    gp32_video_effects_reset(&effects);
-    reset_audio();
-    /* A loaded state can restore a frame counter this run already presented,
-     * so equality alone cannot prove the pixels are unchanged. */
-    invalidate_last_video();
+    size_t guest = 0;
+    if (gp32_load_state_data_ex(emu, data, size, &guest) != GP32_OK) return false;
+    if (guest && guest <= size) {
+        int loaded = lrst_read((const uint8_t *)data + guest, size - guest);
+        if (loaded == 1) return true;
+        if (loaded < 0) {
+            /* A truncated delivery section would silently replay with reset
+             * audio/duplicate state, which is exactly the divergence this
+             * section exists to prevent. */
+            reset_loaded_delivery_state();
+            return false;
+        }
+    }
+    /* State from before the delivery section, or one this build cannot read:
+     * keep the historical reset. A loaded state can restore a frame counter
+     * this run already presented, so equality alone cannot prove the pixels
+     * are unchanged. */
+    reset_loaded_delivery_state();
     return true;
 }
 void *retro_get_memory_data(unsigned id) { (void)id; return NULL; }

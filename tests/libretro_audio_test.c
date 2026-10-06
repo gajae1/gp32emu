@@ -231,6 +231,31 @@ static void test_video_dupe(void) {
     retro_set_environment(NULL);
 }
 
+/* Run-ahead and rewind serialize, run ahead, restore and run the same frames
+ * again. The replay has to reproduce the duplicate decision, not only the
+ * pixels: a state that forgets which frame the frontend already has turns a
+ * NULL duplicate back into a fresh push. */
+static void test_state_video_identity(void) {
+    video_case(true, 500u);
+    retro_run();
+    CHECK(video_calls == 1 && !video_null_calls, "video state case must present its first frame");
+    size_t size = retro_serialize_size();
+    uint8_t *state = size ? (uint8_t *)malloc(size) : NULL;
+    if (!state || !retro_serialize(state, size)) exit(2);
+
+    retro_run();
+    CHECK(video_null_calls == 1, "an unchanged counter must duplicate in the uninterrupted run");
+
+    CHECK(retro_unserialize(state, size), "state must load for a video replay");
+    retro_run();
+    CHECK(video_calls == 3 && video_null_calls == 2,
+          "the replayed frame must keep the duplicate decision of the saved state");
+
+    free(state);
+    retro_set_video_refresh(NULL);
+    retro_set_environment(NULL);
+}
+
 static void test_portrait_video(void) {
     uint32_t *raw = malloc((243u * 320u + 1u) * sizeof(*raw));
     uint32_t *out = malloc((320u * 240u + 2u) * sizeof(*out));
@@ -548,11 +573,14 @@ static void test_state_buffers(const char *state_path) {
     CHECK(gp32_save_state(emu, state_path) == GP32_OK, "file state must save");
     FILE *file = fopen(state_path, "rb");
     if (!file) exit(2);
-    size_t got = fread(again, 1, size, file);
+    size_t guest = gp32_state_size(emu);
+    size_t got = fread(again, 1, guest, file);
     int tail = fgetc(file);
     fclose(file);
-    CHECK(got == size && tail == EOF && !memcmp(state, again, size),
-          "memory serialization must match the existing file format byte for byte");
+    CHECK(got == guest && tail == EOF && !memcmp(state, again, guest),
+          "memory serialization must keep the file's guest payload byte for byte");
+    CHECK(size > guest && !memcmp(state + guest, "LRST", 4u),
+          "memory serialization must append the versioned delivery section");
 
     CHECK(!retro_unserialize(state, 8u), "truncated state header must fail");
     CHECK(!retro_unserialize(state, size - 1u), "truncated state body must fail");
@@ -565,6 +593,33 @@ static void test_state_buffers(const char *state_path) {
     free(state);
     free(again);
     remove(state_path);
+}
+
+/* The same guarantee for the delivery queue: rewind and run-ahead replay the
+ * frames after a state, so the resampler phase and history that a load used to
+ * clear have to come back for the replayed PCM to match the uninterrupted one. */
+static void test_state_replay_continuity(void) {
+    start_case();
+    feed(4, 11025, 3000);
+    feed(3, 22050, 500);
+    size_t size = retro_serialize_size();
+    uint8_t *state = size ? (uint8_t *)malloc(size) : NULL;
+    if (!state || !retro_serialize(state, size)) exit(2);
+
+    size_t base = captured_frames;
+    feed(5, 44100, 900);
+    feed(2, 11025, 1300);
+    size_t count = captured_frames - base;
+    memcpy(expected, captured + base * 2u, count * 2u * sizeof(int16_t));
+
+    CHECK(retro_unserialize(state, size), "state must load for an audio replay");
+    captured_frames = base;
+    feed(5, 44100, 900);
+    feed(2, 11025, 1300);
+    CHECK(captured_frames == base + count &&
+          !memcmp(expected, captured + base * 2u, count * 2u * sizeof(int16_t)),
+          "replayed PCM must match the uninterrupted run after a state load");
+    free(state);
 }
 
 static void test_sustained_backpressure(void) {
@@ -766,9 +821,11 @@ int main(int argc, char **argv) {
     test_oversized_block_recovery();
     test_discard_gap_recovery();
     test_video_dupe();
+    test_state_video_identity();
     test_portrait_video();
     test_lifecycle(argc > 1 ? argv[1] : "libretro_audio_test.tmp");
     test_state_buffers(argc > 1 ? argv[1] : "libretro_audio_test.tmp");
+    test_state_replay_continuity();
     retro_deinit();
     if (failures) {
         fprintf(stderr, "libretro audio: %d failures\n", failures);

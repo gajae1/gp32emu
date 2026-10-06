@@ -111,6 +111,10 @@ gp32_status_t gp32_load_state(gp32_t *gp32, const char *path);
 size_t gp32_state_size(const gp32_t *gp32);
 gp32_status_t gp32_save_state_data(gp32_t *gp32, void *data, size_t size);
 gp32_status_t gp32_load_state_data(gp32_t *gp32, const void *data, size_t size);
+/* Same load, and reports the exact guest-section length at the front of the
+ * buffer. Frontends that append their own section after the guest payload use
+ * it to find where that section starts; trailing bytes stay tolerated. */
+gp32_status_t gp32_load_state_data_ex(gp32_t *gp32, const void *data, size_t size, size_t *consumed);
 
 gp32_status_t gp32_reset(gp32_t *gp32);
 /* Explicit CPU-cycle budget shared by foreground and HLE callback execution,
