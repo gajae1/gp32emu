@@ -9,7 +9,7 @@ Every remote command is read-only: no sudo, no process is started or killed,
 no remote file is created, edited or deleted. Missing files and permission
 errors are recorded in "errors" and per capture instead of aborting the run.
 
-Paths follow docs/PORTABILITY_PROGRESS.md and the F:/GP32/results scripts: the
+Paths follow docs/PORTABILITY_PROGRESS.md: the
 core is /mnt/SDCARD/Emu/GP32/gp32emu_libretro.so and the RA process names are
 ra64.h700 and the GP32-only ra64.gp32.h700. Set GP32_SSH_PASSWORD in the
 environment.
@@ -23,7 +23,7 @@ import shlex
 import sys
 from pathlib import Path
 
-HOST = "192.168.0.204"
+HOST = os.environ.get("GP32_H700_HOST") or None
 USER = "spruce"
 ROOT = "/mnt/SDCARD"
 PROCESSES = ("ra64.h700", "ra64.gp32.h700")
@@ -132,7 +132,7 @@ def write_document(path, document):
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="h700_snapshot.py", description=__doc__,
                                      formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser.add_argument("--host", default=HOST, help="SSH host of the H700 device")
+    parser.add_argument("--host", default=HOST, required=HOST is None, help="SSH host of the H700 device (or set GP32_H700_HOST)")
     parser.add_argument("--user", default=USER, help="SSH user")
     parser.add_argument("--output", type=Path, default=None,
                         help="Local JSON path (default: h700-snapshot-<UTC>.json)")

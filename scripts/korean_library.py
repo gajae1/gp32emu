@@ -14,9 +14,9 @@ read-only and never extracted, renamed or deleted. JSON is deterministic
 the per-file progress lines go to stderr.
 
 Usage:
-  python scripts/korean_library.py F:/GP32
-  python scripts/korean_library.py F:/GP32 --recursive
-  python scripts/korean_library.py F:/GP32 --json-out inventory.json
+  python scripts/korean_library.py /path/to/roms
+  python scripts/korean_library.py /path/to/roms --recursive
+  python scripts/korean_library.py /path/to/roms --json-out inventory.json
 """
 from __future__ import annotations
 

@@ -1,139 +1,116 @@
 # GP32emu
 
-GP32emu is a Game Park GP32 emulator targeting C23, with a C11 fallback for older toolchains. It provides a portable ARM920T interpreter, optional x86_64 and AArch64 dynarecs, SmartMedia loading, HLE BIOS support for selected software, real BIOS boot support, SDL3 standalone frontend, Win64 frontend, Qt6/Linux frontend, save states, screenshots, and MKV recording.
+An emulator for the Game Park GP32 (2001, ARM920T handheld), written in C. It is a fork of
+[gameblabla/gp32emu](https://github.com/gameblabla/gp32emu), aimed at running GP32 games smoothly on
+cheap ARM handhelds (Allwinner H700, Rockchip RK3326 and similar) through RetroArch.
 
-No BIOS, game, or commercial assets are bundled.
+No BIOS, games or other copyrighted files are included. Bring your own dumps.
 
-This fork is developing low-end ARM/Linux and Android libretro support, with
-audio/video and CPU optimizations. Full-game compatibility remains in progress.
-See the [libretro build guide](docs/libretro/README_LIBRETRO.md),
-[Android build guide](docs/ANDROID_BUILD.md),
-[measured progress](docs/PORTABILITY_PROGRESS.md), and
-[game coverage matrix](docs/GP32_LOCAL_GAME_MATRIX.md).
+## What it does
 
-## Supported builds
+- ARM920T interpreter plus a recompiler (JIT) for x86-64 and AArch64.
+  32-bit ARM hosts use the interpreter only.
+- Boots the real GP32 BIOS (v1.6.6, `gp32166m.bin`), or loads SmartMedia cards directly without a BIOS.
+- Frontends: libretro core (main target), SDL 1.2, SDL3, Qt6/Linux, Win64, and a WebAssembly build for browsers.
+- Save states, SmartMedia save writeback, optional LCD persistence and frame interpolation.
+- An optional CPU speed setting (100% to 300%) that gives the game more CPU time without changing
+  sound pitch or timers. It helps games that are slow on the original console.
 
-Headless/core build:
+## Where it stands
+
+Measured on an RG35XX SP class device (H700, Cortex-A53 at 1.5 GHz), real BIOS boot, JIT on,
+core only (RetroArch's own video and audio drivers are not included in these numbers):
+
+| Scene | Frames per second |
+| --- | --- |
+| Astonishia Story R, opening | about 96 |
+| Little Girl Mill, loading from card | about 79 |
+| Blue Angelo, town dialogue | about 85 |
+| Princess Maker 2, cutscene | about 120 |
+
+All 28 commercial cards that were available for testing start and run for 3600 frames of scripted
+input with no crash, and the JIT and the interpreter produce identical output on each of them. Most
+games run at 110 to 240 fps on the same device. That is a check that games run and agree with the
+interpreter, not proof that every game is playable from start to finish.
+
+Known gaps:
+
+- Booting without a BIOS works for many cards but not all. A few stay in their start-up code
+  (Astonishia Story R, Holeman Battle Race 2002, Tales of Windy Land, Topy Topy Gogo among them).
+  Use the BIOS when you have it; it is the reference path.
+- Pinball Dreams starts and plays without a BIOS but its sound is silent.
+- Android builds link but have not been run on a device.
+- Nothing has been compared against a physical GP32 side by side. Sound and timing follow the
+  S3C2400 manual and BIOS behaviour, and some noise in sound comes from the games' own data.
+- No 32-bit ARM recompiler. Boards slower than a Cortex-A53 fall back to the interpreter, which is
+  too slow for most games.
+
+More detail is in [docs/DEVELOPMENT_STATUS.md](docs/DEVELOPMENT_STATUS.md).
+
+## Using it
+
+Korean manual: [docs/MANUAL.ko.md](docs/MANUAL.ko.md). Short version for RetroArch:
+
+1. Put `gp32emu_libretro.so` (or `.dll`) in RetroArch's cores folder.
+2. Copy your BIOS to the system folder under the name `gp32166m.bin`.
+3. Load a `.smc`, `.fxe` or `.fpk` file with the GP32emu core.
+
+For SpruceOS on H700 devices see [packaging/spruce/README.md](packaging/spruce/README.md).
+
+## Building
+
+The code builds as C23 and falls back to C11 on older compilers.
+
+Libretro core with CMake (Linux, Windows, Android NDK):
 
 ```sh
-make -f Makefile.sdl
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DGP32EMU_BUILD_LIBRETRO=ON -DGP32EMU_BUILD_HEADLESS=OFF
+cmake --build build --parallel
 ```
 
-Standalone SDL 1.2 frontend:
+H700 and other AArch64 Linux handhelds can be cross compiled with Zig 0.13.0 using
+`cmake/toolchains/h700-zig.cmake`. Android steps are in [docs/ANDROID_BUILD.md](docs/ANDROID_BUILD.md).
+Full libretro notes are in [docs/libretro/README_LIBRETRO.md](docs/libretro/README_LIBRETRO.md).
+
+Other frontends:
 
 ```sh
-make -f Makefile.sdl sdl12
+make -f Makefile.sdl sdl3          # SDL3 window
+make -f Makefile.sdl sdl12         # SDL 1.2 window
+make -f Makefile.linux qt          # Qt6
+make -f Makefile.win64             # Windows, cross build
+make -f Makefile.wasm              # browser build, then: make -f Makefile.wasm serve
 ```
 
-Standalone SDL3 frontend:
+The WebAssembly build uses the interpreter only and takes any C compiler that can target
+`wasm32` plus `wasm-ld` (clang, or `zig cc -target wasm32-freestanding`).
 
-```sh
-make -f Makefile.sdl sdl3
-```
-
-SDL 1.2 and SDL3 accept `--lcd-persistence` and `--frame-interpolation` to enable the optional temporal video effects. They are disabled by default.
-
-Qt6/Linux frontend:
-
-```sh
-qmake6 GP32emu.pro && make
-```
-
-or:
-
-```sh
-make -f Makefile.linux qt
-```
-
-Win64 frontend cross-build:
-
-```sh
-make -f Makefile.win64
-```
-
-WebAssembly/browser frontend:
-
-```sh
-make -f Makefile.wasm
-make -f Makefile.wasm serve
-```
-
-Then open `http://127.0.0.1:8008/`. The WASM build uses the portable bytecode interpreter only; the x86_64 native dynarec is not compiled or exposed for WebAssembly. It supports loading BIOS files and GP32 game/media images from browser file inputs or drag-and-drop. If no BIOS is loaded, HLE/direct-load mode is used and the page warns that compatibility is limited. Browser audio uses an AudioWorklet jitter buffer when available, with a ScriptProcessor fallback. The frontend is rate-limited by elapsed presentation time; it avoids audio-queue-driven catch-up bursts and uses only small emergency catch-up when audio is close to underrun. The browser UI also provides save/load state slots, remappable keyboard controls, remappable Gamepad API controller support, mobile touch controls, video scaling/filter controls, inactive-tab pause, and a fullscreen toggle with an in-page fallback for browsers that do not expose the Fullscreen API. WASM save/load uses a reusable heap allocator and direct savestate staging to avoid rejected states from stale/corrupt VFS buffers or out-of-memory pressure on larger SmartMedia images.
-
-The Windows UI targets x86_64 (Win64); Win32 is intentionally not provided. SDL 1.2 and SDL3 frontends are both present; SDL3 is the newer input/audio path, while SDL 1.2 remains supported for compatibility.
-
-## Headless usage
+Headless runner, useful for tests and benchmarks:
 
 ```sh
 ./gp32_headless --bios gp32166m.bin --smc game.smc --frames 3000 --jit --dump-frame frame.ppm
-./gp32_headless --bios gp32166m.bin --smc game.smc --frames 3000 --jit --record-mkv capture.mkv
-./gp32_headless --fxe homebrew.fxe --frames 600 --dump-frame frame.ppm
+./gp32_bench --bios gp32166m.bin --smc game.smc --warmup 2400 --frames 300 --jit
 ```
 
-To reproduce a demanding gameplay scene, save a native state after scripted
-input, then reload it with the same BIOS and original game media:
+Run the tests with `ctest --test-dir build --output-on-failure` after configuring with
+`-DGP32EMU_BUILD_TESTS=ON`.
 
-```sh
-./gp32_headless --bios gp32166m.bin --smc game.smc --input-script combat.txt --frames 3900 --jit --save-state combat.gp32st
-./gp32_headless --bios gp32166m.bin --smc game.smc --load-state combat.gp32st --frames 600 --jit --dump-frame replay.ppm
-```
+## Source layout
 
-`--save-state` writes the state after execution and reports a nonzero exit code
-if saving fails. States contain game data and should not be distributed.
+- `src/arm920t.c`, `src/arm920t_jit_*`: CPU, interpreter, JIT
+- `src/s3c2400.c`: the SoC (LCD, timers, DMA, IIS audio, interrupts, NAND controller)
+- `src/gp32.c`, `src/smc_direct.c`: the machine, BIOS boot, direct card loading
+- `src/libretro/`: the libretro core. `wasm/`, `web/`: browser build
+- `tests/`: unit tests for the CPU, JIT, SoC, audio and save states
 
-Current headless capture output is Matroska/MKV with ZMBV video and PCM audio via `--record-mkv`. Y4M output and legacy recording aliases are not supported.
+## Credits and licenses
 
+GP32emu was started by gameblabla. This fork builds on that code, and the original commits are kept
+in the history. The upstream repository does not state a license for its own code at the time of
+writing, so this repository does not add one either; ask the upstream author before reusing it
+outside of GitHub's fork terms.
 
+Parts of the hardware model come from MAME (BSD-3-Clause, Tim Schuerewegen, Raphael Nabet and
+others), and the repository includes the MIT-licensed kuba-- zip library and parts of BDMEmu's
+frontend. Their notices are in [licenses/](licenses/).
 
-## Optional threading
-
-Worker threads are enabled by default on Win64/Linux builds for the parts that can safely run outside the emulated single-CPU machine: Win64 audio pumping and MKV/ZMBV recording. The emulated ARM920T/S3C2400 execution order remains single-threaded for determinism.
-
-To build without worker threads for small or single-core targets:
-
-```sh
-make -f Makefile.sdl GP32EMU_ENABLE_THREADS=0
-make -f Makefile.win64 GP32EMU_ENABLE_THREADS=0
-cmake -S . -B build -DGP32EMU_ENABLE_THREADS=OFF
-```
-
-## Libretro backend
-
-This source package includes a separate libretro backend. It does not replace the SDL, Qt, Win64, or WASM frontends.
-
-Build on Linux:
-
-```sh
-make -f Makefile.libretro clean all
-```
-
-Output:
-
-```text
-gp32emu_libretro.so
-```
-
-Install for RetroArch:
-
-```sh
-mkdir -p ~/.config/retroarch/cores ~/.config/retroarch/system
-cp gp32emu_libretro.so ~/.config/retroarch/cores/
-cp gp32emu_libretro.info ~/.config/retroarch/cores/
-cp "[BIOS] GamePark GP32 (Europe) (v1.6.6).bin" ~/.config/retroarch/system/gp32166m.bin
-```
-
-Run a game:
-
-```sh
-retroarch -L ~/.config/retroarch/cores/gp32emu_libretro.so "Little Wizard (Europe).smc"
-```
-
-From the build directory, include `./` in the core path:
-
-```sh
-retroarch -L ./gp32emu_libretro.so "Little Wizard (Europe).smc"
-```
-
-Supported content extensions are `.smc`, `.fxe`, and `.fpk`. Core options expose JIT, boot mode (`auto`, `require_bios`, or `direct_hle`), LCD persistence, and frame interpolation. Boot mode defaults to `auto`, which uses `gp32166m.bin` when available and falls back to direct/HLE SmartMedia boot if the BIOS is missing. In `auto` mode a card whose only executable is outside the commercial `GAME\` layout (a freeware `GPMM\` card, which the retail BIOS launcher cannot start) also boots through the direct loader instead of stalling on the BIOS DATA LOADING screen; `require_bios` and `direct_hle` keep their explicit meaning. LCD persistence and frame interpolation are optional and disabled by default.
-
-Input uses RetroPad port 1: D-pad maps to GP32 directions, A/B to GP32 A/B, L/R to GP32 L/R, Start to GP32 Start, and Select to GP32 Select. Use RetroArch's normal input remapping for controller-specific mappings.

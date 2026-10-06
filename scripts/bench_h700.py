@@ -163,7 +163,7 @@ def build_comparison(rows, invocation):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--host", default="192.168.0.204")
+    parser.add_argument("--host", required=True)
     parser.add_argument("--user", default="spruce")
     parser.add_argument("--adb-serial", help="Use this explicitly selected USB ADB device instead of SSH")
     parser.add_argument("--adb", default="adb", help="ADB executable path (USB mode only)")
