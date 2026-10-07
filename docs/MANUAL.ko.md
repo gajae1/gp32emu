@@ -2,6 +2,23 @@
 
 RetroArch용 GP32 코어를 쓰는 방법을 적은 문서입니다. 빌드 방법은 README.md에 있습니다.
 
+## 1.0.0 릴리즈
+
+1.0.0은 첫 정식 릴리즈로, 1.0.0-rc1 초안 빌드를 대체합니다. 압축 파일은 프로젝트의
+[Releases 페이지](https://github.com/gajae1/gp32emu/releases)에서 받습니다. 안에는 대상별로 파일이 나뉘어 있습니다.
+
+- `windows-x64/`: 독립 실행 파일 `gp32emu_win64.exe`(같은 폴더에 `SDL3.dll` 필요), RetroArch용
+  `gp32emu_libretro.dll`, 코어 정보 파일
+- `linux-aarch64/`: 리눅스 휴대기기용 RetroArch 코어와 정보 파일
+- `android-arm64/`, `android-armv7/`: 안드로이드용 코어와 정보 파일. armv7은 인터프리터로만 돌아
+  arm64보다 훨씬 느립니다.
+
+`manifest.json`에 모든 파일의 SHA-256 해시가 있고, 라이선스 고지와 이 설명서도 함께 들어 있습니다.
+BIOS와 게임, 세이브는 들어 있지 않습니다.
+
+리샘플러 누적 폭 확장, 언더런 후 필터 표 재사용, 프레임 안에서의 PCM 전달 개선이 포함되어 있습니다.
+테스트는 통과했지만, 휴대기기에서 직접 들어 보고 확인한 것은 아닙니다.
+
 ## 필요한 것
 
 - 코어 파일: `gp32emu_libretro.so`(리눅스, 안드로이드는 `_android.so`) 또는 `gp32emu_libretro.dll`(윈도우)
@@ -18,6 +35,24 @@ BIOS와 게임은 이 저장소에 들어 있지 않습니다. 직접 갖고 있
 
 명령줄로는 `retroarch -L gp32emu_libretro.so 게임.smc` 입니다. 코어 경로에 슬래시가 없으면 RetroArch가
 코어 이름으로 읽으니, 현재 폴더의 파일은 `./gp32emu_libretro.so`처럼 적어야 합니다.
+
+## 윈도우 독립 실행
+
+`gp32emu_win64.exe`와 `SDL3.dll`을 같은 폴더에 두고 실행합니다.
+
+1. `File > Open BIOS...`로 BIOS를 열거나, `Config > Set BIOS path...`로 경로를 저장해 둡니다.
+2. `File > Open SmartMedia image...`, `Open FXE...`, `Open FPK...` 가운데 하나로 게임을 엽니다.
+3. F5/F8로 세이브 스테이트를 저장·불러오고, F12로 스크린샷을 찍습니다.
+
+BIOS로 실행한 SMC 게임의 게임 내 저장은 원본 옆의 `게임.smc.gp32.smc`에 보관합니다. 다음 실행에서는 이 저장
+이미지를 자동으로 불러오며 원본 롬은 바꾸지 않습니다. 따라서 롬이 있는 폴더에 쓰기 권한이
+필요합니다. 저장 실패 알림이 나오면 최신 진행 상황은 저장되지 않은 것이므로 공간과 권한을
+확인하세요. 세이브 스테이트는 F5로 별도로 남길 수 있습니다.
+BIOS 없는 직접 실행에서는 카드 쓰기 보존을 지원하지 않으므로 F5 스테이트를 사용하세요.
+
+명령줄에서는 `gp32emu_win64.exe --bios gp32166m.bin --smc game.smc`처럼 실행합니다(`--fxe`, `--fpk`,
+`--jit`, `--no-jit`도 됩니다). BIOS 경로를 저장하지 않으면 HLE 폴백으로 실행되고, 일부 게임은
+시작하지 못한다는 경고가 나옵니다.
 
 ## 리눅스 휴대기기(aarch64)
 
