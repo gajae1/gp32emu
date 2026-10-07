@@ -3075,13 +3075,18 @@ frames. Faster host execution alone cannot erase that interval. Whether its
 length matches original hardware is still unverified; it is distinct from the
 partial-frame delivery deficit above. No mixer/frontend/governor was changed.
 
-Round 198 update (2026-10-07): the advertisement above changed. `retro_run` now
+Round 198 experiment (reverted in round 215): the advertisement changed. `retro_run`
 pushes one full `RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO` whenever the derivable
 TFT panel period moves by more than 0.05 %, so frontend timing follows the live
 panel (50.82 Hz in the PM2 cutscene) instead of a fixed 60 fps. The emulated
 step per `retro_run` and the 44100/60 audio batch are unchanged; see
 [LCD_TIMING.md](LCD_TIMING.md) and
 `F:/GP32/results/round198-dynamic-fps/REPORT.md`.
+
+Round 215 restores the 60 Hz advertisement to match the unchanged virtual
+interval. Advertising the LCD rate alone changed guest speed and audio supply
+per wall-clock second. The guest LCD clock remains programmable; see the
+frontend-clock regression and ASR title-state capture in the development log.
 
 ## Stopped-IIS audio duration (2026-10-05)
 

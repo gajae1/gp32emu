@@ -16,8 +16,7 @@
 #define GP32_H 240u
 #define GP32_RAW_W 240u
 #define GP32_RAW_H 320u
-/* Timing the frontend reads before the guest programs the TFT panel, and the
- * default the advertisement below starts from. */
+/* Host callback cadence, matching gp32_run_frame's 1/60-second interval. */
 #define GP32_FPS 60.0
 #define GP32_AUDIO_RATE 44100u
 #define GP32_AUDIO_FRAMES_PER_VIDEO 735u
@@ -444,65 +443,12 @@ void retro_get_system_av_info(struct retro_system_av_info *info) {
     info->geometry.max_width = GP32_W;
     info->geometry.max_height = GP32_H;
     info->geometry.aspect_ratio = 4.0f / 3.0f;
+    /* This is retro_run's time step, not the independent guest LCD clock.
+     * gp32_run_frame advances 1/60 second; advertising the panel rate would
+     * change emulation speed and make audio production drift against the
+     * frontend's 44100 Hz consumer. Scanout still follows the guest divider. */
     info->timing.fps = GP32_FPS;
     info->timing.sample_rate = GP32_AUDIO_RATE;
-}
-
-/* Panel-rate advertisement. The TFT frame clock is whatever the guest wrote
- * into the LCDCON registers, so the timing this core reported at load time can
- * stop matching the machine while a game runs; round179 measured a 50.82 Hz
- * cutscene panel behind a 60 fps advertisement. The latch below is the rate
- * the frontend currently holds, in millihertz, starting at the 60 fps baseline
- * retro_get_system_av_info reports. A run whose live period is derivable and
- * differs from the latch by more than 0.05 % pushes the whole A/V info once;
- * unchanged or underivable periods push nothing, which keeps guests that never
- * reprogram the panel at exactly the previous behavior.
- *
- * The latch is host-visible state, not machine state, and deliberately stays
- * out of savestates: after retro_unserialize the ordinary change detection
- * re-advertises the loaded panel programming only if it really moved, so
- * run-ahead and rewind replays do not spam the frontend. */
-static uint64_t advertised_panel_mhz = 60000u; /* 60.000000 Hz */
-
-/* Lifecycle boundaries where the frontend takes a fresh retro_get_system_av_info
- * (init, load, unload), so the latch has to go back to the reported baseline.
- * retro_reset and retro_unserialize are not among them: the frontend keeps the
- * last timing it accepted, and only a real panel-rate change is worth a
- * reconfiguration. */
-static void reset_advertised_timing(void) {
-    advertised_panel_mhz = (uint64_t)(GP32_FPS * 1000.0);
-}
-
-static void refresh_advertised_timing(void) {
-    if (!emu || !environ_cb) return;
-    uint32_t period_ns = 0, period_frac = 0;
-    if (!gp32_get_lcd_frame_period(emu, &period_ns, &period_frac)) return;
-    /* Same 20-bit packing as the panel-period consumers: the fraction never
-     * reaches bit 20, so this is the exact sub-nanosecond period. */
-    uint64_t period_q20 = ((uint64_t)period_ns << 20) | period_frac;
-    if (!period_q20) return;
-    /* millihertz = 1e12 * 2^20 / period_q20; the numerator stays inside
-     * uint64_t and the accessor already confines the period to 5..500 Hz. */
-    uint64_t rate_mhz = (UINT64_C(1000000000000) << 20) / period_q20;
-    if (!rate_mhz) return;
-    uint64_t delta = rate_mhz > advertised_panel_mhz ? rate_mhz - advertised_panel_mhz
-                                                    : advertised_panel_mhz - rate_mhz;
-    if (delta * 2000u <= advertised_panel_mhz) return;
-    struct retro_system_av_info info;
-    retro_get_system_av_info(&info);
-    info.timing.fps = (double)rate_mhz / 1000.0;
-    /* Latch before asking, so "exactly once per change" also holds for a
-     * frontend that refuses the command: retrying every run could not turn a
-     * refusal into a success and would push once per frame forever. */
-    advertised_panel_mhz = rate_mhz;
-    if (environ_cb(RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO, &info)) {
-        lr_log(RETRO_LOG_INFO, "[gp32emu] panel frame clock: %.3f Hz (%.3f ms per frame)\n",
-               info.timing.fps, (double)period_q20 / 1048576.0 / 1000000.0);
-    } else {
-        lr_log(RETRO_LOG_WARN,
-               "[gp32emu] frontend refused the panel frame clock update (%.3f Hz); keeping the previous timing\n",
-               info.timing.fps);
-    }
 }
 
 /* Fractional idle duration, in 1/(60 * 2^24) source-frame units. The
@@ -796,7 +742,6 @@ void retro_init(void) {
     input_device = RETRO_DEVICE_JOYPAD;
     set_default_dirs();
     reset_audio();
-    reset_advertised_timing();
     if (!effects_ready) effects_ready = gp32_video_effects_init(&effects);
     refresh_variables();
     refresh_input_bitmask_support();
@@ -804,7 +749,6 @@ void retro_init(void) {
 void retro_deinit(void) {
     destroy_emu_with_save();
     invalidate_last_video();
-    reset_advertised_timing();
     if (effects_ready) { gp32_video_effects_shutdown(&effects); effects_ready = 0; }
     free(audio_resample_buf);
     audio_resample_buf = NULL;
@@ -1228,11 +1172,6 @@ void retro_run(void) {
      * core instance in this file goes through this single run path. */
     gp32_set_host_pump(emu, pump_audio_delivery, NULL);
     gp32_run_frame(emu);
-    /* The guest can reprogram the panel inside any run; the frontend is told
-     * once per change so its timing follows the real panel clock instead of
-     * the load-time 60 fps default. Presented frames keep the 1/60-second
-     * slot below, so a slower panel simply shows more duplicate frames. */
-    refresh_advertised_timing();
     gp32_framebuffer_desc_t fb;
     int have_fb = gp32_get_framebuffer(emu, &fb) == GP32_OK;
     int effects_active = effects_ready && gp32_video_effects_active(&effects);
@@ -1311,7 +1250,6 @@ bool retro_load_game(const struct retro_game_info *game) {
     destroy_emu_with_save();
     reset_audio();
     invalidate_last_video();
-    reset_advertised_timing();
     content_path[0] = smartmedia_save_path[0] = 0;
     if (game && game->path) snprintf(content_path, sizeof(content_path), "%s", game->path);
     make_runtime_paths(content_path[0] ? content_path : "gp32");
@@ -1413,7 +1351,6 @@ void retro_unload_game(void) {
     content_path[0] = 0;
     reset_audio();
     invalidate_last_video();
-    reset_advertised_timing();
 }
 unsigned retro_get_region(void) { return RETRO_REGION_NTSC; }
 bool retro_load_game_special(unsigned game_type, const struct retro_game_info *info, size_t num_info) { (void)game_type; (void)info; (void)num_info; return false; }

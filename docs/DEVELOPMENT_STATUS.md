@@ -15,6 +15,17 @@ result paths below are names on the development machine.
 
 ## Current accepted work
 
+- Round 215 fixes a libretro clock regression introduced in round 198: host
+  callbacks now remain at 60 Hz, matching `gp32_run_frame` and audio accounting.
+  Advertising the independent guest LCD rate changed speed and starved or
+  overfilled audio even with sufficient host CPU performance. A frontend-ABI
+  test failed at 50, 59.199 and 88.8 Hz before the fix and passes afterwards.
+  In the actual ASR title save, 180 calls deliver the same 132,299 stereo frames
+  and byte-identical WAV; advertised elapsed time changes from 3.039651 to
+  3 seconds, removing a 39.65 ms accumulating deficit. Focused libretro audio,
+  input and state/persistence tests pass. This is a core adapter change, not a
+  RetroArch configuration change; hardware listening remains unverified.
+
 - Round 214 SDK task-table search: an eight-word SSE2/NEON prefilter skips
   windows containing no possible runnable state; other hosts use a scalar
   equivalent. It reads current RAM and preserves the existing per-record
@@ -805,6 +816,10 @@ rounds 199/201 re-validate that split at current HEAD. No per-title tuning was
 added for any of this.
 
 ## Round 198 dynamic panel-rate advertisement (2026-10-07)
+
+Superseded by round 215: output parity alone missed the frontend wall-clock
+mismatch. The implementation described below was removed because each run
+still advanced 1/60 second. This section records the historical experiment.
 
 The libretro core no longer reports a fixed 60 fps for its whole life. Each
 `retro_run`, `refresh_advertised_timing()` reads the live TFT frame period

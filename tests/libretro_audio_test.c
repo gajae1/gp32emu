@@ -4,6 +4,7 @@
  * Link this translation unit with gp32emu, not a second copy of libretro.c.
  */
 #include <stdio.h>
+#include <math.h>
 static unsigned state_file_opens;
 static FILE *counted_fopen(const char *path, const char *mode) {
     ++state_file_opens;
@@ -15,6 +16,7 @@ static FILE *counted_fopen(const char *path, const char *mode) {
 #define gp32_consume_audio test_consume_audio
 #define gp32_clear_audio test_clear_audio
 #define gp32_get_framebuffer test_get_framebuffer
+#define gp32_get_lcd_frame_period test_get_lcd_frame_period
 #ifndef LIBRETRO_SOURCE
 #define LIBRETRO_SOURCE "../src/libretro/libretro.c"
 #endif
@@ -25,12 +27,14 @@ static FILE *counted_fopen(const char *path, const char *mode) {
 #undef gp32_consume_audio
 #undef gp32_clear_audio
 #undef gp32_get_framebuffer
+#undef gp32_get_lcd_frame_period
 
 gp32_status_t gp32_run_frame(gp32_t *);
 gp32_status_t gp32_get_audio(gp32_t *, gp32_audio_desc_t *);
 gp32_status_t gp32_consume_audio(gp32_t *, uint64_t);
 gp32_status_t gp32_clear_audio(gp32_t *);
 gp32_status_t gp32_get_framebuffer(gp32_t *, gp32_framebuffer_desc_t *);
+int gp32_get_lcd_frame_period(const gp32_t *, uint32_t *, uint32_t *);
 
 #define CAPTURE_FRAMES 32768u
 static int16_t input_pcm[4096u * 2u];
@@ -42,6 +46,15 @@ static gp32_framebuffer_desc_t scripted_fb;
 static int scripted = 1;
 static size_t captured_frames, allowance, per_call, callback_calls;
 static int failures;
+static uint32_t scripted_panel_period;
+static double frontend_fps;
+
+int test_get_lcd_frame_period(const gp32_t *g, uint32_t *ns, uint32_t *frac) {
+    if (!scripted_panel_period) return gp32_get_lcd_frame_period(g, ns, frac);
+    *ns = scripted_panel_period;
+    *frac = 0;
+    return 1;
+}
 
 #define CHECK(condition, message) do { \
     if (!(condition)) { \
@@ -141,6 +154,9 @@ static const char *env_lcd_persistence;
 
 static bool test_environ(unsigned cmd, void *data) {
     switch (cmd) {
+    case RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO:
+        frontend_fps = ((struct retro_system_av_info *)data)->timing.fps;
+        return true;
     case RETRO_ENVIRONMENT_GET_CAN_DUPE:
         *(bool *)data = env_can_dupe;
         return true;
@@ -291,6 +307,7 @@ static void start_case(void) {
     emu = gp32_create(NULL);
     if (!emu) exit(2);
     scripted = 1;
+    scripted_panel_period = 0;
     captured_frames = callback_calls = 0;
     allowance = per_call = SIZE_MAX;
     memset(&scripted_audio, 0, sizeof(scripted_audio));
@@ -824,7 +841,37 @@ static void test_partial_overflow_recovery(void) {
     CHECK(exact, "partial recovery preserves every retained frame outside the two gap prefixes");
 }
 
+/* A frontend schedules retro_run at the advertised rate, not the LCD rate.
+ * Every run advances 1/60 second and must supply the matching audio duration,
+ * including when a game reprograms its independent LCD divider. */
+static void test_frontend_audio_clock(void) {
+    const uint32_t periods[] = {20000000u, 16891892u, 11261261u};
+    for (unsigned k = 0; k < GP32_ARRAY_COUNT(periods); ++k) {
+        start_case();
+        retro_set_environment(test_environ);
+        struct retro_system_av_info info;
+        retro_get_system_av_info(&info);
+        frontend_fps = info.timing.fps;
+        scripted_panel_period = periods[k];
+        feed(735u, 44100u, 0); /* let a timing update reach the frontend */
+        captured_frames = 0;
+        double frontend_seconds = 0.0;
+        for (unsigned frame = 0; frame < 12u; ++frame) {
+            frontend_seconds += 1.0 / frontend_fps;
+            feed(735u, 44100u, 0);
+        }
+        double audio_seconds = (double)captured_frames / info.timing.sample_rate;
+        fprintf(stderr, "frontend-clock panel_ns=%u advertised=%.3f audio=%.6f wall=%.6f\n",
+                periods[k], frontend_fps, audio_seconds, frontend_seconds);
+        CHECK(fabs(audio_seconds - frontend_seconds) < 1.0 / 44100.0,
+              "advertised run cadence must match produced audio duration");
+        scripted_panel_period = 0;
+        retro_set_environment(NULL);
+    }
+}
+
 int main(int argc, char **argv) {
+    test_frontend_audio_clock();
     test_partial_and_blocked();
     test_resampled_and_sample_callback();
     test_mixed_spans();
