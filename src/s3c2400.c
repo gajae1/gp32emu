@@ -424,6 +424,12 @@ arm_bus_t s3c2400_get_bus(s3c2400_t *s) {
     b.fastmem = s3c2400_fastmem;
     b.user = s;
     b.is_stable_read32 = s3c2400_is_stable_read32;
+    /* s3c2400_read32 answers 0xffffffff with no side effects for every
+     * aligned physical word outside the BIOS, RAM and identity-I/O windows
+     * (io_read32 decodes nothing there), and fastmem maps only those two
+     * data windows. */
+    b.open_bus_valid = 1;
+    b.open_bus_word32 = 0xffffffffu;
     return b;
 }
 

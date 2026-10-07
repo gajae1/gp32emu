@@ -36,6 +36,8 @@ typedef struct a64_emit {
     size_t pos, cap;
     int fail;
     int ram_read, ram_write, memory, mmu, leaf;
+    int bios_read;   /* jit_bios_base probes the whole read-only BIOS window */
+    int open_bus;    /* bus promises open_bus_word32 outside every window */
     int nzcv_valid; /* host NZCV equals the committed guest flags */
     int fwd_guest;  /* guest register whose committed value is still in w2, -1 = none.
                      * Only a plain register data op leaves it set; every other
@@ -74,7 +76,7 @@ typedef struct a64_cold_op {
     const arm_jit_op_t *op;
     size_t cont; /* hot continuation label this chain resumes at */
     uint32_t done, expected_next, generation;
-    uint8_t kind, load, wb, access, byte, live, nfixup;
+    uint8_t kind, load, wb, access, byte, live, ro, nfixup;
     size_t fixup[16]; /* hot branch sites that enter this chain */
     unsigned sibling; /* chain that owns this chain's guard rejections (0 = none) */
 } a64_cold_op_t;
@@ -903,6 +905,94 @@ static void a64_live_read32(a64_emit_t *e, unsigned rd, size_t cont) {
     for (unsigned i = 0; i < nreject; ++i) a64_patch(e, reject[i], e->pos);
 }
 
+/* Cold chain probe: aligned word load inside a proven non-RAM read window,
+ * entered after the RAM guard rejected the address.  w12 still holds the
+ * unaligned VA, w2 the writeback for writeback shapes and w11 the ARM
+ * unaligned rotation for a computed address.  Proves the same TLB/mapping
+ * the identity-I/O probe proves, then:
+ *   - a physical word below ARM_JIT_BIOS_SIZE_BYTES reads jit_bios_base[pa];
+ *     the window is read-only to guests and fixed before blocks translate,
+ *     so no callback runs and no exit check applies;
+ *   - a physical word outside every window (RAM, BIOS, identity I/O) reads
+ *     the bus-open constant, when the bus declares one (open_bus_word32);
+ * the loaded word keeps the ARM unaligned rotation, Rd commits first and the
+ * writeback second (the checked helpers own Rd==Rn ordering), then the
+ * recorded hot continuation resumes.  Every rejection falls to the next
+ * probe with the registers exactly as it found them. */
+static void a64_ro_word(a64_emit_t *e, const arm_jit_op_t *op, size_t cont) {
+    size_t reject[6];
+    unsigned nreject = 0;
+    a64_mask(e, 3, 12, ~3u); /* w3 = aligned VA, as the checked helpers use */
+    if (e->mmu) {
+        _Static_assert(sizeof(arm_tlb_entry_t) == 16u &&
+                       offsetof(arm_tlb_entry_t, pa_base) == 4u &&
+                       offsetof(arm_tlb_entry_t, mask) == 8u &&
+                       offsetof(arm_tlb_entry_t, valid) == 12u,
+                       "read-only window probe packed TLB layout");
+        /* Read the authoritative TLB; never fill it or widen a mask. */
+        a64_ubfx(e, 6, 3, 12, 12);
+        a64_cpu_addr(e, 8, offsetof(arm920t_t, tlb_entry));
+        a64_rr(e, 0x8b001000u, 8, 8, 6); /* add x8, x8, x6, lsl #4 */
+        a64_u32(e, 0x29400000u | (9u << 10) | (8u << 5) | 7u); /* ldp w7, w9, [x8]: VA, PA */
+        a64_u32(e, 0x29410000u | (6u << 10) | (8u << 5) | 5u); /* ldp w5, w6, [x8, #8]: mask, valid */
+        reject[nreject++] = e->pos;
+        a64_u32(e, 0x34000000u | 6u); /* cbz w6: no live mapping */
+        a64_rr(e, 0x0a200000u, 6, 3, 5); /* bic w6, w3, w5 */
+        a64_cmp(e, 6, 7);
+        reject[nreject++] = a64_jump(e, 1); /* NE: VA outside this page */
+        a64_rr(e, 0x0a000000u, 6, 3, 5); /* and w6, w3, w5 */
+        a64_rr(e, 0x2a000000u, 0, 6, 9); /* orr w0, w6, w9: aligned physical word */
+    } else a64_mov(e, 0, 3);
+    if (e->bios_read) {
+        /* pa < BIOS_SIZE already implies the aligned word fits: pa is a
+         * multiple of four, so pa <= BIOS_SIZE - 4. */
+        a64_imm(e, 6, ARM_JIT_BIOS_SIZE_BYTES);
+        a64_cmp(e, 0, 6);
+        size_t not_bios = a64_jump(e, 2); /* HS: pa outside the BIOS window */
+        a64_cpu_mem(e, 0xf9400000u, 7, offsetof(arm920t_t, jit_bios_base), 3);
+        a64_u32(e, 0xb8606800u | (0u << 16) | (7u << 5) | 1u); /* ldr w1, [x7, w0, uxtw] */
+        if (op->a == 15u && !(op->d & ARM_BC_SD_REGOFF)) {
+            uint32_t va = op->pc + 8u + ((op->d & ARM_BC_SD_U) ? op->imm : 0u - op->imm);
+            if (va & 3u)
+                a64_u32(e, 0x13810021u | (((va & 3u) * 8u) << 10)); /* ror w1 */
+        } else {
+            a64_rr(e, 0x1ac02c00u, 1, 1, 11); /* rorv w1, w1, w11 */
+        }
+        a64_put_guest(e, op->b, 1);
+        if (!(op->d & ARM_BC_SD_P) || (op->d & ARM_BC_SD_W)) a64_put_guest(e, op->a, 2);
+        a64_branch_back(e, cont);
+        a64_patch(e, not_bios, e->pos);
+    }
+    if (e->open_bus) {
+        /* Reject every windowed address; what remains is open bus. */
+        a64_imm(e, 6, ARM_JIT_BIOS_SIZE_BYTES);
+        a64_cmp(e, 0, 6);
+        reject[nreject++] = a64_jump(e, 3); /* LO: pa < BIOS_SIZE */
+        a64_imm(e, 6, ARM_JIT_RAM_BASE_ADDR);
+        a64_rr(e, 0x4b000000u, 6, 0, 6); /* sub w6, w0, w6 */
+        a64_imm(e, 7, ARM_JIT_RAM_SIZE_BYTES);
+        a64_cmp(e, 6, 7);
+        reject[nreject++] = a64_jump(e, 3); /* LO: pa inside the RAM window */
+        a64_imm(e, 6, 0x14000000u);
+        a64_rr(e, 0x4b000000u, 6, 0, 6); /* sub w6, w0, w6 */
+        a64_imm(e, 7, 0x02000000u);
+        a64_cmp(e, 6, 7);
+        reject[nreject++] = a64_jump(e, 3); /* LO: pa inside the I/O window */
+        a64_load(e, 1, offsetof(arm920t_t, bus) + offsetof(arm_bus_t, open_bus_word32));
+        if (op->a == 15u && !(op->d & ARM_BC_SD_REGOFF)) {
+            uint32_t va = op->pc + 8u + ((op->d & ARM_BC_SD_U) ? op->imm : 0u - op->imm);
+            if (va & 3u)
+                a64_u32(e, 0x13810021u | (((va & 3u) * 8u) << 10)); /* ror w1 */
+        } else {
+            a64_rr(e, 0x1ac02c00u, 1, 1, 11); /* rorv w1, w1, w11 */
+        }
+        a64_put_guest(e, op->b, 1);
+        if (!(op->d & ARM_BC_SD_P) || (op->d & ARM_BC_SD_W)) a64_put_guest(e, op->a, 2);
+        a64_branch_back(e, cont);
+    }
+    for (unsigned i = 0; i < nreject; ++i) a64_patch(e, reject[i], e->pos);
+}
+
 static int a64_single_dt(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
     unsigned d = op->d;
     int load = !!(d & ARM_BC_SD_L), byte = !!(d & ARM_BC_SD_B);
@@ -988,6 +1078,8 @@ static int a64_single_dt(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
         cold->access = (uint8_t)access;
         cold->byte = (uint8_t)byte;
         cold->live = (uint8_t)(access && load && !byte && !wb);
+        cold->ro = (uint8_t)(access && load && !byte &&
+                             (e->bios_read || e->open_bus));
         for (unsigned i = 0; i < nslow; ++i) a64_cold_fix(e, cold, slow[i]);
     }
     return 1;
@@ -1451,6 +1543,10 @@ static void a64_cold_flush(a64_emit_t *e) {
              * never walked by the fast path). */
             a64_mov(e, 12, 0);
             if (c->live) a64_live_read32(e, c->op->b, c->cont);
+            /* The read-only window probe claims BIOS-window and, when the
+             * bus declares one, open-bus words; every rejection falls to the
+             * identity-I/O attempt with the registers it found. */
+            if (c->ro) a64_ro_word(e, c->op, c->cont);
             size_t io_cold[4];
             unsigned nio = 0;
             if (c->access && !c->byte)
@@ -1529,6 +1625,15 @@ static void arm_jit_compile_native(arm920t_t *c, arm_jit_block_t *b) {
      * Tiny or discontinuous test buses must retain their callback path. */
     e.ram_read = c->jit_ram_base && fastmem(c, ARM_JIT_RAM_BASE_ADDR, ARM_JIT_RAM_SIZE_BYTES, 0) == c->jit_ram_base;
     e.ram_write = c->jit_ram_base && fastmem(c, ARM_JIT_RAM_BASE_ADDR, ARM_JIT_RAM_SIZE_BYTES, 1) == c->jit_ram_base;
+    /* The read-only probes inline a physical word only when its whole window
+     * is backed exactly as the checked helpers will find it.  The open-bus
+     * contract additionally needs no fastmem mapping outside the windows: the
+     * only map s3c2400-style buses extend is RAM itself, so probe one byte past
+     * the window.  ram_size changes happen through state load, which kills
+     * every block, so the check cannot go stale inside compiled code. */
+    e.bios_read = c->jit_bios_base && fastmem(c, 0, ARM_JIT_BIOS_SIZE_BYTES, 0) == c->jit_bios_base;
+    e.open_bus = c->bus.open_bus_valid &&
+                 !fastmem(c, ARM_JIT_RAM_BASE_ADDR + ARM_JIT_RAM_SIZE_BYTES, 1u, 0);
     if (e.ram_read || e.ram_write) {
         for (unsigned i = 0; i < b->count; ++i)
             if (arm_jit_ops(c, b)[i].kind == ARM_JIT_OP_SINGLE_DT || arm_jit_ops(c, b)[i].kind == ARM_JIT_OP_HALF ||

@@ -41,6 +41,15 @@ typedef struct arm_bus {
      * exactly what write32 does; buses may leave it NULL. Kept last so every
      * earlier bus entry keeps its offset. */
     arm_write32_fn write32_io;
+    /* Optional open-bus word value. When open_bus_valid is nonzero the bus
+     * promises that an aligned physical word read whose address lies outside
+     * the RAM window, the BIOS window and the identity-I/O window and has no
+     * fastmem mapping returns open_bus_word32 with no side effects, for the
+     * CPU lifetime. Native backends may inline that constant once the same
+     * window conditions are proven; zero keeps the checked helper for every
+     * such access. Appended so earlier bus entries keep their offsets. */
+    int open_bus_valid;
+    uint32_t open_bus_word32;
 } arm_bus_t;
 
 typedef struct arm_live_read32 {
