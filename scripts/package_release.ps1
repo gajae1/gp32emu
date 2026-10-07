@@ -43,7 +43,7 @@ Copy-Item -LiteralPath $SdlDll -Destination "$out/windows-x64/SDL3.dll"
 Copy-Item -LiteralPath $SdlLicense -Destination "$out/windows-x64/SDL3-LICENSE.txt"
 Copy-Item -LiteralPath "$repo/README.md" -Destination $out
 Copy-Item -LiteralPath "$repo/docs/RELEASE-$version.md" -Destination "$out/RELEASE-NOTES.md"
-foreach ($doc in @('MANUAL.ko.md','ANDROID_BUILD.md','CPU_SPEED_OPTION.md','DEVELOPMENT_STATUS.md','libretro/README_LIBRETRO.md')) {
+foreach ($doc in @('MANUAL.ko.md')) {
     $dest = Join-Path $out "docs/$doc"
     New-Item -ItemType Directory -Force (Split-Path -Parent $dest) | Out-Null
     Copy-Item -LiteralPath "$repo/docs/$doc" -Destination $dest

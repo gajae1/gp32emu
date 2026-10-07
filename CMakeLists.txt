@@ -225,6 +225,20 @@ if (GP32EMU_BUILD_WIN64_FRONTEND)
         target_include_directories(win64_frontend_test PRIVATE include src)
         target_link_libraries(win64_frontend_test PRIVATE gp32emu SDL3::SDL3 user32 gdi32 comdlg32 winmm ole32 uuid d3d11 dxgi avrt shell32)
         add_test(NAME win64_frontend COMMAND win64_frontend_test)
+        set_tests_properties(win64_frontend PROPERTIES TIMEOUT 30)
+    endif()
+    # Windows does not search the imported library's directory for DLLs.
+    # Keep shared SDL beside the GUI and its device-free lifecycle test.
+    get_target_property(gp32_sdl3_type SDL3::SDL3 TYPE)
+    if (gp32_sdl3_type STREQUAL "SHARED_LIBRARY")
+        foreach(frontend_target gp32emu_win64 win64_frontend_test)
+            if (TARGET ${frontend_target})
+                add_custom_command(TARGET ${frontend_target} POST_BUILD
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        "$<TARGET_FILE:SDL3::SDL3>" "$<TARGET_FILE_DIR:${frontend_target}>"
+                    VERBATIM)
+            endif()
+        endforeach()
     endif()
 endif()
 if (MSVC)

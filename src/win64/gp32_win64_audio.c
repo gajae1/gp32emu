@@ -243,11 +243,9 @@ int gp32_win64_audio_submit(gp32_win64_audio_t *a, const gp32_audio_desc_t *audi
     uint32_t queued_frames = a->frame_count;
     audio_unlock(a);
     if (had_underrun) {
-        /* Consume pump underruns here, on the resampler's owner thread.  A
-         * pump underrun means the ring ran dry and the device heard the
-         * fade-to-silence tail (waveOut) or a drained endpoint (WASAPI), so
-         * the recovery ramp starts from that silence rather than from the
-         * last generated sample, which the device never played. */
+        /* Consume pump underruns on the resampler's owner thread. Recovery
+         * starts from the drained endpoint's silence, not a generated sample
+         * that may never have reached the device. */
         gp32_audio_resampler_mark_gap_from_silence(&a->resampler, dst_rate);
     }
     int32_t adjust_ppm = queue_rate_adjust_ppm(queued_frames);
@@ -311,16 +309,30 @@ static int waveout_open(gp32_win64_audio_t *a) {
     return 1;
 }
 
+/* Short producer chunks are normal while other headers are playing. Submit
+ * only real PCM; padding every short header would insert audible gaps. */
 static int waveout_pump(gp32_win64_audio_t *a) {
     int wrote = 0;
     for (unsigned i = 0; i < GP32_AUDIO_BUFFERS; ++i) {
         WAVEHDR *h = &a->hdr[i];
         if ((h->dwFlags & WHDR_PREPARED) && !(h->dwFlags & WHDR_DONE)) continue;
+        uint32_t avail;
+        audio_lock(a);
+        avail = a->frame_count < GP32_AUDIO_WAVE_FRAMES ? a->frame_count : GP32_AUDIO_WAVE_FRAMES;
+        audio_unlock(a);
+        if (!avail) {
+            int queued = 0;
+            for (unsigned j = 0; j < GP32_AUDIO_BUFFERS; ++j) {
+                if ((a->hdr[j].dwFlags & WHDR_PREPARED) && !(a->hdr[j].dwFlags & WHDR_DONE)) { queued = 1; break; }
+            }
+            if (!queued) { audio_lock(a); a->underrun = 1; audio_unlock(a); }
+            break;
+        }
         if (h->dwFlags & WHDR_PREPARED) waveOutUnprepareHeader(a->wave, h, sizeof(*h));
         memset(h, 0, sizeof(*h));
         h->lpData = (LPSTR)a->wave_buf[i];
-        h->dwBufferLength = (DWORD)(GP32_AUDIO_WAVE_FRAMES * 2u * sizeof(int16_t));
-        ring_read(a, a->wave_buf[i], GP32_AUDIO_WAVE_FRAMES);
+        h->dwBufferLength = (DWORD)(avail * 2u * sizeof(int16_t));
+        ring_read(a, a->wave_buf[i], avail);
         if (waveOutPrepareHeader(a->wave, h, sizeof(*h)) != MMSYSERR_NOERROR) return -1;
         if (waveOutWrite(a->wave, h, sizeof(*h)) != MMSYSERR_NOERROR) return -1;
         if (++wrote >= 2) break;
@@ -332,6 +344,27 @@ static int is_extensible_subtype(const WAVEFORMATEX *fmt, const GUID *sub) {
     if (!fmt || fmt->wFormatTag != WAVE_FORMAT_EXTENSIBLE || fmt->cbSize < 22) return 0;
     const WAVEFORMATEXTENSIBLE *ex = (const WAVEFORMATEXTENSIBLE *)fmt;
     return IsEqualGUID(&ex->SubFormat, sub) != 0;
+}
+
+static int wasapi_format_supported(const WAVEFORMATEX *fmt) {
+    if (!fmt || !fmt->nChannels || !fmt->nSamplesPerSec) return 0;
+    unsigned bits = fmt->wBitsPerSample;
+    int pcm = fmt->wFormatTag == WAVE_FORMAT_PCM ||
+              is_extensible_subtype(fmt, &KSDATAFORMAT_SUBTYPE_PCM);
+    int fp = fmt->wFormatTag == WAVE_FORMAT_IEEE_FLOAT ||
+             is_extensible_subtype(fmt, &KSDATAFORMAT_SUBTYPE_IEEE_FLOAT);
+    if (!(pcm && (bits == 16 || bits == 24 || bits == 32)) && !(fp && bits == 32)) return 0;
+    if (fmt->nBlockAlign != fmt->nChannels * (bits / 8u)) return 0;
+    if (fmt->wFormatTag == WAVE_FORMAT_EXTENSIBLE) {
+        const WAVEFORMATEXTENSIBLE *ex = (const WAVEFORMATEXTENSIBLE *)fmt;
+        unsigned valid = ex->Samples.wValidBitsPerSample;
+        if (valid && (valid < 16 || valid > bits || (fp && valid != 32))) return 0;
+        /* The converter writes FL/FR first (or a mono mix). Let waveOut do
+         * speaker remapping for layouts without a front stereo pair. */
+        if (ex->dwChannelMask && fmt->nChannels > 1 &&
+            (ex->dwChannelMask & KSAUDIO_SPEAKER_STEREO) != KSAUDIO_SPEAKER_STEREO) return 0;
+    }
+    return 1;
 }
 
 static WAVEFORMATEX *make_exclusive_pcm(uint32_t rate) {
@@ -389,6 +422,10 @@ static int wasapi_open(gp32_win64_audio_t *a, int exclusive) {
     } else {
         hr = IAudioClient_GetMixFormat(a->client, &a->mixfmt);
         if (FAILED(hr) || !a->mixfmt) { set_error(a, "WASAPI GetMixFormat failed"); return 0; }
+        if (!wasapi_format_supported(a->mixfmt)) {
+            set_error(a, "WASAPI mix format unsupported");
+            return 0; /* create() cleans up and falls back to waveOut. */
+        }
         if (a->mixfmt->nSamplesPerSec) {
             /*
              * Shared-mode WASAPI consumes frames at the endpoint mix rate,
@@ -428,16 +465,47 @@ static uint32_t fill_wasapi_buffer(gp32_win64_audio_t *a, BYTE *dst, UINT32 fram
         BYTE *base = dst + (size_t)done * fmt->nBlockAlign;
         if (is_float && bits == 32) {
             float *out = (float *)base;
-            for (UINT32 i = 0; i < chunk; ++i) {
-                float l = (float)tmp[(size_t)i * 2u + 0u] / 32768.0f;
-                float r = (float)tmp[(size_t)i * 2u + 1u] / 32768.0f;
-                for (int c = 0; c < channels; ++c) *out++ = (c & 1) ? r : l;
+            if (channels < 2) {
+                for (UINT32 i = 0; i < chunk; ++i) {
+                    out[i] = ((float)tmp[(size_t)i * 2u + 0u] +
+                              (float)tmp[(size_t)i * 2u + 1u]) / 65536.0f;
+                }
+            } else {
+                for (UINT32 i = 0; i < chunk; ++i) {
+                    float *fr = out + (size_t)i * (size_t)channels;
+                    fr[0] = (float)tmp[(size_t)i * 2u + 0u] / 32768.0f;
+                    fr[1] = (float)tmp[(size_t)i * 2u + 1u] / 32768.0f;
+                    for (int c = 2; c < channels; ++c) fr[c] = 0.0f;
+                }
             }
         } else if (is_pcm && bits == 16) {
             int16_t *out = (int16_t *)base;
+            if (channels < 2) {
+                for (UINT32 i = 0; i < chunk; ++i) {
+                    out[i] = (int16_t)(((int)tmp[(size_t)i * 2u + 0u] +
+                                        (int)tmp[(size_t)i * 2u + 1u]) / 2);
+                }
+            } else {
+                for (UINT32 i = 0; i < chunk; ++i) {
+                    int16_t *fr = out + (size_t)i * (size_t)channels;
+                    fr[0] = tmp[(size_t)i * 2u + 0u];
+                    fr[1] = tmp[(size_t)i * 2u + 1u];
+                    for (int c = 2; c < channels; ++c) fr[c] = 0;
+                }
+            }
+        } else if (is_pcm && (bits == 24 || bits == 32)) {
+            unsigned bytes = (unsigned)bits / 8u;
             for (UINT32 i = 0; i < chunk; ++i) {
-                int16_t l = tmp[(size_t)i * 2u + 0u], r = tmp[(size_t)i * 2u + 1u];
-                for (int c = 0; c < channels; ++c) *out++ = (c & 1) ? r : l;
+                int32_t l = tmp[(size_t)i * 2u], r = tmp[(size_t)i * 2u + 1u];
+                for (int c = 0; c < channels; ++c) {
+                    int32_t sample = channels == 1 ? (l + r) / 2 : c == 0 ? l : c == 1 ? r : 0;
+                    /* Left-align the original 16 bits in the PCM container.
+                     * Unsigned shifts preserve negative samples without
+                     * signed-shift overflow; unused low bits stay zero. */
+                    uint32_t packed = (uint32_t)sample << (bits - 16);
+                    BYTE *out = base + (size_t)i * fmt->nBlockAlign + (size_t)c * bytes;
+                    for (unsigned b = 0; b < bytes; ++b) out[b] = (BYTE)(packed >> (b * 8u));
+                }
             }
         } else {
             memset(base, 0, (size_t)chunk * fmt->nBlockAlign);

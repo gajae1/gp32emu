@@ -15,6 +15,71 @@ result paths below are names on the development machine.
 
 ## Current accepted work
 
+- Round 222 (1.0.0 republication held): waveOut now submits real short PCM
+  buffers instead of padding each to 1024 frames with manufactured silence.
+  It marks a gap only once both the producer ring and device headers drain.
+  Windows WASAPI also converts 24/32-bit PCM containers rather than silently
+  replacing them with zeroes; unsupported mix formats take the existing
+  waveOut fallback. Reproductions fail before each fix and pass afterwards.
+  The Windows standalone builds; the focused Win64 audio regression passes.
+  Driver completion timing and acoustic playback are not covered by its mocks.
+  The unused reset/pump synchronization concern has no frontend caller and
+  was not changed speculatively.
+
+  The user's stock RetroArch ASR title session was observed without changing
+  playback, volume or settings. In 2000 ALSA status samples over 20.915 s,
+  playback stayed RUNNING with an unchanged start timestamp. Hardware delay
+  was 2304-3072 frames at 48 kHz (48-64 ms); no near-empty buffer was observed.
+  This is evidence against hardware starvation in that muted window, not a
+  capture of its waveform or proof of original GP32 audio quality. The running
+  core is the earlier 47c5ced build; these new fixes are not installed yet.
+  Evidence: F:/GP32/results/round222-audio/.
+
+  ASR title source attribution is now stronger than a JIT/interpreter match.
+  Its original ASTO.DAT archive contains 178 mono IMA WAVs at 22050 Hz and
+  49 at 11025 Hz. RAM's unpacked file index identifies data/bgm/tem-1.wav
+  at archive offset 0x183c64f (11025 Hz, 256-byte blocks, 505 samples/block).
+  The original game decoder at 0x0c0112a4 selects ADPCM nibbles using the
+  global sample counter, without restarting parity at each odd-length block;
+  it also has its own 2x interpolation. Parent reimplemented that guest
+  algorithm independently in Python, verified its generated tables against
+  RAM, and checked the decoder bytes against the original unpacked game.
+  The resulting reference matches all 69,432 captured title PCM samples
+  exactly, starting at reference sample 49,909. Resetting nibble parity at
+  each block changes that result. No game-specific emulator correction was
+  added: the sampled digital artifacts belong to the shipped guest decoder.
+  This does not establish speaker/DAC equivalence or explain every reported
+  click in other scenes. Scripts and copyrighted source extracts stay local.
+
+  Final Windows CTest sweep passed 30 cases; the GUI lifecycle executable
+  stalled before main because its imported SDL3 DLL was absent from the build
+  directory. CMake now copies shared SDL beside the GUI and lifecycle test;
+  the affected test alone passes after that fix. All 31 cases are covered
+  without repeating the other 30. Linux ARM64 and Android ARM64/v7 binaries
+  and their round-221 checks are reused: their compiled source is unchanged.
+  End-user README/manual/release notes now describe installation and features,
+  not development history; build instructions live in docs/BUILDING.md and
+  are excluded from the binary package along with development reports.
+
+- Round 221 (after 1.0.0): removed libretro's amplitude-threshold click
+  suppressor. A continuous 6 kHz, 24000-peak sine was incorrectly treated as
+  repeated clicks. Rate-matched delivery now preserves the complete waveform,
+  including partial frontend acceptance; actual queue-discard recovery remains.
+  Legacy filter fields stay reserved in the save format. This restores original
+  sharp effects too: it is not a filter for clicks already in the game assets.
+  ASR's title capture does not trigger the old suppressor, so this change is
+  not evidence of a fix for its remaining reported crackle.
+  Windows endpoint conversion now mixes both source channels for mono and
+  leaves extra channels silent on standard surround layouts, instead of
+  dropping the right channel or duplicating full-band stereo into the LFE.
+  These are generic delivery fixes, not guest CPU or game-specific changes.
+  Focused Windows audio/persistence tests pass 3/3; the ARM64 audio regression
+  passes under QEMU. Windows, Linux ARM64 and Android ARM64/v7 cores build.
+  Three-second ASR title and opening captures remain byte-identical to 1.0.0,
+  with complete nominal output duration (one carried sample at the title).
+  Actual listening and frontend/device underruns remain unverified. The SDL
+  soft-limit relaxation was rejected because it increases allowed latency.
+
 - Round 220 prepares 1.0.0. Final review found silent libretro media-save
   failures and missing Win64 in-game save persistence. The former now emits
   both an error log and a frontend message. Win64 saves to an original-card
@@ -326,13 +391,15 @@ result paths below are names on the development machine.
   mis-keyed decode and stall in direct boot, but run past the stall when fed the
   BIOS-matching payload (`SMC_ANALYSIS.md`).
 - Guest audio audit (round 163, F:/GP32/results/round163/w-asrguest/): no
-  emulation defect. ASR's 238 large steps (max -15616) during the specification
+  DMA-boundary discontinuity found in the observed window. ASR's 238 large
+  steps (max -15616) during the specification
   boot are inside continuous guest PCM spans, not DMA start/reload/stop
   boundaries. Emitted audio matches the expected 1,274,210.5 frames within
   -0.01%, with no short-block gaps; derived IIS rates (11025/23144 Hz) match the
   BIOS beep timing, and DMA stop emits true zero. Dooly/BIOS/ASR boot PCM
-  prefixes are byte-identical, confirming the remaining pops are guest assets.
-  No source change.
+  prefixes are byte-identical. This comparison does not establish that every
+  remaining pop comes from original assets: the independent source-decoder or
+  physical GP32 reference is still missing. No source change in that round.
 - Accepted (round 163): input-driven commercial-library sweep and its opt-in
   diagnostics. gp32_compat now records frame-stamped core logs and per-frame
   PC/video hashes; an opt-in diag sink reports undefined-instruction/abort
