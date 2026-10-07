@@ -159,11 +159,13 @@ static void poly_history_prime(gp32_audio_resampler_t *r, const int16_t *src) {
  * rest are contiguous in src, so no tap ever needs a future frame. */
 static void poly_gather(const gp32_audio_resampler_t *r, const int16_t *src,
                         int have_prev, size_t n, uint32_t frac,
-                        int32_t *acc_l, int32_t *acc_r) {
+                        int64_t *acc_l, int64_t *acc_r) {
     const int16_t *c = r->poly_coef[(frac >> 24) & (GP32_AUDIO_POLY_PHASES - 1u)];
     size_t lead = have_prev ? 1u : 0u;
     size_t src_taps = n < GP32_AUDIO_POLY_HISTORY ? n : GP32_AUDIO_POLY_HISTORY;
-    int32_t sum_l = 0, sum_r = 0;
+    /* Each product fits int32_t, but the signed FIR lobes can sum above
+     * INT32_MAX on full-scale PCM. Clip only after the wide accumulation. */
+    int64_t sum_l = 0, sum_r = 0;
     for (size_t i = 0; i < src_taps; ++i) {
         const int16_t *p = src + ((n - i) - lead) * 2u;
         sum_l += (int32_t)c[i] * (int32_t)p[0];
@@ -184,8 +186,8 @@ static void poly_gather(const gp32_audio_resampler_t *r, const int16_t *src,
     *acc_r = sum_r;
 }
 
-static int16_t poly_pack(int32_t acc) {
-    int32_t v = (acc + 16384) >> 15;
+static int16_t poly_pack(int64_t acc) {
+    int64_t v = (acc + 16384) >> 15;
     if (v > 32767) v = 32767;
     if (v < -32768) v = -32768;
     return (int16_t)v;
@@ -317,7 +319,7 @@ size_t gp32_audio_resampler_process(gp32_audio_resampler_t *r,
     /* Gap ramp first: at most GP32_AUDIO_FADE_MAX_FRAMES outputs that glide
      * from the last delivered sample onto the band-limited stream. */
     while (room != 0u && phase < limit_q32 && fade_left != 0u && fade_total != 0u) {
-        int32_t acc_l, acc_r;
+        int64_t acc_l, acc_r;
         poly_gather(r, src_s16_stereo, have_prev, (size_t)(phase >> 32),
                     (uint32_t)phase, &acc_l, &acc_r);
         int16_t l = poly_pack(acc_l);
@@ -343,7 +345,7 @@ size_t gp32_audio_resampler_process(gp32_audio_resampler_t *r,
      * intervals - 1, so every virtual index the kernel reads is a real frame
      * of this block or of the history ring. */
     while (room != 0u && phase < limit_q32) {
-        int32_t acc_l, acc_r;
+        int64_t acc_l, acc_r;
         poly_gather(r, src_s16_stereo, have_prev, (size_t)(phase >> 32),
                     (uint32_t)phase, &acc_l, &acc_r);
         int16_t l = poly_pack(acc_l);

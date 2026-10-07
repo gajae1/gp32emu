@@ -870,7 +870,48 @@ static void test_frontend_audio_clock(void) {
     }
 }
 
+/* A valid full-scale signal can exceed a 32-bit FIR accumulator before the
+ * final s16 clip. Exercise both contiguous taps and carried history. */
+static void test_resampler_peak_clipping(void) {
+    gp32_audio_resampler_t r;
+    int16_t zero[4] = {0}, out[2], src[132];
+    for (unsigned history = 0; history < 2; ++history) {
+        gp32_audio_resampler_init(&r);
+        gp32_audio_resampler_process(&r, zero, 2, 23144, 44100, 0, out, 1);
+        unsigned phase = 0;
+        int largest = 0;
+        for (unsigned p = 0; p < GP32_AUDIO_POLY_PHASES; ++p) {
+            int magnitude = 0;
+            for (unsigned i = 0; i < GP32_AUDIO_POLY_TAPS; ++i) {
+                int c = r.poly_coef[p][i];
+                magnitude += c < 0 ? -c : c;
+            }
+            if (magnitude > largest) { largest = magnitude; phase = p; }
+        }
+        memset(src, 0, sizeof(src));
+        int64_t sum_l = 0, sum_r = 0;
+        for (unsigned i = 0; i < GP32_AUDIO_POLY_TAPS; ++i) {
+            int c = r.poly_coef[phase][i];
+            int16_t l = c < 0 ? INT16_MIN : INT16_MAX;
+            int16_t rr = c < 0 ? INT16_MAX : INT16_MIN;
+            sum_l += (int64_t)c * l;
+            sum_r += (int64_t)c * rr;
+            if (!history) { src[(64u - i) * 2u] = l; src[(64u - i) * 2u + 1u] = rr; }
+            else if (!i) { r.prev_l = l; r.prev_r = rr; }
+            else { r.poly_hist_l[64u - i] = l; r.poly_hist_r[64u - i] = rr; }
+        }
+        CHECK(sum_l > INT32_MAX && sum_r < INT32_MIN, "peak fixture crosses both accumulator limits");
+        r.have_prev = history != 0;
+        r.phase_q32 = ((uint64_t)(history ? 0u : 64u) << 32) | ((uint64_t)phase << 24);
+        CHECK(gp32_audio_resampler_process(&r, src, history ? 1u : 66u,
+                  23144, 44100, 0, out, 1) == 1u, "peak fixture emits a sample");
+        CHECK(out[0] == INT16_MAX && out[1] == INT16_MIN,
+              "FIR peaks saturate without wrapping to the opposite polarity");
+    }
+}
+
 int main(int argc, char **argv) {
+    test_resampler_peak_clipping();
     test_frontend_audio_clock();
     test_partial_and_blocked();
     test_resampled_and_sample_callback();

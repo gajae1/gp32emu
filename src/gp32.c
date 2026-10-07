@@ -5,6 +5,7 @@
 #include "fxe.h"
 #include "fpk.h"
 #include "smc_direct.h"
+#include "save_atomic.h"
 
 #if defined(__SSE2__) || defined(_M_X64) || (defined(_M_IX86_FP) && _M_IX86_FP >= 2)
 #include <emmintrin.h>
@@ -5607,14 +5608,25 @@ gp32_status_t gp32_load_state_data_ex(gp32_t *g, const void *data, size_t size, 
 
 gp32_status_t gp32_save_state(gp32_t *g, const char *path) {
     if (!g || !path) return GP32_ERR_INVALID_ARGUMENT;
-    FILE *f = fopen(path, "wb");
-    if (!f) { seterr(g, "open savestate %s: %s", path, strerror(errno)); return GP32_ERR_IO; }
-    state_io_t io = state_io_file(f);
+    char err[192];
+    save_atomic_t stage;
+    if (!save_atomic_begin(&stage, path, err, sizeof(err))) {
+        seterr(g, "%s", err);
+        return GP32_ERR_IO;
+    }
+    state_io_t io = state_io_file(stage.file);
     uint32_t percent = gp32_cpu_speed_to_nominal(g);
     int ok = gp32_state_write(g, &io);
     gp32_cpu_speed_restore(g, percent);
-    if (fclose(f) != 0) ok = 0;
-    if (!ok) { seterr(g, "write savestate %s failed", path); return GP32_ERR_IO; }
+    if (!ok) {
+        save_atomic_abort(&stage);
+        seterr(g, "write savestate %s failed", path);
+        return GP32_ERR_IO;
+    }
+    if (!save_atomic_commit(&stage, path, err, sizeof(err))) {
+        seterr(g, "%s", err);
+        return GP32_ERR_IO;
+    }
     return GP32_OK;
 }
 

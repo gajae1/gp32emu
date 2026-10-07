@@ -43,6 +43,7 @@ SOURCES += \
     src/audio/gp32_audio_resampler.c \
     src/media/gp32_media.c \
     src/media/gp32_video_effects.c \
+    src/save_atomic.c \
     src/qt/main.cpp \
     src/qt/GP32Engine.cpp \
     src/qt/GP32MainWindow.cpp \
@@ -63,6 +64,7 @@ HEADERS += \
     src/audio/gp32_audio_resampler.h \
     src/media/gp32_media.h \
     src/zip.h \
+    src/save_atomic.h \
     src/qt/GP32Engine.h \
     src/qt/GP32MainWindow.h \
     src/qt/GP32VideoWidget.h

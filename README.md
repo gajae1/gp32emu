@@ -58,7 +58,7 @@ not proof that every game is playable from start to finish.
 | Windows x64 | Built and smoke-tested: the Win64 frontend and the libretro DLL build with the Zig C23 toolchain, and the regression suite passes there. |
 | Linux x86-64 | Built and tested: libretro core, headless runner and the regression suite. |
 | AArch64 Linux (Cortex-A53 class, glibc 2.17 or newer) | Cross-compiled with the Zig toolchain in `cmake/toolchains/`. CPU regression and bounded game-output comparisons also run under QEMU. Earlier revisions were measured on a handheld of this class; the latest JIT changes still need hardware performance measurements. QEMU timings are not device performance estimates. |
-| Android arm64-v8a, armeabi-v7a, x86_64 | Cross-compiled with NDK 28.2 (`APP_PLATFORM android-21`) through both the CMake toolchain and `jni/Android.mk`; all three link. Never run on a device or an emulator. |
+| Android arm64-v8a, armeabi-v7a, x86_64 | Cross-compiled with NDK 28.2 (`APP_PLATFORM android-21`) through both the CMake toolchain and `jni/Android.mk`; all three link. The release packages the two ABIs `scripts/build_android.ps1` accepts, arm64-v8a and armeabi-v7a; x86_64 needs a manual CMake configure (`-DANDROID_ABI=x86_64`) or `ndk-build`. Never run on a device or an emulator. |
 | 32-bit ARM | Builds and runs the interpreter only. There is no 32-bit ARM recompiler, so it is too slow for most games. |
 | WebAssembly | Interpreter only. The core and the JS bridge build, but browser playback has not been verified. |
 
@@ -124,7 +124,9 @@ make -f Makefile.wasm              # browser build, then: make -f Makefile.wasm 
 ```
 
 `Makefile.win64` builds the bundled SDL3 first (`make -f Makefile.win64 sdl`) and links D3D11/GDI
-video, WASAPI/waveOut audio and SDL3 joystick input. The WebAssembly build needs any C compiler
+video, WASAPI/waveOut audio and SDL3 joystick input. It names the binary `GP32emu-win64.exe`; the
+Win64 GUI shipped in the release archives is the CMake build above, which produces
+`gp32emu_win64.exe` and loads a separate `SDL3.dll`. The WebAssembly build needs any C compiler
 that can target `wasm32` plus `wasm-ld` (clang, or `zig cc -target wasm32-freestanding`).
 
 ### Headless runner and tests
@@ -172,7 +174,10 @@ does not add one either; ask the upstream author before reusing it outside GitHu
 
 Parts of the hardware model come from MAME (BSD-3-Clause, Tim Schuerewegen, Raphael Nabet and
 others). The repository also includes the MIT-licensed kuba-- zip library and parts of BDMEmu's
-frontend. Their notices are in [licenses/](licenses/).
+frontend. Their notices are in [licenses/](licenses/). The Windows archive ships SDL3 under the
+zlib licence; its notice is in [third_party/sdl/SDL3-3.4.10.tar.gz](third_party/sdl/SDL3-3.4.10.tar.gz)
+as `LICENSE.txt` and travels beside the DLL as `SDL3-LICENSE.txt`. SDL3 is fetched as a release
+asset rather than installed separately, and the static MinGW build links it into the executable.
 
 Game ROMs and BIOS files are not included and are not distributed with the emulator; supply your
 own dumps.

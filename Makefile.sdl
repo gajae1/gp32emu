@@ -17,6 +17,7 @@ THREAD_LIBS ?=
 endif
 
 LIB_OBJS = \
+	src/save_atomic.o \
 	src/gp32.o \
 	src/arm920t.o \
 	src/s3c2400.o \

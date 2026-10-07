@@ -66,6 +66,7 @@ add_library(gp32emu
     src/audio/gp32_audio_resampler.c
     src/media/gp32_media.c
     src/media/gp32_video_effects.c
+    src/save_atomic.c
 )
 target_include_directories(gp32emu PUBLIC include PRIVATE src)
 if(GP32EMU_CPU_PROFILE)
@@ -77,7 +78,7 @@ endif()
 
 if (GP32EMU_BUILD_TESTS)
     enable_testing()
-    foreach(test_name libretro_audio libretro_persistence libretro_input input_script arm_poll arm_jit arm_exception s3c2400_timing s3c2400_iis_irq s3c2400_irq s3c2400_lcd s3c2400_scanout s3c2400_pwm s3c2400_gpio s3c2400_state gp32_pcm gp32_timer gp32_callback gp32_wait gp32_swi_1ff gp32_file gp32_codec gp32_eeprom gp32_shadow gp32_state smartmedia savestate_session)
+    foreach(test_name libretro_audio libretro_persistence libretro_input input_script arm_poll arm_jit arm_exception s3c2400_timing s3c2400_iis_irq s3c2400_irq s3c2400_lcd s3c2400_scanout s3c2400_pwm s3c2400_gpio s3c2400_state gp32_pcm gp32_timer gp32_callback gp32_wait gp32_swi_1ff gp32_file gp32_codec gp32_eeprom gp32_shadow gp32_state smartmedia savestate_session atomic_save)
         add_executable(${test_name}_test tests/${test_name}_test.c)
         target_include_directories(${test_name}_test PRIVATE src src/libretro)
         target_link_libraries(${test_name}_test PRIVATE gp32emu)
@@ -112,6 +113,7 @@ if (GP32EMU_BUILD_TESTS)
     add_test(NAME gp32_state COMMAND gp32_state_test ${CMAKE_CURRENT_BINARY_DIR}/gp32-state.tmp)
     add_test(NAME smartmedia COMMAND smartmedia_test)
     add_test(NAME savestate_session COMMAND savestate_session_test)
+    add_test(NAME atomic_save COMMAND atomic_save_test ${CMAKE_CURRENT_BINARY_DIR}/atomic-save)
     add_executable(arm_jit_recycle_test tests/arm_jit_recycle_test.c)
     target_include_directories(arm_jit_recycle_test PRIVATE src include)
     target_compile_definitions(arm_jit_recycle_test PRIVATE _XOPEN_SOURCE=700)
@@ -191,7 +193,7 @@ if (GP32EMU_BUILD_QT6)
     target_include_directories(gp32emu_qt6 PRIVATE include src)
     target_link_libraries(gp32emu_qt6 PRIVATE gp32emu Qt6::Widgets)
     if (TARGET gp32emu_sdl3)
-        target_compile_definitions(gp32emu_qt6 PRIVATE GP32EMU_QT_SDL3_AUDIO=1)
+        target_compile_definitions(gp32emu_qt6 PRIVATE GP32EMU_QT_SDL3_AUDIO=1 GP32EMU_QT_SDL3_INPUT=1 SDL_MAIN_HANDLED=1)
         target_link_libraries(gp32emu_qt6 PRIVATE gp32emu_sdl3 SDL3::SDL3)
     endif()
 endif()
