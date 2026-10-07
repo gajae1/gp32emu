@@ -33,9 +33,20 @@ covers only `arm64-v8a` and `armeabi-v7a`; its `-Abi` parameter accepts those tw
 and the release packages them. For `x86_64`, configure CMake manually with
 `-DANDROID_ABI=x86_64` or use the `ndk-build` route above, which builds all three.
 
-## What the build does not prove
+## Runtime validation
 
-All three ABIs link, but the core has never been run on an Android device or emulator
-here: runtime loading, frontend import, audio output and executable-memory policy are
-still untested. BIOS and games are not distributed with the core.
+The released 1.0.0 ARM64 core has been loaded by a private JNI/libretro test frontend
+inside an Android 11 app sandbox. This used an x86-64 Android Virtual Device with
+`libndk_translation.so` and 4 KB pages, not a native ARM phone.
+
+An Astonishia Story R title save state ran for 180 frames. All 132,299 stereo audio
+frames (44.1 kHz, signed 16-bit) matched the Windows reference byte for byte. The
+core also serialized and restored a fresh state successfully. JIT was requested,
+but the test did not independently measure whether native JIT code executed.
+
+This checks library loading, the exercised core path, audio callbacks and state
+compatibility. It does not verify RetroArch import, on-screen presentation, audio
+device playback, controller input, native ARM performance, ARMv7 runtime, or a
+16 KB-page device. Those still need testing. BIOS and games are not distributed
+with the core or the test frontend.
 
