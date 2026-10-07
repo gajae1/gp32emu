@@ -33,6 +33,7 @@ static char test_system_dir[4096];
 static char test_save_dir[4096];
 static char test_content_dir[4096];
 static int failures;
+static unsigned error_logs, user_messages;
 
 #define CHECK(condition, message) do { \
     if (!(condition)) { \
@@ -41,7 +42,10 @@ static int failures;
     } \
 } while (0)
 
-static void quiet_log(int level, const char *fmt, ...) { (void)level; (void)fmt; }
+static void quiet_log(int level, const char *fmt, ...) {
+    (void)fmt;
+    if (level == RETRO_LOG_ERROR) ++error_logs;
+}
 
 static bool test_environ(unsigned cmd, void *data) {
     switch (cmd) {
@@ -60,6 +64,8 @@ static bool test_environ(unsigned cmd, void *data) {
         return true;
     }
     case RETRO_ENVIRONMENT_SET_MESSAGE:
+        ++user_messages;
+        return true;
     case RETRO_ENVIRONMENT_SET_PIXEL_FORMAT:
     case RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS:
     case RETRO_ENVIRONMENT_SET_VARIABLES:
@@ -317,6 +323,18 @@ int main(int argc, char **argv) {
     }
     retro_unload_game();
     CHECK(file_exists(save_b), "unload after replacement must persist the second image");
+
+    /* A regular file used as the parent reliably rejects writes on all hosts,
+     * including privileged test runners where permission bits cannot do so. */
+    CHECK(retro_load_game(&game_a), "save failure test must load valid media");
+    join_path(smartmedia_save_path, sizeof(smartmedia_save_path), save_a, "blocked.smc");
+    unsigned logs_before = error_logs, messages_before = user_messages;
+    retro_unload_game();
+    CHECK(error_logs == logs_before + 1u && user_messages == messages_before + 1u,
+          "failed media persistence must produce an error log and user message");
+    CHECK(emu == NULL, "failed persistence must still release the unloaded core");
+    CHECK(nand_read_byte(save_a, MARK_PAGE, MARK_COL, &mounted),
+          "a failed persistence attempt must leave the earlier image readable");
 
     retro_deinit();
     test_state_across_sessions();

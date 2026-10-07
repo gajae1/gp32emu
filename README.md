@@ -12,6 +12,27 @@ phones. The credits and licence terms are at the bottom of this file.
 
 No BIOS, game ROMs or other copyrighted files are included. Bring your own dumps.
 
+## Release 1.0.0
+
+1.0.0 is the first release and replaces the 1.0.0-rc1 draft build. The archive is published on the
+project's [Releases page](https://github.com/gajae1/gp32emu/releases) and groups the binaries by
+target:
+
+- `windows-x64/`: the standalone `gp32emu_win64.exe` (keep `SDL3.dll` beside it), the libretro DLL
+  and the core `.info`.
+- `linux-aarch64/`: the AArch64 libretro core and `.info` for RetroArch handhelds.
+- `android-arm64/`, `android-armv7/`: Android cores and `.info`. ARMv7 runs the interpreter, so it
+  is much slower than the ARM64 core.
+
+`manifest.json` lists a SHA-256 hash for every file, and the archive carries the third-party notices
+and this documentation. ROMs, BIOS files and saves are not included. RetroArch installation steps
+are under [Using the core](#using-the-core); the Korean manual is
+[docs/MANUAL.ko.md](docs/MANUAL.ko.md).
+
+The release includes wide resampler accumulation, filter-table reuse after an underrun,
+and mid-frame or batched PCM delivery.
+Tests cover them, but listening on the handheld is still unverified.
+
 ## What it does
 
 - ARM920T CPU: a portable interpreter plus a dynamic recompiler (JIT) for x86-64 and little-endian
@@ -57,7 +78,7 @@ not proof that every game is playable from start to finish.
 | --- | --- |
 | Windows x64 | Built and smoke-tested: the Win64 frontend and the libretro DLL build with the Zig C23 toolchain, and the regression suite passes there. |
 | Linux x86-64 | Built and tested: libretro core, headless runner and the regression suite. |
-| AArch64 Linux (Cortex-A53 class, glibc 2.17 or newer) | Cross-compiled with the Zig toolchain in `cmake/toolchains/`. CPU regression and bounded game-output comparisons also run under QEMU. Earlier revisions were measured on a handheld of this class; the latest JIT changes still need hardware performance measurements. QEMU timings are not device performance estimates. |
+| AArch64 Linux (Cortex-A53 class, glibc 2.17 or newer) | Cross-compiled with the Zig toolchain in `cmake/toolchains/`. The 1.0.0 JIT, audio and persistence regressions pass on native Cortex-A53 hardware, along with three bounded game-scene runs. CPU regression and game-output comparisons also run under QEMU; its timings are not device performance estimates. |
 | Android arm64-v8a, armeabi-v7a, x86_64 | Cross-compiled with NDK 28.2 (`APP_PLATFORM android-21`) through both the CMake toolchain and `jni/Android.mk`; all three link. The release packages the two ABIs `scripts/build_android.ps1` accepts, arm64-v8a and armeabi-v7a; x86_64 needs a manual CMake configure (`-DANDROID_ABI=x86_64`) or `ndk-build`. Never run on a device or an emulator. |
 | 32-bit ARM | Builds and runs the interpreter only. There is no 32-bit ARM recompiler, so it is too slow for most games. |
 | WebAssembly | Interpreter only. The core and the JS bridge build, but browser playback has not been verified. |
@@ -148,6 +169,17 @@ Korean manual: [docs/MANUAL.ko.md](docs/MANUAL.ko.md). The short version for Ret
 1. Put `gp32emu_libretro.so` (or `.dll`) in RetroArch's cores directory.
 2. Put your BIOS in the system directory under the name `gp32166m.bin`.
 3. Load a `.smc`, `.fxe` or `.fpk` file with the GP32emu core.
+
+Windows standalone: run `gp32emu_win64.exe` with `SDL3.dll` beside it. `File > Open BIOS`,
+`Open SmartMedia image`, `Open FXE` and `Open FPK` load content, `Config > Set BIOS path` remembers
+a BIOS, F5/F8 save and load state, and F12 takes a screenshot. The same options are on the command
+line: `gp32emu_win64.exe --bios gp32166m.bin --smc game.smc` (also `--fxe`, `--fpk`, `--jit`,
+`--no-jit`).
+
+When booting with a BIOS, Windows standalone preserves in-game SmartMedia saves beside the original card as
+`game.smc.gp32.smc` and restores that file on the next load. The original card stays unchanged;
+its directory must be writable. Save failures are reported. F5/F8 states are separate.
+BIOS-less direct boot has no writable card device; use save states for that path.
 
 The core options are the dynamic recompiler, the boot mode (`auto`, `require_bios` or `direct_hle`),
 LCD persistence, frame interpolation and the CPU speed; the manual explains each one, and

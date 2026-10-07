@@ -214,6 +214,18 @@ if (GP32EMU_BUILD_WIN64_FRONTEND)
     target_include_directories(gp32emu_win64 PRIVATE include src)
     target_compile_definitions(gp32emu_win64 PRIVATE GP32EMU_WIN64_FRONTEND=1 SDL_MAIN_HANDLED=1)
     target_link_libraries(gp32emu_win64 PRIVATE gp32emu SDL3::SDL3 user32 gdi32 comdlg32 winmm ole32 uuid d3d11 dxgi avrt shell32)
+    if (MINGW)
+        # Zig's MinGW driver ignores -mwindows; select the PE subsystem explicitly.
+        target_link_options(gp32emu_win64 PRIVATE "-Wl,--subsystem,windows")
+    endif()
+    if (GP32EMU_BUILD_TESTS)
+        add_executable(win64_frontend_test tests/win64_frontend_test.c
+            src/win64/gp32_win64_video.c src/win64/gp32_win64_audio.c
+            src/win64/gp32_win64_sdl_input.c src/input/gp32_sdl3_input_shared.c)
+        target_include_directories(win64_frontend_test PRIVATE include src)
+        target_link_libraries(win64_frontend_test PRIVATE gp32emu SDL3::SDL3 user32 gdi32 comdlg32 winmm ole32 uuid d3d11 dxgi avrt shell32)
+        add_test(NAME win64_frontend COMMAND win64_frontend_test)
+    endif()
 endif()
 if (MSVC)
     target_compile_options(gp32emu PRIVATE /W4)

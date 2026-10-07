@@ -249,7 +249,11 @@ static void make_runtime_paths(const char *game_path) {
 static void destroy_emu_with_save(void) {
     state_capacity = 0;
     if (!emu) return;
-    if (smartmedia_save_path[0]) gp32_save_smartmedia(emu, smartmedia_save_path);
+    if (smartmedia_save_path[0] && gp32_save_smartmedia(emu, smartmedia_save_path) != GP32_OK) {
+        lr_log(RETRO_LOG_ERROR, "[gp32emu] Cannot save SmartMedia to %s: %s\n",
+               smartmedia_save_path, gp32_get_error(emu));
+        lr_message("GP32 save failed. Check free space and write access; latest progress was not saved.");
+    }
     gp32_destroy(emu);
     emu = NULL;
 }
@@ -432,7 +436,7 @@ unsigned retro_api_version(void) { return RETRO_API_VERSION; }
 void retro_get_system_info(struct retro_system_info *info) {
     memset(info, 0, sizeof(*info));
     info->library_name = "gp32emu";
-    info->library_version = "1.0.0-rc1";
+    info->library_version = "1.0.0";
     info->valid_extensions = "smc|fxe|fpk";
     info->need_fullpath = true;
     info->block_extract = false;

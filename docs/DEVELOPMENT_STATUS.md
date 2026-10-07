@@ -1,6 +1,6 @@
 # Development log
 
-Updated 2026-10-06; documentation revised 2026-10-07. This is the working log of
+Updated 2026-10-08. This is the working log of
 the project: what was measured, what was accepted and what was rejected. Read it
 before repeating an investigation, and re-check the Git revision before quoting a
 number from it. The goal is full compatibility on low-end ARM hardware
@@ -14,6 +14,30 @@ cross-compiled unless a line says the build was installed. Build directories and
 result paths below are names on the development machine.
 
 ## Current accepted work
+
+- Round 220 prepares 1.0.0. Final review found silent libretro media-save
+  failures and missing Win64 in-game save persistence. The former now emits
+  both an error log and a frontend message. Win64 saves to an original-card
+  sidecar, restores it on load, and keeps the current machine's save path
+  separate from a newly selected game. Corrupt saves fail without being
+  overwritten. Failed loads stop the frontend instead of running a partial
+  machine. Native menus now clear stale keyboard holds. Focused Windows
+  persistence/frontend regressions pass, including replacement and corrupt
+  saves. Release binaries and deployment are tracked in the 1.0.0 manifest.
+
+- Round 219 batches libretro output into approximately two-ms spans while
+  retaining mid-frame delivery and flushing each frame's remainder. ASR's
+  three-second title-state capture uses 1,521 callbacks instead of 19,844,
+  with identical 132,299 PCM frames and WAV SHA256. This is a 92% reduction
+  in callback count, not an equivalent game speedup. JIT/interpreter captures
+  also agree in this scene. Windows and AArch64 audio regressions pass; the
+  AArch64 result is under QEMU. Remaining physical crackle is not declared fixed.
+
+- Round 218 adds mid-frame PCM delivery to Win64, SDL3 and SDL1.2. Win64
+  forwards each span to playback and recording, with recorder failure cleanup
+  outside core execution. Windows/SDL3 builds, routing/error-path checks and
+  an SDL3 dummy-device smoke run pass. SDL1.2 source compiles; its runtime and
+  the Qt frontend's delivery cadence are not covered by this change.
 
 - Round 217 preserves the rate-keyed FIR table across stream resets and gap
   recovery, while clearing phase, history and fade state as before. Rebuilding

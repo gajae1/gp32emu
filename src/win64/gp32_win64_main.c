@@ -61,6 +61,7 @@ typedef struct app_state {
     gp32_media_recorder_t *recorder;
     char bios[MAX_PATH];
     char smc[MAX_PATH];
+    char smc_save[MAX_PATH]; /* Belongs to the loaded machine, not the next selection. */
     char fxe[MAX_PATH];
     char fpk[MAX_PATH];
     char state_path[MAX_PATH];
@@ -103,7 +104,9 @@ static void app_set_status(app_state_t *a, const char *msg) {
 
 static void app_show_status_error(app_state_t *a, const char *msg) {
     app_set_status(a, msg ? msg : "Error");
-    if (a && a->hwnd) MessageBoxA(a->hwnd, msg ? msg : "Error", "GP32emu", MB_OK | MB_ICONERROR);
+    fprintf(stderr, "GP32emu: %s\n", msg ? msg : "Error");
+    if (a && a->hwnd) MessageBoxA(IsWindow(a->hwnd) ? a->hwnd : NULL,
+                                 msg ? msg : "Error", "GP32emu", MB_OK | MB_ICONERROR);
 }
 
 static void app_make_config_path(app_state_t *a) {
@@ -174,8 +177,15 @@ static void app_update_title(app_state_t *a) {
 
 static void app_destroy_machine(app_state_t *a) {
     if (!a) return;
+    if (a->emu && a->smc_save[0] && gp32_save_smartmedia(a->emu, a->smc_save) != GP32_OK) {
+        char error[512];
+        snprintf(error, sizeof(error), "SmartMedia save failed: %s\nLatest progress was not saved.", gp32_get_error(a->emu));
+        app_show_status_error(a, error);
+    }
     if (a->emu) gp32_destroy(a->emu);
     a->emu = NULL;
+    a->smc_save[0] = 0;
+    a->running = 0;
     a->frame_index = 0;
     a->accum_units = 1000000ull;
 }
@@ -254,6 +264,26 @@ static int app_create_machine(app_state_t *a) {
         return 0;
     }
     app_destroy_machine(a);
+    char save_path[MAX_PATH] = {0};
+    const char *media_path = a->smc;
+    if (a->smc[0]) {
+        int n = snprintf(save_path, sizeof(save_path), "%s.gp32.smc", a->smc);
+        if (n < 0 || (size_t)n >= sizeof(save_path)) {
+            app_show_status_error(a, "SmartMedia path is too long for its save file.");
+            return 0;
+        }
+        DWORD attr = GetFileAttributesA(save_path);
+        if (attr != INVALID_FILE_ATTRIBUTES) {
+            if (attr & FILE_ATTRIBUTE_DIRECTORY) {
+                app_show_status_error(a, "SmartMedia save path is a directory.");
+                return 0;
+            }
+            media_path = save_path;
+        } else if (GetLastError() != ERROR_FILE_NOT_FOUND && GetLastError() != ERROR_PATH_NOT_FOUND) {
+            app_show_status_error(a, "Cannot access the existing SmartMedia save.");
+            return 0;
+        }
+    }
     gp32_options_t opt;
     memset(&opt, 0, sizeof(opt));
     a->emu = gp32_create(&opt);
@@ -269,18 +299,26 @@ static int app_create_machine(app_state_t *a) {
     }
     if (use_real_bios) {
         st = gp32_load_bios(a->emu, a->bios);
-        if (st == GP32_OK && a->smc[0]) st = gp32_load_smartmedia(a->emu, a->smc);
+        if (st == GP32_OK && a->smc[0]) {
+            if (media_path == save_path) {
+                st = gp32_set_smartmedia_state_base_file(a->emu, a->smc);
+                if (st == GP32_OK) st = gp32_load_smartmedia_over_base(a->emu, media_path);
+            } else st = gp32_load_smartmedia(a->emu, media_path);
+        }
         if (st == GP32_OK) st = gp32_reset(a->emu);
     }
-    if (st == GP32_OK && a->smc[0] && use_hle_boot) st = gp32_load_smartmedia_direct(a->emu, a->smc);
+    if (st == GP32_OK && a->smc[0] && use_hle_boot) st = gp32_load_smartmedia_direct(a->emu, media_path);
     if (st == GP32_OK && a->fxe[0]) st = gp32_load_fxe(a->emu, a->fxe);
     if (st == GP32_OK && a->fpk[0]) st = gp32_load_fpk(a->emu, a->fpk);
     if (st != GP32_OK) {
         char buf[512];
         snprintf(buf, sizeof(buf), "Load failed: %s", gp32_get_error(a->emu));
         app_show_status_error(a, buf);
+        app_destroy_machine(a);
         return 0;
     }
+    /* Direct HLE extracts assets but does not mount a writable card device. */
+    snprintf(a->smc_save, sizeof(a->smc_save), "%s", use_real_bios ? save_path : "");
     app_create_audio(a);
     app_update_title(a);
     a->running = 1;
@@ -633,8 +671,9 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpara
     case WM_KEYUP:
         if (a) a->keyboard_buttons &= ~key_to_button(wparam);
         return 0;
+    case WM_ENTERMENULOOP:
     case WM_KILLFOCUS:
-        /* Key releases may go to another window after Alt-Tab or a dialog. */
+        /* Modal menus and other windows can consume the matching key release. */
         if (a) a->keyboard_buttons = 0;
         return 0;
     case WM_COMMAND:
@@ -805,6 +844,8 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show) {
             } else if (!strcmp(arg, "--fpk") && i + 1 < argc) {
                 WideCharToMultiByte(CP_UTF8, 0, argvw[++i], -1, app.fpk, sizeof(app.fpk), NULL, NULL);
                 app.smc[0] = app.fxe[0] = 0;
+            } else if (!strcmp(arg, "--no-audio")) {
+                app.no_audio = 1;
             } else if (!strcmp(arg, "--no-jit")) {
                 app.jit = 0;
             } else if (!strcmp(arg, "--jit")) {
