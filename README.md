@@ -31,8 +31,8 @@ No BIOS, game ROMs or other copyrighted files are included. Bring your own dumps
 Speed was tuned against a 1.5 GHz Cortex-A53 handheld, the slowest hardware this project aims at.
 The numbers below were recorded during development on that machine with the headless bench
 harness: BIOS boot, JIT on, core only, so RetroArch's own video and audio drivers are not part of
-the measurement. The real console refreshes at 60 Hz, which makes 60 frames per second real time
-here.
+the measurement. These benchmarks use 60 host steps per second as the real-time baseline;
+the emulated LCD refresh follows the game's clock and LCD register settings.
 
 | Scene | Core frames per second |
 | --- | --- |
@@ -57,7 +57,7 @@ not proof that every game is playable from start to finish.
 | --- | --- |
 | Windows x64 | Built and smoke-tested: the Win64 frontend and the libretro DLL build with the Zig C23 toolchain, and the regression suite passes there. |
 | Linux x86-64 | Built and tested: libretro core, headless runner and the regression suite. |
-| AArch64 Linux (Cortex-A53 class, glibc 2.17 or newer) | Cross-compiled with the Zig toolchain in `cmake/toolchains/`. Counted as cross-compile only: nothing in this tree has been run on hardware, and no device or AArch64 emulator was available to run it. Earlier revisions of the AArch64 JIT were measured on a handheld of this class, which is where the numbers above come from. |
+| AArch64 Linux (Cortex-A53 class, glibc 2.17 or newer) | Cross-compiled with the Zig toolchain in `cmake/toolchains/`. CPU regression and bounded game-output comparisons also run under QEMU. Earlier revisions were measured on a handheld of this class; the latest JIT changes still need hardware performance measurements. QEMU timings are not device performance estimates. |
 | Android arm64-v8a, armeabi-v7a, x86_64 | Cross-compiled with NDK 28.2 (`APP_PLATFORM android-21`) through both the CMake toolchain and `jni/Android.mk`; all three link. Never run on a device or an emulator. |
 | 32-bit ARM | Builds and runs the interpreter only. There is no 32-bit ARM recompiler, so it is too slow for most games. |
 | WebAssembly | Interpreter only. The core and the JS bridge build, but browser playback has not been verified. |
@@ -74,8 +74,9 @@ not proof that every game is playable from start to finish.
   Libretro serialization is memory-only, so full-speed rewind or run-ahead is not established,
   and rewind/run-ahead inside a real RetroArch session has not been verified.
 - No measurement against a physical GP32 has been recorded. Sound and timing follow the S3C2400
-  manual and the observed BIOS behaviour, and clicks and pops that some games make come from the
-  games' own data; speaker-level fidelity, input latency and long playthroughs are all still open.
+  manual and the observed BIOS behaviour. The source of remaining clicks and pops has not been
+  established for every scene; speaker-level fidelity, input latency and long playthroughs are
+  still open.
 - The compatibility work covers bounded scenes (3,600 frames of scripted input per card), not
   complete games.
 

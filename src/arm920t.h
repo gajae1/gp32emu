@@ -45,7 +45,9 @@ typedef struct arm_bus {
      * promises that an aligned physical word read whose address lies outside
      * the RAM window, the BIOS window and the identity-I/O window and has no
      * fastmem mapping returns open_bus_word32 with no side effects, for the
-     * CPU lifetime. Native backends may inline that constant once the same
+     * CPU lifetime. Fastmem mappings must be limited to BIOS and contiguous
+     * RAM starting at 0x0c000000; extra disjoint mappings require leaving this
+     * flag zero. Native backends may inline that constant once the same
      * window conditions are proven; zero keeps the checked helper for every
      * such access. Appended so earlier bus entries keep their offsets. */
     int open_bus_valid;

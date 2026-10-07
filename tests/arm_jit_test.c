@@ -19,7 +19,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define BIOS_SIZE 0x10000u
+#define BIOS_SIZE 0x80000u
 #define RAM_BASE  0x0c000000u           /* GP32 SDRAM window */
 /* A64 enables direct RAM loads/stores only after validating the full GP32
  * window. A smaller mock would silently exercise helpers instead. */
@@ -174,6 +174,9 @@ static uint16_t tb_read16(void *u, uint32_t a) {
 static uint32_t tb_read32(void *u, uint32_t a) {
     test_bus_t *b = (test_bus_t *)u;
     uint8_t *p = bus_ptr(b, a, 4u);
+    if (!p && b->bus.open_bus_valid && a >= BIOS_SIZE &&
+        a - RAM_BASE >= RAM_SIZE && a - IO_ADDR >= 0x02000000u)
+        return b->bus.open_bus_word32;
     if (!p && b->mem_probe) return tb_mem_io(b, a, 0u);
     if (b->block_io && a >= IO_ADDR && a < IO_ADDR + 12u)
         return tb_block_io(b, a, 0x11110000u + (a - IO_ADDR) / 4u);
@@ -289,6 +292,55 @@ static void set_mem_both(uint32_t addr, uint32_t v) {
     gp32_st32le(bus_ptr(&bus_ref, addr, 4u), v);
 }
 static uint32_t ref_reg(unsigned i) { return arm920t_get_reg(cpu_ref, i); }
+
+/* Read-only cold paths must retain ARM rotations, writeback and the I/O
+ * fallback. A nonuniform open-bus value exposes missing word rotation. */
+static void case_native_read_windows(void) {
+    const uint32_t addresses[] = {0x200u, BIOS_SIZE - 4u, 0xfffffeecu,
+                                  RAM_BASE + RAM_SIZE, IO_ADDR};
+    const uint32_t program[] = {
+        0xee02af10u, /* MCR p15,0,r10,c2,c0,0: translation table */
+        0xee01bf10u, /* MCR p15,0,r11,c1,c0,0: MMU control */
+        0xe5902000u, /* LDR r2,[r0] */
+        0xe5903001u, /* LDR r3,[r0,#1] */
+        0xe5904003u, /* LDR r4,[r0,#3] */
+        0xe4905004u, /* LDR r5,[r0],#4 */
+        0xe2400004u, /* SUB r0,r0,#4 */
+        0xeafffff9u, /* B first LDR */
+    };
+    for (unsigned mmu = 0; mmu < 2u; ++mmu) {
+        for (unsigned k = 0; k < GP32_ARRAY_COUNT(addresses); ++k) {
+            current_case = "native-read-windows";
+            setup_pair();
+            arm920t_destroy(cpu_jit);
+            arm920t_destroy(cpu_ref);
+            bus_jit.bus.open_bus_valid = bus_ref.bus.open_bus_valid = 1;
+            bus_jit.bus.open_bus_word32 = bus_ref.bus.open_bus_word32 = 0x12345678u;
+            cpu_jit = arm920t_create(&bus_jit.bus);
+            cpu_ref = arm920t_create(&bus_ref.bus);
+            if (!cpu_jit || !cpu_ref) exit(2);
+            arm920t_reset(cpu_jit, CODE_ADDR);
+            arm920t_reset(cpu_ref, CODE_ADDR);
+            arm920t_set_jit(cpu_jit, 1);
+            arm920t_set_jit(cpu_ref, 0);
+            load_both(program, GP32_ARRAY_COUNT(program));
+            set_reg_both(0u, addresses[k]);
+            set_reg_both(10u, RAM_BASE + 0x8000u);
+            set_reg_both(11u, mmu);
+            set_mem_both(RAM_BASE + 0x8000u, 2u); /* identity-map code */
+            set_mem_both(RAM_BASE + 0x8000u + (addresses[k] >> 20) * 4u,
+                         (addresses[k] & 0xfff00000u) | 2u);
+            if (addresses[k] < BIOS_SIZE) set_mem_both(addresses[k], 0x12345678u);
+            run_chunks();
+            CHECK(ref_reg(0u) == addresses[k], "read-window writeback restored");
+            CHECK(ref_reg(2u) == (addresses[k] == IO_ADDR ? UINT32_MAX : 0x12345678u),
+                  "read-window source value");
+            CHECK(ref_reg(3u) == (addresses[k] == IO_ADDR ? UINT32_MAX : 0x78123456u),
+                  "read-window unaligned rotation");
+            teardown_pair();
+        }
+    }
+}
 
 static int tb_poll_stable(void *u, uint32_t a) {
     (void)u;
@@ -4543,6 +4595,8 @@ int main(int argc, char **argv) {
     int terminal_coproc_only = argc == 2 && !strcmp(argv[1], "--terminal-coproc");
     if (argc == 2 && !strcmp(argv[1], "--sflag-logic")) {
         case_native_sflag_logic();
+    } else if (argc == 2 && !strcmp(argv[1], "--read-windows")) {
+        case_native_read_windows();
     } else if (argc == 2 && !strcmp(argv[1], "--live-read32")) {
         case_live_read32();
         case_io_direct_word();
@@ -4633,6 +4687,7 @@ int main(int argc, char **argv) {
     } else if (ram_end_only) {
         case_native_mapped_ram_end();
     } else {
+    case_native_read_windows();
     case_live_read32();
     case_io_direct_word();
     case_terminal_swi_yield();
@@ -4709,6 +4764,7 @@ int main(int argc, char **argv) {
         return 1;
     }
     printf("PASS: arm jit differential (%s), jit events=%" PRIu64 " fallbacks=%" PRIu64 "\n",
+           (argc == 2 && !strcmp(argv[1], "--read-windows")) ? "read-windows" :
            (argc == 2 && !strcmp(argv[1], "--ram-page-tags")) ? "ram-page-tags" :
            (argc == 2 && !strcmp(argv[1], "--live-read32")) ? "live-read32" :
            (argc == 2 && !strcmp(argv[1], "--exception-return")) ? "exception-return" :
