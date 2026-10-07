@@ -28,7 +28,9 @@ notes. `Makefile.libretro` also builds the legacy Linux core.
 
 The Android build script accepts `arm64-v8a` and `armeabi-v7a`. Building `x86_64`
 requires a manual NDK CMake configuration with `-DANDROID_ABI=x86_64` or
-`ndk-build`. The Android target is API 21. Android runtime use is unverified.
+`ndk-build`. The Android target is API 21. A limited Android app-sandbox run is
+documented in [ANDROID_BUILD.md](ANDROID_BUILD.md#runtime-validation); RetroArch
+integration and native ARM device use remain unverified.
 
 For Linux AArch64 cross-compilation, put Zig 0.13.0 on PATH and use the toolchain
 file in `cmake/toolchains/`. It targets Cortex-A53 and glibc 2.17 or newer.
