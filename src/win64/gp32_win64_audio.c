@@ -243,8 +243,12 @@ int gp32_win64_audio_submit(gp32_win64_audio_t *a, const gp32_audio_desc_t *audi
     uint32_t queued_frames = a->frame_count;
     audio_unlock(a);
     if (had_underrun) {
-        /* Consume pump underruns here, on the resampler's owner thread. */
-        gp32_audio_resampler_mark_gap(&a->resampler, dst_rate);
+        /* Consume pump underruns here, on the resampler's owner thread.  A
+         * pump underrun means the ring ran dry and the device heard the
+         * fade-to-silence tail (waveOut) or a drained endpoint (WASAPI), so
+         * the recovery ramp starts from that silence rather than from the
+         * last generated sample, which the device never played. */
+        gp32_audio_resampler_mark_gap_from_silence(&a->resampler, dst_rate);
     }
     int32_t adjust_ppm = queue_rate_adjust_ppm(queued_frames);
     size_t max_out = gp32_audio_resampler_max_output_frames(&a->resampler,

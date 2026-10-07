@@ -107,7 +107,9 @@ static gp32_status_t sdl3_audio_submit(gp32_audio_backend_t *backend, const gp32
     int queued_bytes = SDL_GetAudioStreamQueued(a->stream);
     uint32_t queued_frames = bytes_to_frames(queued_bytes);
     if (a->started && queued_frames == 0u) {
-        gp32_audio_resampler_mark_gap(&a->resampler, dst_rate);
+        /* The stream ran dry, so SDL is filling the device with silence; the
+         * recovery ramp starts from that silence. */
+        gp32_audio_resampler_mark_gap_from_silence(&a->resampler, dst_rate);
         /* The stale soft-limit ramp no longer describes what the device
          * heard: it fell through to silence, so resume from there. */
         a->ramp_pending = 0;
@@ -156,8 +158,10 @@ static gp32_status_t sdl3_audio_submit(gp32_audio_backend_t *backend, const gp32
      * even when that batch alone exceeds the limit, as the other backends do. */
     if (queued_bytes > max_queued ||
         (queued_bytes <= soft_queued && queued_bytes > max_queued - (int)bytes)) {
+        /* Clearing the stream empties it, so the device falls to silence
+         * before the next chunk plays. */
         (void)SDL_ClearAudioStream(a->stream);
-        gp32_audio_resampler_mark_gap(&a->resampler, dst_rate);
+        gp32_audio_resampler_mark_gap_from_silence(&a->resampler, dst_rate);
         queued_bytes = 0;
     } else if (queued_bytes > soft_queued) {
         a->ramp_pending = 1;

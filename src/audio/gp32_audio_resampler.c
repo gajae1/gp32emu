@@ -216,6 +216,17 @@ void gp32_audio_resampler_mark_gap(gp32_audio_resampler_t *r, uint32_t dst_rate_
     r->fade_total = fade;
 }
 
+void gp32_audio_resampler_mark_gap_from_silence(gp32_audio_resampler_t *r,
+                                                uint32_t dst_rate_hz) {
+    if (!r) return;
+    /* Anchor the recovery ramp at zero, the level an emptied ring or stream
+     * leaves on the device, before mark_gap preserves that anchor. */
+    r->last_out_l = 0;
+    r->last_out_r = 0;
+    r->have_last_out = 1;
+    gp32_audio_resampler_mark_gap(r, dst_rate_hz);
+}
+
 size_t gp32_audio_resampler_max_output_frames(const gp32_audio_resampler_t *r,
                                               size_t input_frames,
                                               uint32_t src_rate_hz,
