@@ -15,6 +15,20 @@ result paths below are names on the development machine.
 
 ## Current accepted work
 
+- Round 204 AArch64 JIT execution parity (evidence in
+  `F:/GP32/results/round204-a64emu/`, harness `run_parity.ps1`): the aarch64
+  backend can now be executed on this machine -- Docker Desktop runs a
+  cross-built aarch64 bench (ELF64 `e_machine` 0xB7, zig `-mcpu=cortex_a53`)
+  under `--platform linux/arm64` -- so a backend change no longer needs the
+  handheld for a hash check. Six titles (Her Knights KR, Astonishia Story R KR,
+  Princess Maker 2 KR, Blue Angelo EU, Little Wizard EU, Dungeon & Guarder EU)
+  match the x64 JIT build on all eleven tracked fields (`jit`, video/audio hash,
+  cycles, pc, cpsr, audio_frames, underrun risk and the three LCD counters),
+  66/66, with `jit=1` on both sides. Engagement check: Her Knights warmup 300 /
+  frames 150 runs 4.018 s interpreted vs 0.331 s with `--jit` at identical
+  hashes (12.2x). Container wall times are QEMU-emulated, so no fps claim is
+  attached; the harness is the regression net for rounds 189 and 203.
+
 - Round 175 GPIO live-read coverage (branch `round175/bus-fastpath`, evidence in
   `F:/GP32/results/bus-fastpath/`): the CPU-facing live-read table now serves
   every word a SmartMedia bit-bang driver polls, not just two -- GPBCON
