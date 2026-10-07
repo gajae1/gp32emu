@@ -13,10 +13,12 @@ s3c2400_t *s3c2400_create(size_t ram_size);
 void s3c2400_destroy(s3c2400_t *soc);
 void s3c2400_reset(s3c2400_t *soc);
 arm_bus_t s3c2400_get_bus(s3c2400_t *soc);
-/* CPU-facing live GPIO readback: GPBDAT 0x1560000c and GPEDAT 0x15600030 as
- * stable, immutable SoC-owned descriptors. Each mirror always equals the
- * ordinary GPIO read at every CPU-resume boundary; the storage stays valid
- * until s3c2400_destroy. Returns NULL with *count == 0 when unavailable. */
+/* CPU-facing live GPIO readback: the four polled words of the SmartMedia bit
+ * banging window (GPBCON 0x15600008, GPBDAT 0x1560000c, GPCDAT 0x15600024,
+ * GPEDAT 0x15600030) as stable, immutable SoC-owned descriptors. Each mirror
+ * always equals the ordinary GPIO read, at every CPU-resume boundary and after
+ * every store; the storage stays valid until s3c2400_destroy. Returns NULL
+ * with *count == 0 when unavailable. */
 const arm_live_read32_t *s3c2400_live_read32(const s3c2400_t *soc, size_t *count);
 
 int s3c2400_load_bios(s3c2400_t *soc, const char *path, char *err, size_t err_len);
