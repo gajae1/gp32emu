@@ -5,6 +5,7 @@
  */
 #include "smartmedia.h"
 #include "zip.h"
+#include "save_atomic.h"
 
 /* v0014 savestate delta.
  *
@@ -621,27 +622,21 @@ int smc_set_state_base_file(smc_t *s, const char *path, char *err, size_t err_le
 
 int smc_save_file(smc_t *s, const char *path, char *err, size_t err_len) {
     if (!s || !path || !s->data) return 0;
-    FILE *f = fopen(path, "wb");
-    if (!f) {
-        if (err && err_len) snprintf(err, err_len, "open %s: %s", path, strerror(errno));
-        return 0;
-    }
+    save_atomic_t stage;
+    if (!save_atomic_begin(&stage, path, err, err_len)) return 0;
     if (s->header_size) {
-        if (fwrite(s->header, 1, s->header_size, f) != s->header_size) {
+        if (fwrite(s->header, 1, s->header_size, stage.file) != s->header_size) {
+            save_atomic_abort(&stage);
             if (err && err_len) snprintf(err, err_len, "write %s header failed", path);
-            fclose(f);
             return 0;
         }
     }
-    if (fwrite(s->data, 1, s->data_size, f) != s->data_size) {
+    if (fwrite(s->data, 1, s->data_size, stage.file) != s->data_size) {
+        save_atomic_abort(&stage);
         if (err && err_len) snprintf(err, err_len, "write %s payload failed", path);
-        fclose(f);
         return 0;
     }
-    if (fclose(f) != 0) {
-        if (err && err_len) snprintf(err, err_len, "close %s: %s", path, strerror(errno));
-        return 0;
-    }
+    if (!save_atomic_commit(&stage, path, err, err_len)) return 0;
     s->dirty = 0;
     return 1;
 }

@@ -53,6 +53,7 @@ LOCAL_SRC_FILES := \
     ../src/audio/gp32_audio_resampler.c \
     ../src/media/gp32_media.c \
     ../src/media/gp32_video_effects.c \
+    ../src/save_atomic.c \
     ../src/libretro/libretro.c
 LOCAL_CFLAGS := $(GP32EMU_C23_FLAG) -O3 -fPIC -Wall -Wextra -Wpedantic $(GP32EMU_DEFINES) $(GP32EMU_INCLUDES)
 LOCAL_STATIC_LIBRARIES := gp32emu_zip

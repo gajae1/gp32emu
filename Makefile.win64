@@ -72,7 +72,8 @@ CORE_SRC := \
   src/platform/platform.c \
   src/audio/gp32_audio_resampler.c \
   src/media/gp32_media.c \
-  src/media/gp32_video_effects.c
+  src/media/gp32_video_effects.c \
+  src/save_atomic.c
 
 WIN64_SRC := \
   src/win64/gp32_win64_main.c \

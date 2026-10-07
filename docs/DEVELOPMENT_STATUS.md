@@ -15,6 +15,24 @@ result paths below are names on the development machine.
 
 ## Current accepted work
 
+- Round 216 release review fixes full-scale overflow in the shared audio FIR.
+  Its actual 23144-to-44100 Hz kernel can accumulate 2,721,586,631 before
+  clipping, beyond signed 32-bit range. Wide accumulation preserves saturation
+  instead of flipping sample polarity. The regression covers both contiguous
+  input and carried history. The ASR title-state capture remains byte-identical
+  over 180 callbacks, so this is not evidence that its reported crackle is gone.
+  The apparent large state copy in the output-count predictor is already removed
+  by the optimizing compiler; no speculative rewrite was made there.
+  Host save-state and SmartMedia writes now use unique, exclusively created
+  sibling files and replace the old save only after closing successfully.
+  Failed writes/replacements preserve the previous save; this is not a
+  power-loss durability guarantee. The freestanding browser VFS retains its
+  existing memory-backed path. CMake Qt builds now enable SDL3 gamepad input.
+  Final Windows regressions pass 30/30; AArch64 audio and atomic-save tests pass
+  under QEMU. Windows standalone/libretro, Linux AArch64 and Android ARM64/v7
+  binaries build. Changed WASM save units compile. Qt build/runtime and latest
+  hardware listening remain unverified. This build is labelled 1.0.0-rc1.
+
 - Round 215 fixes a libretro clock regression introduced in round 198: host
   callbacks now remain at 60 Hz, matching `gp32_run_frame` and audio accounting.
   Advertising the independent guest LCD rate changed speed and starved or

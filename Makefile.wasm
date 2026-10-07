@@ -36,6 +36,7 @@ CORE_SRCS := \
   src/gp32.c \
   src/audio/gp32_audio_resampler.c \
   src/media/gp32_video_effects.c \
+  src/save_atomic.c \
   wasm/libc/src/pcfx_wasm_libc.c \
   wasm/gp32_wasm_core.c
 OBJS := $(patsubst %.c,$(BUILD_DIR)/%.o,$(CORE_SRCS))

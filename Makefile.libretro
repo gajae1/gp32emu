@@ -25,6 +25,7 @@ endif
 TARGET_NAME ?= gp32emu_libretro
 TARGET_FILE := $(TARGET_NAME).$(LIBRETRO_EXT)
 CORE_OBJS = \
+ src/save_atomic.o \
  src/gp32.o \
  src/arm920t.o \
  src/s3c2400.o \

@@ -28,7 +28,10 @@ From PowerShell, with the NDK installed:
 The script builds `arm64-v8a` and `armeabi-v7a` into separate directories under
 `build-android/`, produces `gp32emu_libretro_android.so`, and writes their SHA-256
 values to `manifest.json`. Use `-Abi`, `-OutputDirectory`, `-Jobs` or `-ApiLevel` to
-override the defaults; `ANDROID_NDK_HOME` can supply the NDK directory.
+override the defaults; `ANDROID_NDK_HOME` can supply the NDK directory. The script
+covers only `arm64-v8a` and `armeabi-v7a`; its `-Abi` parameter accepts those two
+and the release packages them. For `x86_64`, configure CMake manually with
+`-DANDROID_ABI=x86_64` or use the `ndk-build` route above, which builds all three.
 
 ## What the build does not prove
 
