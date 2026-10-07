@@ -731,6 +731,41 @@ Zig directory to PATH fixed it. The A64 binaries cannot run on this PC. Focused
 and four-scene runtime checks remain pending while that target is
 offline; the exact commands are recorded in the round 167 result report.
 
+## Round 194 direct-boot census (40 titles, interp vs JIT)
+
+All 40 titles in the local TOSEC set were measured on Windows x64 with
+`--force-direct --warmup 2400 --frames 600` in both modes (80 rows; raw data,
+CSV and report under `F:/GP32/results/round194-force-direct-census/`). The
+window starts right after the guest loader, so it captures boot, launcher and
+attract scenes rather than deep gameplay; the fps column is the end-of-window
+rate and `cyc/frame` is guest cycles per emulated frame.
+
+The heaviest end-of-window rates (interp / JIT fps) were Tomak - Save the Earth,
+Again v2.0 EU 31.6/34.1, SmashGP v0.4c 87.9/115.9, Dungeon & Guarder Dragon Gore
+KR 99.2/460.3, Dragon Gore EU 110.1/345.0, Winter Is KR 119.8/301.2, Astonishia
+Story R KR 135.2/294.5, Again ~ Tomak KR 187.4/1096.6, Super Plusha EU
+261.9/472.6, Topy Topy Gogo EU 292.5/1703.3 and Dooly Soccer 2002 305.9/1936.4.
+The handheld estimate applies the round 186 ratio (median JIT 0.137, median
+interp 0.111; a lower bound because that core predates the current work), which
+puts SmashGP near 15.9, Dragon Gore KR near 63.0, Dragon Gore EU near 47.2,
+Winter Is near 41.2, Astonishia Story R near 40.3 and Tomak v2.0 EU near 4.7 fps.
+
+Two findings drive the next rounds. First, Tomak v2.0 EU has a JIT/interp ratio
+of 1.08 with bit-identical cycles, pc, cpsr, video_hash and audio_hash, so the
+JIT contributes nothing in that window: it either never engages or the guest
+spins in a path it never reaches (round 193 saw the same 0x0c00xxxx stall
+pattern in Astonishia Story R's direct boot). Second, several fast titles
+(Princess Maker 2, GP Daenantu, One-Shot VOCA, Tomak v1.0, Kimchiman, Raphael,
+Pinball Dreams) also show ratios of 1.0-1.2, so the census cannot yet say how
+much of the library actually benefits from the JIT.
+
+Twelve titles produced zero PCM in both modes for the whole window and twelve
+rows report `audio_underrun_risk=300` (Blue Angelo reports 1). Round 191
+classified eight of the silent titles as five genuinely silent scenes and three
+emulator-side audio drops (Astonishia Story R, GP Daenantu, Super Plusha), and
+rounds 199/201 re-validate that split at current HEAD. No per-title tuning was
+added for any of this.
+
 ## Broader remaining evidence
 
 See `PC_LIBRARY_COVERAGE.md` for bounded scenes, not blanket compatibility.
