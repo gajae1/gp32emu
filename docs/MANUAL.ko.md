@@ -1,126 +1,187 @@
 # GP32emu 사용설명서
 
-RetroArch용 GP32 코어를 쓰는 방법을 적은 문서입니다. 빌드 방법은 README.md에 있습니다.
+Windows 독립 실행 프로그램과 RetroArch용 GP32 코어의 설치·조작·저장 안내입니다.
+BIOS와 게임 파일은 포함하지 않습니다. 직접 보유한 덤프를 사용하세요.
 
-## 1.0.0 릴리즈
+## 필요한 파일
 
-1.0.0은 첫 정식 릴리즈로, 1.0.0-rc1 초안 빌드를 대체합니다. 압축 파일은 프로젝트의
-[Releases 페이지](https://github.com/gajae1/gp32emu/releases)에서 받습니다. 안에는 대상별로 파일이 나뉘어 있습니다.
-
-- `windows-x64/`: 독립 실행 파일 `gp32emu_win64.exe`(같은 폴더에 `SDL3.dll` 필요), RetroArch용
-  `gp32emu_libretro.dll`, 코어 정보 파일
-- `linux-aarch64/`: 리눅스 휴대기기용 RetroArch 코어와 정보 파일
-- `android-arm64/`, `android-armv7/`: 안드로이드용 코어와 정보 파일. armv7은 인터프리터로만 돌아
-  arm64보다 훨씬 느립니다.
-
-`manifest.json`에 모든 파일의 SHA-256 해시가 있고, 라이선스 고지와 이 설명서도 함께 들어 있습니다.
-BIOS와 게임, 세이브는 들어 있지 않습니다.
-
-리샘플러 누적 폭 확장, 언더런 후 필터 표 재사용, 프레임 안에서의 PCM 전달 개선이 포함되어 있습니다.
-테스트는 통과했지만, 휴대기기에서 직접 들어 보고 확인한 것은 아닙니다.
-
-## 필요한 것
-
-- 코어 파일: `gp32emu_libretro.so`(리눅스, 안드로이드는 `_android.so`) 또는 `gp32emu_libretro.dll`(윈도우)
-- GP32 BIOS 1.6.6: 파일 이름을 `gp32166m.bin`으로 바꿔서 사용합니다.
-- 게임 파일: `.smc`, `.fxe`, `.fpk`
-
-BIOS와 게임은 이 저장소에 들어 있지 않습니다. 직접 갖고 있는 덤프를 쓰세요.
-
-## RetroArch(PC)
-
-1. 코어 파일을 RetroArch의 `cores` 폴더에 넣습니다.
-2. `gp32166m.bin`을 `system` 폴더에 넣습니다.
-3. RetroArch에서 코어 불러오기로 GP32emu를 고르고, 콘텐츠 불러오기로 게임 파일을 엽니다.
-
-명령줄로는 `retroarch -L gp32emu_libretro.so 게임.smc` 입니다. 코어 경로에 슬래시가 없으면 RetroArch가
-코어 이름으로 읽으니, 현재 폴더의 파일은 `./gp32emu_libretro.so`처럼 적어야 합니다.
-
-## 윈도우 독립 실행
-
-`gp32emu_win64.exe`와 `SDL3.dll`을 같은 폴더에 두고 실행합니다.
-
-1. `File > Open BIOS...`로 BIOS를 열거나, `Config > Set BIOS path...`로 경로를 저장해 둡니다.
-2. `File > Open SmartMedia image...`, `Open FXE...`, `Open FPK...` 가운데 하나로 게임을 엽니다.
-3. F5/F8로 세이브 스테이트를 저장·불러오고, F12로 스크린샷을 찍습니다.
-
-BIOS로 실행한 SMC 게임의 게임 내 저장은 원본 옆의 `게임.smc.gp32.smc`에 보관합니다. 다음 실행에서는 이 저장
-이미지를 자동으로 불러오며 원본 롬은 바꾸지 않습니다. 따라서 롬이 있는 폴더에 쓰기 권한이
-필요합니다. 저장 실패 알림이 나오면 최신 진행 상황은 저장되지 않은 것이므로 공간과 권한을
-확인하세요. 세이브 스테이트는 F5로 별도로 남길 수 있습니다.
-BIOS 없는 직접 실행에서는 카드 쓰기 보존을 지원하지 않으므로 F5 스테이트를 사용하세요.
-
-명령줄에서는 `gp32emu_win64.exe --bios gp32166m.bin --smc game.smc`처럼 실행합니다(`--fxe`, `--fpk`,
-`--jit`, `--no-jit`도 됩니다). BIOS 경로를 저장하지 않으면 HLE 폴백으로 실행되고, 일부 게임은
-시작하지 못한다는 경고가 나옵니다.
-
-## 리눅스 휴대기기(aarch64)
-
-기기마다 폴더 이름은 다르지만 방식은 같습니다.
-
-1. 기기가 코어를 찾는 폴더에 aarch64용 `gp32emu_libretro.so`를 넣습니다.
-2. 코어 정보 파일 `gp32emu_libretro.info`는 코어 옆이 아니라 기기의 RetroArch가 정보 파일을 읽는
-   폴더에 넣습니다. 코어 옆에만 두면 읽지 않는 경우가 있습니다.
-3. `gp32166m.bin`과 게임 파일은 그 기기의 BIOS/롬 폴더에 넣고, 메뉴에서 목록을 새로고침합니다.
-
-기존 RetroArch 파일과 설정은 건드리지 마세요. 이미 GP32 항목을 설정해 둔 상태라면 설정 파일을
-덮어쓰지 말고 코어 파일만 교체하세요. 무거운 장면에서 소리가 끊기면 기기의 CPU 성능 모드를 올릴
-수 있는지 확인해 보세요.
-
-## 조작
-
-RetroPad 1번 포트를 그대로 씁니다.
-
-| RetroPad | GP32 |
+| 대상 | 패키지 폴더와 실행 파일 |
 | --- | --- |
-| 방향키 | 방향키 |
-| A, B | A, B |
-| L, R | L, R |
-| Start | Start |
-| Select | Select |
+| Windows x64 독립 실행 | `windows-x64/gp32emu_win64.exe`, 같은 폴더의 `SDL3.dll` |
+| Windows x64 RetroArch | `windows-x64/gp32emu_libretro.dll` |
+| Linux AArch64 RetroArch | `linux-aarch64/gp32emu_libretro.so` |
+| Android ARM64 RetroArch | `android-arm64/gp32emu_libretro_android.so` |
+| Android ARMv7 RetroArch | `android-armv7/gp32emu_libretro_android.so` |
 
-버튼 배치가 마음에 안 들면 RetroArch의 입력 리맵 기능으로 바꾸면 됩니다.
+각 코어 폴더에는 `gp32emu_libretro.info`도 있습니다. Linux 코어는 glibc 2.17 이상,
+Android 코어는 API 21 이상을 대상으로 합니다. Android는 컴파일만 확인했으며 실제 실행은
+미검증입니다. ARMv7은 JIT 없이 동작하므로 ARM64보다 상당히 느립니다.
 
-## 코어 옵션
+게임은 `.smc` 카드 이미지와 `.fxe`, `.fpk` 형식을 엽니다. GP32 BIOS 1.6.6 사용을
+권장합니다. BIOS 없이 실행할 수 있는 게임은 제한되어 있습니다.
 
-RetroArch 빠른 메뉴의 코어 옵션에서 바꿉니다.
+## Windows 독립 실행
 
-- **Dynamic recompiler**: 기본값은 켜짐(JIT). 저사양 ARM 기기에서는 켜져 있어야 제 속도가 납니다.
-  문제를 의심할 때만 끄고 비교해 보세요.
-- **Boot mode**: `auto`가 기본입니다. BIOS가 있으면 BIOS로 부팅하고, 없으면 카드에서 바로 부팅합니다.
-  `require_bios`는 BIOS가 없을 때 오류를 내고, `direct_hle`는 BIOS가 있어도 쓰지 않습니다.
-- **LCD persistence**: 원래 액정의 잔상을 흉내 냅니다. 기본값은 꺼짐.
-- **Frame interpolation**: 프레임 사이를 섞어 줍니다. 기본값은 꺼짐.
-- **CPU speed**: 100%에서 300%까지. 게임에 주는 CPU 시간만 늘리고 소리 높이, 타이머, 화면 갱신은 그대로 둡니다.
-  원래 기기에서도 느렸던 게임이나 로딩이 긴 게임에 도움이 되지만, 그만큼 기기 CPU를 더 씁니다.
-  저사양 기기에서는 필요한 게임에서만 올리세요. 올리면 일부 게임이 이상하게 동작할 수 있습니다.
+1. 압축을 풀고 `gp32emu_win64.exe`와 `SDL3.dll`을 같은 폴더에 둡니다.
+2. 프로그램을 실행한 뒤 `Config > Set BIOS path...`에서 BIOS를 지정합니다.
+   `File > Open BIOS...`로 BIOS를 열 수도 있습니다.
+3. `File > Open SmartMedia image...`, `Open FXE...`, `Open FPK...`로 해당 게임을 엽니다.
 
-## 저장
+BIOS 경로와 설정은 실행 파일 옆의 `GP32emu.ini`에 저장하므로 쓰기 가능한 폴더에 두세요.
+BIOS가 설정되지 않으면 HLE 대체 실행을 사용한다는 경고가 나옵니다. 이 경로로 시작하지
+못하는 게임은 BIOS를 지정해서 실행하세요.
 
-- **게임 안 저장**: GP32 게임은 SmartMedia 카드에 저장합니다. 이 내용은 RetroArch의 저장 폴더에
-  `게임이름.gp32.smc`로 만들어집니다. 게임을 닫을 때 기록됩니다. 같은 이름의 게임 파일은 같은
-  저장 파일을 공유합니다.
-- **세이브 스테이트**: RetroArch의 보통 방식대로 저장하고 불러옵니다. 스테이트에 RAM과 SmartMedia
-  이미지가 함께 들어가서 한 슬롯이 10MB가량입니다.
-- 스테이트를 저장한 뒤 되돌려 다시 진행해도 소리와 화면이 처음 진행과 같게 나오도록 맞춰
-  두었습니다. 이전 버전에서 만든 스테이트도 불러올 수 있습니다. 실제 RetroArch에서 되감기와
-  런어헤드를 켜 놓고 확인한 것은 아닙니다.
+`Emulation > Run/Pause`로 일시정지·재개하고 `Reset`으로 다시 시작합니다.
+`Video`에서 전체화면, 화면 비율, 정수 배율, 잔상 효과를 바꿀 수 있습니다.
+화면 출력에 문제가 있으면 `GDI fallback`을 선택할 수 있습니다. `Audio`에서는
+`waveOut`, `WASAPI shared`, `WASAPI exclusive`를 선택합니다.
 
-## 문제가 생길 때
+### 키보드와 단축키
 
-- **BIOS 화면(DATA LOADING)에서 멈춤**: 상용 게임이 아닌 자작 카드(GPMM 구조)는 BIOS가 시작하지 못합니다.
-  Boot mode가 `auto`이면 자동으로 바로 부팅하니 `require_bios`로 바뀌어 있지 않은지 보세요.
-- **BIOS 없이 켰더니 시작 화면에서 멈춤**: BIOS 없이 바로 부팅하는 방식은 아직 모든 카드에서 되지는
-  않습니다. BIOS를 넣고 쓰세요.
-- **소리가 가끔 끊김**: 기기에서 CPU 성능 모드를 올릴 수 있으면 올리고, 같은 CPU를 쓰는 다른
-  프로그램을 끄세요. 무거운 로딩 구간에서 순간적으로 느려져 끊기는 경우가 있습니다.
-- **Pinball Dreams의 소리가 없음**: 알려진 문제입니다. 게임이 스스로 볼륨을 최소로 설정합니다.
-- **RetroArch가 바로 꺼짐**: `retroarch --verbose`로 실행해서 로그를 확인하세요.
+| 키 | 동작 |
+| --- | --- |
+| 방향키 | GP32 방향키 |
+| Z / X | GP32 A / B |
+| A / S | GP32 L / R |
+| Enter | Start |
+| Shift | Select |
+| F5 | 세이브 스테이트 저장 대화상자 |
+| F8 | 세이브 스테이트 불러오기 대화상자 |
+| F12 | BMP 스크린샷 저장 대화상자 |
+| F11 또는 Alt+Enter | 전체화면 전환 |
+| Esc | 전체화면이면 창 모드로 전환, 창 모드이면 프로그램 종료 |
 
-## 브라우저에서 해 보기
+F5/F8은 자동 슬롯 저장·불러오기가 아닙니다. 파일 대화상자에서 경로를 선택합니다.
+`File` 메뉴의 `Save State...`, `Load State...`, `Take Screenshot...`도 같은 기능입니다.
+`Start Recording ZMBV MKV...`와 `Stop Recording`으로 MKV 녹화를 시작·종료할 수 있습니다.
 
-`make -f Makefile.wasm`으로 `web/gp32_wasm_core.wasm`을 만든 뒤 `make -f Makefile.wasm serve`를 실행하고
-`http://127.0.0.1:8008/`을 엽니다. BIOS와 게임 파일을 페이지에 끌어다 놓으면 됩니다.
-브라우저 빌드는 JIT 없이 인터프리터로만 돌기 때문에 PC 정도의 성능이 필요합니다.
-브라우저에서의 재생 자체는 아직 검증하지 않았습니다.
+### 명령줄
 
+실행 파일이 있는 폴더의 PowerShell에서 다음과 같이 실행합니다.
+
+```powershell
+.\gp32emu_win64.exe --bios "gp32166m.bin" --smc "game.smc"
+.\gp32emu_win64.exe --fxe "homebrew.fxe"
+.\gp32emu_win64.exe --fpk "homebrew.fpk"
+```
+
+`--jit`은 JIT 켜기, `--no-jit`은 끄기, `--no-audio`는 소리 출력 끄기입니다.
+옵션 없이 넘긴 파일 경로는 SMC 이미지로 취급하므로 FXE/FPK에는 해당 옵션을 쓰세요.
+경로에 공백이 있으면 따옴표로 감쌉니다. `--bios`로 지정한 경로는 `GP32emu.ini`에도 저장됩니다.
+
+## RetroArch 설치
+
+### PC와 Linux 휴대기기
+
+1. RetroArch의 플랫폼과 아키텍처에 맞는 코어를 설정된 코어 폴더에 넣습니다.
+   Linux AArch64 코어는 x86-64 PC용이 아닙니다.
+2. `gp32emu_libretro.info`를 RetroArch의 **코어 정보 파일 폴더**에 넣습니다.
+   코어 폴더와 정보 파일 폴더는 다를 수 있습니다.
+3. BIOS를 RetroArch의 **시스템/BIOS 폴더**에 `gp32166m.bin` 이름으로 넣습니다.
+4. 코어 불러오기에서 GP32emu를 고른 뒤 콘텐츠 불러오기에서 게임을 엽니다.
+
+휴대기기의 코어·정보·BIOS 폴더는 기기별로 다릅니다. 기존 RetroArch 설정을 덮어쓰지 말고
+설정에 지정된 위치를 사용하세요. 게임 목록을 따로 관리하는 메뉴에서는 목록 새로고침이
+필요할 수 있습니다.
+
+Linux에서 현재 폴더의 코어를 명령줄로 불러오는 예입니다.
+
+```sh
+retroarch -L ./gp32emu_libretro.so "game.smc"
+```
+
+### Android
+
+RetroArch 앱의 아키텍처에 맞춰 ARM64 또는 ARMv7 코어를 선택합니다. 기기의 운영체제가
+64비트여도 앱이 32비트라면 ARMv7 코어가 필요합니다. 앱에서 제공하는 로컬 코어 설치 기능으로
+`gp32emu_libretro_android.so`를 설치한 뒤, 정보 파일과 BIOS를 앱에 설정된 폴더에 넣고
+콘텐츠를 불러옵니다. 코어 설치 방법과 파일 접근 권한은 RetroArch 배포판에 따라 다릅니다.
+Android에서의 실행과 조작은 아직 확인되지 않았습니다.
+
+### 조작
+
+RetroPad 1번 포트를 사용합니다. 방향키, A/B, L/R, Start, Select는 각각 같은 이름의
+GP32 버튼에 대응합니다. 실제 키보드·게임패드 배치는 RetroArch의 입력 설정과 리맵에서 바꿉니다.
+위의 Windows 키보드 표는 독립 실행 프로그램에만 적용됩니다.
+
+### 코어 옵션
+
+RetroArch 빠른 메뉴의 코어 옵션에서 설정합니다.
+
+| 옵션 | 동작 |
+| --- | --- |
+| Dynamic recompiler | 기본 켜짐. x86-64와 AArch64에서 JIT을 사용합니다. ARMv7에는 JIT이 없습니다. |
+| Boot mode | 기본 `auto`. 아래의 SMC 부팅 설명을 참고하세요. |
+| LCD persistence | 액정 잔상 효과. 기본 꺼짐. |
+| Frame interpolation | 프레임 사이를 섞는 효과. 기본 꺼짐. |
+| CPU speed | 기본 100%. 100/125/150/175/200/250/300% 중 선택합니다. |
+
+SMC의 `auto`는 BIOS가 있으면 우선 사용하고, BIOS가 없거나 BIOS 경로의 콘텐츠 로드에
+실패하면 직접 부팅을 시도합니다. 다만 `GPMM/` 같은 자작 카드 구조는 기본 BIOS 실행기가
+시작하지 못하므로 BIOS가 있어도 카드를 연결한 직접 부팅으로 전환합니다.
+`require_bios`는 BIOS를 요구하고 직접 부팅으로 전환하지 않습니다.
+`direct_hle`는 BIOS를 사용하지 않습니다. 자작 카드 자동 판별은 이 모드에서도 적용됩니다.
+
+CPU speed는 소리 높이·타이머·화면 갱신 주기를 바꾸지 않고 게임에 주는 CPU 시간을 늘립니다.
+느린 게임이나 로딩에 도움이 될 수 있지만 호스트의 CPU 사용량이 늘고 호환성에 영향을 줄 수
+있습니다. 필요한 게임에서만 올리세요.
+
+## 저장과 백업
+
+### 게임 안에서 저장
+
+게임 내 저장은 SmartMedia 카드에 기록됩니다. 에뮬레이터는 원본 카드 파일을 바꾸지 않고
+별도 저장 이미지를 만들며, 게임을 닫거나 다른 콘텐츠를 열 때 기록합니다.
+
+| 실행 방식 | 저장 이미지 위치 |
+| --- | --- |
+| Windows에서 BIOS로 실행한 `game.smc` | 원본 옆의 `game.smc.gp32.smc` |
+| RetroArch에서 카드를 연결해 실행한 `game.smc` | RetroArch 저장 폴더의 `game.gp32.smc` |
+
+다음 로드 때 기존 저장 이미지를 자동으로 불러옵니다. Windows에서는 원본 카드 폴더에
+쓰기 권한이 필요합니다. RetroArch가 저장 폴더를 제공하지 않으면 코어는 시스템 폴더를
+사용합니다. 같은 저장 폴더에서는 경로가 달라도 확장자를 뺀 게임 이름이 같으면 같은
+저장 파일을 공유합니다.
+
+Windows HLE 실행과 RetroArch의 일반 직접 부팅은 쓰기 가능한 카드 장치를 연결하지 않으므로
+게임 내 저장을 보존하지 못합니다. RetroArch가 자동 판별한 자작 카드 직접 부팅은 카드를
+연결하므로 카드 쓰기를 보존할 수 있습니다. 카드 저장이 없는 경로에서는 스테이트를 사용하세요.
+
+저장 실패 알림이 나오면 최신 진행 상황이 파일에 남지 않았을 수 있습니다. 공간과 쓰기 권한을
+확인하세요. 기존 저장 이미지가 읽히지 않으면 이를 보호하기 위해 게임 로드가 중단됩니다.
+원본 카드와 저장 이미지는 각각 백업해 두세요.
+
+### 세이브 스테이트
+
+Windows에서는 F5/F8 대화상자로 `.gp32st` 파일을 저장·불러옵니다. 기본 제안 이름은
+`gp32_state.gp32st`이며, 게임별 자동 파일명이 아니므로 알아보기 쉬운 이름을 지정하세요.
+스크린샷도 F12 대화상자에서 저장 위치를 선택하며 기본 제안 이름은 `gp32_screenshot.bmp`입니다.
+RetroArch에서는 프런트엔드의 스테이트 저장·불러오기 기능을 사용합니다.
+
+스테이트는 실행 상태와 메모리, 연결된 카드의 상태를 담습니다. 카드 데이터는 원본 대비 변경분만
+담거나 전체 이미지를 담을 수 있으므로 크기가 일정하지 않습니다. 원본 카드 파일을 그대로
+보관하고 같은 콘텐츠를 연 뒤 스테이트를 불러오세요. 변경분으로 저장된 스테이트는 기준 카드가
+다르면 복원할 수 없습니다. 스테이트를 불러오면 카드 내용도 그 시점으로 돌아갈 수 있습니다.
+
+스테이트는 게임 내 저장 이미지와 별개입니다. 다른 빌드나 프런트엔드 사이의 스테이트 호환성은
+보장하지 않습니다. 실제 RetroArch 세션에서의 되감기와 런어헤드는 미검증입니다.
+
+## 문제 해결과 제한
+
+- **BIOS 없이 시작 화면에서 멈춤:** BIOS를 지정해 실행하세요. Astonishia Story R, Hany,
+  Super Plusha 등은 직접 부팅에 제한이 있습니다.
+- **자작 카드가 DATA LOADING에서 멈춤:** RetroArch에서 `Boot mode`가 `auto`인지 확인하세요.
+  자작 카드 자동 전환 설명은 RetroArch용이며 Windows 독립 실행에 그대로 적용되지 않습니다.
+- **소리가 끊김:** 다른 무거운 프로그램을 닫고, 기기에서 성능 모드를 선택할 수 있으면 확인하세요.
+- **어스토니시아 스토리 R 타이틀 음악이 거칠게 들림:** 게임 자체의 음원 디코딩 방식에 따른
+  잡음이 남아 있습니다. CPU speed를 높여 해결되는 문제는 아닙니다.
+- **Pinball Dreams에서 소리가 없음:** 직접 부팅 경로에서 발생하는 알려진 제한입니다.
+- **저장되지 않거나 저장 이미지를 읽지 못함:** 위의 저장 위치, 여유 공간, 권한을 확인하세요.
+  기존 저장 파일은 백업한 뒤 상태를 확인하세요.
+- **RetroArch가 종료됨:** `retroarch --verbose`로 로그를 확인하세요.
+
+호환성 확인은 일부 장면에 한정되며 전체 게임 완주를 보장하지 않습니다. 실제 GP32와의 소리·입력
+지연 비교, 장시간 플레이는 미확인입니다. Android 실행, Qt 실행, 브라우저 재생도 미검증입니다.
+
+프로젝트 출처와 라이선스 고지는 [README](../README.md#credits-and-licensing)와
+[licenses/](../licenses/)에 있습니다. SDL3 고지는 패키지의 `windows-x64/SDL3-LICENSE.txt`에 있습니다.

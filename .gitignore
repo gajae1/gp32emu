@@ -2,6 +2,7 @@
 *.a
 build*
 !scripts/build_android.ps1
+!docs/BUILDING.md
 third_party/sdl/build/
 third_party/sdl/install/
 third_party/sdl/SDL3-3.4.10/
@@ -14,6 +15,9 @@ web/*.wasm
 .qmake.stash
 __pycache__/
 *.pyc
+
+# Local diagnostics and captures are not source or release contents.
+/results/
 
 # Android ndk-build outputs
 libs/

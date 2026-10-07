@@ -961,7 +961,32 @@ static void test_resampler_gap_replay(void) {
     }
 }
 
+static void test_clean_tone_delivery(void) {
+    /* A legal high-level tone has large sample-to-sample slopes. Those are
+     * content, not evidence of a dropped buffer or a transport discontinuity.
+     * The rate-matched adapter must preserve it even across short sends. */
+    for (unsigned blocked = 0; blocked < 2u; ++blocked) {
+        start_case();
+        const size_t frames = 2048u;
+        for (size_t i = 0; i < frames; ++i) {
+            int16_t v = (int16_t)(24000.0 * sin(2.0 * 3.14159265358979323846 *
+                                              6000.0 * (double)i / 44100.0));
+            input_pcm[i * 2u] = v;
+            input_pcm[i * 2u + 1u] = (int16_t)-v;
+        }
+        memcpy(expected, input_pcm, frames * 4u);
+        if (blocked) { allowance = 17u; per_call = 7u; }
+        scripted_audio = (gp32_audio_desc_t){input_pcm, frames, 44100u};
+        retro_run();
+        allowance = SIZE_MAX;
+        flush_audio();
+        CHECK(captured_frames == frames && !memcmp(captured, expected, frames * 4u),
+              "continuous high-level music must not be treated as output clicks");
+    }
+}
+
 int main(int argc, char **argv) {
+    test_clean_tone_delivery();
     test_resampler_gap_replay();
     test_resampler_peak_clipping();
     test_frontend_audio_clock();

@@ -17,6 +17,12 @@
  * WIN64_AUDIO_SOURCE can point at a mutated backend copy, which keeps this test
  * honest: the pre-fix arrangement fails the ownership checks below.
  */
+/* mingw-w64 declares the waveOut API as dllimport unless _WINMM_ is set, which
+ * would bind the backend's calls straight to libwinmm and bypass the fake
+ * driver below.  The backend source is included by this TU, so the switch has
+ * to be set before that include. */
+#define _WINMM_
+
 #include <stdio.h>
 #include <string.h>
 
@@ -90,6 +96,156 @@ static IAudioRenderClientVtbl g_render_vtbl = {
     .GetBuffer = fake_get_buffer,
     .ReleaseBuffer = fake_release_buffer,
 };
+
+/* --- Legacy waveOut path -------------------------------------------------
+ * waveOut completes whole headers, so the pump must hand the device only the
+ * frames the producer really queued.  A chunk shorter than the 1024 frame
+ * header is a normal producer hiccup while the other headers keep playing;
+ * padding it with the fade-to-silence tail puts fabricated silence in the
+ * middle of continuous audio and raises the gap flag, which makes the
+ * producer ramp in from silence that was never heard.  The fake driver below
+ * records exactly what the pump submits and keeps each written header queued
+ * (WHDR_PREPARED without WHDR_DONE) the way a real device does. */
+static int g_wave_writes;
+static int g_wave_prepare_calls;
+static int g_wave_unprepare_calls;
+static DWORD g_wave_written_bytes[8];
+static int16_t *g_wave_written_data[8];
+
+/* _WINMM_ keeps these declarations out of dllimport form, so these
+ * definitions are what the included backend links against. */
+MMRESULT WINAPI waveOutPrepareHeader(HWAVEOUT hwo, LPWAVEHDR pwh, UINT cbwh) {
+    (void)hwo; (void)cbwh;
+    ++g_wave_prepare_calls;
+    pwh->dwFlags |= WHDR_PREPARED;
+    return MMSYSERR_NOERROR;
+}
+
+MMRESULT WINAPI waveOutWrite(HWAVEOUT hwo, LPWAVEHDR pwh, UINT cbwh) {
+    (void)hwo; (void)cbwh;
+    if (g_wave_writes < 8) {
+        g_wave_written_bytes[g_wave_writes] = pwh->dwBufferLength;
+        g_wave_written_data[g_wave_writes] = (int16_t *)pwh->lpData;
+    }
+    ++g_wave_writes;
+    pwh->dwFlags |= WHDR_PREPARED;
+    return MMSYSERR_NOERROR;
+}
+
+MMRESULT WINAPI waveOutUnprepareHeader(HWAVEOUT hwo, LPWAVEHDR pwh, UINT cbwh) {
+    (void)hwo; (void)cbwh;
+    ++g_wave_unprepare_calls;
+    pwh->dwFlags &= (DWORD)~WHDR_PREPARED;
+    return MMSYSERR_NOERROR;
+}
+
+static void test_waveout_short_read_gap(void) {
+    const int16_t sentinel = 0x2b2b; /* value the pump must leave untouched */
+    const uint32_t producer_frames = 300u;
+
+    /* waveOut state as waveout_open() leaves it, minus the device handle. */
+    g_audio.kind = AUDIO_WAVEOUT;
+    g_audio.wave = (HWAVEOUT)(uintptr_t)1;
+    for (unsigned i = 0; i < GP32_AUDIO_BUFFERS; ++i) {
+        free(g_audio.wave_buf[i]);
+        g_audio.wave_buf[i] = (int16_t *)malloc((size_t)GP32_AUDIO_WAVE_FRAMES * 2u * sizeof(int16_t));
+        CHECK(g_audio.wave_buf[i] != NULL, "waveOut fixture buffer allocated");
+        for (uint32_t f = 0; f < GP32_AUDIO_WAVE_FRAMES * 2u; ++f) g_audio.wave_buf[i][f] = sentinel;
+        memset(&g_audio.hdr[i], 0, sizeof(g_audio.hdr[i]));
+        g_audio.hdr[i].lpData = (LPSTR)g_audio.wave_buf[i];
+        g_audio.hdr[i].dwBufferLength = (DWORD)(GP32_AUDIO_WAVE_FRAMES * 2u * sizeof(int16_t));
+    }
+    /* The device is mid-stream: one header still holds real queued audio. */
+    g_audio.hdr[0].dwFlags = WHDR_PREPARED;
+
+    free(g_audio.queue);
+    g_audio.queue = NULL;
+    g_audio.read_frame = g_audio.frame_count = g_audio.frame_cap = 0;
+    g_audio.underrun = 0;
+    g_audio.last_ring_l = g_audio.last_ring_r = 0;
+    g_audio.have_last_ring = 0;
+    CHECK(ensure_queue(&g_audio, 4096u), "queue capacity for the waveOut fixture");
+
+    static int16_t chunk[300 * 2];
+    for (uint32_t i = 0; i < producer_frames; ++i) {
+        chunk[i * 2 + 0] = (int16_t)(4000 + (int)i);
+        chunk[i * 2 + 1] = (int16_t)(-4000 - (int)i);
+    }
+    ring_write_bulk_unlocked(&g_audio, chunk, producer_frames);
+
+    g_wave_writes = 0;
+    g_wave_prepare_calls = 0;
+    g_wave_unprepare_calls = 0;
+    CHECK(gp32_win64_audio_pump_backend(&g_audio) == 0, "waveOut short-chunk pump returns 0");
+
+    CHECK(g_wave_writes == 1, "one header takes the short producer chunk");
+    CHECK(g_wave_written_bytes[0] == producer_frames * 2u * sizeof(int16_t),
+          "the header carries the real frames, not a padded 1024 frame buffer");
+    const int16_t *wrote = g_wave_written_data[0];
+    int ordered = wrote != NULL;
+    for (uint32_t i = 0; ordered && i < producer_frames; ++i) {
+        if (wrote[i * 2 + 0] != (int16_t)(4000 + (int)i) ||
+            wrote[i * 2 + 1] != (int16_t)(-4000 - (int)i)) ordered = 0;
+    }
+    CHECK(ordered, "every queued frame reached the device in order");
+    int tail_clean = wrote != NULL;
+    for (uint32_t i = producer_frames; tail_clean && i < GP32_AUDIO_WAVE_FRAMES; ++i) {
+        if (wrote[i * 2 + 0] != sentinel || wrote[i * 2 + 1] != sentinel) tail_clean = 0;
+    }
+    CHECK(tail_clean, "no fade or silence tail is fabricated past the real frames");
+    CHECK(g_audio.wave_buf[2][0] == sentinel &&
+          g_audio.wave_buf[2][GP32_AUDIO_WAVE_FRAMES * 2u - 1u] == sentinel,
+          "no second header is filled with manufactured silence");
+    CHECK(g_audio.frame_count == 0u, "the short chunk was consumed exactly once");
+    CHECK(g_audio.underrun == 0, "a short chunk behind queued buffers raises no gap");
+    CHECK(g_audio.have_last_ring &&
+          g_audio.last_ring_l == (int16_t)(4000 + (int)(producer_frames - 1u)) &&
+          g_audio.last_ring_r == (int16_t)(-4000 - (int)(producer_frames - 1u)),
+          "the last real frame stays the device continuity anchor");
+
+    /* Steady state still fills whole headers: the pump must not turn the
+     * partial-chunk rule into a throughput cap. */
+    for (unsigned i = 0; i < GP32_AUDIO_BUFFERS; ++i) {
+        g_audio.hdr[i].dwFlags = 0;
+        g_audio.hdr[i].lpData = (LPSTR)g_audio.wave_buf[i];
+    }
+    static int16_t full[2048 * 2];
+    for (uint32_t i = 0; i < 2048u; ++i) { full[i * 2 + 0] = 700; full[i * 2 + 1] = -700; }
+    ring_write_bulk_unlocked(&g_audio, full, 2048u);
+    g_wave_writes = 0;
+    g_audio.underrun = 0;
+    CHECK(gp32_win64_audio_pump_backend(&g_audio) == 0, "full-chunk waveOut pump returns 0");
+    CHECK(g_wave_writes == 2 && g_wave_written_bytes[0] == 1024u * 2u * sizeof(int16_t) &&
+          g_wave_written_bytes[1] == 1024u * 2u * sizeof(int16_t),
+          "two whole headers are filled while the producer keeps up");
+    CHECK(g_audio.frame_count == 0u && g_audio.underrun == 0, "the whole chunk left with no gap");
+
+    /* The device drained everything: this is the gap the fade exists for, so
+     * the pump still reports it instead of inventing silence buffers. */
+    for (unsigned i = 0; i < GP32_AUDIO_BUFFERS; ++i) {
+        g_audio.hdr[i].dwFlags = 0;
+        g_audio.hdr[i].lpData = (LPSTR)g_audio.wave_buf[i];
+        for (uint32_t f = 0; f < GP32_AUDIO_WAVE_FRAMES * 2u; ++f) g_audio.wave_buf[i][f] = sentinel;
+    }
+    g_audio.read_frame = 0;
+    g_audio.frame_count = 0;
+    g_audio.underrun = 0;
+    g_wave_writes = 0;
+    CHECK(gp32_win64_audio_pump_backend(&g_audio) == 0, "drained waveOut pump returns 0");
+    CHECK(g_wave_writes == 0, "an empty ring submits no manufactured silence buffer");
+    CHECK(g_audio.underrun == 1, "a device with nothing left to play still raises the gap flag");
+
+    for (unsigned i = 0; i < GP32_AUDIO_BUFFERS; ++i) {
+        free(g_audio.wave_buf[i]);
+        g_audio.wave_buf[i] = NULL;
+        memset(&g_audio.hdr[i], 0, sizeof(g_audio.hdr[i]));
+    }
+    g_audio.wave = NULL;
+    g_audio.kind = AUDIO_WASAPI;
+    free(g_audio.queue);
+    g_audio.queue = NULL;
+    g_audio.read_frame = g_audio.frame_count = g_audio.frame_cap = 0;
+}
 
 /* Overflow trims the ring at the read head while the device is between
  * reads: the next frame it pulls must glide from the last frame it actually
@@ -258,6 +414,106 @@ static void test_drop_edge_recovery(void) {
           "content past the ramp window is the submitted block");
     CHECK(g_audio.resampler.fade_left == 0 && g_audio.resampler.fade_total == 0,
           "full discard armed no resampler fade");
+}
+
+/* Endpoint conversion: GetMixFormat can hand back mono (USB headsets,
+ * comms devices) or more than two channels (HDMI receivers, virtual
+ * devices). A stereo source owns FL/FR; the remaining endpoint channels
+ * must stay silent, and a mono endpoint must carry both source channels
+ * instead of dropping the right one. */
+static void test_endpoint_channel_conversion(void)
+{
+    static const int16_t seed[2 * 4] = {
+        16384, -8192, 16384, -8192, 16384, -8192, 16384, -8192
+    };
+
+    free(g_audio.queue);
+    g_audio.queue = NULL;
+    g_audio.read_frame = g_audio.frame_count = g_audio.frame_cap = 0;
+    g_audio.underrun = 0;
+    CHECK(ensure_queue(&g_audio, 64u), "queue capacity for the channel fixture");
+    ring_write_bulk_unlocked(&g_audio, seed, 4u);
+    CHECK(g_audio.frame_count == 4u, "seeded four stereo frames");
+
+    WAVEFORMATEX six;
+    memset(&six, 0, sizeof six);
+    six.wFormatTag = WAVE_FORMAT_IEEE_FLOAT;
+    six.nChannels = 6;
+    six.nSamplesPerSec = 48000;
+    six.wBitsPerSample = 32;
+    six.nBlockAlign = 24;
+    six.nAvgBytesPerSec = 48000u * 24u;
+    g_audio.mixfmt = &six;
+
+    float out6[6 * 4];
+    memset(out6, 0x7f, sizeof out6);
+    CHECK(fill_wasapi_buffer(&g_audio, (BYTE *)out6, 4u) == 4u, "6ch fill produced every frame");
+    CHECK(out6[0] == 0.5f && out6[1] == -0.25f, "6ch float FL/FR carry the stereo source");
+    int extra_silent = 1;
+    for (int i = 0; i < 4; ++i) {
+        for (int c = 2; c < 6; ++c) {
+            if (out6[(size_t)i * 6u + (size_t)c] != 0.0f) extra_silent = 0;
+        }
+    }
+    CHECK(extra_silent, "6ch float leaves center/LFE/surround silent");
+
+    ring_write_bulk_unlocked(&g_audio, seed, 4u);
+    WAVEFORMATEX mono;
+    memset(&mono, 0, sizeof mono);
+    mono.wFormatTag = WAVE_FORMAT_PCM;
+    mono.nChannels = 1;
+    mono.nSamplesPerSec = 48000;
+    mono.wBitsPerSample = 16;
+    mono.nBlockAlign = 2;
+    mono.nAvgBytesPerSec = 48000u * 2u;
+    g_audio.mixfmt = &mono;
+
+    int16_t out1[4];
+    memset(out1, 0x7f, sizeof out1);
+    CHECK(fill_wasapi_buffer(&g_audio, (BYTE *)out1, 4u) == 4u, "mono fill produced every frame");
+    int mono_ok = 1;
+    for (int i = 0; i < 4; ++i) {
+        if (out1[i] != 4096) mono_ok = 0;
+    }
+    CHECK(mono_ok, "mono endpoint receives the stereo mix, not the left channel alone");
+
+    g_audio.mixfmt = NULL;
+    free(g_audio.queue);
+    g_audio.queue = NULL;
+    g_audio.read_frame = g_audio.frame_count = g_audio.frame_cap = 0;
+}
+
+static void test_endpoint_wide_pcm(void) {
+    const int16_t seed[] = {32767, -32768, 1, -1};
+    const BYTE pcm24[] = {0, 0xff, 0x7f, 0, 0, 0x80, 0, 1, 0, 0, 0xff, 0xff};
+    const int32_t pcm32[] = {INT32_C(2147418112), INT32_MIN, 65536, -65536};
+    BYTE out[sizeof(pcm32) + 4];
+    WAVEFORMATEXTENSIBLE fmt = {0};
+    fmt.Format.wFormatTag = WAVE_FORMAT_EXTENSIBLE;
+    fmt.Format.cbSize = 22;
+    fmt.Format.nChannels = 2;
+    fmt.Format.nSamplesPerSec = 48000;
+    fmt.dwChannelMask = KSAUDIO_SPEAKER_STEREO;
+    fmt.SubFormat = KSDATAFORMAT_SUBTYPE_PCM;
+    g_audio.mixfmt = &fmt.Format;
+    CHECK(ensure_queue(&g_audio, 4u), "wide PCM queue allocated");
+    for (unsigned bits = 24; bits <= 32; bits += 8) {
+        fmt.Format.wBitsPerSample = (WORD)bits;
+        fmt.Samples.wValidBitsPerSample = 24; /* 24 valid bits in either container */
+        fmt.Format.nBlockAlign = (WORD)(2u * bits / 8u);
+        ring_write_bulk_unlocked(&g_audio, seed, 2);
+        memset(out, 0x5a, sizeof(out));
+        CHECK(fill_wasapi_buffer(&g_audio, out, 2) == 2, "wide PCM frames delivered");
+        size_t bytes = 2u * fmt.Format.nBlockAlign;
+        CHECK(memcmp(out, bits == 24 ? (const void *)pcm24 : (const void *)pcm32, bytes) == 0,
+              "wide PCM preserves source polarity and level with left-aligned valid bits");
+        CHECK(out[bytes] == 0x5a, "wide PCM stops at the negotiated buffer length");
+        CHECK(g_audio.frame_count == 0, "wide PCM consumes each source frame once");
+    }
+    g_audio.mixfmt = NULL;
+    free(g_audio.queue);
+    g_audio.queue = NULL;
+    g_audio.read_frame = g_audio.frame_count = g_audio.frame_cap = 0;
 }
 
 int main(void) {
@@ -479,6 +735,9 @@ int main(void) {
     CHECK(g_audio.underrun == 1, "drained pump raises the gap flag");
 
     test_drop_edge_recovery();
+    test_endpoint_channel_conversion();
+    test_endpoint_wide_pcm();
+    test_waveout_short_read_gap();
 
     free(g_audio.queue);
     free(g_audio.tmp);
