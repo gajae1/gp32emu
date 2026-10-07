@@ -19,6 +19,7 @@
 /* Host callback cadence, matching gp32_run_frame's 1/60-second interval. */
 #define GP32_FPS 60.0
 #define GP32_AUDIO_RATE 44100u
+#define GP32_AUDIO_PUMP_FRAMES (GP32_AUDIO_RATE / 500u)
 #define GP32_AUDIO_FRAMES_PER_VIDEO 735u
 #define GP32_AUDIO_QUEUE_LIMIT (GP32_AUDIO_RATE / 4u)
 #define GP32_AUDIO_GAP_FRAMES (GP32_AUDIO_RATE / 1000u)
@@ -1131,7 +1132,12 @@ static void pump_audio_delivery(gp32_t *g, void *user) {
     if (!g) return;
     gp32_audio_desc_t aud;
     if (gp32_get_audio(g, &aud) == GP32_OK && aud.frame_count) drain_guest_audio(g, &aud);
-    flush_audio();
+    /* CPU yields can produce only a handful of frames. Batch up to two ms
+     * of output instead of entering the frontend thousands of times/second.
+     * retro_run still flushes the remainder at every frame boundary. Keep
+     * draining guest spans above so a short span at a rate change cannot
+     * prevent the following span from reaching this queue. */
+    if (audio_pending_frames >= GP32_AUDIO_PUMP_FRAMES) flush_audio();
 }
 
 /* libretro only accepts a NULL frame when the frontend returned true from

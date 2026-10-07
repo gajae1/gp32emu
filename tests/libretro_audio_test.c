@@ -329,6 +329,26 @@ static void feed(size_t frames, uint32_t rate, int seed) {
     retro_run();
 }
 
+static void test_midframe_delivery_batches(void) {
+    start_case();
+    for (size_t slice = 0; slice < 100u; ++slice) {
+        for (size_t i = 0; i < 4u; ++i) {
+            int16_t v = (int16_t)(slice * 4u + i);
+            input_pcm[i * 2u] = expected[(slice * 4u + i) * 2u] = v;
+            input_pcm[i * 2u + 1u] = expected[(slice * 4u + i) * 2u + 1u] = -v;
+        }
+        scripted_audio = (gp32_audio_desc_t){input_pcm, 4u, 44100u};
+        pump_audio_delivery(emu, NULL);
+        CHECK(slice * 4u + 4u - captured_frames < 128u,
+              "mid-frame batching must retain less than three ms of active PCM");
+    }
+    CHECK(captured_frames > 256u, "long frames must deliver audio before returning");
+    flush_audio(); /* Same final drain as retro_run. */
+    CHECK(captured_frames == 400u && !memcmp(captured, expected, 400u * 4u),
+          "batching must preserve every PCM frame and its order");
+    CHECK(callback_calls <= 10u, "tiny slices should not each invoke the frontend");
+}
+
 static void test_partial_and_blocked(void) {
     start_case();
     per_call = 3;
@@ -945,6 +965,7 @@ int main(int argc, char **argv) {
     test_resampler_gap_replay();
     test_resampler_peak_clipping();
     test_frontend_audio_clock();
+    test_midframe_delivery_batches();
     test_partial_and_blocked();
     test_resampled_and_sample_callback();
     test_mixed_spans();
