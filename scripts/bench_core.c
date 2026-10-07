@@ -257,7 +257,7 @@ static void print_frame_times_json(double *frame_ms, size_t count,
 
 static int usage(const char *argv0) {
     fprintf(stderr,
-        "usage: %s --bios bios.bin --smc game.smc [--state file] [--warmup N=2400] [--frames N=600] [--jit] [--input-script script.txt] [--cpu-profile] [--frame-times] [--legacy-cycle-frames] [--force-bios]\n"
+        "usage: %s --bios bios.bin --smc game.smc [--state file] [--warmup N=2400] [--frames N=600] [--jit] [--input-script script.txt] [--cpu-profile] [--frame-times] [--legacy-cycle-frames] [--force-bios] [--force-direct]\n"
         "Times --frames frames after --warmup warmup frames. BIOS+SMC runs without an input script get the same\n"
         "auto A pulses as headless_main. Prints one JSON object: fps, elapsed, cycles, pc, cpsr, clock,\n"
         "audio_frames, lcd_frames/lcd_repeat_frames/lcd_unpresented_frames, video/audio FNV-1a-64 hashes.\n"
@@ -265,7 +265,7 @@ static int usage(const char *argv0) {
         "warmup boundary and appends a cpu_profile object (requires a GP32EMU_CPU_PROFILE build).\n"
         "A card whose only executable sits outside GAME\\ (the freeware GPMM\\ layout) cannot boot through\n"
         "the retail BIOS, so it is loaded through the direct SmartMedia boot instead; --state replays and\n"
-        "--force-bios keep the BIOS path.\n"
+        "--force-bios keep the BIOS path. --force-direct boots any classified card through the host-side direct loader.\n"
         "--frame-times times each measured frame with the high-resolution host clock and appends a\n"
         "frame_times object: count, p50/p90/p99/p99.9/max milliseconds (nearest rank), how many frames\n"
         "exceeded 16.67 ms and 33.3 ms, and the 10 slowest frames. With --cpu-profile as well, every\n"
@@ -371,7 +371,7 @@ static void print_cpu_profile_json(const gp32_cpu_profile_t *p) {
 int main(int argc, char **argv) {
     const char *bios = NULL, *smc = NULL, *state_path = NULL, *input_script_path = NULL;
     uint64_t warmup = 2400, frames = 600;
-    int jit = 0, cpu_profile = 0, legacy_cycle_frames = 0, frame_times = 0, force_bios = 0;
+    int jit = 0, cpu_profile = 0, legacy_cycle_frames = 0, frame_times = 0, force_bios = 0, force_direct = 0;
     int frame_times_raw = 0;
     unsigned cpu_speed = 100u;
 
@@ -387,6 +387,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--frame-times")) frame_times = 1;
         else if (!strcmp(argv[i], "--frame-times-raw")) frame_times = frame_times_raw = 1;
         else if (!strcmp(argv[i], "--force-bios")) force_bios = 1;
+        else if (!strcmp(argv[i], "--force-direct")) force_direct = 1;
         else if (!strcmp(argv[i], "--cpu-speed") && i + 1 < argc) cpu_speed = (unsigned)strtoul(argv[++i], NULL, 0);
         else if (!strcmp(argv[i], "--input-script") && i + 1 < argc) input_script_path = argv[++i];
         else if (!strcmp(argv[i], "--help") || !strcmp(argv[i], "-h")) { usage(argv[0]); return 0; }
@@ -432,9 +433,12 @@ int main(int argc, char **argv) {
     if (!force_bios && !state_path) {
         char layout_exe[260], layout_err[256];
         smc_card_launch_layout_t layout = smc_direct_classify_file(smc, layout_exe, sizeof(layout_exe), layout_err, sizeof(layout_err));
-        if (layout == SMC_CARD_LAYOUT_DIRECT_ONLY) {
-            fprintf(stderr, "boot path: direct SmartMedia (starts from %s; the retail BIOS launcher boots GAME\\ cards only)\n",
-                    layout_exe[0] ? layout_exe : "a freeware layout");
+        if (layout == SMC_CARD_LAYOUT_DIRECT_ONLY || (force_direct && layout != SMC_CARD_LAYOUT_NONE)) {
+            fprintf(stderr, "boot path: direct SmartMedia (starts from %s; %s)\n",
+                    layout_exe[0] ? layout_exe : "a freeware layout",
+                    force_direct && layout != SMC_CARD_LAYOUT_DIRECT_ONLY
+                        ? "forced by --force-direct"
+                        : "the retail BIOS launcher boots GAME\\ cards only");
             opt.bios_path = NULL;
         }
     }
