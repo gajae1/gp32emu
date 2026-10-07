@@ -10,9 +10,9 @@
  * Pins the resampler ownership split:
  *   1. The pump thread only raises the locked a->underrun flag: a->resampler is
  *      byte-for-byte unchanged when the underrun branch returns.
- *   2. Submit consumes that flag and marks the gap, so the queued output starts
- *      with the crossfade from the pre-gap sample, while a submit without the
- *      flag does not fade.
+ *   2. Submit consumes that flag and marks the gap from the silence the device
+ *      heard, so the queued output ramps up from zero instead of stepping to
+ *      the last generated sample; a submit without the flag does not fade.
  *
  * WIN64_AUDIO_SOURCE can point at a mutated backend copy, which keeps this test
  * honest: the pre-fix arrangement fails the ownership checks below.
@@ -333,19 +333,15 @@ int main(void) {
 
     uint32_t ring_at = (before_read + before_frames) % g_audio.frame_cap;
     int16_t first_l = g_audio.queue[ring_at * 2 + 0];
-    CHECK(first_l > 28000 && first_l < 30000, "first queued frame crossfades from the pre-gap sample");
-    CHECK(g_audio.queue[ring_at * 2 + 1] == first_l, "right channel crossfades identically");
-    /* The gap crossfade chains from the previous output frame, so with silent
-     * input it decays without overshoot across the gap window. */
-    int nonincreasing = 1;
-    for (uint32_t i = 1; i < 48u; ++i) {
-        if (g_audio.queue[(ring_at + i) * 2] > g_audio.queue[(ring_at + i - 1u) * 2]) nonincreasing = 0;
-    }
-    CHECK(nonincreasing, "crossfade decays without overshoot toward the new content");
-    CHECK(g_audio.queue[(ring_at + 47u) * 2] <= first_l / 4,
-          "crossfade attenuates the pre-gap sample across the gap window");
-    CHECK(g_audio.queue[(ring_at + 48u) * 2] == 0 && g_audio.queue[(ring_at + 49u) * 2] == 0,
-          "fade window ends and the silent input plays unmodified");
+    CHECK(first_l > -64 && first_l < 64,
+          "resumed head starts from the silence the device heard, not the pre-gap sample");
+    CHECK(g_audio.queue[ring_at * 2 + 1] == first_l, "both channels resume from silence identically");
+    /* The device heard silence, so the recovery ramp contributes no step of
+     * its own: silent input stays silent across the window. */
+    int silent = 1;
+    for (uint32_t i = 0; i < 48u; ++i)
+        if (g_audio.queue[(ring_at + i) * 2] != 0) silent = 0;
+    CHECK(silent, "silent input after an underrun stays silent across the recovery window");
     CHECK(g_audio.resampler.fade_left == 0, "gap fade was consumed by the produced block");
     CHECK(g_audio.resampler.src_rate == 44100 && g_audio.resampler.dst_rate == 48000,
           "producer ran the resampler at the real rates");
@@ -424,6 +420,40 @@ int main(void) {
           "no fade or silence tail is written past the real frames");
     CHECK(g_audio.underrun == 0, "a short ring raises no gap while the endpoint is buffered");
     CHECK(g_audio.frame_count == 0u, "the real frames were consumed");
+
+    /* A resume that carries real content must still rise from the silence
+     * instead of stepping straight to the content level. */
+    free(g_audio.queue);
+    g_audio.queue = NULL;
+    g_audio.read_frame = g_audio.frame_count = g_audio.frame_cap = 0;
+    g_audio.underrun = 0;
+    g_audio.last_ring_l = g_audio.last_ring_r = 0;
+    g_audio.have_last_ring = 0;
+    gp32_audio_resampler_init(&g_audio.resampler);
+    static int16_t loud[1024 * 2];
+    for (int i = 0; i < 1024; ++i) { loud[i * 2 + 0] = 30000; loud[i * 2 + 1] = 30000; }
+    gp32_audio_desc_t loud_desc;
+    memset(&loud_desc, 0, sizeof loud_desc);
+    loud_desc.samples_s16_interleaved = loud;
+    loud_desc.frame_count = 1024;
+    loud_desc.sample_rate_hz = 44100;
+    /* The pump drove the device to silence without consuming content. */
+    g_audio.underrun = 1;
+    CHECK(gp32_win64_audio_submit(&g_audio, &loud_desc) == 0, "loud resume submit returns 0");
+    uint32_t loud_at = g_audio.read_frame;
+    int16_t head = g_audio.queue[(size_t)loud_at * 2];
+    CHECK(head > -1000 && head < 1000, "loud resume starts near the silence, not at content level");
+    int rises = 1;
+    for (uint32_t i = 1; i < 48u; ++i)
+        if (g_audio.queue[((size_t)loud_at + i) * 2] < g_audio.queue[((size_t)loud_at + i - 1u) * 2]) rises = 0;
+    CHECK(rises, "loud resume ramps monotonically up to the content");
+    CHECK(g_audio.queue[((size_t)loud_at + 47u) * 2] > 15000,
+          "loud resume reaches the content within the recovery window");
+    /* Leave the ring empty for the drain-tail section below. */
+    free(g_audio.queue);
+    g_audio.queue = NULL;
+    g_audio.read_frame = g_audio.frame_count = g_audio.frame_cap = 0;
+    g_audio.underrun = 0;
 
     /* Drain tail: the endpoint still holds real frames. A reset now would
      * discard them; the stream must keep playing until padding reaches 0. */

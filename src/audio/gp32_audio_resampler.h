@@ -54,6 +54,13 @@ typedef struct gp32_audio_resampler {
 void gp32_audio_resampler_init(gp32_audio_resampler_t *r);
 void gp32_audio_resampler_reset(gp32_audio_resampler_t *r);
 void gp32_audio_resampler_mark_gap(gp32_audio_resampler_t *r, uint32_t dst_rate_hz);
+/* Gap recovery for a device that heard silence, not the last generated
+ * sample: an emptied host ring/stream (underrun) is the common case.  The
+ * fade then starts from zero so the resumed stream rises from the silence
+ * the device actually played instead of stepping up to the last sample it
+ * never heard. */
+void gp32_audio_resampler_mark_gap_from_silence(gp32_audio_resampler_t *r,
+                                                 uint32_t dst_rate_hz);
 size_t gp32_audio_resampler_max_output_frames(const gp32_audio_resampler_t *r,
                                               size_t input_frames,
                                               uint32_t src_rate_hz,
