@@ -15,6 +15,16 @@ result paths below are names on the development machine.
 
 ## Current accepted work
 
+- Round 217 preserves the rate-keyed FIR table across stream resets and gap
+  recovery, while clearing phase, history and fade state as before. Rebuilding
+  all 256 coefficient rows after every underrun was unnecessary. A native x64
+  ABBA microbenchmark of 256 recoveries falls from 116-117 ms to 2 ms with
+  identical output counts and PCM hash. These numbers measure recovery work,
+  not game speed or handheld performance. Regression coverage compares cached
+  recovery against a fresh filter through source/destination rate changes and
+  both recovery anchors. Windows libretro/Win64 audio tests and the AArch64
+  libretro audio test under QEMU pass. No remaining ASR crackle fix is claimed.
+
 - Round 216 release review fixes full-scale overflow in the shared audio FIR.
   Its actual 23144-to-44100 Hz kernel can accumulate 2,721,586,631 before
   clipping, beyond signed 32-bit range. Wide accumulation preserves saturation

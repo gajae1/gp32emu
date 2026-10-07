@@ -910,7 +910,39 @@ static void test_resampler_peak_clipping(void) {
     }
 }
 
+/* Reusing a filter after a gap must match a freshly built filter, including
+ * a new rate and both last-sample and silence-anchored recovery ramps. */
+static void test_resampler_gap_replay(void) {
+    gp32_audio_resampler_t cached, fresh;
+    const uint32_t rates[][2] = {{23144,44100}, {23144,44100}, {11025,44100},
+                                 {11025,48000}, {48000,44100}, {23144,44100}};
+    int16_t input[256], actual[2048], expected_pcm[2048];
+    gp32_audio_resampler_init(&cached);
+    for (unsigned k = 0; k < GP32_ARRAY_COUNT(rates); ++k) {
+        for (unsigned i = 0; i < GP32_ARRAY_COUNT(input); ++i)
+            input[i] = (int16_t)((int32_t)((i * 997u + k * 7919u) % 60001u) - 30000);
+        gp32_audio_resampler_init(&fresh);
+        fresh.last_out_l = cached.last_out_l;
+        fresh.last_out_r = cached.last_out_r;
+        fresh.have_last_out = cached.have_last_out;
+        if (k & 1u) {
+            gp32_audio_resampler_mark_gap_from_silence(&cached, rates[k][1]);
+            gp32_audio_resampler_mark_gap_from_silence(&fresh, rates[k][1]);
+        } else {
+            gp32_audio_resampler_mark_gap(&cached, rates[k][1]);
+            gp32_audio_resampler_mark_gap(&fresh, rates[k][1]);
+        }
+        size_t got = gp32_audio_resampler_process(&cached, input, 128,
+            rates[k][0], rates[k][1], 0, actual, 1024);
+        size_t want = gp32_audio_resampler_process(&fresh, input, 128,
+            rates[k][0], rates[k][1], 0, expected_pcm, 1024);
+        CHECK(got == want && !memcmp(actual, expected_pcm, got * 2u * sizeof(int16_t)),
+              "gap recovery and rate changes match a fresh filter sample for sample");
+    }
+}
+
 int main(int argc, char **argv) {
+    test_resampler_gap_replay();
     test_resampler_peak_clipping();
     test_frontend_audio_clock();
     test_partial_and_blocked();

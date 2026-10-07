@@ -202,7 +202,12 @@ void gp32_audio_resampler_reset(gp32_audio_resampler_t *r) {
     int16_t last_l = r->last_out_l;
     int16_t last_r = r->last_out_r;
     int have_last = r->have_last_out;
-    memset(r, 0, sizeof(*r));
+    /* Coefficients depend only on their rate keys, not stream history. Keep
+     * them across gaps: rebuilding 256 sinc rows delays underrun recovery.
+     * process() still rebuilds on a different source/destination rate. */
+    memset(r, 0, offsetof(gp32_audio_resampler_t, poly_src_rate));
+    memset(r->poly_hist_l, 0, sizeof(r->poly_hist_l));
+    memset(r->poly_hist_r, 0, sizeof(r->poly_hist_r));
     r->last_out_l = last_l;
     r->last_out_r = last_r;
     r->have_last_out = have_last;
