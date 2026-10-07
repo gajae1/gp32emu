@@ -15,6 +15,24 @@ result paths below are names on the development machine.
 
 ## Current accepted work
 
+- Round 175 GPIO live-read coverage (branch `round175/bus-fastpath`, evidence in
+  `F:/GP32/results/bus-fastpath/`): the CPU-facing live-read table now serves
+  every word a SmartMedia bit-bang driver polls, not just two -- GPBCON
+  0x15600008, GPBDAT 0x1560000c, GPCDAT 0x15600024 and GPEDAT 0x15600030 -- so
+  a JIT-compiled load of any of them no longer calls the SoC read callback.
+  Each mirror is refreshed only by the stores that can move its own word:
+  GPBCON and GPCDAT through the latched card lines, GPBDAT through datarx and
+  through its register's own upper half, GPEDAT only through its register; the
+  broad mutations (button mask, card mount, reset, state load) still refresh
+  all four, and a store to another GPIO word stays conservative. A GPCDAT
+  store therefore no longer recomposes every word, which an earlier variant did.
+  The GPIO test now snapshots all four descriptors by address and checks
+  mirror/ordinary/fast-IO parity at every checkpoint; ctest 28/28. Her Knights
+  (Korea, 6000 frames) and the Blue Angelo dialogue save replay both produce
+  bit-identical video and audio hashes against 3faaad3, and frame time stays
+  inside run-to-run noise (2820 vs 2792 fps; Blue Angelo replay 715-760 vs
+  734-757 fps over 300 frames). No device-side run is recorded for this
+  revision.
 - Round 166 direct-boot hardware handoff (result.md and evidence in
   `F:/GP32/results/round166/direct-clock/`): a direct load now starts from the
   SoC state retail BIOS 1.6.6 leaves at the first game instruction (read back

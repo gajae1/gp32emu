@@ -152,12 +152,15 @@ struct s3c2400 {
     gp32_smc_lines_t smc_lines;
     s3c2400_log_fn log;
     void *log_user;
-    /* Live GPIO readback mirrors and their CPU-facing descriptors (GPBDAT
-     * 0x1560000c, GPEDAT 0x15600030). Appended last so every earlier field
-     * keeps its offset. Derived state: never serialized, refreshed after
-     * every mutation, storage stable until s3c2400_destroy. */
+    /* Live GPIO readback mirrors and their CPU-facing descriptors: every word
+     * the SmartMedia bit-bang driver polls of its port window, GPBCON's strobe
+     * 0x15600008, GPBDAT 0x1560000c, GPCDAT's card status 0x15600024 and
+     * GPEDAT 0x15600030. Appended last so every earlier field keeps its offset.
+     * Derived state: never serialized, refreshed after every mutation, storage
+     * stable until s3c2400_destroy. */
     volatile uint32_t live_gpbdat, live_gpedat;
-    arm_live_read32_t live_read32[2];
+    volatile uint32_t live_gpcon, live_gpcdat;
+    arm_live_read32_t live_read32[4];
     uint32_t lcd_hclk_remainder; /* fractional HCLK, denominator RUN clock */
     uint64_t audio_idle_phase; /* 44100-Hz silence fraction, denominator RUN */
     int audio_idle_enabled; /* host policy; direct HLE has its own PCM source */
@@ -224,8 +227,11 @@ static void slog(s3c2400_t *s, const char *fmt, ...) {
     s->log(s->log_user, buf);
 }
 
-/* Guest-visible GPBDAT/GPEDAT composition: the single source for ordinary
- * reads, the specialized read32_io path and the live readback mirrors. */
+/* Guest-visible composition of every polled GPIO word: the single source for
+ * ordinary reads, the specialized read32_io path and the live readback
+ * mirrors. Each depends only on gpio[], the latched SmartMedia lines and the
+ * card's presence/protection, all of which only move on a GPIO store, a card
+ * mount or a state load, so every caller refreshes the affected word. */
 static uint32_t gp32_gpbdat_readback(const s3c2400_t *s) {
     return (s->gpio[0x0cu >> 2] & ~0xffffu) | s->smc_lines.datarx | (s->button_in0 & 0xff00u);
 }
@@ -238,6 +244,22 @@ static uint32_t gp32_gpedat_readback(const s3c2400_t *s) {
     return data | (s->button_in1 & 0xc0u);
 }
 
+/* GPBCON[0] is the SmartMedia read strobe: the register word with bit 0
+ * recomposed from the latched read line the guest just drove. */
+static uint32_t gp32_gpcon_readback(const s3c2400_t *s) {
+    return (s->gpio[0x08u >> 2] & ~1u) | (s->smc_lines.read ? 0u : 1u);
+}
+/* GPCDAT[9:6] carry the latched card lines and the card's own presence and
+ * write-protect state; the rest is the register word. */
+static uint32_t gp32_gpcdat_readback(const s3c2400_t *s) {
+    uint32_t data = s->gpio[0x24u >> 2] & ~0x3c0u;
+    if (!s->smc_lines.busy) data |= 0x200u;
+    if (!s->smc_lines.do_read) data |= 0x100u;
+    if (!s->smc_lines.chip) data |= 0x080u;
+    if (!smc_is_protected(s->smc)) data |= 0x040u;
+    return data;
+}
+
 static void live_gpbdat_refresh(s3c2400_t *s) {
     s->live_gpbdat = gp32_gpbdat_readback(s);
 }
@@ -246,21 +268,37 @@ static void live_gpedat_refresh(s3c2400_t *s) {
     s->live_gpedat = gp32_gpedat_readback(s);
 }
 
+static void live_gpcon_refresh(s3c2400_t *s) {
+    s->live_gpcon = gp32_gpcon_readback(s);
+}
+
+static void live_gpcdat_refresh(s3c2400_t *s) {
+    s->live_gpcdat = gp32_gpcdat_readback(s);
+}
+
 /* Keep both live words equal to an ordinary GPIO read. Must run after every
  * broad mutation of gpio[], smc_lines, cached buttons or card presence. The
  * hot GPIO write path below refreshes only the affected word. */
 static void live_read32_refresh(s3c2400_t *s) {
     live_gpbdat_refresh(s);
     live_gpedat_refresh(s);
+    live_gpcon_refresh(s);
+    live_gpcdat_refresh(s);
 }
 
 /* Fill the SoC-owned descriptor list once, before the first reset (which
- * populates both mirrors). Addresses stay fixed until s3c2400_destroy. */
+ * populates every mirror). Addresses stay fixed until s3c2400_destroy.
+ * Ordered by measured poll frequency so a matched probe exits early: the
+ * SmartMedia driver reads GPCDAT, GPBCON, then GPBDAT and GPDDAT. */
 static void live_read32_init(s3c2400_t *s) {
-    s->live_read32[0].pa = 0x1560000cu;
-    s->live_read32[0].word = &s->live_gpbdat;
-    s->live_read32[1].pa = 0x15600030u;
-    s->live_read32[1].word = &s->live_gpedat;
+    s->live_read32[0].pa = 0x15600024u;
+    s->live_read32[0].word = &s->live_gpcdat;
+    s->live_read32[1].pa = 0x15600008u;
+    s->live_read32[1].word = &s->live_gpcon;
+    s->live_read32[2].pa = 0x1560000cu;
+    s->live_read32[2].word = &s->live_gpbdat;
+    s->live_read32[3].pa = 0x15600030u;
+    s->live_read32[3].word = &s->live_gpedat;
 }
 
 /* Recompute the guest-visible GPIO input bits from the host button mask.
@@ -1056,15 +1094,9 @@ static uint32_t io_read32(s3c2400_t *s, uint32_t addr) {
         if (off > 0x5bu) return 0xffffffffu;
         uint32_t data = reg_array_read(s->gpio, sizeof(s->gpio), off);
         switch (off) {
-        case 0x08: data = (data & ~1u) | (!s->smc_lines.read ? 1u : 0u); break;
+        case 0x08: data = s->live_gpcon; break;
         case 0x0c: data = gp32_gpbdat_readback(s); break;
-        case 0x24:
-            data &= ~0x3c0u;
-            if (!s->smc_lines.busy) data |= 0x200u;
-            if (!s->smc_lines.do_read) data |= 0x100u;
-            if (!s->smc_lines.chip) data |= 0x080u;
-            if (!smc_is_protected(s->smc)) data |= 0x040u;
-            break;
+        case 0x24: data = s->live_gpcdat; break;
         case 0x30: data = gp32_gpedat_readback(s); break;
         }
         return data;
@@ -1128,16 +1160,9 @@ static uint32_t s3c2400_read32_io(void *user, uint32_t addr) {
     case 0x15100038u: return pwm_current_count(s, 3u);
     case 0x15100040u: return pwm_current_count(s, 4u);
     case 0x15400004u: return s->iic[1] & ~0x0fu;
-    case 0x15600008u: return (s->gpio[0x08u >> 2] & ~1u) | (!s->smc_lines.read ? 1u : 0u);
+    case 0x15600008u: return s->live_gpcon;
     case 0x1560000cu: return s->live_gpbdat;
-    case 0x15600024u: {
-        uint32_t data = s->gpio[0x24u >> 2] & ~0x3c0u;
-        if (!s->smc_lines.busy) data |= 0x200u;
-        if (!s->smc_lines.do_read) data |= 0x100u;
-        if (!s->smc_lines.chip) data |= 0x080u;
-        if (!smc_is_protected(s->smc)) data |= 0x040u;
-        return data;
-    }
+    case 0x15600024u: return s->live_gpcdat;
     case 0x15600030u: return s->live_gpedat;
     default:
         return io_read32(s, addr);
@@ -1231,7 +1256,15 @@ static void io_write32(s3c2400_t *s, uint32_t addr, uint32_t value, uint32_t mas
             s->smc_lines.cmd_latch=((*reg&0x20u)!=0);
             s->smc_lines.add_latch=((*reg&0x10u)!=0);
             s->smc_lines.do_write=((*reg&0x08u)==0);
-            if (gp32_smc_update_does_work(&s->smc_lines)) gp32_smc_update(s);
+            if (gp32_smc_update_does_work(&s->smc_lines)) {
+                gp32_smc_update(s);
+                /* A deselected card clears every latched line and a data-read
+                 * window advances datarx, so refresh every word that exposes
+                 * them. */
+                live_gpbdat_refresh(s);
+                live_gpcon_refresh(s);
+                live_gpcdat_refresh(s);
+            }
             if (codec_output && ((old_gpe ^ *reg) & 0xe00u)) {
                 gp32_codec_gpio(&s->codec, old_gpe, *reg);
                 s->codec_gain_q16 = gp32_codec_gain_q16(&s->codec);
@@ -1240,16 +1273,39 @@ static void io_write32(s3c2400_t *s, uint32_t addr, uint32_t value, uint32_t mas
         } else {
             *reg = (*reg & ~mask) | (value & mask);
             switch(off){
-            case 0x08: s->smc_lines.read = ((*reg & 1u) == 0); if (gp32_smc_update_does_work(&s->smc_lines)) gp32_smc_update(s); break;
+            case 0x08:
+                s->smc_lines.read = ((*reg & 1u) == 0);
+                live_gpcon_refresh(s);
+                if (gp32_smc_update_does_work(&s->smc_lines)) {
+                    gp32_smc_update(s);
+                    live_gpbdat_refresh(s);
+                    live_gpcon_refresh(s);
+                    live_gpcdat_refresh(s);
+                }
+                break;
             case 0x0c: s->smc_lines.datatx = (uint8_t)(*reg & 0xffu); break;
-            case 0x24: s->smc_lines.do_read=((*reg&0x100u)==0); s->smc_lines.chip=((*reg&0x80u)==0); s->smc_lines.wp=((*reg&0x40u)==0); if (gp32_smc_update_does_work(&s->smc_lines)) gp32_smc_update(s); break;
+            case 0x24:
+                s->smc_lines.do_read=((*reg&0x100u)==0);
+                s->smc_lines.chip=((*reg&0x80u)==0);
+                s->smc_lines.wp=((*reg&0x40u)==0);
+                live_gpcdat_refresh(s);
+                if (gp32_smc_update_does_work(&s->smc_lines)) {
+                    gp32_smc_update(s);
+                    live_gpbdat_refresh(s);
+                    live_gpcon_refresh(s);
+                    live_gpcdat_refresh(s);
+                }
+                break;
             default: break;
             }
-            /* GPBCON can open a NAND read window and change datarx. GPDDAT
-             * can deselect the card, which resets latches consumed by both
-             * live words. Unknown GPIO mutations stay conservative. */
-            if (off == 0x08u || off == 0x0cu) live_gpbdat_refresh(s);
-            else live_read32_refresh(s);
+            /* Every word a store can move was refreshed with its own register
+             * above: GPBCON and GPCDAT through the latched SmartMedia lines,
+             * GPBDAT through datarx, and GPEDAT only through its own word.
+             * A GPBDAT store also exposes the register's own upper half, so it
+             * keeps a refresh of that single word. Unknown GPIO mutations stay
+             * conservative. */
+            if (off == 0x0cu) live_gpbdat_refresh(s);
+            else if (off != 0x08u && off != 0x24u) live_read32_refresh(s);
         }
         return;
     }

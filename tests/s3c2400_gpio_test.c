@@ -11,8 +11,8 @@ static s3c2400_t *soc;
 static arm_bus_t bus;
 static const arm_live_read32_t *live_reads;
 static size_t live_read_count;
-static uint32_t live_pa[2];
-static const volatile uint32_t *live_word[2];
+static uint32_t live_pa[4];
+static const volatile uint32_t *live_word[4];
 static unsigned width;
 static int failures;
 #define CHECK(c, m) do { if (!(c)) { fprintf(stderr, "FAIL: %s (%u-bit)\n", m, width); ++failures; } } while (0)
@@ -23,26 +23,37 @@ static int failures;
 static void live_begin(void) {
     live_read_count = 0;
     live_reads = s3c2400_live_read32(soc, &live_read_count);
-    CHECK(live_reads != NULL && live_read_count == 2, "two live readback descriptors");
-    if (!live_reads || live_read_count != 2) { live_reads = NULL; live_read_count = 0; return; }
-    CHECK(live_reads[0].pa == GPIO + 0x0cu && live_reads[1].pa == GPIO + 0x30u,
-          "live descriptors must cover GPBDAT 0x1560000c and GPEDAT 0x15600030");
-    CHECK(live_reads[0].word != NULL && live_reads[1].word != NULL,
-          "live descriptor words must point at SoC-owned storage");
+    CHECK(live_reads != NULL && live_read_count == 4, "four live readback descriptors");
+    if (!live_reads || live_read_count != 4) { live_reads = NULL; live_read_count = 0; return; }
+    static const uint32_t want[] = { 0x08u, 0x0cu, 0x24u, 0x30u };
+    for (unsigned w = 0; w < sizeof(want) / sizeof(want[0]); ++w) {
+        int found = 0;
+        for (size_t i = 0; i < live_read_count; ++i)
+            if (live_reads[i].pa == GPIO + want[w] && live_reads[i].word) found = 1;
+        CHECK(found, "live descriptors must cover GPBCON, GPBDAT, GPCDAT and GPEDAT");
+        if (!found) { live_reads = NULL; live_read_count = 0; return; }
+    }
     for (unsigned i = 0; i < live_read_count; ++i) {
         live_pa[i] = live_reads[i].pa;
         live_word[i] = live_reads[i].word;
     }
 }
+/* Mirror lookup by register address: the descriptor order is a probe-order
+ * detail of the SoC, the coverage contract is what this test owns. */
+static const volatile uint32_t *live_at(uint32_t off) {
+    for (size_t i = 0; i < live_read_count; ++i)
+        if (live_pa[i] == GPIO + off) return live_word[i];
+    return NULL;
+}
 static void check_live_descriptors(void) {
-    if (live_read_count != 2) return;
+    if (live_read_count != 4) return;
     size_t count = 0;
     const arm_live_read32_t *again = s3c2400_live_read32(soc, &count);
     CHECK(again == live_reads && count == live_read_count,
           "the live descriptor list must stay at the same SoC-owned address");
-    CHECK(again[0].pa == live_pa[0] && again[0].word == live_word[0] &&
-          again[1].pa == live_pa[1] && again[1].word == live_word[1],
-          "live descriptors must keep their registered addresses and words");
+    for (size_t i = 0; i < live_read_count; ++i)
+        CHECK(again[i].pa == live_pa[i] && again[i].word == live_word[i],
+              "live descriptors must keep their registered addresses and words");
 }
 static void check_live_parity(const char *where) {
     for (size_t i = 0; i < live_read_count; ++i) {
@@ -116,12 +127,12 @@ static uint32_t want_edat(uint32_t mask) {
 }
 /* Expected live mirror bits, computed from the pad wiring like want_*. */
 static void check_live_buttons(uint32_t mask, const char *where) {
-    if (live_read_count != 2) return;
+    if (live_read_count != 4) return;
     char msg[128];
     snprintf(msg, sizeof(msg), "%s: live GPBDAT word must carry the active-low pad bits", where);
-    CHECK((*live_word[0] & 0xff00u) == want_bdat(mask), msg);
+    CHECK((*live_at(0x0cu) & 0xff00u) == want_bdat(mask), msg);
     snprintf(msg, sizeof(msg), "%s: live GPEDAT word must carry the active-low start/select bits", where);
-    CHECK((*live_word[1] & 0xc0u) == want_edat(mask), msg);
+    CHECK((*live_at(0x30u) & 0xc0u) == want_edat(mask), msg);
 }
 static void check_button_mask(uint32_t mask) {
     char msg[96];
@@ -152,7 +163,7 @@ int main(void) {
         live_begin();
         check_live_descriptors();
         check_live_parity("card load");
-        CHECK(live_read_count == 2 && (*live_word[1] & 4u) == 0,
+        CHECK(live_read_count == 4 && (*live_at(0x30u) & 4u) == 0,
               "live GPEDAT mirror must report the loaded card as present");
         write_port(0x24, 0x140);
         write_port(0x30, 8);
@@ -175,9 +186,9 @@ int main(void) {
         write_port(0x24, 0x1c0);    /* deselect */
         CHECK(bus.read32(bus.user, GPIO + 0x24) & 0x80, "deselect must reset chip signals");
         check_live_parity("chip-off deselect");
-        CHECK(live_read_count == 2 && (*live_word[0] & 0xffu) == 0,
+        CHECK(live_read_count == 4 && (*live_at(0x0cu) & 0xffu) == 0,
               "chip-off must clear the live data latch mirror");
-        CHECK(live_read_count == 2 && (*live_word[1] & 4u) == 0,
+        CHECK(live_read_count == 4 && (*live_at(0x30u) & 4u) == 0,
               "the loaded card must still be present in the live mirror");
         /* Every GPIO write width must refresh both live words; the CPU loads
          * them instead of issuing the ordinary reads. */
@@ -195,7 +206,7 @@ int main(void) {
         check_live_parity("GPBDAT word write");
         bus.write8(bus.user, GPIO + 0x30, 0x28);
         check_live_parity("GPEDAT byte write");
-        CHECK(live_read_count == 2 && (*live_word[1] & 0x20u) != 0,
+        CHECK(live_read_count == 4 && (*live_at(0x30u) & 0x20u) != 0,
               "live GPEDAT mirror must follow latch writes");
         bus.write16(bus.user, GPIO + 0x30, 0x18);
         check_live_parity("GPEDAT halfword write");
@@ -206,13 +217,13 @@ int main(void) {
         CHECK(!s3c2400_load_smartmedia(soc, "no-such-smartmedia-file.smc", error, sizeof(error)),
               "missing card file must fail");
         check_live_parity("failed card file load");
-        CHECK(live_read_count == 2 && (*live_word[1] & 4u) == 0,
+        CHECK(live_read_count == 4 && (*live_at(0x30u) & 4u) == 0,
               "failed file open must leave the card present");
         error[0] = '\0';
         CHECK(!s3c2400_load_smartmedia_buffer(soc, image, 1024u, error, sizeof(error)),
               "geometry-rejected card buffer must fail");
         check_live_parity("failed card buffer load");
-        CHECK(live_read_count == 2 && (*live_word[1] & 4u) != 0,
+        CHECK(live_read_count == 4 && (*live_at(0x30u) & 4u) != 0,
               "live GPEDAT mirror must expose the removed card");
         CHECK(bus.read32(bus.user, GPIO + 0x30) & 4u, "ordinary read must agree the card is gone");
         s3c2400_destroy(soc);
@@ -238,20 +249,20 @@ int main(void) {
     write_port(0x24, 0x140);         /* chip selected so latch writes survive */
     write_port(0x30, 0x18);
     check_live_parity("pre-reset latch write");
-    CHECK(live_read_count == 2 && (*live_word[1] & 0x18u) == 0x18u,
+    CHECK(live_read_count == 4 && (*live_at(0x30u) & 0x18u) == 0x18u,
           "live GPEDAT mirror must follow pre-reset latch writes");
     /* Host-owned input survives reset and must keep feeding both ports. */
     s3c2400_reset(soc);
     check_live_parity("reset");
     check_live_descriptors();
-    CHECK(live_read_count == 2 && (*live_word[1] & 0x1cu) == 0x0cu,
+    CHECK(live_read_count == 4 && (*live_at(0x30u) & 0x1cu) == 0x0cu,
           "reset must clear the live GPEDAT latch mirrors");
     CHECK((bus.read32_io(bus.user, GPIO + 0x0c) & 0xff00u) == want_bdat(masks[5]) &&
           (bus.read32_io(bus.user, GPIO + 0x30) & 0xc0u) == want_edat(masks[5]) &&
-          live_read_count == 2 &&
-          (*live_word[0] & 0xff00u) == want_bdat(masks[5]) &&
-          (*live_word[1] & 0xc0u) == want_edat(masks[5]) &&
-          (*live_word[1] & 0x1cu) == 0x0cu,
+          live_read_count == 4 &&
+          (*live_at(0x0cu) & 0xff00u) == want_bdat(masks[5]) &&
+          (*live_at(0x30u) & 0xc0u) == want_edat(masks[5]) &&
+          (*live_at(0x30u) & 0x1cu) == 0x0cu,
           "pressed buttons must still read back after reset");
     /* Save with everything pressed, release, restore: the reads must
      * reproduce the save-time mask, then live input must work again. */
@@ -264,8 +275,8 @@ int main(void) {
               (bus.read32(bus.user, GPIO + 0x30) & 0xc0u) == 0xc0u,
               "release must clear every button bit");
         check_live_parity("button release");
-        CHECK(live_read_count == 2 && (*live_word[0] & 0xff00u) == 0xff00u &&
-              (*live_word[1] & 0xc0u) == 0xc0u,
+        CHECK(live_read_count == 4 && (*live_at(0x0cu) & 0xff00u) == 0xff00u &&
+              (*live_at(0x30u) & 0xc0u) == 0xc0u,
               "release must clear every live button bit");
         /* Dirty latched control lines and card presence after the save so the
          * restore must recompute both mirrors from the loaded image alone. */
@@ -275,7 +286,7 @@ int main(void) {
         write_port(0x24, 0x140);     /* chip selected so the latch survives */
         write_port(0x30, 0x18);      /* address latch raised */
         check_live_parity("dirty before state restore");
-        CHECK(live_read_count == 2 && (*live_word[1] & 0x1cu) == 0x18u,
+        CHECK(live_read_count == 4 && (*live_at(0x30u) & 0x1cu) == 0x18u,
               "dirty latches and card presence must show in the live GPEDAT word");
         rewind(state);
         CHECK(s3c2400_state_load(soc, state), "state load");
@@ -284,10 +295,10 @@ int main(void) {
               (bus.read32_io(bus.user, GPIO + 0x0c) & 0xff00u) == want_bdat(masks[5]) &&
               (bus.read32(bus.user, GPIO + 0x30) & 0xc0u) == want_edat(masks[5]) &&
               (bus.read32_io(bus.user, GPIO + 0x30) & 0xc0u) == want_edat(masks[5]) &&
-              live_read_count == 2 &&
-              (*live_word[0] & 0xff00u) == want_bdat(masks[5]) &&
-              (*live_word[1] & 0xc0u) == want_edat(masks[5]) &&
-              (*live_word[1] & 0x1cu) == 0x0cu,
+              live_read_count == 4 &&
+              (*live_at(0x0cu) & 0xff00u) == want_bdat(masks[5]) &&
+              (*live_at(0x30u) & 0xc0u) == want_edat(masks[5]) &&
+              (*live_at(0x30u) & 0x1cu) == 0x0cu,
               "restored state must replay the save-time button mask on both read paths");
         check_live_parity("state load");
         check_live_descriptors();
