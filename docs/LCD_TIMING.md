@@ -13,11 +13,15 @@ Local mirkoSDK graphics and GP32 MAME4ALL display routines supplied independent
 examples of these registers being programmed and polled. No SDK implementation
 was copied into the emulator.
 
-This changes guest display timing, not host speed limits. Libretro still
-advertises 60 fps and advances one 1/60-second virtual interval per call. Guest
-panel frequency can differ from 60 Hz. In the supplied Blue Angelo state it is
-approximately 98.94 Hz; that alone does not explain the user's report of fast
-gameplay or prove that changing panel timing fixes it.
+This changes guest display timing, not host speed limits. Libretro advances one
+1/60-second virtual interval per call. Since round 198 it also advertises the
+live panel rate: when the derivable TFT period moves by more than 0.05 %, the
+following `retro_run` pushes one full `RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO`, so
+a frontend that accepts the command paces to the panel clock instead of the
+load-time 60 fps default. Guest panel frequency can differ from 60 Hz. In the
+supplied Blue Angelo state it is approximately 98.94 Hz; that alone does not
+explain the user's report of fast gameplay or prove that changing panel timing
+fixes it.
 
 ## State compatibility and limits
 

@@ -155,6 +155,13 @@ gp32_status_t gp32_get_framebuffer(gp32_t *gp32, gp32_framebuffer_desc_t *out_de
 gp32_status_t gp32_get_audio(gp32_t *gp32, gp32_audio_desc_t *out_desc);
 gp32_status_t gp32_consume_audio(gp32_t *gp32, uint64_t frames);
 gp32_status_t gp32_clear_audio(gp32_t *gp32);
+/* Frame period of the live TFT panel programming as period_ns +
+ * period_frac/2^20 ns, the same clock LINECNT and VSTATUS observe. Returns 0
+ * when no panel frame clock can be derived (ENVID off, STN mode, zero
+ * divider, or a period outside the 5..500 Hz sanity window), and the caller
+ * keeps its previous timing. Frontends use it to advertise the rate the
+ * hardware actually shows; it never changes emulated time. */
+int gp32_get_lcd_frame_period(const gp32_t *gp32, uint32_t *period_ns, uint32_t *period_frac);
 
 uint32_t gp32_get_pc(const gp32_t *gp32);
 uint32_t gp32_get_cpu_reg(const gp32_t *gp32, unsigned reg);

@@ -766,6 +766,31 @@ emulator-side audio drops (Astonishia Story R, GP Daenantu, Super Plusha), and
 rounds 199/201 re-validate that split at current HEAD. No per-title tuning was
 added for any of this.
 
+## Round 198 dynamic panel-rate advertisement (2026-10-07)
+
+The libretro core no longer reports a fixed 60 fps for its whole life. Each
+`retro_run`, `refresh_advertised_timing()` reads the live TFT frame period
+(`gp32_get_lcd_frame_period()`, exposed from `s3c2400_lcd_frame_period()`) and,
+when the rate differs from the last advertised value by more than 0.05 %,
+pushes one full `RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO` with unchanged 320x240
+geometry, 4:3 aspect and 44100 Hz sample rate. The latch is host state and
+stays out of savestates; `retro_init`, `retro_load_game`, `retro_unload_game`
+and `retro_deinit` restore the 60 fps baseline, and a frontend that refuses the
+command keeps the previous timing with one warning instead of a per-frame
+retry. The emulated step per call and the derived audio budget (44100/60, idle
+silence denominator `60 << 24`) are unchanged because `retro_run` still
+advances one 1/60-second virtual interval.
+
+Evidence (`F:/GP32/results/round198-dynamic-fps/`): ctest 29/29; video and
+audio hashes plus cycles/pc/cpsr/clock/LCD counters identical to the base build
+for Princess Maker 2 (interp and JIT), Her Knights and Astonishia Story R with
+`--force-direct --warmup 2400 --frames 600`; a scratch-instrumented build shows
+the PM2 cutscene state moving the advertisement 60 -> 50.818 Hz exactly once
+(600- and 3000-frame runs), while the base build never sends the command. Not
+verified: real frontend (RetroArch/Spruce) wall pacing, physical device
+behavior, and whether a future rate-matched `retro_run` interval is worth the
+audio-accounting change.
+
 ## Broader remaining evidence
 
 See `PC_LIBRARY_COVERAGE.md` for bounded scenes, not blanket compatibility.

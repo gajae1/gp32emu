@@ -3075,6 +3075,14 @@ frames. Faster host execution alone cannot erase that interval. Whether its
 length matches original hardware is still unverified; it is distinct from the
 partial-frame delivery deficit above. No mixer/frontend/governor was changed.
 
+Round 198 update (2026-10-07): the advertisement above changed. `retro_run` now
+pushes one full `RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO` whenever the derivable
+TFT panel period moves by more than 0.05 %, so frontend timing follows the live
+panel (50.82 Hz in the PM2 cutscene) instead of a fixed 60 fps. The emulated
+step per `retro_run` and the 44100/60 audio batch are unchanged; see
+[LCD_TIMING.md](LCD_TIMING.md) and
+`F:/GP32/results/round198-dynamic-fps/REPORT.md`.
+
 ## Stopped-IIS audio duration (2026-10-05)
 
 BIOS-mode execution now queues timed silence while IISCON[0] is clear. Its
