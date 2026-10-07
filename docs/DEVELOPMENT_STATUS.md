@@ -15,6 +15,17 @@ result paths below are names on the development machine.
 
 ## Current accepted work
 
+- Round 214 SDK task-table search: an eight-word SSE2/NEON prefilter skips
+  windows containing no possible runnable state; other hosts use a scalar
+  equivalent. It reads current RAM and preserves the existing per-record
+  validation and scan order, without caching task addresses or selecting games.
+  Tomak EU v2.0's parked direct-boot window improves from 38.867 to
+  206.115-222.973 host benchmark fps at the same cycles, PC and output hashes.
+  This removes wasted scanning in a stalled scene, not its boot issue. Tests
+  cover all eight positions, candidate priority and the final RAM window;
+  the AArch64 wait regression passes under QEMU. Native handheld performance
+  and audio quality were not measured in this round.
+
 - Round 214 integrates the round 203 AArch64 read-only memory paths. BIOS
   words and explicitly certified open-bus words can stay in native code;
   TLB misses, I/O, writes and unsupported bus mappings retain their helpers.
