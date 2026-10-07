@@ -6,6 +6,20 @@
 #include "fpk.h"
 #include "smc_direct.h"
 
+#if defined(__SSE2__) || defined(_M_X64) || (defined(_M_IX86_FP) && _M_IX86_FP >= 2)
+#include <emmintrin.h>
+#define GP32_HOST_SSE2 1
+#define GP32_HOST_NEON 0
+#elif (defined(__ARM_NEON) || defined(__ARM_NEON__)) && \
+      defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+#include <arm_neon.h>
+#define GP32_HOST_SSE2 0
+#define GP32_HOST_NEON 1
+#else
+#define GP32_HOST_SSE2 0
+#define GP32_HOST_NEON 0
+#endif
+
 #define GP32_RAM_BASE 0x0c000000u
 #define ARM_MODE_SVC 0x13u
 #define ARM_I_FLAG 0x00000080u
@@ -4544,6 +4558,44 @@ static int direct_restore_saved_context(gp32_t *g, uint32_t task_addr) {
     return 1;
 }
 
+/*
+ * Exact coarse prefilter for the fallback task-table sweep: true only when all
+ * eight consecutive little-endian words at p are outside [1, 8].  The state
+ * filter below reads exactly those words and accepts only 1, 2, 4 and 8, so a
+ * window reported empty cannot contain a record this pass would resume or
+ * tick.  Every surviving position still runs the same full validation; the
+ * host implementations below must agree word for word.
+ */
+static int direct_task_state_window_empty(const uint8_t *p) {
+#if GP32_HOST_SSE2
+    const __m128i lo = _mm_loadu_si128((const __m128i *)(const void *)p);
+    const __m128i hi = _mm_loadu_si128((const __m128i *)(const void *)(p + 16u));
+    const __m128i one = _mm_set1_epi32(1);
+    /* Unsigned (word - 1) > 7 rejects 0 and everything above 8 as well. */
+    const __m128i limit = _mm_set1_epi32((int)(0x80000000u | 7u));
+    const __m128i bias = _mm_set1_epi32((int)0x80000000u);
+    const __m128i lo_high = _mm_cmpgt_epi32(_mm_xor_si128(_mm_sub_epi32(lo, one), bias), limit);
+    const __m128i hi_high = _mm_cmpgt_epi32(_mm_xor_si128(_mm_sub_epi32(hi, one), bias), limit);
+    return _mm_movemask_ps(_mm_castsi128_ps(_mm_and_si128(lo_high, hi_high))) == 0x0f;
+#elif GP32_HOST_NEON
+    const uint32x4_t zero = vdupq_n_u32(0u);
+    const uint32x4_t eight = vdupq_n_u32(8u);
+    const uint32x4_t lo = vld1q_u32((const uint32_t *)(const void *)p);
+    const uint32x4_t hi = vld1q_u32((const uint32_t *)(const void *)(p + 16u));
+    const uint32x4_t in = vorrq_u32(vandq_u32(vcleq_u32(lo, eight), vmvnq_u32(vceqq_u32(lo, zero))),
+                                    vandq_u32(vcleq_u32(hi, eight), vmvnq_u32(vceqq_u32(hi, zero))));
+    const uint32x2_t pairs = vpmax_u32(vget_low_u32(in), vget_high_u32(in));
+    const uint32x2_t any = vpmax_u32(pairs, pairs);
+    return vget_lane_u32(any, 0u) == 0u;
+#else
+    for (unsigned i = 0; i < 8u; ++i) {
+        uint32_t word = gp32_ld32le(p + i * 4u);
+        if (word >= 1u && word <= 8u) return 0;
+    }
+    return 1;
+#endif
+}
+
 static int direct_try_resume_sdk_task(gp32_t *g) {
     if (!g || !g->direct_fxe_mode || !g->cpu) return 0;
     uint32_t pc = arm920t_get_pc(g->cpu);
@@ -4587,7 +4639,20 @@ static int direct_try_resume_sdk_task(gp32_t *g) {
     const uint8_t *ram = s3c2400_ram_data(g->soc);
     if (!ram) return 0;
     for (uint32_t t = GP32_RAM_BASE; t + 0x34u < ram_end; t += 4u) {
-        uint32_t state = gp32_ld32le(ram + (t - GP32_RAM_BASE) + 0x14u);
+        const uint8_t *rec = ram + (t - GP32_RAM_BASE);
+        /*
+         * The 32-byte probe stays inside the RAM buffer: the loop bound leaves
+         * at least 0x34 bytes of record headroom past t, and the probe covers
+         * the state words at +0x14 .. +0x30.  A window with no state word can
+         * only contain records that this pass rejects below, so advancing to
+         * its end removes reads without changing which records are examined,
+         * in which order, or with which side effects.
+         */
+        if (direct_task_state_window_empty(rec + 0x14u)) {
+            t += 28u; /* with the loop step this advances one full window */
+            continue;
+        }
+        uint32_t state = gp32_ld32le(rec + 0x14u);
         /* Every other state word fails direct_task_record_plausible() inside
          * direct_task_state_can_run() below, so the candidate can be neither
          * resumed nor ticked. Rejecting it here leaves the pass, its side

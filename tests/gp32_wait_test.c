@@ -443,8 +443,99 @@ static void check_panel_rate(int jit) {
     gp32_destroy(g);
 }
 
+/* The parked fallback sweep may skip a whole prefilter window only when none
+ * of its eight state words is in [1, 8]. */
+static int sdk_window_reference(const uint32_t *w) {
+    for (unsigned i = 0; i < 8u; ++i) if (w[i] >= 1u && w[i] <= 8u) return 0;
+    return 1;
+}
+static void check_sdk_task_window(void) {
+    const uint32_t values[] = { 0u, 1u, 2u, 3u, 4u, 7u, 8u, 9u, 0x80000009u, 0xffffffffu, 0x0c000000u };
+    uint32_t w[8];
+    for (unsigned i = 0; i < 8u; ++i) w[i] = 0x0c000000u + i;
+    CHECK(direct_task_state_window_empty((const uint8_t *)w) && sdk_window_reference(w),
+          "window without a state word is skippable");
+    for (unsigned lane = 0; lane < 8u; ++lane) {
+        for (unsigned k = 0; k < GP32_ARRAY_COUNT(values); ++k) {
+            for (unsigned i = 0; i < 8u; ++i) w[i] = 0x0c000000u + i;
+            w[lane] = values[k];
+            CHECK(direct_task_state_window_empty((const uint8_t *)w) == sdk_window_reference(w),
+                  "window probe matches the state filter in every lane");
+        }
+    }
+    { /* Cross-lane combinations: the compiled probe must equal the scalar contract. */
+        uint32_t seed = 0x12345678u;
+        for (unsigned it = 0; it < 4096u; ++it) {
+            for (unsigned i = 0; i < 8u; ++i) {
+                seed = seed * 1664525u + 1013904223u;
+                w[i] = (seed & 0x80u) ? seed : (seed >> 28u);
+            }
+            CHECK(direct_task_state_window_empty((const uint8_t *)w) == sdk_window_reference(w),
+                  "window probe matches the scalar contract for combined lanes");
+        }
+    }
+}
+
+/* A record far from any literal pool is reachable only through this sweep, so
+ * its state word must be found in every one of the eight window lanes, an
+ * invalid record must not be resumed, the lowest runnable record must win, and
+ * the last scanned record must still be reached. */
+static void sdk_task_record(gp32_t *g, uint32_t t, uint32_t saved_sp, uint32_t state, uint32_t entry) {
+    s3c2400_write32(g->soc, t + 0u, saved_sp);
+    s3c2400_write32(g->soc, t + 0x14u, state);
+    s3c2400_write32(g->soc, t + 0x30u, entry);
+}
+static void sdk_task_context(gp32_t *g, uint32_t saved_sp, uint32_t marker, uint32_t saved_pc) {
+    s3c2400_write32(g->soc, saved_sp + 0u, 0xa00000d3u);
+    for (unsigned i = 0; i < 13u; ++i) s3c2400_write32(g->soc, saved_sp + 4u + (uint32_t)i * 4u, marker + i);
+    s3c2400_write32(g->soc, saved_sp + 56u, marker + 13u);
+    s3c2400_write32(g->soc, saved_sp + 60u, saved_pc);
+}
+static void check_sdk_task_sweep(int jit) {
+    const uint32_t window = GP32_RAM_BASE + 0x8000u, saved_sp = GP32_RAM_BASE + 0x10000u;
+    const uint32_t saved_pc = GP32_RAM_BASE + 0x30000u;
+    for (unsigned lane = 0; lane < 8u; ++lane) {
+        gp32_t *g = fixture(jit, 0u); if (!g) return;
+        const uint32_t task = window + lane * 4u;
+        s3c2400_write32(g->soc, saved_pc, 0xe1a00000u);
+        sdk_task_context(g, saved_sp, 0x33330000u, saved_pc);
+        sdk_task_record(g, task, saved_sp, 2u, saved_pc);
+        CHECK(direct_try_resume_sdk_task(g) == 1 && gp32_get_pc(g) == saved_pc &&
+              gp32_get_cpsr(g) == 0xa00000d3u && gp32_get_cpu_reg(g, 0u) == 0x33330000u &&
+              s3c2400_debug_read32(g->soc, task + 0x14u) == 1u,
+              "state word in every sweep window lane resumes its own record");
+        gp32_destroy(g);
+    }
+    gp32_t *g = fixture(jit, 0u); if (!g) return;
+    const uint32_t decoy = GP32_RAM_BASE + 0x4000u, first = GP32_RAM_BASE + 0x8000u, later = GP32_RAM_BASE + 0x18000u;
+    const uint32_t first_sp = GP32_RAM_BASE + 0x10000u, later_sp = GP32_RAM_BASE + 0x1a000u;
+    const uint32_t first_pc = GP32_RAM_BASE + 0x30000u, later_pc = GP32_RAM_BASE + 0x34000u;
+    s3c2400_write32(g->soc, first_pc, 0xe1a00000u);
+    s3c2400_write32(g->soc, later_pc, 0xe1a00000u);
+    sdk_task_context(g, first_sp, 0x33330000u, first_pc);
+    sdk_task_context(g, later_sp, 0x44440000u, later_pc);
+    sdk_task_record(g, decoy, first_sp, 1u, 0u);            /* entry outside RAM */
+    sdk_task_record(g, first, first_sp, 2u, first_pc);
+    sdk_task_record(g, later, later_sp, 4u, later_pc);      /* wakeable, must stay untouched */
+    CHECK(direct_try_resume_sdk_task(g) == 1 && gp32_get_pc(g) == first_pc && gp32_get_cpu_reg(g, 12u) == 0x3333000cu,
+          "lowest runnable record wins and invalid records are skipped");
+    CHECK(s3c2400_debug_read32(g->soc, decoy + 0x14u) == 1u && s3c2400_debug_read32(g->soc, first + 0x14u) == 1u &&
+          s3c2400_debug_read32(g->soc, later + 0x14u) == 4u && s3c2400_debug_read32(g->soc, later + 0x20u) == 0u,
+          "records after the resumed one keep their state and tick counters");
+    gp32_destroy(g);
+    g = fixture(jit, 0u); if (!g) return;
+    const uint32_t tail = GP32_RAM_BASE + 0x800000u - 0x38u, tail_pc = GP32_RAM_BASE + 0x30000u;
+    s3c2400_write32(g->soc, tail_pc, 0xe1a00000u);
+    sdk_task_context(g, saved_sp, 0x55550000u, tail_pc);
+    sdk_task_record(g, tail, saved_sp, 2u, tail_pc);
+    CHECK(tail + 0x34u < GP32_RAM_BASE + 0x800000u && direct_try_resume_sdk_task(g) == 1 && gp32_get_pc(g) == tail_pc,
+          "record in the last scanned window is resumed");
+    gp32_destroy(g);
+}
+
 int main(int argc, char **argv) {
     const char *path = argc > 1 ? argv[1] : "wait-state.tmp";
+    check_sdk_task_window();
     for (int jit = 0; jit <= 1; ++jit) {
         check_callback_wait(jit, 0u, 0, path);
         check_callback_wait(jit, UINT32_MAX - 1000000u, 1, path);
@@ -457,6 +548,7 @@ int main(int argc, char **argv) {
         check_display_cadence(jit);
         check_panel_rate(jit);
         check_mirror_pair(jit); check_legacy_request(jit);
+        check_sdk_task_sweep(jit);
     }
     printf("guest wait regression: %s (%d failures)\n", failures ? "FAIL" : "PASS", failures);
     return failures ? 1 : 0;
