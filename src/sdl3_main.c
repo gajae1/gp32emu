@@ -104,6 +104,17 @@ static void sdl3_audio_reopen(gp32_audio_backend_t **audio, const gp32_audio_opt
     if (!*audio) fprintf(stderr, "SDL audio unavailable: %s\n", SDL_GetError());
 }
 
+/* Supply completed PCM during long frames without reentering SDL event handling. */
+static void sdl3_pump_audio(gp32_t *g, void *user) {
+    gp32_audio_backend_t *audio = user;
+    gp32_audio_desc_t aud;
+    if (!audio) return;
+    while (gp32_get_audio(g, &aud) == GP32_OK && aud.frame_count > 0) {
+        gp32_audio_submit(audio, &aud);
+        if (gp32_consume_audio(g, aud.frame_count) != GP32_OK) break;
+    }
+}
+
 int main(int argc, char **argv) {
     app_options_t args;
     if (!parse_args(argc, argv, &args)) {
@@ -258,20 +269,16 @@ int main(int argc, char **argv) {
             buttons = input_script ? gp32_input_script_frame(input_script, frame_index) : physical_buttons;
             gp32_set_buttons(g, buttons);
             gp32_input_recorder_sample(recorder, frame_index, buttons);
+            gp32_set_host_pump(g, audio ? sdl3_pump_audio : NULL, audio);
             gp32_status_t st = args.cycles_per_frame_set
                 ? gp32_run_cycles(g, args.cycles_per_frame) : gp32_run_frame(g);
+            gp32_set_host_pump(g, NULL, NULL);
             if (st != GP32_OK) {
                 fprintf(stderr, "run failed: %s\n", gp32_get_error(g));
                 quit = 1;
                 break;
             }
-            if (audio) {
-                gp32_audio_desc_t aud;
-                while (gp32_get_audio(g, &aud) == GP32_OK && aud.frame_count > 0) {
-                    gp32_audio_submit(audio, &aud);
-                    if (gp32_consume_audio(g, aud.frame_count) != GP32_OK) break;
-                }
-            }
+            if (audio) sdl3_pump_audio(g, audio);
             frame_index++;
             emu_fps_frames++;
             ran_emulation = 1;

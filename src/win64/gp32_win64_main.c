@@ -658,18 +658,39 @@ static uint64_t qpc_elapsed_us(app_state_t *a, LARGE_INTEGER now) {
     return (uint64_t)((diff * 1000000ll) / a->qpf.QuadPart);
 }
 
+typedef struct frame_audio_context {
+    app_state_t *app;
+    int recording_failed;
+} frame_audio_context_t;
+
+static void pump_frame_audio(gp32_t *g, void *user) {
+    frame_audio_context_t *ctx = user;
+    app_state_t *a = ctx->app;
+    if (!a->audio && !a->recorder) return;
+    gp32_audio_desc_t aud;
+    while (gp32_get_audio(g, &aud) == GP32_OK && aud.frame_count > 0) {
+        if (a->audio) gp32_win64_audio_submit(a->audio, &aud);
+        if (a->recorder && !ctx->recording_failed &&
+            !gp32_media_recorder_add_audio(a->recorder, &aud))
+            ctx->recording_failed = 1;
+        if (gp32_consume_audio(g, aud.frame_count) != GP32_OK) break;
+    }
+}
+
 static void run_one_frame(app_state_t *a) {
     if (!a || !a->emu) return;
+    frame_audio_context_t audio_ctx = { .app = a };
     gp32_set_buttons(a->emu, a->buttons);
-    if (gp32_run_frame(a->emu) != GP32_OK) { app_set_status(a, gp32_get_error(a->emu)); a->running = 0; return; }
-    if (a->audio || a->recorder) {
-        gp32_audio_desc_t aud;
-        while (gp32_get_audio(a->emu, &aud) == GP32_OK && aud.frame_count > 0) {
-            if (a->audio) gp32_win64_audio_submit(a->audio, &aud);
-            if (a->recorder && !gp32_media_recorder_add_audio(a->recorder, &aud)) { app_set_status(a, gp32_media_recorder_error(a->recorder)); app_stop_recording(a); }
-            if (gp32_consume_audio(a->emu, aud.frame_count) != GP32_OK) break;
-        }
+    gp32_set_host_pump(a->emu, (a->audio || a->recorder) ? pump_frame_audio : NULL, &audio_ctx);
+    gp32_status_t st = gp32_run_frame(a->emu);
+    gp32_set_host_pump(a->emu, NULL, NULL);
+    if (st == GP32_OK) pump_frame_audio(a->emu, &audio_ctx);
+    /* Recorder cleanup updates menus; keep it outside the core's pump hook. */
+    if (audio_ctx.recording_failed) {
+        app_set_status(a, gp32_media_recorder_error(a->recorder));
+        app_stop_recording(a);
     }
+    if (st != GP32_OK) { app_set_status(a, gp32_get_error(a->emu)); a->running = 0; return; }
     a->frame_index++;
     a->emu_frames++;
 }
