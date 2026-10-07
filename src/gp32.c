@@ -4877,6 +4877,9 @@ uint32_t gp32_debug_read32(gp32_t *g, uint32_t addr) { return g ? s3c2400_debug_
 uint64_t gp32_get_cycles(const gp32_t *g) { return g ? arm920t_get_cycles(g->cpu) : 0; }
 uint32_t gp32_get_fclk_hz(const gp32_t *g) { return g ? s3c2400_fclk_hz(g->soc) : 0u; }
 uint32_t gp32_get_run_clock_hz(const gp32_t *g) { return g ? s3c2400_run_clock_hz(g->soc) : 0u; }
+int gp32_get_lcd_frame_period(const gp32_t *g, uint32_t *period_ns, uint32_t *period_frac) {
+    return g ? s3c2400_lcd_frame_period(g->soc, period_ns, period_frac) : 0;
+}
 uint64_t gp32_get_jit_hits(const gp32_t *g) { return g ? arm920t_get_jit_hits(g->cpu) : 0; }
 uint64_t gp32_get_jit_misses(const gp32_t *g) { return g ? arm920t_get_jit_misses(g->cpu) : 0; }
 uint64_t gp32_get_jit_fallbacks(const gp32_t *g) { return g ? arm920t_get_jit_fallbacks(g->cpu) : 0; }
