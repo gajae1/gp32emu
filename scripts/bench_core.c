@@ -259,7 +259,8 @@ static int usage(const char *argv0) {
     fprintf(stderr,
         "usage: %s --bios bios.bin --smc game.smc [--state file] [--warmup N=2400] [--frames N=600] [--jit] [--input-script script.txt] [--cpu-profile] [--frame-times] [--legacy-cycle-frames] [--force-bios] [--force-direct]\n"
         "Times --frames frames after --warmup warmup frames. BIOS+SMC runs without an input script get the same\n"
-        "auto A pulses as headless_main. Prints one JSON object: fps, elapsed, cycles, pc, cpsr, clock,\n"
+        "auto A pulses as headless_main. Prints one JSON object: fps, elapsed, cycles (absolute counter,\n"
+        "warmup included), cycles_measured (counter delta over the measured frames only), pc, cpsr, clock,\n"
         "audio_frames, lcd_frames/lcd_repeat_frames/lcd_unpresented_frames, video/audio FNV-1a-64 hashes.\n"
         "--cpu-profile resets CPU workload counters at the\n"
         "warmup boundary and appends a cpu_profile object (requires a GP32EMU_CPU_PROFILE build).\n"
@@ -474,7 +475,7 @@ int main(int argc, char **argv) {
     uint64_t lcd_frames = 0, lcd_repeat_frames = 0, lcd_unpresented_frames = 0, lcd_counter = 0;
     int lcd_have_counter = 0;
     double t0 = 0.0, elapsed = 0.0;
-    uint64_t frame_ticks0 = 0;
+    uint64_t frame_ticks0 = 0, cycles_at_warmup = 0;
     frame_counters_t frame_ctr_before;
     int timed = 0;
     gp32_status_t st = GP32_OK;
@@ -493,7 +494,12 @@ int main(int argc, char **argv) {
         }
         gp32_set_buttons(g, buttons);
 
-        if (!timed && frame >= warmup) { timed = 1; t0 = now_seconds(); if (cpu_profile) gp32_reset_cpu_profile(g); }
+        if (!timed && frame >= warmup) {
+            timed = 1;
+            cycles_at_warmup = gp32_get_cycles(g);
+            t0 = now_seconds();
+            if (cpu_profile) gp32_reset_cpu_profile(g);
+        }
         if (timed && frame_times) {
             frame_ticks0 = now_ticks();
             if (frame_ctr) frame_ctr_before = frame_counters_snapshot(g);
@@ -555,8 +561,15 @@ int main(int argc, char **argv) {
     }
 
     double fps = elapsed > 0.0 ? (double)measured / elapsed : 0.0;
+    /* The top-level "cycles" field is the absolute counter and therefore
+     * includes every warmup frame; cycles_measured is that counter's delta
+     * across the measured window, so guest time derives from exactly the
+     * frames fps/elapsed describe without arithmetic on warmup. */
+    uint64_t cycles_end = gp32_get_cycles(g);
+    uint64_t cycles_measured = timed ? cycles_end - cycles_at_warmup : 0;
     printf("{\"fps\":%.3f,\"elapsed\":%.6f,\"frames\":%" PRIu64
            ",\"warmup\":%" PRIu64 ",\"cycles\":%" PRIu64
+           ",\"cycles_measured\":%" PRIu64
            ",\"pc\":\"0x%08" PRIx32 "\",\"cpsr\":\"0x%08" PRIx32 "\""
            ",\"clock\":%" PRIu32 ",\"audio_frames\":%" PRIu64
            ",\"audio_underrun_risk\":%" PRIu64
@@ -564,7 +577,7 @@ int main(int argc, char **argv) {
            ",\"lcd_unpresented_frames\":%" PRIu64
            ",\"video_hash\":\"%016" PRIx64 "\",\"audio_hash\":\"%016" PRIx64 "\""
            ",\"jit\":%d",
-           fps, elapsed, measured, warmup, gp32_get_cycles(g),
+           fps, elapsed, measured, warmup, cycles_end, cycles_measured,
            gp32_get_pc(g), gp32_get_cpsr(g), gp32_get_run_clock_hz(g),
            audio_frames, audio_underrun_risk, lcd_frames, lcd_repeat_frames,
            lcd_unpresented_frames, video_hash, audio_hash, jit);
