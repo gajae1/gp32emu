@@ -15,6 +15,19 @@ result paths below are names on the development machine.
 
 ## Current accepted work
 
+- Round 214 integrates the round 203 AArch64 read-only memory paths. BIOS
+  words and explicitly certified open-bus words can stay in native code;
+  TLB misses, I/O, writes and unsupported bus mappings retain their helpers.
+  In the same Astonishia direct-boot window (240 warmup / 120 measured frames),
+  word-read helper calls fell from 29,617,560 to zero, with identical cycles,
+  PC, CPSR, clock, audio count and video/audio hashes. This is a CPU overhead
+  reduction in that window, not a fix for its direct-boot stall or proof that
+  its audio issues are resolved. The full AArch64 JIT differential executable
+  passes under QEMU, including full-size BIOS, open-bus rotation, MMU and
+  writeback coverage added here. No new handheld speed measurement was made.
+  Round 189 cross-block chaining remains on its development branch: it adds
+  unused link bookkeeping and lacks a reliable native-hardware speed result.
+
 - Round 204 AArch64 JIT execution parity (evidence in
   `F:/GP32/results/round204-a64emu/`, harness `run_parity.ps1`): the aarch64
   backend can now be executed on this machine -- Docker Desktop runs a
