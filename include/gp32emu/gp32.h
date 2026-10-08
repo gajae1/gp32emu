@@ -273,6 +273,13 @@ typedef struct gp32_cpu_profile {
     uint64_t single_nonram_regions[256];
     gp32_memory_profile_t single_nonram_addresses[GP32_CPU_PROFILE_MEMORY_SLOTS];
     uint64_t single_nonram_address_overflow;
+    /* Native returns to a different guest PC, by the exiting opcode kind.
+     * The last slot covers native-loop blocks whose exact exit instruction
+     * cannot be inferred from the returned instruction count alone. Ready
+     * means the next cached block passes dispatch guards, not that chaining
+     * is proven safe or profitable. Counted poll sources are never ready. */
+    uint64_t native_cross_exits[GP32_CPU_PROFILE_OP_KINDS + 1u];
+    uint64_t native_dispatch_ready_exits[GP32_CPU_PROFILE_OP_KINDS + 1u];
 } gp32_cpu_profile_t;
 
 gp32_status_t gp32_get_cpu_profile(const gp32_t *gp32, gp32_cpu_profile_t *out);

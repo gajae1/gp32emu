@@ -1620,6 +1620,9 @@ static void arm_jit_compile_native(arm920t_t *c, arm_jit_block_t *b) {
     e.live_read32 = c->live_read32;
     e.live_read32_count = c->live_read32_count;
     e.loop_done = a64_selfloop_prefix(c, b);
+#if ARM920T_PROFILING
+    c->profile_native_loop[b - c->jit_blocks] = e.loop_done != 0;
+#endif
     e.block_count = b->count;
     /* Validate the complete direct window, including write permission.
      * Tiny or discontinuous test buses must retain their callback path. */
