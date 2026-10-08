@@ -23,7 +23,7 @@ typedef struct smc_save_job {
     char path[SAVE_ATOMIC_MAX_PATH], error[256];
     uint64_t epoch;
     atomic_bool done;
-    int ok;
+    int ok, delta;
 #if GP32EMU_ENABLE_THREADS
 #if defined(_WIN32)
     HANDLE thread;
@@ -717,12 +717,15 @@ static smc_save_job_t *smc_prepare_save(smc_t *s, const char *path) {
     uint8_t *head = job->image, *body = head + SMC_SAVE_HEAD;
     memcpy(body, s->header, s->header_size);
     size_t pos = s->header_size;
-    for (uint32_t page = 0; page < s->num_pages; ++page) {
-        if (!(s->page_diff[page >> 3] & (1u << (page & 7)))) continue;
-        if (body_size - pos < 4u + s->page_total_size) goto bad;
-        gp32_st32le(body + pos, page);
-        memcpy(body + pos + 4u, s->data + (size_t)page * s->page_total_size, s->page_total_size);
-        pos += 4u + s->page_total_size;
+    for (uint32_t first = 0; first < s->num_pages; first += 8u) {
+        unsigned mask = s->page_diff[first >> 3];
+        for (uint32_t page = first; mask && page < s->num_pages; ++page, mask >>= 1) {
+            if (!(mask & 1u)) continue;
+            if (body_size - pos < 4u + s->page_total_size) goto bad;
+            gp32_st32le(body + pos, page);
+            memcpy(body + pos + 4u, s->data + (size_t)page * s->page_total_size, s->page_total_size);
+            pos += 4u + s->page_total_size;
+        }
     }
     if (pos != body_size) goto bad;
     memcpy(head, smc_save_magic, sizeof(smc_save_magic));
@@ -732,7 +735,7 @@ static smc_save_job_t *smc_prepare_save(smc_t *s, const char *path) {
     gp32_st32le(head + 20, (uint32_t)s->header_size);
     gp32_st32le(head + 24, (uint32_t)s->base_size);
     memcpy(head + 32, s->base_digest, 16);
-    smc_image_digest(body, body_size, head + 48);
+    job->delta = 1;
     return job;
 bad:
     free(job->image); free(job); return NULL;
@@ -741,6 +744,10 @@ bad:
 /* No live emulator memory is accessed by this writer. */
 static void smc_write_save(smc_save_job_t *job) {
     save_atomic_t stage;
+    /* Hash the immutable snapshot here, off the emulation thread during
+     * autosave. Legacy full-card images have no delta checksum field. */
+    if (job->delta)
+        smc_image_digest(job->image + SMC_SAVE_HEAD, job->size - SMC_SAVE_HEAD, job->image + 48);
     job->ok = save_atomic_begin(&stage, job->path, job->error, sizeof(job->error));
     if (job->ok) {
         job->ok = fwrite(job->image, 1, job->size, stage.file) == job->size;
