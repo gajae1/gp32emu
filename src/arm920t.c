@@ -333,6 +333,10 @@ struct arm920t {
 #endif
     /* A64 arena: lowest cold byte of the current chunk (0 = chunk end). */
     size_t jit_cold_floor;
+#if ARM920T_PROFILING && defined(ARM_JIT_NATIVE_A64)
+    /* Compilation metadata, not reset with sampling counters. */
+    uint8_t profile_native_loop[ARM_JIT_BLOCK_COUNT];
+#endif
 };
 _Static_assert(offsetof(arm920t_t, jit_cache_epoch) == offsetof(arm920t_t, jit_generation) + 4u &&
                offsetof(arm_jit_block_t, tag_cache_epoch) == offsetof(arm_jit_block_t, generation) + 4u,
@@ -4233,6 +4237,38 @@ static ARM_NOINLINE uint32_t arm_jit_run_nonram(arm920t_t *c, uint32_t pc) {
     return 1u;
 }
 
+#if ARM920T_PROFILING
+/* Observe only cached metadata: profiling must not fetch, translate, compile
+ * or invoke bus callbacks merely to predict the next dispatcher lookup. */
+static void arm_profile_native_exit(arm920t_t *c, const arm_jit_block_t *b,
+                                    uint32_t done, uint32_t run_done) {
+    uint32_t pc = c->r[15] & ~3u;
+    if (!done || !b->valid || b->generation != c->jit_generation ||
+        b->tag_cache_epoch != c->jit_cache_epoch || pc == b->tag_pc) return;
+    unsigned kind = done <= b->count ? arm_jit_ops(c, b)[done - 1u].kind : GP32_CPU_PROFILE_OP_KINDS;
+#if defined(ARM_JIT_NATIVE_A64)
+    /* Even a small done value can include multiple short native repetitions.
+     * Do not mistake their aggregate count for a decoded instruction index. */
+    if (c->profile_native_loop[b - c->jit_blocks]) kind = GP32_CPU_PROFILE_OP_KINDS;
+#endif
+    if (kind > GP32_CPU_PROFILE_OP_KINDS) kind = GP32_CPU_PROFILE_OP_KINDS;
+    c->prof.native_cross_exits[kind]++;
+    if ((b->poll_backedge >> 1) || c->halted || c->trace || thumb(c) || !c->jit_enabled ||
+        (c->irq_line && !(c->cpsr & I_FLAG)) || (c->fiq_line && !(c->cpsr & F_FLAG)) ||
+        run_done >= c->run_limit || done > c->run_limit - run_done) return;
+    uint32_t budget = c->run_limit - run_done - done;
+    const arm_jit_block_t *next = &c->jit_blocks[arm_jit_block_index(pc)];
+    for (unsigned way = 0; way < ARM_JIT_BLOCK_WAYS; ++way, ++next) {
+        if (next->valid && next->tag_pc == pc && next->generation == c->jit_generation &&
+            next->tag_cache_epoch == c->jit_cache_epoch && next->native_ok == 1u &&
+            !(next->poll_backedge >> 1) && !next->deferred_inline_pc && budget >= next->count) {
+            c->prof.native_dispatch_ready_exits[kind]++;
+            return;
+        }
+    }
+}
+#endif
+
 static uint32_t arm_jit_run(arm920t_t *c, uint32_t run_done) {
     if (!c || run_done >= c->run_limit || thumb(c) || c->trace) return 0;
     if (!c->jit_ram_base) c->jit_ram_base = fastmem(c, ARM_JIT_RAM_BASE_ADDR, 1u, 0);
@@ -4320,6 +4356,7 @@ static uint32_t arm_jit_run(arm920t_t *c, uint32_t run_done) {
 #if ARM920T_PROFILING
                     c->prof.native_block_calls++;
                     c->prof.native_arm_insns += done;
+                    arm_profile_native_exit(c, b, done, total - done);
 #endif
                     /* A native run makes no stable-read observation, which is
                      * the only way the general tail keeps a poll snapshot. */
@@ -4377,6 +4414,7 @@ static uint32_t arm_jit_run(arm920t_t *c, uint32_t run_done) {
             c->prof.native_block_calls++;
             c->prof.native_arm_insns += done;
             if (!done) c->prof.native_bail_calls++;
+            arm_profile_native_exit(c, b, done, total);
 #endif
         }
 
