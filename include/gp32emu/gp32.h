@@ -94,7 +94,7 @@ gp32_status_t gp32_load_smartmedia_data(gp32_t *gp32, const void *data, size_t s
  * A state saved by this core stores the NAND pages that differ from the image
  * the frontend passes as content, not the whole card, so it is smaller but only
  * reconstructs over that same image. A host that mounts a persisted card image
- * over the content (as the libretro core does) must therefore set the base from
+ * over immutable content must therefore set the base from
  * the content and mount the persisted image with the over-base loaders: the
  * state base then stays the content, which every later session passes again,
  * and a state saved in one session loads in any later session of the same game.
@@ -112,6 +112,11 @@ gp32_status_t gp32_load_fxe_data(gp32_t *gp32, const void *data, size_t size, co
 gp32_status_t gp32_load_fpk(gp32_t *gp32, const char *path);
 gp32_status_t gp32_load_fpk_data(gp32_t *gp32, const void *data, size_t size, const char *label);
 gp32_status_t gp32_save_smartmedia(gp32_t *gp32, const char *path);
+/* Persistent page changes over the mounted original card. Legacy full card
+ * saves are accepted on load. A delta must match the exact mounted base. */
+gp32_status_t gp32_save_card_progress(gp32_t *gp32, const char *path);
+gp32_status_t gp32_load_card_progress(gp32_t *gp32, const char *path);
+gp32_status_t gp32_boot_mounted_smartmedia(gp32_t *gp32, const char *label);
 gp32_status_t gp32_save_state(gp32_t *gp32, const char *path);
 gp32_status_t gp32_load_state(gp32_t *gp32, const char *path);
 /* Exact current payload size (including queued PCM), or 0 on failure.

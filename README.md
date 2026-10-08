@@ -22,18 +22,19 @@ Supply your own BIOS and game dumps; neither is included.
 
 ## Package contents
 
-| Folder | Files |
+| ZIP package | Binaries at the archive root |
 | --- | --- |
-| `windows-x64/` | `gp32emu_win64.exe`, `SDL3.dll`, `SDL3-LICENSE.txt`, `gp32emu_libretro.dll`, `gp32emu_libretro.info` |
-| `linux-aarch64/` | `gp32emu_libretro.so`, `gp32emu_libretro.info` |
-| `android-arm64/` | `gp32emu_libretro_android.so`, `gp32emu_libretro.info` |
-| `android-armv7/` | `gp32emu_libretro_android.so`, `gp32emu_libretro.info` |
+| `gp32emu-1.0.0-windows-x64.zip` | `gp32emu_win64.exe`, `SDL3.dll`, `SDL3-LICENSE.txt` |
+| `gp32emu-1.0.0-libretro-windows-x64.zip` | `gp32emu_libretro.dll`, `gp32emu_libretro.info` |
+| `gp32emu-1.0.0-linux-aarch64.zip` | `gp32emu_libretro.so`, `gp32emu_libretro.info` |
+| `gp32emu-1.0.0-android-arm64.zip` | `gp32emu_libretro_android.so`, `gp32emu_libretro.info` |
+| `gp32emu-1.0.0-android-armv7.zip` | `gp32emu_libretro_android.so`, `gp32emu_libretro.info` |
 
 The Linux core targets AArch64 with glibc 2.17 or newer. The Android cores target
 Android API 21 or newer; they have been compiled, but Android runtime use is
 unverified. ARMv7 uses the interpreter and is substantially slower than ARM64.
 
-The package also contains this README, release notes, the
+Each ZIP also contains this README, release notes, the
 [Korean manual](docs/MANUAL.ko.md), third-party notices in [licenses/](licenses/),
 and `manifest.json` with checksums for the packaged files. BIOS images, games and
 save files are not included.
@@ -46,12 +47,16 @@ save files are not included.
 
 The BIOS path and settings are stored in `GP32emu.ini` beside the executable, so
 use a writable folder. A BIOS is recommended for commercial games.
+Use `File > Game library...` to register a game folder and launch games from its
+list. It lists SMC, FXE and FPK files directly inside that folder, excluding save
+images; extract ZIP archives first. `Config > Keyboard controls...` lets you
+remap the GP32 buttons. The folder and key assignments are remembered.
 
 Use the arrow keys for directions, **Z/X** for GP32 **A/B**, **A/S** for **L/R**,
 **Enter** for **Start**, and **Shift** for **Select**. **F5/F8** open save-state
 save/load dialogs; **F12** opens a BMP screenshot save dialog. **F11** or
-**Alt+Enter** toggles fullscreen. **Esc** leaves fullscreen, or closes the
-application when already windowed.
+**Alt+Enter** toggles fullscreen. **Esc** only leaves fullscreen; it does not
+close the application. Use `File > Exit`, the close button or **Alt+F4** to quit.
 
 ## RetroArch
 
@@ -66,21 +71,31 @@ for controls, options and installation details.
 
 ## Saves
 
-Windows BIOS-booted SMC games keep in-game saves in `game.smc.gp32.smc` beside
-`game.smc`. RetroArch uses `<game>.gp32.smc` in its save directory, without the
-original extension; if no save directory is supplied, the core uses its system
-directory. Saves are written when content is closed or replaced, and restored
-on the next load. The original card file is left unchanged. In RetroArch, games
-with the same filename stem share a save in the same save directory.
+For an unpacked `.smc` file, the original card image is never modified. Ordinary
+card accesses during play work as before; when the game is closed or replaced,
+changed card pages are stored in a small persistent save file. Windows uses
+`<original filename including .smc>.gp32.sav` next
+to the ROM, for example `game.smc.gp32.sav`. RetroArch uses `<stem>.gp32.sav`
+in its configured save directory. The save location must be writable, and the
+delta must be loaded atop the exact original `.smc`. Extract ZIP archives
+before loading them. If RetroArch supplies no save directory, the system
+directory is used. Games with the same filename stem share a save location;
+keep their saves in separate directories.
+
+Existing full `.gp32.smc` save images are imported automatically. After the new
+page-delta save is written successfully, the consumed old image is removed; if
+deletion fails, the new save wins. Full card images stored as `.gp32.sav` are
+also supported. Invalid saves or deltas for a different original stop loading
+instead of being overwritten. Keep backups of valuable progress.
 
 Use a BIOS for in-game saves in commercial SMC games. Where direct boot does not
 preserve card writes, use save states instead.
 If saving fails, check free space and write access. An unreadable saved card
 stops loading rather than being silently replaced.
 
-Save states are separate from in-game saves. Keep the original card file
-unchanged and load the same content before restoring a state. Restoring a state
-can also return the card's in-game progress to an earlier point.
+Save states are separate snapshots of the running machine. They may contain
+base-relative card deltas, so preserve the exact original ROM. Restoring a state
+also rolls back in-game card progress.
 
 ## Limitations
 
@@ -112,8 +127,8 @@ Raphael Nabet and others). The repository also includes the MIT-licensed kuba--
 zip library and parts of BDMEmu's frontend. Their notices are in
 [licenses/](licenses/).
 
-The Windows package includes SDL3 under the zlib licence, with its notice beside
-the DLL as `windows-x64/SDL3-LICENSE.txt`. In the source tree, SDL3's `LICENSE.txt`
+The Windows package includes SDL3 under the zlib licence, with its notice in
+`SDL3-LICENSE.txt`. In the source tree, SDL3's `LICENSE.txt`
 is inside `third_party/sdl/SDL3-3.4.10.tar.gz`.
 
 Game ROMs and BIOS files are not distributed with the emulator; supply your own dumps.

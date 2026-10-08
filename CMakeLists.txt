@@ -205,6 +205,7 @@ if (GP32EMU_BUILD_WIN64_FRONTEND)
     find_package(SDL3 REQUIRED CONFIG)
     add_executable(gp32emu_win64 WIN32
         src/win64/gp32_win64_main.c
+        src/win64/gp32_win64_ui.c
         src/win64/gp32_win64_video.c
         src/win64/gp32_win64_audio.c
         src/win64/gp32_win64_sdl_input.c
@@ -220,6 +221,7 @@ if (GP32EMU_BUILD_WIN64_FRONTEND)
     endif()
     if (GP32EMU_BUILD_TESTS)
         add_executable(win64_frontend_test tests/win64_frontend_test.c
+            src/win64/gp32_win64_ui.c src/win64/gp32emu.rc
             src/win64/gp32_win64_video.c src/win64/gp32_win64_audio.c
             src/win64/gp32_win64_sdl_input.c src/input/gp32_sdl3_input_shared.c)
         target_include_directories(win64_frontend_test PRIVATE include src)

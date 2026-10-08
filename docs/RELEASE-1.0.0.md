@@ -15,16 +15,17 @@ RetroArch cores for emulating the Game Park GP32.
 
 ## Files
 
-| Folder | Contents |
+| ZIP package | Binaries at the archive root |
 | --- | --- |
-| `windows-x64/` | `gp32emu_win64.exe`, `SDL3.dll`, `SDL3-LICENSE.txt`, `gp32emu_libretro.dll`, `gp32emu_libretro.info` |
-| `linux-aarch64/` | `gp32emu_libretro.so`, `gp32emu_libretro.info` |
-| `android-arm64/`, `android-armv7/` | Each contains `gp32emu_libretro_android.so` and `gp32emu_libretro.info` |
+| `gp32emu-1.0.0-windows-x64.zip` | `gp32emu_win64.exe`, `SDL3.dll`, `SDL3-LICENSE.txt` |
+| `gp32emu-1.0.0-libretro-windows-x64.zip` | `gp32emu_libretro.dll`, `gp32emu_libretro.info` |
+| `gp32emu-1.0.0-linux-aarch64.zip` | `gp32emu_libretro.so`, `gp32emu_libretro.info` |
+| `gp32emu-1.0.0-android-arm64.zip` | `gp32emu_libretro_android.so`, `gp32emu_libretro.info` |
+| `gp32emu-1.0.0-android-armv7.zip` | `gp32emu_libretro_android.so`, `gp32emu_libretro.info` |
 
 Linux requires AArch64 and glibc 2.17 or newer. Android cores target API 21 or
-newer. Documentation consists of the README, these notes and `docs/MANUAL.ko.md`.
-Third-party notices and a file checksum manifest are included. BIOS images,
-games and saves are not included.
+newer. Every ZIP also contains the README, these notes, `docs/MANUAL.ko.md`,
+`licenses/` and `manifest.json`. BIOS images, games and saves are not included.
 
 ## Installation
 
@@ -35,8 +36,9 @@ For RetroArch, install the core matching the app's architecture and place its
 dump in the system directory as `gp32166m.bin`, then load the core and content.
 
 A BIOS is recommended. See the README and Korean manual for controls, save-file
-locations and the limits of direct boot. Keep your original card files: some
-save states require the same card image to restore.
+locations and the limits of direct boot. Original `.smc` files are never modified;
+keep them unchanged because persistent saves and states are restored relative to
+the exact original card.
 
 ## Known limitations
 
@@ -48,5 +50,5 @@ run-ahead are unverified. Android cores have been compiled but runtime use is
 unverified; ARMv7 uses the slower interpreter.
 
 GP32emu originates with gameblabla. See the README for upstream credits and the
-existing licensing status, `licenses/` for third-party notices, and
-`windows-x64/SDL3-LICENSE.txt` for SDL3's zlib licence.
+existing licensing status, `licenses/` for third-party notices, and the Windows
+ZIP's `SDL3-LICENSE.txt` for SDL3's zlib licence.
