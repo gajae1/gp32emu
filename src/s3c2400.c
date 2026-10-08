@@ -581,6 +581,9 @@ int s3c2400_set_smartmedia_state_base_file(s3c2400_t *s, const char *path, char 
 }
 int s3c2400_save_smartmedia(s3c2400_t *s, const char *path, char *err, size_t err_len) { return s && smc_save_file(s->smc, path, err, err_len); }
 int s3c2400_save_card_progress(s3c2400_t *s, const char *path, char *err, size_t err_len) { return s && smc_save_changes(s->smc, path, err, err_len); }
+int s3c2400_poll_card_progress(s3c2400_t *s, const char *path, char *err, size_t err_len) {
+    return s && smc_autosave_poll(s->smc, path, smc_host_time_ms(), err, err_len);
+}
 int s3c2400_load_card_progress(s3c2400_t *s, const char *path, char *err, size_t err_len) {
     if (!s) return 0;
     int ok = smc_load_changes(s->smc, path, err, err_len);

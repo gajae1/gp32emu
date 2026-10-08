@@ -115,6 +115,9 @@ gp32_status_t gp32_save_smartmedia(gp32_t *gp32, const char *path);
 /* Persistent page changes over the mounted original card. Legacy full card
  * saves are accepted on load. A delta must match the exact mounted base. */
 gp32_status_t gp32_save_card_progress(gp32_t *gp32, const char *path);
+/* Call once per host frame with a stable save path. Reports a failed automatic
+ * save once until recovery. Explicit save/destroy waits for outstanding work. */
+gp32_status_t gp32_poll_card_progress(gp32_t *gp32, const char *path);
 gp32_status_t gp32_load_card_progress(gp32_t *gp32, const char *path);
 gp32_status_t gp32_boot_mounted_smartmedia(gp32_t *gp32, const char *label);
 gp32_status_t gp32_save_state(gp32_t *gp32, const char *path);

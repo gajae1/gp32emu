@@ -774,6 +774,8 @@ static void run_one_frame(app_state_t *a) {
     if (st != GP32_OK) { app_set_status(a, gp32_get_error(a->emu)); a->running = 0; return; }
     a->frame_index++;
     a->emu_frames++;
+    if (a->smc_save[0] && gp32_poll_card_progress(a->emu, a->smc_save) != GP32_OK)
+        app_show_status_error(a, gp32_get_error(a->emu));
 }
 
 static void app_pump(app_state_t *a) {

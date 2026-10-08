@@ -6,13 +6,39 @@
 #include "smartmedia.h"
 #include "zip.h"
 #include "save_atomic.h"
+#include <stdatomic.h>
+#include <time.h>
+#ifndef GP32EMU_ENABLE_THREADS
+#define GP32EMU_ENABLE_THREADS 0
+#endif
+#if defined(_WIN32)
+#include <windows.h>
+#elif GP32EMU_ENABLE_THREADS
+#include <pthread.h>
+#endif
+
+typedef struct smc_save_job {
+    uint8_t *image;
+    size_t size;
+    char path[SAVE_ATOMIC_MAX_PATH], error[256];
+    uint64_t epoch;
+    atomic_bool done;
+    int ok;
+#if GP32EMU_ENABLE_THREADS
+#if defined(_WIN32)
+    HANDLE thread;
+#else
+    pthread_t thread;
+#endif
+#endif
+} smc_save_job_t;
 
 /* v0014 savestate delta.
  *
  * A state's SmartMedia section usually carries only the NAND pages that differ
  * from the image the frontend passed, not the whole 17-34 MB card. That image
  * is stable for the life of the content file: the libretro core persists guest
- * writes to <save dir>/<rom>.gp32.smc and every later session mounts that file
+ * writes to <save dir>/<rom>.gp32.sav and every later session mounts that file
  * over the frontend content, so the base a state was saved against is still
  * available when the state is loaded in a later session of the same game.
  *
@@ -98,6 +124,10 @@ struct smc {
     uint8_t *page_diff;
     uint32_t diff_pages;
     uint32_t state_entries;
+    /* Host persistence state is deliberately absent from savestates. */
+    uint64_t write_epoch, observed_epoch, quiet_since, last_attempt;
+    int autosave_started, autosave_error, persist_dirty;
+    smc_save_job_t *save_job;
 };
 
 static unsigned log2_u32(uint32_t v) {
@@ -114,6 +144,7 @@ smc_t *smc_create(void) {
 
 void smc_destroy(smc_t *s) {
     if (!s) return;
+    smc_autosave_wait(s, NULL, 0);
     free(s->data);
     free(s->page_reg);
     free(s->base);
@@ -424,6 +455,7 @@ static void smc_apply_idle_command_state(smc_t *s) {
 /* Install a parsed card image. The state base survives when it still describes
  * the new card shape; its exact page map is rebuilt. */
 static void smc_install_image(smc_t *s, smc_mount_image_t *img, int keep_base) {
+    ++s->write_epoch;
     uint8_t *base = s->base;
     size_t base_size = s->base_size;
     uint32_t base_page_total = s->base_page_total_size;
@@ -446,6 +478,7 @@ static void smc_install_image(smc_t *s, smc_mount_image_t *img, int keep_base) {
     memcpy(s->header, img->header, sizeof(s->header));
     s->header_size = img->header_size;
     s->dirty = 0;
+    s->persist_dirty = 0;
     s->page_data_size = img->page_data_size;
     s->page_total_size = img->page_total_size;
     s->num_pages = img->num_pages;
@@ -482,6 +515,7 @@ int smc_load_buffer(smc_t *s, const uint8_t *src, size_t len, char *err, size_t 
     if (!smc_parse_image(src, len, &img, err, err_len)) {
         /* A rejected buffer mount clears the card, as every build before v0014
          * did: an invalid image must not leave a stale card for the guest. */
+        smc_autosave_wait(s, NULL, 0);
         free(s->data);
         free(s->page_reg);
         free(s->base);
@@ -641,7 +675,7 @@ int smc_save_file(smc_t *s, const char *path, char *err, size_t err_len) {
     return 1;
 }
 
-int smc_is_dirty(const smc_t *s) { return s ? s->dirty : 0; }
+int smc_is_dirty(const smc_t *s) { return s ? s->persist_dirty : 0; }
 
 /* Persistent saves are not machine snapshots: an explicit little-endian
  * 64-byte header binds sorted page records to the immutable card image.
@@ -663,48 +697,160 @@ uint8_t *smc_copy_image(const smc_t *s, size_t *size) {
     return image;
 }
 
-int smc_save_changes(smc_t *s, const char *path, char *err, size_t err_len) {
-    if (!s || !path || !s->data) return 0;
-    /* Older states can mount cards with no matching base. Preserve them in
-     * full rather than inventing a delta against unrelated bytes. */
-    if (!smc_base_geometry_ok(s)) return smc_save_file(s, path, err, err_len);
+static smc_save_job_t *smc_prepare_save(smc_t *s, const char *path) {
+    if (!s || !path || !s->data || strlen(path) >= SAVE_ATOMIC_MAX_PATH) return NULL;
+    smc_save_job_t *job = calloc(1, sizeof(*job));
+    if (!job) return NULL;
+    atomic_init(&job->done, false);
+    strcpy(job->path, path);
+    job->epoch = s->write_epoch;
+    if (!smc_base_geometry_ok(s)) {
+        /* Full legacy states may contain a card with no matching original. */
+        job->image = smc_copy_image(s, &job->size);
+        if (job->image) return job;
+        free(job); return NULL;
+    }
     size_t body_size = s->header_size + (size_t)s->diff_pages * (4u + s->page_total_size);
-    uint8_t *body = malloc(body_size ? body_size : 1u);
-    if (!body) { if (err && err_len) snprintf(err, err_len, "out of memory preparing card save"); return 0; }
+    job->size = SMC_SAVE_HEAD + body_size;
+    job->image = calloc(1, job->size);
+    if (!job->image) { free(job); return NULL; }
+    uint8_t *head = job->image, *body = head + SMC_SAVE_HEAD;
     memcpy(body, s->header, s->header_size);
     size_t pos = s->header_size;
     for (uint32_t page = 0; page < s->num_pages; ++page) {
         if (!(s->page_diff[page >> 3] & (1u << (page & 7)))) continue;
-        if (body_size - pos < 4u + s->page_total_size) { free(body); return 0; }
+        if (body_size - pos < 4u + s->page_total_size) goto bad;
         gp32_st32le(body + pos, page);
         memcpy(body + pos + 4u, s->data + (size_t)page * s->page_total_size, s->page_total_size);
         pos += 4u + s->page_total_size;
     }
-    if (pos != body_size) { free(body); return 0; }
-    uint8_t head[SMC_SAVE_HEAD] = {0};
+    if (pos != body_size) goto bad;
     memcpy(head, smc_save_magic, sizeof(smc_save_magic));
     gp32_st32le(head + 8, s->page_total_size);
     gp32_st32le(head + 12, s->num_pages);
     gp32_st32le(head + 16, s->diff_pages);
     gp32_st32le(head + 20, (uint32_t)s->header_size);
     gp32_st32le(head + 24, (uint32_t)s->base_size);
-    /* Maximum card size is 128 MiB, so the high size word is zero. */
     memcpy(head + 32, s->base_digest, 16);
     smc_image_digest(body, body_size, head + 48);
+    return job;
+bad:
+    free(job->image); free(job); return NULL;
+}
+
+/* No live emulator memory is accessed by this writer. */
+static void smc_write_save(smc_save_job_t *job) {
     save_atomic_t stage;
-    int ok = save_atomic_begin(&stage, path, err, err_len);
-    if (ok) {
-        ok = fwrite(head, 1, sizeof(head), stage.file) == sizeof(head) &&
-             fwrite(body, 1, body_size, stage.file) == body_size;
-        if (ok) ok = save_atomic_commit(&stage, path, err, err_len);
-        else {
-            save_atomic_abort(&stage);
-            if (err && err_len) snprintf(err, err_len, "writing card changes failed");
-        }
+    job->ok = save_atomic_begin(&stage, job->path, job->error, sizeof(job->error));
+    if (job->ok) {
+        job->ok = fwrite(job->image, 1, job->size, stage.file) == job->size;
+        if (!job->ok) snprintf(job->error, sizeof(job->error), "writing card changes failed");
+        if (job->ok) job->ok = save_atomic_sync(&stage, job->error, sizeof(job->error));
+        if (job->ok) job->ok = save_atomic_commit(&stage, job->path, job->error, sizeof(job->error));
+        else save_atomic_abort(&stage);
     }
-    free(body);
-    if (ok) s->dirty = 0;
+    atomic_store_explicit(&job->done, true, memory_order_release);
+}
+
+#if GP32EMU_ENABLE_THREADS
+#if defined(_WIN32)
+static DWORD WINAPI smc_save_worker(LPVOID arg) { smc_write_save(arg); return 0; }
+#else
+static void *smc_save_worker(void *arg) { smc_write_save(arg); return NULL; }
+#endif
+#endif
+
+int smc_autosave_wait(smc_t *s, char *err, size_t err_len) {
+    if (!s || !s->save_job) return 1;
+    smc_save_job_t *job = s->save_job;
+#if GP32EMU_ENABLE_THREADS
+#if defined(_WIN32)
+    WaitForSingleObject(job->thread, INFINITE);
+    CloseHandle(job->thread);
+#else
+    pthread_join(job->thread, NULL);
+#endif
+#endif
+    int ok = job->ok;
+    if (ok && s->write_epoch == job->epoch) s->persist_dirty = 0;
+    if (!ok && err && err_len) snprintf(err, err_len, "%s", job->error);
+    free(job->image); free(job); s->save_job = NULL;
     return ok;
+}
+
+int smc_save_changes(smc_t *s, const char *path, char *err, size_t err_len) {
+    if (!s || !path || !s->data) return 0;
+    /* Join before the final flush: an older background snapshot must never
+     * replace a newer exit save. A failed worker is retried by this flush. */
+    smc_autosave_wait(s, NULL, 0);
+    smc_save_job_t *job = smc_prepare_save(s, path);
+    if (!job) { if (err && err_len) snprintf(err, err_len, "cannot prepare card save"); return 0; }
+    smc_write_save(job);
+    int ok = job->ok;
+    if (!ok && err && err_len) snprintf(err, err_len, "%s", job->error);
+    free(job->image); free(job);
+    if (ok) { s->dirty = 0; s->persist_dirty = 0; s->autosave_error = 0; }
+    return ok;
+}
+
+uint64_t smc_host_time_ms(void) {
+#if defined(_WIN32)
+    return GetTickCount64();
+#elif defined(GP32EMU_WASM)
+    return (uint64_t)((double)clock() * 1000.0 / CLOCKS_PER_SEC);
+#else
+    struct timespec ts;
+    if (clock_gettime(CLOCK_MONOTONIC, &ts)) return 0;
+    return (uint64_t)ts.tv_sec * 1000u + (uint64_t)ts.tv_nsec / 1000000u;
+#endif
+}
+
+int smc_autosave_poll(smc_t *s, const char *path, uint64_t now, char *err, size_t err_len) {
+    if (!s || !s->data || !path || !path[0]) return 1;
+    if (!s->autosave_started) {
+        s->autosave_started = 1;
+        s->last_attempt = s->quiet_since = now;
+        s->observed_epoch = s->write_epoch;
+    }
+    if (s->save_job && atomic_load_explicit(&s->save_job->done, memory_order_acquire)) {
+        if (!smc_autosave_wait(s, err, err_len)) goto failed;
+        s->autosave_error = 0;
+    }
+    if (s->observed_epoch != s->write_epoch) {
+        s->observed_epoch = s->write_epoch;
+        s->quiet_since = now;
+    }
+    /* Coalesce a save burst and avoid checkpointing a partially written FAT.
+     * At most one attempt per 10 host seconds, after 2 seconds without writes.
+     * Persistent storage latency never runs on the emulator thread in threaded builds. */
+    if (s->save_job || !s->persist_dirty || now - s->last_attempt < 10000u || now - s->quiet_since < 2000u) return 1;
+    s->last_attempt = now;
+    smc_save_job_t *job = smc_prepare_save(s, path);
+    if (!job) {
+        if (err && err_len) snprintf(err, err_len, "cannot prepare automatic card save");
+        goto failed;
+    }
+#if GP32EMU_ENABLE_THREADS
+#if defined(_WIN32)
+    job->thread = CreateThread(NULL, 0, smc_save_worker, job, 0, NULL);
+    int started = job->thread != NULL;
+#else
+    int started = pthread_create(&job->thread, NULL, smc_save_worker, job) == 0;
+#endif
+    if (!started) {
+        free(job->image); free(job);
+        if (err && err_len) snprintf(err, err_len, "cannot start automatic card save worker");
+        goto failed;
+    }
+#else
+    smc_write_save(job);
+#endif
+    s->save_job = job;
+    return 1;
+failed:
+    if (s->autosave_error) return 1;
+    s->autosave_error = 1;
+    return 0;
 }
 
 int smc_load_changes(smc_t *s, const char *path, char *err, size_t err_len) {
@@ -815,9 +961,18 @@ void smc_command_w(smc_t *s, uint8_t data) {
             s->status = (uint8_t)((s->status & 0x80) | s->accumulated_status);
             if (s->page_addr < s->num_pages) {
                 uint8_t *dst = &s->data[(size_t)s->page_addr * s->page_total_size];
-                for (uint32_t i = 0; i < s->page_total_size; ++i) dst[i] &= s->page_reg[i];
-                s->dirty = 1;
-                smc_diff_refresh(s, s->page_addr, 1u);
+                int changed = 0;
+                for (uint32_t i = 0; i < s->page_total_size; ++i) {
+                    uint8_t value = dst[i] & s->page_reg[i];
+                    changed |= value != dst[i];
+                    dst[i] = value;
+                }
+                if (changed) {
+                    s->dirty = 1;
+                    s->persist_dirty = 1;
+                    ++s->write_epoch;
+                    smc_diff_refresh(s, s->page_addr, 1u);
+                }
             }
             s->status |= 0x40;
             s->accumulated_status = (data == 0x15) ? (uint8_t)(s->status & 0x1f) : 0;
@@ -838,9 +993,15 @@ void smc_command_w(smc_t *s, uint8_t data) {
             size_t len = ((size_t)1u << s->log2_pages_per_block) * s->page_total_size;
             if (off < s->data_size) {
                 if (off + len > s->data_size) len = s->data_size - off;
-                memset(s->data + off, 0xff, len);
-                s->dirty = 1;
-                smc_diff_refresh(s, first, (uint32_t)(len / s->page_total_size));
+                size_t i = 0;
+                while (i < len && s->data[off + i] == 0xff) ++i;
+                if (i < len) {
+                    memset(s->data + off, 0xff, len);
+                    s->dirty = 1;
+                    s->persist_dirty = 1;
+                    ++s->write_epoch;
+                    smc_diff_refresh(s, first, (uint32_t)(len / s->page_total_size));
+                }
             }
             s->status |= 0x40;
             s->mode = SM_M_INIT;
@@ -1232,6 +1393,9 @@ void smc_state_stage_commit(smc_t *s, smc_state_stage_t *stage) {
         stage->page_reg = NULL;
         smc_apply_state_fields(s, &stage->st);
     }
+    /* Restoring a clean old slot can roll back an already-persisted card. */
+    s->persist_dirty = s->data != NULL;
+    ++s->write_epoch;
     smc_state_stage_destroy(stage);
 }
 

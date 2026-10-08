@@ -4333,6 +4333,16 @@ gp32_status_t gp32_save_card_progress(gp32_t *g, const char *path) {
     return GP32_OK;
 }
 
+gp32_status_t gp32_poll_card_progress(gp32_t *g, const char *path) {
+    if (!g || !path) return GP32_ERR_INVALID_ARGUMENT;
+    char e[256] = {0};
+    if (!s3c2400_poll_card_progress(g->soc, path, e, sizeof(e))) {
+        seterr(g, "%s", e[0] ? e : "Automatic card save failed");
+        return GP32_ERR_IO;
+    }
+    return GP32_OK;
+}
+
 gp32_status_t gp32_load_card_progress(gp32_t *g, const char *path) {
     if (!g || !path) return GP32_ERR_INVALID_ARGUMENT;
     char e[256] = {0};

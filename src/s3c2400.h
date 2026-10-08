@@ -39,6 +39,7 @@ int s3c2400_set_smartmedia_state_base(s3c2400_t *soc, const uint8_t *data, size_
 int s3c2400_set_smartmedia_state_base_file(s3c2400_t *soc, const char *path, char *err, size_t err_len);
 int s3c2400_save_smartmedia(s3c2400_t *soc, const char *path, char *err, size_t err_len);
 int s3c2400_save_card_progress(s3c2400_t *soc, const char *path, char *err, size_t err_len);
+int s3c2400_poll_card_progress(s3c2400_t *soc, const char *path, char *err, size_t err_len);
 int s3c2400_load_card_progress(s3c2400_t *soc, const char *path, char *err, size_t err_len);
 uint8_t *s3c2400_copy_smartmedia(s3c2400_t *soc, size_t *size);
 int s3c2400_load_ram_image(s3c2400_t *soc, uint32_t addr, const uint8_t *data, size_t size, char *err, size_t err_len);

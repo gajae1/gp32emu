@@ -8,7 +8,8 @@ RetroArch cores for emulating the Game Park GP32.
 - Loads `.smc` cards and `.fxe` / `.fpk` homebrew, with BIOS boot and limited
   booting without a BIOS.
 - Provides x86-64 and AArch64 JIT execution, save states, and persistent
-  SmartMedia saves when a writable card is mounted.
+  SmartMedia saves when a writable card is mounted, with periodic background
+  saving in Windows and RetroArch and a final flush on close.
 - Offers LCD persistence and frame interpolation, plus guest CPU speed options
   in RetroArch. Windows includes keyboard and gamepad input, fullscreen,
   BMP screenshots and MKV recording.

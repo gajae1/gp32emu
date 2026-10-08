@@ -28,6 +28,8 @@ int save_atomic_begin(save_atomic_t *st, const char *path, char *err, size_t err
 /* Close the stage and replace path with it. Returns 1 on success. On failure
  * path keeps its previous contents and the stage is deleted. st ends idle. */
 int save_atomic_commit(save_atomic_t *st, const char *path, char *err, size_t err_len);
+/* Flush staged data to the host device before publishing a persistent save. */
+int save_atomic_sync(save_atomic_t *st, char *err, size_t err_len);
 
 /* Close and delete only the stage created by save_atomic_begin, never path.
  * Safe on an idle state and after a failed commit. */

@@ -123,6 +123,18 @@ int save_atomic_begin(save_atomic_t *st, const char *path, char *err, size_t err
 #endif
 }
 
+int save_atomic_sync(save_atomic_t *st, char *err, size_t err_len) {
+    if (!st || !st->file) return 0;
+    int ok = fflush(st->file) == 0;
+#if defined(_WIN32)
+    if (ok) ok = _commit(_fileno(st->file)) == 0;
+#elif !defined(GP32EMU_WASM)
+    if (ok) ok = fsync(fileno(st->file)) == 0;
+#endif
+    if (!ok && err && err_len) snprintf(err, err_len, "sync staged save: %s", strerror(errno));
+    return ok;
+}
+
 int save_atomic_commit(save_atomic_t *st, const char *path, char *err, size_t err_len) {
     if (!st || !st->active || !st->file || !path) {
         if (err && err_len) snprintf(err, err_len, "no staged save file for %s", path ? path : "");
