@@ -22,5 +22,6 @@ caches textures, so restart it after replacing the image.
 A Spruce build with `standard_launch.sh`, per-system core lookup and the 64-bit H700 RetroArch is
 required. Other firmware versions may need a different launcher.
 
-`docs/KOREAN_LIBRARY.md` describes how to check a folder of game files for duplicates.
+To check a local game folder for duplicates without changing its files, run
+`python scripts/korean_library.py /path/to/roms` from the repository root.
 
