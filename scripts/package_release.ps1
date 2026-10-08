@@ -6,6 +6,7 @@ param(
     [Parameter(Mandatory)][string]$AndroidArmv7Build,
     [Parameter(Mandatory)][string]$SdlDll,
     [Parameter(Mandatory)][string]$SdlLicense,
+    [Parameter(Mandatory)][string]$StripTool,
     [Parameter(Mandatory)][string]$OutputDirectory
 )
 $ErrorActionPreference = 'Stop'
@@ -26,7 +27,7 @@ $targets = @(
     @{Name='android-armv7';Build=$AndroidArmv7Build;Files=@('gp32emu_libretro_android.so')}
 )
 # Validate inputs before creating a partial distribution.
-$required = @($SdlDll, $SdlLicense, "$repo/docs/RELEASE-$version.md")
+$required = @($SdlDll, $SdlLicense, $StripTool, "$repo/docs/RELEASE-$version.md")
 foreach ($target in $targets) {
     foreach ($file in $target.Files) { $required += Join-Path $target.Build $file }
 }
@@ -37,6 +38,11 @@ foreach ($target in $targets) {
     $dest = Join-Path $out $target.Name
     New-Item -ItemType Directory -Force $dest | Out-Null
     foreach ($file in $target.Files) { Copy-Item -LiteralPath (Join-Path $target.Build $file) -Destination $dest }
+    # Strip only the distribution copies; retain build symbols for diagnosis.
+    foreach ($file in $target.Files | Where-Object { $_.EndsWith('.so') }) {
+        & $StripTool --strip-debug (Join-Path $dest $file)
+        if ($LASTEXITCODE -ne 0) { throw "Cannot strip debug information from $($target.Name)/$file" }
+    }
     Copy-Item -LiteralPath "$repo/gp32emu_libretro.info" -Destination $dest
 }
 Copy-Item -LiteralPath $SdlDll -Destination "$out/windows-x64/SDL3.dll"

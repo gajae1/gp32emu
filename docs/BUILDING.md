@@ -35,6 +35,12 @@ integration and native ARM device use remain unverified.
 For Linux AArch64 cross-compilation, put Zig 0.13.0 on PATH and use the toolchain
 file in `cmake/toolchains/`. It targets Cortex-A53 and glibc 2.17 or newer.
 
+`scripts/package_release.ps1` assembles a fresh distribution directory from the
+four build directories and SDL3 inputs. Pass `-StripTool` with the path to
+`llvm-strip` (included in the Android NDK). It removes debug information only
+from packaged `.so` copies; original build outputs keep their symbols. Tests,
+build caches and local results are not copied into the distribution.
+
 ## Standalone frontends
 
 Enable the desired frontend in the same CMake configuration:
