@@ -23,8 +23,7 @@ With a multi-configuration generator, select Release when building with
 Android requires the NDK toolchain configuration; CMake produces
 `gp32emu_libretro_android.so`, while `jni/Android.mk` produces
 `libs/<abi>/libretro.so`. See [ANDROID_BUILD.md](ANDROID_BUILD.md) for the Android
-steps and [README_LIBRETRO.md](libretro/README_LIBRETRO.md) for core development
-notes. `Makefile.libretro` also builds the legacy Linux core.
+steps. `Makefile.libretro` also builds the legacy Linux core.
 
 The Android build script accepts `arm64-v8a` and `armeabi-v7a`. Building `x86_64`
 requires a manual NDK CMake configuration with `-DANDROID_ABI=x86_64` or

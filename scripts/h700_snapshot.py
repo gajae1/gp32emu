@@ -9,8 +9,7 @@ Every remote command is read-only: no sudo, no process is started or killed,
 no remote file is created, edited or deleted. Missing files and permission
 errors are recorded in "errors" and per capture instead of aborting the run.
 
-Paths follow docs/PORTABILITY_PROGRESS.md: the
-core is /mnt/SDCARD/Emu/GP32/gp32emu_libretro.so and the RA process names are
+The core is /mnt/SDCARD/Emu/GP32/gp32emu_libretro.so and the RA process names are
 ra64.h700 and the GP32-only ra64.gp32.h700. Set GP32_SSH_PASSWORD in the
 environment.
 """
