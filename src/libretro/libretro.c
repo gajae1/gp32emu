@@ -1097,6 +1097,10 @@ void retro_run(void) {
         }
     }
     flush_audio();
+    if (smartmedia_save_path[0] && gp32_poll_card_progress(emu, smartmedia_save_path) != GP32_OK) {
+        lr_log(RETRO_LOG_ERROR, "[gp32emu] Automatic card save failed: %s\n", gp32_get_error(emu));
+        lr_message("GP32 automatic save failed. Check space and write access; retrying in the background.");
+    }
 }
 
 static int load_content(gp32_t *g, const struct retro_game_info *game, content_boot_t boot) {

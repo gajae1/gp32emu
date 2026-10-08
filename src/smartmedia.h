@@ -23,6 +23,11 @@ size_t smc_image_size(const smc_t *smc);
 int smc_is_dirty(const smc_t *smc);
 int smc_save_changes(smc_t *smc, const char *path, char *err, size_t err_len);
 int smc_load_changes(smc_t *smc, const char *path, char *err, size_t err_len);
+/* Poll on the emulator thread; a worker owns only an immutable save snapshot.
+ * now_ms is monotonic host time. Errors are reported once until a save succeeds. */
+int smc_autosave_poll(smc_t *smc, const char *path, uint64_t now_ms, char *err, size_t err_len);
+int smc_autosave_wait(smc_t *smc, char *err, size_t err_len);
+uint64_t smc_host_time_ms(void);
 uint8_t *smc_copy_image(const smc_t *smc, size_t *size);
 int smc_state_save(const smc_t *smc, FILE *f);
 int smc_state_load(smc_t *smc, FILE *f);

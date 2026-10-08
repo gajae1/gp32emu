@@ -72,8 +72,12 @@ for controls, options and installation details.
 ## Saves
 
 For an unpacked `.smc` file, the original card image is never modified. Ordinary
-card accesses during play work as before; when the game is closed or replaced,
-changed card pages are stored in a small persistent save file. Windows uses
+card accesses during play work as before. Windows and RetroArch save changed
+card pages automatically, at most once per 10 seconds after card writes have
+been idle for 2 seconds, and flush again when the game is closed or replaced.
+Release builds write in the background to keep storage I/O off the emulation
+thread. Saves are staged and flushed before replacing the previous file;
+failed attempts retain pending changes and retry. Windows uses
 `<original filename including .smc>.gp32.sav` next
 to the ROM, for example `game.smc.gp32.sav`. RetroArch uses `<stem>.gp32.sav`
 in its configured save directory. The save location must be writable, and the

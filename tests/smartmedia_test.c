@@ -58,6 +58,8 @@ static void check_progress(bool header) {
     CHECK(smc_load_buffer(s, original, size, err, sizeof(err)), "mount original");
     CHECK(smc_save_changes(s, path, err, sizeof(err)), "save unchanged card");
     CHECK(smc_load_changes(s, path, err, sizeof(err)), "reload unchanged card");
+    FILE *snapshot = tmpfile();
+    CHECK(snapshot && smc_state_save(s, snapshot), "capture clean card state");
 
     /* Erasing must persist spare bytes too, and a later program must survive
      * a fresh mount without changing any other block. */
@@ -99,13 +101,72 @@ static void check_progress(bool header) {
     CHECK(smc_load_changes(s, path, err, sizeof(err)), "import full card save");
     actual = smc_copy_image(s, &actual_size);
     CHECK(actual && actual_size == size && !memcmp(actual, expected, size), "legacy import exact bytes");
+    if (snapshot) {
+        rewind(snapshot);
+        CHECK(smc_state_load(s, snapshot), "restore previously clean state");
+        CHECK(smc_is_dirty(s), "state rollback must reach persistent storage");
+        fclose(snapshot);
+    }
 done:
     remove(path);
     free(actual); free(expected); free(original);
     smc_destroy(s);
 }
 
+static void erase_block(smc_t *s, unsigned page) {
+    smc_command_w(s, 0x60); smc_address_w(s, (uint8_t)page);
+    smc_address_w(s, (uint8_t)(page >> 8)); smc_command_w(s, 0xd0);
+}
+
+static void check_autosave(void) {
+    const char *path = "smartmedia-auto-test.tmp";
+    size_t size = 8192u * 528u;
+    uint8_t *original = calloc(1, size);
+    smc_t *s = smc_create(), *restored = smc_create();
+    char err[256] = {0};
+    CHECK(original && s && restored, "allocate autosave fixture");
+    if (!original || !s || !restored) goto done;
+    remove(path);
+    CHECK(smc_load_buffer(s, original, size, err, sizeof(err)), "autosave original");
+    CHECK(smc_autosave_poll(s, path, 100, err, sizeof(err)), "initial idle poll");
+    erase_block(s, 16);
+    CHECK(smc_autosave_poll(s, path, 200, err, sizeof(err)), "observe card write");
+    CHECK(smc_autosave_poll(s, path, 1000, err, sizeof(err)), "coalesce pending write");
+    FILE *f = fopen(path, "rb"); CHECK(!f, "no early storage write"); if (f) fclose(f);
+    CHECK(smc_autosave_poll(s, path, 10100, err, sizeof(err)), "start periodic save");
+    /* New writes while a snapshot is pending must remain dirty after its join. */
+    erase_block(s, 32);
+    CHECK(smc_autosave_wait(s, err, sizeof(err)), "join background save");
+    CHECK(smc_is_dirty(s), "later write survives worker completion");
+    CHECK(smc_load_buffer(restored, original, size, err, sizeof(err)) &&
+          smc_load_changes(restored, path, err, sizeof(err)), "reopen before emulator exit");
+    CHECK(read_page(restored, 16) == 0xff && read_page(restored, 32) == 0,
+          "worker captured only the original snapshot");
+    CHECK(smc_save_changes(s, path, err, sizeof(err)), "exit flush includes newer writes");
+    CHECK(smc_load_changes(restored, path, err, sizeof(err)) && read_page(restored, 32) == 0xff,
+          "final save is never overwritten by an older worker");
+    CHECK(!smc_is_dirty(s), "committed current image is clean");
+    remove(path);
+    CHECK(smc_autosave_poll(s, path, 50000, err, sizeof(err)) && smc_autosave_wait(s, err, sizeof(err)), "idle after commit");
+    f = fopen(path, "rb"); CHECK(!f, "unchanged card causes no write"); if (f) fclose(f);
+    CHECK(smc_save_changes(s, path, err, sizeof(err)), "seed previous valid save");
+    erase_block(s, 48);
+    CHECK(smc_autosave_poll(s, path, 50100, err, sizeof(err)), "observe retry fixture");
+    CHECK(smc_autosave_poll(s, "smartmedia-auto-test.tmp/blocked", 60100, err, sizeof(err)), "start failed write");
+    CHECK(!smc_autosave_wait(s, err, sizeof(err)) && smc_is_dirty(s), "failed save retains pending changes");
+    CHECK(smc_load_changes(restored, path, err, sizeof(err)) && read_page(restored, 48) == 0,
+          "failed save preserves previous file");
+    CHECK(smc_autosave_poll(s, path, 60101, err, sizeof(err)) && smc_autosave_wait(s, err, sizeof(err)), "retry is throttled");
+    CHECK(smc_is_dirty(s), "throttled retry has not cleared changes");
+    CHECK(smc_autosave_poll(s, path, 70100, err, sizeof(err)) && smc_autosave_wait(s, err, sizeof(err)), "retry recovers");
+    CHECK(smc_load_changes(restored, path, err, sizeof(err)) && read_page(restored, 48) == 0xff,
+          "retry persists previously failed changes");
+done:
+    smc_destroy(s); smc_destroy(restored); free(original); remove(path);
+}
+
 int main(void) {
+    check_autosave();
     for (unsigned header = 0; header < 2; ++header) {
         check_progress(header != 0);
         check_card(8192, 0xe3, 16, header != 0);
