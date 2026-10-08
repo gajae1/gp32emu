@@ -5,17 +5,19 @@ BIOS와 게임 파일은 포함하지 않습니다. 직접 보유한 덤프를 �
 
 ## 필요한 파일
 
-| 대상 | 패키지 폴더와 실행 파일 |
+| 대상 | ZIP 패키지와 루트의 실행 파일 |
 | --- | --- |
-| Windows x64 독립 실행 | `windows-x64/gp32emu_win64.exe`, 같은 폴더의 `SDL3.dll` |
-| Windows x64 RetroArch | `windows-x64/gp32emu_libretro.dll` |
-| Linux AArch64 RetroArch | `linux-aarch64/gp32emu_libretro.so` |
-| Android ARM64 RetroArch | `android-arm64/gp32emu_libretro_android.so` |
-| Android ARMv7 RetroArch | `android-armv7/gp32emu_libretro_android.so` |
+| Windows x64 독립 실행 | `gp32emu-1.0.0-windows-x64.zip`: `gp32emu_win64.exe`, `SDL3.dll` |
+| Windows x64 RetroArch | `gp32emu-1.0.0-libretro-windows-x64.zip`: `gp32emu_libretro.dll` |
+| Linux AArch64 RetroArch | `gp32emu-1.0.0-linux-aarch64.zip`: `gp32emu_libretro.so` |
+| Android ARM64 RetroArch | `gp32emu-1.0.0-android-arm64.zip`: `gp32emu_libretro_android.so` |
+| Android ARMv7 RetroArch | `gp32emu-1.0.0-android-armv7.zip`: `gp32emu_libretro_android.so` |
 
-각 코어 폴더에는 `gp32emu_libretro.info`도 있습니다. Linux 코어는 glibc 2.17 이상,
-Android 코어는 API 21 이상을 대상으로 합니다. Android는 컴파일만 확인했으며 실제 실행은
-미검증입니다. ARMv7은 JIT 없이 동작하므로 ARM64보다 상당히 느립니다.
+각 코어 ZIP에는 `gp32emu_libretro.info`도 포함되어 있습니다. 모든 ZIP에는 README,
+릴리스 노트, 이 설명서, `licenses/`, `manifest.json`이 함께 들어 있습니다.
+Linux 코어는 glibc 2.17 이상, Android 코어는 API 21 이상을 대상으로 합니다.
+Android는 컴파일만 확인했으며 실제 실행은 미검증입니다. ARMv7은 JIT 없이 동작하므로
+ARM64보다 상당히 느립니다.
 
 게임은 `.smc` 카드 이미지와 `.fxe`, `.fpk` 형식을 엽니다. GP32 BIOS 1.6.6 사용을
 권장합니다. BIOS 없이 실행할 수 있는 게임은 제한되어 있습니다.
@@ -28,6 +30,10 @@ Android 코어는 API 21 이상을 대상으로 합니다. Android는 컴파일�
 3. `File > Open SmartMedia image...`, `Open FXE...`, `Open FPK...`로 해당 게임을 엽니다.
 
 BIOS 경로와 설정은 실행 파일 옆의 `GP32emu.ini`에 저장하므로 쓰기 가능한 폴더에 두세요.
+`File > Game library...`의 `Choose folder...`에서 게임 폴더 하나를 등록하면
+목록에서 게임을 더블클릭해 실행할 수 있습니다. 해당 폴더 바로 아래의 SMC·FXE·FPK만
+표시하며, 하위 폴더와 저장 이미지는 제외합니다. ZIP은 먼저 압축을 풀어 주세요.
+등록한 폴더는 다음 실행에도 유지되며, 파일을 추가했다면 `Refresh`로 갱신합니다.
 BIOS가 설정되지 않으면 HLE 대체 실행을 사용한다는 경고가 나옵니다. 이 경로로 시작하지
 못하는 게임은 BIOS를 지정해서 실행하세요.
 
@@ -49,7 +55,14 @@ BIOS가 설정되지 않으면 HLE 대체 실행을 사용한다는 경고가 �
 | F8 | 세이브 스테이트 불러오기 대화상자 |
 | F12 | BMP 스크린샷 저장 대화상자 |
 | F11 또는 Alt+Enter | 전체화면 전환 |
-| Esc | 전체화면이면 창 모드로 전환, 창 모드이면 프로그램 종료 |
+| Esc | 전체화면이면 창 모드로 전환. 프로그램을 종료하지 않음 |
+
+위 표는 기본 배치입니다. `Config > Keyboard controls...`에서 바꿀 버튼을 클릭하고
+새 키를 누른 뒤 `OK`를 선택하면 저장됩니다. 이미 쓰는 키를 지정하면 두 버튼의 키를
+서로 바꿉니다. `Defaults`는 기본 배치 복원, `Cancel`은 변경 취소입니다.
+키 입력 대기 중 Esc는 해당 입력을 취소합니다. Esc·Alt·Windows 키와
+F5/F8/F10/F11/F12는 창 조작과 단축키용으로 예약되어 있습니다.
+종료는 창 닫기 버튼, `File > Exit` 또는 Alt+F4를 사용하세요.
 
 F5/F8은 자동 슬롯 저장·불러오기가 아닙니다. 파일 대화상자에서 경로를 선택합니다.
 `File` 메뉴의 `Save State...`, `Load State...`, `Take Screenshot...`도 같은 기능입니다.
@@ -130,18 +143,20 @@ CPU speed는 소리 높이·타이머·화면 갱신 주기를 바꾸지 않고 
 
 ### 게임 안에서 저장
 
-게임 내 저장은 SmartMedia 카드에 기록됩니다. 에뮬레이터는 원본 카드 파일을 바꾸지 않고
-별도 저장 이미지를 만들며, 게임을 닫거나 다른 콘텐츠를 열 때 기록합니다.
+게임 내 저장 위치와 형식은 각 게임이 결정합니다. 압축을 푼 `.smc`를 실행하면
+**원본 카드 이미지는 수정하지 않습니다**. 실행 중 카드 읽기·쓰기는 이전과 같게
+동작하고, 게임을 닫거나 바꿀 때 변경된 페이지만 별도 저장 파일에 기록합니다.
+Windows는 원본 파일 이름에 `.gp32.sav`를 붙인 파일, 예를 들어 `game.smc` 옆의
+`game.smc.gp32.sav`를 사용합니다. RetroArch는 저장 폴더에 `게임이름.gp32.sav`를
+사용합니다. 저장 위치에는 쓰기 권한이 필요하고, 변경분은 정확히 같은 원본 `.smc`
+위로만 불러옵니다. ZIP은 먼저 압축을 풀어 주세요. RetroArch가 저장 폴더를 제공하지
+않으면 시스템 폴더를 사용합니다. 확장자를 뺀 파일 이름이 같은 게임은 저장 경로도
+같으므로 서로 다른 저장 폴더를 사용하세요.
 
-| 실행 방식 | 저장 이미지 위치 |
-| --- | --- |
-| Windows에서 BIOS로 실행한 `game.smc` | 원본 옆의 `game.smc.gp32.smc` |
-| RetroArch에서 카드를 연결해 실행한 `game.smc` | RetroArch 저장 폴더의 `game.gp32.smc` |
-
-다음 로드 때 기존 저장 이미지를 자동으로 불러옵니다. Windows에서는 원본 카드 폴더에
-쓰기 권한이 필요합니다. RetroArch가 저장 폴더를 제공하지 않으면 코어는 시스템 폴더를
-사용합니다. 같은 저장 폴더에서는 경로가 달라도 확장자를 뺀 게임 이름이 같으면 같은
-저장 파일을 공유합니다.
+예전 전체 카드 저장 파일인 `.gp32.smc`는 자동으로 가져옵니다. 새 페이지 저장에
+성공한 뒤 사용된 예전 이미지를 삭제하며, 삭제에 실패해도 새 저장이 유지됩니다.
+전체 카드 이미지로 된 `.gp32.sav`도 불러올 수 있습니다. 유효하지 않은 저장 파일이나
+원본이 다른 변경분 파일은 덮어쓰지 않고 로드를 중단합니다.
 
 Windows HLE 실행과 RetroArch의 일반 직접 부팅은 쓰기 가능한 카드 장치를 연결하지 않으므로
 게임 내 저장을 보존하지 못합니다. RetroArch가 자동 판별한 자작 카드 직접 부팅은 카드를
@@ -149,7 +164,7 @@ Windows HLE 실행과 RetroArch의 일반 직접 부팅은 쓰기 가능한 카�
 
 저장 실패 알림이 나오면 최신 진행 상황이 파일에 남지 않았을 수 있습니다. 공간과 쓰기 권한을
 확인하세요. 기존 저장 이미지가 읽히지 않으면 이를 보호하기 위해 게임 로드가 중단됩니다.
-원본 카드와 저장 이미지는 각각 백업해 두세요.
+중요한 진행 상황이 담긴 카드 파일은 별도로 백업해 두세요.
 
 ### 세이브 스테이트
 
@@ -158,10 +173,9 @@ Windows에서는 F5/F8 대화상자로 `.gp32st` 파일을 저장·불러옵니�
 스크린샷도 F12 대화상자에서 저장 위치를 선택하며 기본 제안 이름은 `gp32_screenshot.bmp`입니다.
 RetroArch에서는 프런트엔드의 스테이트 저장·불러오기 기능을 사용합니다.
 
-스테이트는 실행 상태와 메모리, 연결된 카드의 상태를 담습니다. 카드 데이터는 원본 대비 변경분만
-담거나 전체 이미지를 담을 수 있으므로 크기가 일정하지 않습니다. 원본 카드 파일을 그대로
-보관하고 같은 콘텐츠를 연 뒤 스테이트를 불러오세요. 변경분으로 저장된 스테이트는 기준 카드가
-다르면 복원할 수 없습니다. 스테이트를 불러오면 카드 내용도 그 시점으로 돌아갈 수 있습니다.
+스테이트는 CPU·메모리·연결된 카드까지 포함하는 순간 저장입니다. 카드 변경분은
+원본 기준으로 저장될 수 있으므로 해당 원본 ROM을 그대로 보관하세요. 스테이트를
+불러오면 게임 내 저장 내용도 그 시점으로 돌아갑니다.
 
 스테이트는 게임 내 저장 이미지와 별개입니다. 다른 빌드나 프런트엔드 사이의 스테이트 호환성은
 보장하지 않습니다. 실제 RetroArch 세션에서의 되감기와 런어헤드는 미검증입니다.
@@ -184,4 +198,4 @@ RetroArch에서는 프런트엔드의 스테이트 저장·불러오기 기능�
 지연 비교, 장시간 플레이는 미확인입니다. Android 실행, Qt 실행, 브라우저 재생도 미검증입니다.
 
 프로젝트 출처와 라이선스 고지는 [README](../README.md#credits-and-licensing)와
-[licenses/](../licenses/)에 있습니다. SDL3 고지는 패키지의 `windows-x64/SDL3-LICENSE.txt`에 있습니다.
+[licenses/](../licenses/)에 있습니다. Windows ZIP에는 `SDL3-LICENSE.txt`도 들어 있습니다.

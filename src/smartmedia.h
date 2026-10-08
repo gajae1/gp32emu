@@ -21,6 +21,9 @@ void smc_address_w(smc_t *smc, uint8_t data);
 void smc_data_w(smc_t *smc, uint8_t data);
 size_t smc_image_size(const smc_t *smc);
 int smc_is_dirty(const smc_t *smc);
+int smc_save_changes(smc_t *smc, const char *path, char *err, size_t err_len);
+int smc_load_changes(smc_t *smc, const char *path, char *err, size_t err_len);
+uint8_t *smc_copy_image(const smc_t *smc, size_t *size);
 int smc_state_save(const smc_t *smc, FILE *f);
 int smc_state_load(smc_t *smc, FILE *f);
 
@@ -43,7 +46,7 @@ int smc_state_load_io(smc_t *smc, state_io_t *io, smc_state_format_t format);
 
 /* The image a v0014 delta section is expressed against.
  *
- * The libretro core keeps the frontend content (<rom>.smc) as this base: every
+ * Immutable-content frontends keep their content as this base: every
  * later session of the same game passes that same content again, so a state
  * saved in one session still loads in a later one, even after the guest wrote
  * its save data to the persisted card. */

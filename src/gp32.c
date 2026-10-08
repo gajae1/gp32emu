@@ -4326,6 +4326,30 @@ gp32_status_t gp32_save_smartmedia(gp32_t *g, const char *path) {
     return GP32_OK;
 }
 
+gp32_status_t gp32_save_card_progress(gp32_t *g, const char *path) {
+    if (!g || !path) return GP32_ERR_INVALID_ARGUMENT;
+    char e[256] = {0};
+    if (!s3c2400_save_card_progress(g->soc, path, e, sizeof(e))) { seterr(g, "%s", e[0] ? e : "Card progress save failed"); return GP32_ERR_IO; }
+    return GP32_OK;
+}
+
+gp32_status_t gp32_load_card_progress(gp32_t *g, const char *path) {
+    if (!g || !path) return GP32_ERR_INVALID_ARGUMENT;
+    char e[256] = {0};
+    if (!s3c2400_load_card_progress(g->soc, path, e, sizeof(e))) { seterr(g, "%s", e[0] ? e : "Card progress load failed"); return GP32_ERR_BAD_IMAGE; }
+    return GP32_OK;
+}
+
+gp32_status_t gp32_boot_mounted_smartmedia(gp32_t *g, const char *label) {
+    if (!g) return GP32_ERR_INVALID_ARGUMENT;
+    size_t size = 0;
+    uint8_t *image = s3c2400_copy_smartmedia(g->soc, &size);
+    if (!image) { seterr(g, "Cannot copy mounted card for direct boot"); return GP32_ERR_IO; }
+    gp32_status_t st = gp32_load_smartmedia_direct_data(g, image, size, label);
+    free(image);
+    return st;
+}
+
 /* The retail firmware answers a reboot request by restarting the machine: it
  * clears RAM, reloads the firmware and jumps to the entry the launcher
  * published. Direct mode has no firmware to re-enter, so the equivalent is to

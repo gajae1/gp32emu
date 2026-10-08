@@ -1,0 +1,35 @@
+#ifndef GP32_WIN64_UI_H
+#define GP32_WIN64_UI_H
+
+/* Shared with the Windows resource compiler. */
+#define IDD_KEYBOARD 201
+#define IDD_LIBRARY 202
+#define IDC_KEY_FIRST 2000
+#define IDC_KEY_DEFAULTS 2010
+#define IDC_KEY_HINT 2011
+#define IDC_GAME_FOLDER 2100
+#define IDC_GAME_BROWSE 2101
+#define IDC_GAME_LIST 2102
+#define IDC_GAME_REFRESH 2103
+#define IDC_GAME_HINT 2104
+
+#ifndef RC_INVOKED
+#include <windows.h>
+#include <stdint.h>
+
+#define GP32_KEY_COUNT 10
+typedef struct gp32_win64_preferences {
+    UINT keys[GP32_KEY_COUNT];
+    char game_folder[MAX_PATH];
+} gp32_win64_preferences_t;
+
+void gp32_win64_preferences_load(gp32_win64_preferences_t *p, const char *ini);
+void gp32_win64_preferences_save(const gp32_win64_preferences_t *p, const char *ini);
+uint32_t gp32_win64_key_button(const gp32_win64_preferences_t *p, WPARAM vk);
+int gp32_win64_is_card_save(const char *path);
+int gp32_win64_is_game(const char *path);
+int gp32_win64_keyboard_dialog(HWND owner, HINSTANCE inst, gp32_win64_preferences_t *p);
+int gp32_win64_library_dialog(HWND owner, HINSTANCE inst, gp32_win64_preferences_t *p,
+                              char path[MAX_PATH]);
+#endif
+#endif

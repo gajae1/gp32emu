@@ -77,13 +77,13 @@ CORE_SRC := \
 
 WIN64_SRC := \
   src/win64/gp32_win64_main.c \
+  src/win64/gp32_win64_ui.c \
   src/win64/gp32_win64_video.c \
   src/win64/gp32_win64_audio.c \
   src/win64/gp32_win64_sdl_input.c \
   src/input/gp32_sdl3_input_shared.c
 
 OBJ := $(patsubst %.c,$(BUILD)/%.o,$(CORE_SRC) $(WIN64_SRC))
-ICON_RC := $(BUILD)/gp32emu_icon.rc
 ICON_RES := $(BUILD)/gp32emu_icon.res.o
 
 .DEFAULT_GOAL := all
@@ -121,12 +121,9 @@ check-sdl: sdl
 $(TARGET): $(OBJ) $(ICON_RES) | check-sdl check-resource-toolchain
 	$(CC) $(CFLAGS) $(CPPFLAGS) -o $@ $^ $(LDFLAGS) $(LDLIBS)
 
-$(ICON_RC): resources/gp32emu.ico | check-resource-toolchain
+$(ICON_RES): src/win64/gp32emu.rc src/win64/gp32_win64_ui.h resources/gp32emu.ico | check-resource-toolchain
 	@mkdir -p $(dir $@)
-	printf '101 ICON "%s"\n' "$(abspath $<)" > $@
-
-$(ICON_RES): $(ICON_RC)
-	$(WINDRES) --codepage=65001 --output-format=coff --target=pe-x86-64 -i $< -o $@
+	$(WINDRES) --codepage=65001 --include-dir=src/win64 --output-format=coff --target=pe-x86-64 -i $< -o $@
 
 $(BUILD)/src/third_party/zip/zip.o: src/third_party/zip/zip.c src/third_party/zip/zip.h src/third_party/zip/miniz.h | check-sdl
 	@mkdir -p $(dir $@)

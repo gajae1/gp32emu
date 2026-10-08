@@ -643,6 +643,122 @@ int smc_save_file(smc_t *s, const char *path, char *err, size_t err_len) {
 
 int smc_is_dirty(const smc_t *s) { return s ? s->dirty : 0; }
 
+/* Persistent saves are not machine snapshots: an explicit little-endian
+ * 64-byte header binds sorted page records to the immutable card image.
+ * Header: magic[8], page bytes/u32, pages/u32, records/u32, card header/u32,
+ * base payload bytes/u64, base digest[16], body digest[16]. The body contains
+ * the card header followed by {page index/u32, complete NAND page} records.
+ * Both the data and spare area of each page are preserved. */
+#define SMC_SAVE_HEAD 64u
+static const uint8_t smc_save_magic[8] = {'G','P','3','2','S','A','V','1'};
+
+uint8_t *smc_copy_image(const smc_t *s, size_t *size) {
+    if (!s || !s->data || !size) return NULL;
+    *size = s->header_size + s->data_size;
+    uint8_t *image = malloc(*size);
+    if (image) {
+        memcpy(image, s->header, s->header_size);
+        memcpy(image + s->header_size, s->data, s->data_size);
+    }
+    return image;
+}
+
+int smc_save_changes(smc_t *s, const char *path, char *err, size_t err_len) {
+    if (!s || !path || !s->data) return 0;
+    /* Older states can mount cards with no matching base. Preserve them in
+     * full rather than inventing a delta against unrelated bytes. */
+    if (!smc_base_geometry_ok(s)) return smc_save_file(s, path, err, err_len);
+    size_t body_size = s->header_size + (size_t)s->diff_pages * (4u + s->page_total_size);
+    uint8_t *body = malloc(body_size ? body_size : 1u);
+    if (!body) { if (err && err_len) snprintf(err, err_len, "out of memory preparing card save"); return 0; }
+    memcpy(body, s->header, s->header_size);
+    size_t pos = s->header_size;
+    for (uint32_t page = 0; page < s->num_pages; ++page) {
+        if (!(s->page_diff[page >> 3] & (1u << (page & 7)))) continue;
+        if (body_size - pos < 4u + s->page_total_size) { free(body); return 0; }
+        gp32_st32le(body + pos, page);
+        memcpy(body + pos + 4u, s->data + (size_t)page * s->page_total_size, s->page_total_size);
+        pos += 4u + s->page_total_size;
+    }
+    if (pos != body_size) { free(body); return 0; }
+    uint8_t head[SMC_SAVE_HEAD] = {0};
+    memcpy(head, smc_save_magic, sizeof(smc_save_magic));
+    gp32_st32le(head + 8, s->page_total_size);
+    gp32_st32le(head + 12, s->num_pages);
+    gp32_st32le(head + 16, s->diff_pages);
+    gp32_st32le(head + 20, (uint32_t)s->header_size);
+    gp32_st32le(head + 24, (uint32_t)s->base_size);
+    /* Maximum card size is 128 MiB, so the high size word is zero. */
+    memcpy(head + 32, s->base_digest, 16);
+    smc_image_digest(body, body_size, head + 48);
+    save_atomic_t stage;
+    int ok = save_atomic_begin(&stage, path, err, err_len);
+    if (ok) {
+        ok = fwrite(head, 1, sizeof(head), stage.file) == sizeof(head) &&
+             fwrite(body, 1, body_size, stage.file) == body_size;
+        if (ok) ok = save_atomic_commit(&stage, path, err, err_len);
+        else {
+            save_atomic_abort(&stage);
+            if (err && err_len) snprintf(err, err_len, "writing card changes failed");
+        }
+    }
+    free(body);
+    if (ok) s->dirty = 0;
+    return ok;
+}
+
+int smc_load_changes(smc_t *s, const char *path, char *err, size_t err_len) {
+    if (!s || !path) return 0;
+    FILE *f = fopen(path, "rb");
+    if (!f) { if (err && err_len) snprintf(err, err_len, "cannot open card save: %s", path); return 0; }
+    uint8_t head[SMC_SAVE_HEAD], digest[16];
+    size_t got = fread(head, 1, sizeof(head), f);
+    if (got < 8 || memcmp(head, smc_save_magic, 8)) {
+        fclose(f);
+        return smc_load_file_over_base(s, path, err, err_len);
+    }
+    uint8_t *body = NULL, *image = NULL;
+    int ok = 0;
+    if (got != sizeof(head) || !s->base) goto done;
+    uint32_t page_bytes = gp32_ld32le(head + 8), pages = gp32_ld32le(head + 12);
+    uint32_t count = gp32_ld32le(head + 16), header_bytes = gp32_ld32le(head + 20);
+    uint32_t base_bytes = gp32_ld32le(head + 24);
+    if (!pages || page_bytes != s->base_page_total_size || pages != s->base_num_pages ||
+        count > pages || (header_bytes != 0 && header_bytes != sizeof(s->header)) ||
+        base_bytes != s->base_size || gp32_ld32le(head + 28) != 0 ||
+        base_bytes > SMC_STATE_MAX_IMAGE || (uint64_t)page_bytes * pages != base_bytes ||
+        memcmp(head + 32, s->base_digest, 16)) goto done;
+    size_t body_size = header_bytes + (size_t)count * (4u + page_bytes);
+    if (fseek(f, 0, SEEK_END) != 0 || ftell(f) != (long)(SMC_SAVE_HEAD + body_size) ||
+        fseek(f, SMC_SAVE_HEAD, SEEK_SET) != 0) goto done;
+    body = malloc(body_size ? body_size : 1u);
+    if (!body || fread(body, 1, body_size, f) != body_size) goto done;
+    smc_image_digest(body, body_size, digest);
+    if (memcmp(digest, head + 48, 16)) goto done;
+    image = malloc((size_t)header_bytes + base_bytes);
+    if (!image) goto done;
+    memcpy(image, body, header_bytes);
+    memcpy(image + header_bytes, s->base, base_bytes);
+    uint32_t previous = 0;
+    size_t pos = header_bytes;
+    for (uint32_t i = 0; i < count; ++i) {
+        uint32_t page = gp32_ld32le(body + pos);
+        if (page >= pages || (i && page <= previous)) goto done;
+        memcpy(image + header_bytes + (size_t)page * page_bytes, body + pos + 4u, page_bytes);
+        pos += 4u + page_bytes;
+        previous = page;
+    }
+    /* Parse/stage first: truncated, foreign or corrupt input leaves the live
+     * card unchanged. Mounting rebuilds the same difference map as guest writes. */
+    ok = smc_load_buffer_over_base(s, image, (size_t)header_bytes + base_bytes, err, err_len);
+done:
+    fclose(f);
+    free(body);
+    free(image);
+    if (!ok && err && err_len) snprintf(err, err_len, "invalid card save or original card mismatch: %s", path);
+    return ok;
+}
+
 void smc_reset(smc_t *s) {
     if (!s) return;
     s->mode = SM_M_INIT;

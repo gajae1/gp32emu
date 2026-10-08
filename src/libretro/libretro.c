@@ -66,6 +66,9 @@ static char save_dir[4096];
 static char content_dir[4096];
 static char content_path[4096];
 static char smartmedia_save_path[4096];
+static char smartmedia_legacy_path[4096];
+static int smartmedia_legacy_loaded;
+static int smartmedia_save_error;
 static size_t state_capacity;
 static int use_jit;
 static int use_lcd_persistence;
@@ -220,11 +223,15 @@ static void make_runtime_paths(const char *game_path) {
     snprintf(stem, sizeof(stem), "%s", path_basename(game_path));
     strip_ext(stem);
     char smc_name[1200];
-    /* RetroArch-convention name: <save dir>/<rom basename>.gp32.smc.
+    /* RetroArch-convention name: <save dir>/<rom basename>.gp32.sav.
      * Known limitation: ROMs sharing a basename in different folders share
      * one save file. */
-    snprintf(smc_name, sizeof(smc_name), "%s.gp32.smc", stem);
+    snprintf(smc_name, sizeof(smc_name), "%s.gp32.sav", stem);
     join_path(smartmedia_save_path, sizeof(smartmedia_save_path), save_dir, smc_name);
+    snprintf(smc_name, sizeof(smc_name), "%s.gp32.smc", stem);
+    join_path(smartmedia_legacy_path, sizeof(smartmedia_legacy_path), save_dir, smc_name);
+    smartmedia_legacy_loaded = 0;
+    smartmedia_save_error = 0;
 }
 
 /* Flush the persisted SmartMedia image before releasing the emulator. Used by
@@ -232,13 +239,16 @@ static void make_runtime_paths(const char *game_path) {
 static void destroy_emu_with_save(void) {
     state_capacity = 0;
     if (!emu) return;
-    if (smartmedia_save_path[0] && gp32_save_smartmedia(emu, smartmedia_save_path) != GP32_OK) {
+    if (smartmedia_save_path[0] && gp32_save_card_progress(emu, smartmedia_save_path) != GP32_OK) {
         lr_log(RETRO_LOG_ERROR, "[gp32emu] Cannot save SmartMedia to %s: %s\n",
                smartmedia_save_path, gp32_get_error(emu));
         lr_message("GP32 save failed. Check free space and write access; latest progress was not saved.");
+    } else if (smartmedia_save_path[0] && smartmedia_legacy_loaded && remove(smartmedia_legacy_path) != 0) {
+        lr_log(RETRO_LOG_WARN, "[gp32emu] Saved progress; could not remove unused old card %s\n", smartmedia_legacy_path);
     }
     gp32_destroy(emu);
     emu = NULL;
+    smartmedia_legacy_loaded = 0;
 }
 
 /* Which loader starts SmartMedia content.
@@ -254,81 +264,47 @@ typedef enum content_boot {
     CONTENT_BOOT_DIRECT_MEDIA = 2
 } content_boot_t;
 
-/* A persisted SmartMedia image, when present, supersedes the original media.
- * Returns 1 if the save was mounted, 0 if absent, -1 if present but unreadable.
- * The -1 case fails the content load instead of silently mounting the pristine
- * ROM, which would overwrite the save on exit. */
-static int mount_saved_smartmedia(gp32_t *g, int use_direct, int over_base) {
-    if (!smartmedia_save_path[0] || !file_exists(smartmedia_save_path)) return 0;
-    /* The card image mounts over the frontend content, never over its own
-     * savestate base: states stay expressed against the content image. */
-    gp32_status_t st = use_direct ? gp32_load_smartmedia_direct(g, smartmedia_save_path)
-                                  : over_base ? gp32_load_smartmedia_over_base(g, smartmedia_save_path)
-                                              : gp32_load_smartmedia(g, smartmedia_save_path);
-    if (st != GP32_OK) {
-        const char *err = gp32_get_error(g);
-        lr_log(RETRO_LOG_ERROR, "[gp32emu] saved SmartMedia image %s is unreadable: %s\n",
-               smartmedia_save_path, (err && err[0]) ? err : "invalid image");
-        lr_message("GP32emu: saved SmartMedia image is unreadable; load aborted to protect it");
+/* Load changes only after mounting the exact immutable original. A present but
+ * invalid or inaccessible save aborts loading instead of losing progress. */
+static int mount_saved_smartmedia(gp32_t *g) {
+    const char *path = smartmedia_save_path;
+    if (!path[0]) return 0;
+    FILE *f = fopen(path, "rb");
+    if (!f && errno == ENOENT) {
+        path = smartmedia_legacy_path;
+        f = fopen(path, "rb");
+        if (!f && errno == ENOENT) return 0;
+    }
+    if (!f) {
+        smartmedia_save_error = 1;
+        lr_message("GP32emu: cannot read the card save; check access permissions");
         return -1;
     }
-    lr_log(RETRO_LOG_INFO, "[gp32emu] restored saved SmartMedia image: %s\n", smartmedia_save_path);
+    fclose(f);
+    if (gp32_load_card_progress(g, path) != GP32_OK) {
+        smartmedia_save_error = 1;
+        lr_log(RETRO_LOG_ERROR, "[gp32emu] Cannot restore %s: %s\n", path, gp32_get_error(g));
+        lr_message("GP32emu: damaged save or original card mismatch; load aborted to protect progress");
+        return -1;
+    }
+    smartmedia_legacy_loaded = path == smartmedia_legacy_path;
     return 1;
 }
 
-/* Direct boot of a card the guest also reads: mount the card image the way the
- * BIOS path does (the persisted card over the content as its savestate base),
- * then extract and start the executable from that same image. */
-static int load_direct_smartmedia_with_media(gp32_t *g, const void *data, size_t size, const char *path, const char *label) {
-    if (smartmedia_save_path[0] && file_exists(smartmedia_save_path)) {
-        int base_ok = 0;
-        if (data && size) base_ok = gp32_set_smartmedia_state_base(g, data, size) == GP32_OK;
-        else if (path && path[0]) base_ok = gp32_set_smartmedia_state_base_file(g, path) == GP32_OK;
-        if (!base_ok)
-            lr_log(RETRO_LOG_WARN, "[gp32emu] content image unavailable as the savestate base; states will carry the whole card\n");
-        int saved = mount_saved_smartmedia(g, 0, 1);
-        if (saved < 0) return saved;
-        if (saved) return gp32_load_smartmedia_direct(g, smartmedia_save_path) == GP32_OK;
-    }
-    if (data && size) {
-        if (gp32_load_smartmedia_data(g, data, size) != GP32_OK) return 0;
-        return gp32_load_smartmedia_direct_data(g, data, size, label) == GP32_OK;
-    }
-    if (!path || !path[0]) return 0;
-    if (gp32_load_smartmedia(g, path) != GP32_OK) return 0;
-    return gp32_load_smartmedia_direct(g, path) == GP32_OK;
-}
-
-/* Mount the SmartMedia content image and, when a persisted card exists, mount
- * that card over the content instead of in place of it.
- *
- * The content image is the savestate base: it is the image every later session
- * of this game passes again, so a state written against it stays loadable there
- * even after the guest wrote its save data to the persisted card. Returns 0 for
- * a failed load, 1 for a mounted card and -1 for an unreadable persisted image,
- * which must fail the load instead of silently booting the pristine content and
- * overwriting the save on exit. */
 static int load_smartmedia_content(gp32_t *g, const void *data, size_t size, const char *path, const char *label, content_boot_t boot) {
-    if (boot == CONTENT_BOOT_DIRECT_MEDIA) return load_direct_smartmedia_with_media(g, data, size, path, label);
     if (boot == CONTENT_BOOT_DIRECT) {
-        /* Direct boot extracts the executable from the image and mounts no
-         * card device, so no base applies. */
-        int saved = mount_saved_smartmedia(g, 1, 0);
-        if (saved) return saved;
+        /* This boot path extracts a program without mounting a writable card. */
+        smartmedia_save_path[0] = 0;
         if (data && size) return gp32_load_smartmedia_direct_data(g, data, size, label) == GP32_OK;
         return path && path[0] && gp32_load_smartmedia_direct(g, path) == GP32_OK;
     }
-    if (smartmedia_save_path[0] && file_exists(smartmedia_save_path)) {
-        int base_ok = 0;
-        if (data && size) base_ok = gp32_set_smartmedia_state_base(g, data, size) == GP32_OK;
-        else if (path && path[0]) base_ok = gp32_set_smartmedia_state_base_file(g, path) == GP32_OK;
-        if (!base_ok)
-            lr_log(RETRO_LOG_WARN, "[gp32emu] content image unavailable as the savestate base; states will carry the whole card\n");
-        int saved = mount_saved_smartmedia(g, 0, 1);
-        if (saved) return saved;
-    }
-    if (data && size) return gp32_load_smartmedia_data(g, data, size) == GP32_OK;
-    return path && path[0] && gp32_load_smartmedia(g, path) == GP32_OK;
+    gp32_status_t st = data && size ? gp32_load_smartmedia_data(g, data, size)
+                                  : gp32_load_smartmedia(g, path);
+    if (st != GP32_OK) return 0;
+    if (mount_saved_smartmedia(g) < 0) return -1;
+    if (boot == CONTENT_BOOT_DIRECT_MEDIA)
+        return gp32_boot_mounted_smartmedia(g, label) == GP32_OK;
+    return 1;
 }
 
 static int try_bios_path(char *out, size_t outsz, const char *dir, const char *name) {
@@ -1171,6 +1147,7 @@ bool retro_load_game(const struct retro_game_info *game) {
     if (environ_cb) environ_cb(RETRO_ENVIRONMENT_SET_PIXEL_FORMAT, &fmt);
 
     int ext_smc = content_path[0] && has_ext(content_path, "smc");
+    if (!ext_smc && !(game && game->data && game->size && !has_ext(content_path, "fxe") && !has_ext(content_path, "fpk"))) smartmedia_save_path[0] = 0;
     char bios_path[4096];
     int have_bios = find_bios_path(bios_path, sizeof(bios_path), content_path);
 
@@ -1226,7 +1203,7 @@ bool retro_load_game(const struct retro_game_info *game) {
             gp32_destroy(emu);
             emu = NULL;
         }
-        if (boot_mode == 1 || !ext_smc) return false;
+        if (smartmedia_save_error || boot_mode == 1 || !ext_smc) return false;
         lr_log(RETRO_LOG_WARN, "[gp32emu] falling back to BIOSless direct SmartMedia boot.\n");
         lr_message("GP32emu: BIOS boot failed, using direct SmartMedia boot");
         boot = (layout == SMC_CARD_LAYOUT_DIRECT_ONLY) ? CONTENT_BOOT_DIRECT_MEDIA : CONTENT_BOOT_DIRECT;

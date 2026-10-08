@@ -1,0 +1,259 @@
+#include "gp32_win64_ui.h"
+#include "gp32emu/gp32.h"
+#include <shlobj.h>
+#include <stdio.h>
+#include <string.h>
+
+static const UINT default_keys[GP32_KEY_COUNT] = {
+    VK_UP, VK_DOWN, VK_LEFT, VK_RIGHT, 'Z', 'X', 'A', 'S', VK_RETURN, VK_SHIFT
+};
+static const char *const key_names[GP32_KEY_COUNT] = {
+    "Up", "Down", "Left", "Right", "A", "B", "L", "R", "Start", "Select"
+};
+static const uint32_t button_bits[GP32_KEY_COUNT] = {
+    GP32_BUTTON_UP, GP32_BUTTON_DOWN, GP32_BUTTON_LEFT, GP32_BUTTON_RIGHT,
+    GP32_BUTTON_A, GP32_BUTTON_B, GP32_BUTTON_L, GP32_BUTTON_R,
+    GP32_BUTTON_START, GP32_BUTTON_SELECT
+};
+
+static UINT normalize_key(UINT key) {
+    if (key == VK_LSHIFT || key == VK_RSHIFT) return VK_SHIFT;
+    if (key == VK_LCONTROL || key == VK_RCONTROL) return VK_CONTROL;
+    return key;
+}
+
+static int valid_key(UINT key) {
+    return key >= VK_BACK && key < 256 && key != VK_ESCAPE && key != VK_MENU &&
+        key != VK_LMENU && key != VK_RMENU && key != VK_LWIN && key != VK_RWIN &&
+        key != VK_F5 && key != VK_F8 && key != VK_F11 && key != VK_F12 && key != VK_F10;
+}
+
+void gp32_win64_preferences_load(gp32_win64_preferences_t *p, const char *ini) {
+    memcpy(p->keys, default_keys, sizeof(p->keys));
+    p->game_folder[0] = 0;
+    if (!ini || !ini[0]) return;
+    int valid = 1;
+    for (int i = 0; i < GP32_KEY_COUNT; ++i) {
+        p->keys[i] = normalize_key(GetPrivateProfileIntA("Keyboard", key_names[i], default_keys[i], ini));
+        if (!valid_key(p->keys[i])) valid = 0;
+        for (int j = 0; j < i; ++j) if (p->keys[i] == p->keys[j]) valid = 0;
+    }
+    /* A malformed partial map must not leave any button unreachable. */
+    if (!valid) memcpy(p->keys, default_keys, sizeof(p->keys));
+    GetPrivateProfileStringA("Paths", "GameFolder", "", p->game_folder, MAX_PATH, ini);
+}
+
+void gp32_win64_preferences_save(const gp32_win64_preferences_t *p, const char *ini) {
+    WritePrivateProfileStringA("Paths", "GameFolder", p->game_folder, ini);
+    for (int i = 0; i < GP32_KEY_COUNT; ++i) {
+        char value[16];
+        snprintf(value, sizeof(value), "%u", p->keys[i]);
+        WritePrivateProfileStringA("Keyboard", key_names[i], value, ini);
+    }
+}
+
+uint32_t gp32_win64_key_button(const gp32_win64_preferences_t *p, WPARAM vk) {
+    UINT key = normalize_key((UINT)vk);
+    for (int i = 0; i < GP32_KEY_COUNT; ++i)
+        if (p->keys[i] == key) return button_bits[i];
+    return 0;
+}
+
+int gp32_win64_is_card_save(const char *path) {
+    size_t n = strlen(path);
+    return n >= 9 && (!_stricmp(path + n - 9, ".gp32.smc") || !_stricmp(path + n - 9, ".gp32.sav"));
+}
+
+int gp32_win64_is_game(const char *path) {
+    const char *ext = strrchr(path, '.');
+    return ext && !gp32_win64_is_card_save(path) &&
+        (!_stricmp(ext, ".smc") || !_stricmp(ext, ".fxe") || !_stricmp(ext, ".fpk"));
+}
+
+typedef struct keyboard_dialog {
+    gp32_win64_preferences_t pending;
+    gp32_win64_preferences_t *target;
+    WNDPROC button_proc;
+    int capturing;
+} keyboard_dialog_t;
+
+static void key_labels(HWND dlg, keyboard_dialog_t *d) {
+    for (int i = 0; i < GP32_KEY_COUNT; ++i) {
+        char name[64];
+        UINT key = d->pending.keys[i];
+        LONG scan = (LONG)(MapVirtualKeyA(key, MAPVK_VK_TO_VSC) << 16);
+        if ((key >= VK_PRIOR && key <= VK_DOWN) || key == VK_INSERT || key == VK_DELETE || key == VK_DIVIDE)
+            scan |= 1L << 24;
+        if (!GetKeyNameTextA(scan, name, sizeof(name))) snprintf(name, sizeof(name), "Key %u", key);
+        SetDlgItemTextA(dlg, IDC_KEY_FIRST + i, name);
+    }
+}
+
+static LRESULT CALLBACK capture_key(HWND button, UINT msg, WPARAM wp, LPARAM lp) {
+    HWND dlg = GetParent(button);
+    keyboard_dialog_t *d = (keyboard_dialog_t *)GetWindowLongPtrA(dlg, DWLP_USER);
+    if (d && d->capturing == GetDlgCtrlID(button) - IDC_KEY_FIRST) {
+        if (msg == WM_GETDLGCODE) return DLGC_WANTALLKEYS;
+        if (msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN) {
+            if (lp & (1L << 30)) return 0;
+            UINT key = normalize_key((UINT)wp);
+            if (key != VK_ESCAPE) {
+                if (!valid_key(key)) {
+                    SetDlgItemTextA(dlg, IDC_KEY_HINT, "That key is reserved for window or emulator commands.");
+                    return 0;
+                }
+                /* Swap duplicate assignments, keeping every control usable. */
+                for (int i = 0; i < GP32_KEY_COUNT; ++i)
+                    if (i != d->capturing && d->pending.keys[i] == key)
+                        d->pending.keys[i] = d->pending.keys[d->capturing];
+                d->pending.keys[d->capturing] = key;
+            }
+            d->capturing = -1;
+            key_labels(dlg, d);
+            SetDlgItemTextA(dlg, IDC_KEY_HINT, "Click a control, then press a key. Duplicate keys are swapped.");
+            return 0;
+        }
+    }
+    return CallWindowProcA(d->button_proc, button, msg, wp, lp);
+}
+
+static INT_PTR CALLBACK keyboard_proc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
+    keyboard_dialog_t *d = (keyboard_dialog_t *)GetWindowLongPtrA(dlg, DWLP_USER);
+    if (msg == WM_INITDIALOG) {
+        d = (keyboard_dialog_t *)lp;
+        SetWindowLongPtrA(dlg, DWLP_USER, (LONG_PTR)d);
+        for (int i = 0; i < GP32_KEY_COUNT; ++i)
+            d->button_proc = (WNDPROC)SetWindowLongPtrA(GetDlgItem(dlg, IDC_KEY_FIRST + i), GWLP_WNDPROC, (LONG_PTR)capture_key);
+        key_labels(dlg, d);
+        return TRUE;
+    }
+    if (msg == WM_COMMAND && d) {
+        int id = LOWORD(wp);
+        if (id >= IDC_KEY_FIRST && id < IDC_KEY_FIRST + GP32_KEY_COUNT) {
+            key_labels(dlg, d);
+            d->capturing = id - IDC_KEY_FIRST;
+            SetDlgItemTextA(dlg, id, "Press a key...");
+            SetDlgItemTextA(dlg, IDC_KEY_HINT, "Esc cancels this assignment. F5/F8/F10/F11/F12 and Alt are reserved.");
+            SetFocus(GetDlgItem(dlg, id));
+        } else if (id == IDC_KEY_DEFAULTS) {
+            d->capturing = -1;
+            memcpy(d->pending.keys, default_keys, sizeof(default_keys));
+            key_labels(dlg, d);
+        } else if (id == IDOK || id == IDCANCEL) {
+            if (id == IDOK) *d->target = d->pending;
+            EndDialog(dlg, id);
+        }
+        return TRUE;
+    }
+    return FALSE;
+}
+
+int gp32_win64_keyboard_dialog(HWND owner, HINSTANCE inst, gp32_win64_preferences_t *p) {
+    keyboard_dialog_t d = { .pending = *p, .target = p, .capturing = -1 };
+    return DialogBoxParamA(inst, MAKEINTRESOURCEA(IDD_KEYBOARD), owner, keyboard_proc, (LPARAM)&d) == IDOK;
+}
+
+typedef struct library_dialog {
+    gp32_win64_preferences_t *prefs;
+    char *selected;
+} library_dialog_t;
+
+static void library_refresh(HWND dlg, library_dialog_t *d) {
+    HWND list = GetDlgItem(dlg, IDC_GAME_LIST);
+    SendMessageA(list, LB_RESETCONTENT, 0, 0);
+    EnableWindow(GetDlgItem(dlg, IDOK), FALSE);
+    const char *folder = d->prefs->game_folder;
+    SetDlgItemTextA(dlg, IDC_GAME_FOLDER, folder);
+    if (!folder[0]) {
+        SetDlgItemTextA(dlg, IDC_GAME_HINT, "Choose a folder containing SMC, FXE or FPK games.");
+        return;
+    }
+    char pattern[MAX_PATH];
+    if (snprintf(pattern, sizeof(pattern), "%s\\*", folder) >= (int)sizeof(pattern)) {
+        SetDlgItemTextA(dlg, IDC_GAME_HINT, "Folder path is too long.");
+        return;
+    }
+    WIN32_FIND_DATAA entry;
+    HANDLE find = FindFirstFileA(pattern, &entry);
+    if (find == INVALID_HANDLE_VALUE) {
+        SetDlgItemTextA(dlg, IDC_GAME_HINT, "Cannot read this folder. Check its location and permissions.");
+        return;
+    }
+    int skipped = 0;
+    do {
+        if (entry.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
+        if (!gp32_win64_is_game(entry.cFileName)) continue;
+        if (strlen(folder) + 1 + strlen(entry.cFileName) >= MAX_PATH) { skipped++; continue; }
+        if (SendMessageA(list, LB_ADDSTRING, 0, (LPARAM)entry.cFileName) < 0) { skipped++; break; }
+    } while (FindNextFileA(find, &entry));
+    DWORD error = GetLastError();
+    FindClose(find);
+    LRESULT count = SendMessageA(list, LB_GETCOUNT, 0, 0);
+    if (count > 0) {
+        SendMessageA(list, LB_SETCURSEL, 0, 0);
+        EnableWindow(GetDlgItem(dlg, IDOK), TRUE);
+    }
+    SetDlgItemTextA(dlg, IDC_GAME_HINT, skipped || error != ERROR_NO_MORE_FILES ?
+        "Some entries could not be listed (path length or folder access)." :
+        "Double-click to play. Subfolders, ZIPs and save images are not listed.");
+}
+
+static int CALLBACK browse_init(HWND hwnd, UINT msg, LPARAM lp, LPARAM data) {
+    (void)lp;
+    if (msg == BFFM_INITIALIZED && data && *(const char *)data)
+        SendMessageA(hwnd, BFFM_SETSELECTIONA, TRUE, data);
+    return 0;
+}
+
+static INT_PTR CALLBACK library_proc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
+    library_dialog_t *d = (library_dialog_t *)GetWindowLongPtrA(dlg, DWLP_USER);
+    if (msg == WM_INITDIALOG) {
+        d = (library_dialog_t *)lp;
+        SetWindowLongPtrA(dlg, DWLP_USER, (LONG_PTR)d);
+        library_refresh(dlg, d);
+        return TRUE;
+    }
+    if (msg == WM_COMMAND && d) {
+        int id = LOWORD(wp);
+        if (id == IDC_GAME_BROWSE) {
+            HRESULT hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
+            BROWSEINFOA info = {0};
+            info.hwndOwner = dlg;
+            info.lpszTitle = "Choose your GP32 game folder";
+            info.ulFlags = BIF_RETURNONLYFSDIRS | (SUCCEEDED(hr) ? BIF_NEWDIALOGSTYLE : 0);
+            info.lpfn = browse_init;
+            info.lParam = (LPARAM)d->prefs->game_folder;
+            PIDLIST_ABSOLUTE item = SHBrowseForFolderA(&info);
+            char folder[MAX_PATH];
+            if (item && SHGetPathFromIDListA(item, folder)) {
+                snprintf(d->prefs->game_folder, MAX_PATH, "%s", folder);
+                library_refresh(dlg, d);
+            }
+            CoTaskMemFree(item);
+            if (SUCCEEDED(hr)) CoUninitialize();
+        } else if (id == IDC_GAME_REFRESH) {
+            library_refresh(dlg, d);
+        } else if (id == IDCANCEL) {
+            EndDialog(dlg, IDCANCEL);
+        } else if (id == IDOK || (id == IDC_GAME_LIST && HIWORD(wp) == LBN_DBLCLK)) {
+            HWND list = GetDlgItem(dlg, IDC_GAME_LIST);
+            LRESULT sel = SendMessageA(list, LB_GETCURSEL, 0, 0);
+            if (sel == LB_ERR) return TRUE;
+            char name[MAX_PATH];
+            LRESULT len = SendMessageA(list, LB_GETTEXTLEN, sel, 0);
+            if (len < 0 || len >= MAX_PATH) return TRUE;
+            SendMessageA(list, LB_GETTEXT, sel, (LPARAM)name);
+            if (snprintf(d->selected, MAX_PATH, "%s\\%s", d->prefs->game_folder, name) >= MAX_PATH) return TRUE;
+            EndDialog(dlg, IDOK);
+        }
+        return TRUE;
+    }
+    return FALSE;
+}
+
+int gp32_win64_library_dialog(HWND owner, HINSTANCE inst, gp32_win64_preferences_t *p,
+                              char path[MAX_PATH]) {
+    library_dialog_t d = { .prefs = p, .selected = path };
+    path[0] = 0;
+    return DialogBoxParamA(inst, MAKEINTRESOURCEA(IDD_LIBRARY), owner, library_proc, (LPARAM)&d) == IDOK;
+}

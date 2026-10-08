@@ -580,6 +580,14 @@ int s3c2400_set_smartmedia_state_base_file(s3c2400_t *s, const char *path, char 
     return s && smc_set_state_base_file(s->smc, path, err, err_len);
 }
 int s3c2400_save_smartmedia(s3c2400_t *s, const char *path, char *err, size_t err_len) { return s && smc_save_file(s->smc, path, err, err_len); }
+int s3c2400_save_card_progress(s3c2400_t *s, const char *path, char *err, size_t err_len) { return s && smc_save_changes(s->smc, path, err, err_len); }
+int s3c2400_load_card_progress(s3c2400_t *s, const char *path, char *err, size_t err_len) {
+    if (!s) return 0;
+    int ok = smc_load_changes(s->smc, path, err, err_len);
+    live_read32_refresh(s);
+    return ok;
+}
+uint8_t *s3c2400_copy_smartmedia(s3c2400_t *s, size_t *size) { return s ? smc_copy_image(s->smc, size) : NULL; }
 
 int s3c2400_load_ram_image(s3c2400_t *s, uint32_t addr, const uint8_t *data, size_t size, char *err, size_t err_len) {
     if (!s || !data) return 0;

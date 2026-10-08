@@ -3,6 +3,7 @@
 #include "gp32_win64_audio.h"
 #include "gp32_win64_sdl_input.h"
 #include "gp32_win64_video.h"
+#include "gp32_win64_ui.h"
 #include "media/gp32_media.h"
 
 #ifndef WIN32_LEAN_AND_MEAN
@@ -49,6 +50,8 @@
 #define IDM_CONFIG_CLEAR_BIOS   1402
 #define IDM_CONFIG_BOOT_BIOS    1403
 #define IDM_CONFIG_USE_HLE      1404
+#define IDM_CONFIG_KEYBOARD     1405
+#define IDM_FILE_LIBRARY        1011
 
 typedef struct app_state {
     HINSTANCE inst;
@@ -62,6 +65,7 @@ typedef struct app_state {
     char bios[MAX_PATH];
     char smc[MAX_PATH];
     char smc_save[MAX_PATH]; /* Belongs to the loaded machine, not the next selection. */
+    char smc_legacy[MAX_PATH];
     char fxe[MAX_PATH];
     char fpk[MAX_PATH];
     char state_path[MAX_PATH];
@@ -69,6 +73,7 @@ typedef struct app_state {
     char record_path[MAX_PATH];
     char config_path[MAX_PATH];
     char video_backend[16];
+    gp32_win64_preferences_t preferences;
     gp32_win64_audio_mode_t audio_mode;
     WINDOWPLACEMENT windowed_placement;
     LONG_PTR windowed_style;
@@ -127,6 +132,7 @@ static void app_make_config_path(app_state_t *a) {
 static void app_load_config(app_state_t *a) {
     if (!a) return;
     app_make_config_path(a);
+    gp32_win64_preferences_load(&a->preferences, a->config_path);
     GetPrivateProfileStringA("Paths", "BIOS", "", a->bios, (DWORD)sizeof(a->bios), a->config_path);
     GetPrivateProfileStringA("Video", "Backend", a->video_backend[0] ? a->video_backend : "d3d11", a->video_backend, (DWORD)sizeof(a->video_backend), a->config_path);
     a->integer_scaling = GetPrivateProfileIntA("Video", "IntegerScaling", a->integer_scaling, a->config_path) ? 1 : 0;
@@ -148,6 +154,7 @@ static void app_load_config(app_state_t *a) {
 
 static void app_save_config(app_state_t *a) {
     if (!a || !a->config_path[0]) return;
+    gp32_win64_preferences_save(&a->preferences, a->config_path);
     WritePrivateProfileStringA("Paths", "BIOS", a->bios[0] ? a->bios : NULL, a->config_path);
     WritePrivateProfileStringA("Video", "Backend", a->video_backend[0] ? a->video_backend : "d3d11", a->config_path);
     WritePrivateProfileStringA("Video", "IntegerScaling", a->integer_scaling ? "1" : "0", a->config_path);
@@ -177,14 +184,19 @@ static void app_update_title(app_state_t *a) {
 
 static void app_destroy_machine(app_state_t *a) {
     if (!a) return;
-    if (a->emu && a->smc_save[0] && gp32_save_smartmedia(a->emu, a->smc_save) != GP32_OK) {
-        char error[512];
-        snprintf(error, sizeof(error), "SmartMedia save failed: %s\nLatest progress was not saved.", gp32_get_error(a->emu));
-        app_show_status_error(a, error);
+    if (a->emu && a->smc_save[0]) {
+        if (gp32_save_card_progress(a->emu, a->smc_save) != GP32_OK) {
+            char error[512];
+            snprintf(error, sizeof(error), "SmartMedia save failed: %s\nLatest progress was not saved.", gp32_get_error(a->emu));
+            app_show_status_error(a, error);
+        } else if (a->smc_legacy[0] && remove(a->smc_legacy) != 0) {
+            app_show_status_error(a, "Progress was saved as .gp32.sav. The unused older .gp32.smc file could not be removed.");
+        }
     }
     if (a->emu) gp32_destroy(a->emu);
     a->emu = NULL;
     a->smc_save[0] = 0;
+    a->smc_legacy[0] = 0;
     a->running = 0;
     a->frame_index = 0;
     a->accum_units = 1000000ull;
@@ -259,26 +271,42 @@ static void app_create_audio(app_state_t *a) {
 
 static int app_create_machine(app_state_t *a) {
     if (!a) return 0;
+    if (gp32_win64_is_card_save(a->smc)) {
+        app_show_status_error(a, "This is a SmartMedia save image, not the original game.\nOpen the original .smc file; its saved progress is loaded automatically.");
+        return 0;
+    }
     if (!a->bios[0] && !a->smc[0] && !a->fxe[0] && !a->fpk[0]) {
         app_set_status(a, "No BIOS or GP32 program selected. Use Config > Set BIOS path or File > Open SmartMedia/FXE/FPK.");
         return 0;
     }
     app_destroy_machine(a);
     char save_path[MAX_PATH] = {0};
+    char legacy_path[MAX_PATH] = {0};
     const char *media_path = a->smc;
     if (a->smc[0]) {
-        int n = snprintf(save_path, sizeof(save_path), "%s.gp32.smc", a->smc);
+        int n = snprintf(save_path, sizeof(save_path), "%s.gp32.sav", a->smc);
         if (n < 0 || (size_t)n >= sizeof(save_path)) {
             app_show_status_error(a, "SmartMedia path is too long for its save file.");
             return 0;
         }
         DWORD attr = GetFileAttributesA(save_path);
+        if (attr == INVALID_FILE_ATTRIBUTES && GetLastError() == ERROR_FILE_NOT_FOUND) {
+            snprintf(legacy_path, sizeof(legacy_path), "%s.gp32.smc", a->smc);
+            DWORD legacy_attr = GetFileAttributesA(legacy_path);
+            if (legacy_attr != INVALID_FILE_ATTRIBUTES) {
+                media_path = legacy_path;
+                attr = legacy_attr;
+            } else if (GetLastError() != ERROR_FILE_NOT_FOUND && GetLastError() != ERROR_PATH_NOT_FOUND) {
+                app_show_status_error(a, "Cannot access the existing SmartMedia save.");
+                return 0;
+            }
+        }
         if (attr != INVALID_FILE_ATTRIBUTES) {
             if (attr & FILE_ATTRIBUTE_DIRECTORY) {
                 app_show_status_error(a, "SmartMedia save path is a directory.");
                 return 0;
             }
-            media_path = save_path;
+            if (media_path != legacy_path) media_path = save_path;
         } else if (GetLastError() != ERROR_FILE_NOT_FOUND && GetLastError() != ERROR_PATH_NOT_FOUND) {
             app_show_status_error(a, "Cannot access the existing SmartMedia save.");
             return 0;
@@ -300,14 +328,12 @@ static int app_create_machine(app_state_t *a) {
     if (use_real_bios) {
         st = gp32_load_bios(a->emu, a->bios);
         if (st == GP32_OK && a->smc[0]) {
-            if (media_path == save_path) {
-                st = gp32_set_smartmedia_state_base_file(a->emu, a->smc);
-                if (st == GP32_OK) st = gp32_load_smartmedia_over_base(a->emu, media_path);
-            } else st = gp32_load_smartmedia(a->emu, media_path);
+            st = gp32_load_smartmedia(a->emu, a->smc);
+            if (st == GP32_OK && media_path != a->smc) st = gp32_load_card_progress(a->emu, media_path);
         }
         if (st == GP32_OK) st = gp32_reset(a->emu);
     }
-    if (st == GP32_OK && a->smc[0] && use_hle_boot) st = gp32_load_smartmedia_direct(a->emu, media_path);
+    if (st == GP32_OK && a->smc[0] && use_hle_boot) st = gp32_load_smartmedia_direct(a->emu, a->smc);
     if (st == GP32_OK && a->fxe[0]) st = gp32_load_fxe(a->emu, a->fxe);
     if (st == GP32_OK && a->fpk[0]) st = gp32_load_fpk(a->emu, a->fpk);
     if (st != GP32_OK) {
@@ -319,6 +345,7 @@ static int app_create_machine(app_state_t *a) {
     }
     /* Direct HLE extracts assets but does not mount a writable card device. */
     snprintf(a->smc_save, sizeof(a->smc_save), "%s", use_real_bios ? save_path : "");
+    if (use_real_bios && media_path == legacy_path) snprintf(a->smc_legacy, sizeof(a->smc_legacy), "%s", legacy_path);
     app_create_audio(a);
     app_update_title(a);
     a->running = 1;
@@ -338,6 +365,17 @@ static int app_reset_machine(app_state_t *a) {
     app_create_audio(a);
     a->accum_units = 1000000ull;
     return 1;
+}
+
+static int app_open_game(app_state_t *a, const char *path, int kind) {
+    if (gp32_win64_is_card_save(path)) {
+        app_show_status_error(a, "This file contains saved progress.\nSelect the original .smc game instead; its save is loaded automatically.");
+        return 0;
+    }
+    a->smc[0] = a->fxe[0] = a->fpk[0] = 0;
+    char *target = kind == 1 ? a->fxe : kind == 2 ? a->fpk : a->smc;
+    snprintf(target, MAX_PATH, "%s", path);
+    return app_create_machine(a);
 }
 
 static void app_recreate_video(app_state_t *a) {
@@ -451,6 +489,8 @@ static void update_menu_checks(app_state_t *a) {
 static HMENU create_menu(void) {
     HMENU menu = CreateMenu();
     HMENU file = CreatePopupMenu();
+    AppendMenuA(file, MF_STRING, IDM_FILE_LIBRARY, "Game library...");
+    AppendMenuA(file, MF_SEPARATOR, 0, NULL);
     AppendMenuA(file, MF_STRING, IDM_FILE_OPEN_BIOS, "Open BIOS...");
     AppendMenuA(file, MF_STRING, IDM_FILE_OPEN_SMC, "Open SmartMedia image...");
     AppendMenuA(file, MF_STRING, IDM_FILE_OPEN_FXE, "Open FXE...");
@@ -491,6 +531,8 @@ static HMENU create_menu(void) {
     AppendMenuA(menu, MF_POPUP, (UINT_PTR)audio, "Audio");
 
     HMENU config = CreatePopupMenu();
+    AppendMenuA(config, MF_STRING, IDM_CONFIG_KEYBOARD, "Keyboard controls...");
+    AppendMenuA(config, MF_SEPARATOR, 0, NULL);
     AppendMenuA(config, MF_STRING, IDM_CONFIG_SET_BIOS, "Set BIOS path...");
     AppendMenuA(config, MF_STRING, IDM_CONFIG_CLEAR_BIOS, "Clear BIOS path");
     AppendMenuA(config, MF_SEPARATOR, 0, NULL);
@@ -500,26 +542,26 @@ static HMENU create_menu(void) {
     return menu;
 }
 
-static uint32_t key_to_button(WPARAM vk) {
-    switch (vk) {
-    case VK_LEFT: return GP32_BUTTON_LEFT;
-    case VK_RIGHT: return GP32_BUTTON_RIGHT;
-    case VK_UP: return GP32_BUTTON_UP;
-    case VK_DOWN: return GP32_BUTTON_DOWN;
-    case 'Z': return GP32_BUTTON_A;
-    case 'X': return GP32_BUTTON_B;
-    case 'A': return GP32_BUTTON_L;
-    case 'S': return GP32_BUTTON_R;
-    case VK_RETURN: return GP32_BUTTON_START;
-    case VK_SHIFT: case VK_LSHIFT: case VK_RSHIFT: return GP32_BUTTON_SELECT;
-    default: return 0u;
-    }
-}
-
 static void app_command(app_state_t *a, UINT id) {
     if (!a) return;
     char path[MAX_PATH];
     switch (id) {
+    case IDM_CONFIG_KEYBOARD:
+        a->keyboard_buttons = 0;
+        if (gp32_win64_keyboard_dialog(a->hwnd, a->inst, &a->preferences)) app_save_config(a);
+        QueryPerformanceCounter(&a->last_qpc);
+        break;
+    case IDM_FILE_LIBRARY: {
+        a->keyboard_buttons = 0;
+        int selected = gp32_win64_library_dialog(a->hwnd, a->inst, &a->preferences, path);
+        app_save_config(a);
+        QueryPerformanceCounter(&a->last_qpc);
+        if (selected) {
+            const char *ext = strrchr(path, '.');
+            app_open_game(a, path, !_stricmp(ext, ".fxe") ? 1 : !_stricmp(ext, ".fpk") ? 2 : 0);
+        }
+        break;
+    }
     case IDM_FILE_OPEN_BIOS:
         if (select_open_file(a->hwnd, "Open GP32 BIOS", "GP32 BIOS (*.bin;*.rom;*.bios;*.zip)\0*.bin;*.rom;*.bios;*.zip\0All files\0*.*\0", path, sizeof(path))) {
             snprintf(a->bios, sizeof(a->bios), "%s", path);
@@ -530,13 +572,13 @@ static void app_command(app_state_t *a, UINT id) {
         }
         break;
     case IDM_FILE_OPEN_SMC:
-        if (select_open_file(a->hwnd, "Open GP32 SmartMedia image", "SmartMedia (*.smc)\0*.smc\0All files\0*.*\0", path, sizeof(path))) { snprintf(a->smc, sizeof(a->smc), "%s", path); a->fxe[0] = a->fpk[0] = 0; app_create_machine(a); }
+        if (select_open_file(a->hwnd, "Open GP32 SmartMedia image", "SmartMedia (*.smc)\0*.smc\0All files\0*.*\0", path, sizeof(path))) app_open_game(a, path, 0);
         break;
     case IDM_FILE_OPEN_FXE:
-        if (select_open_file(a->hwnd, "Open GP32 FXE", "GP32 executable (*.fxe)\0*.fxe\0All files\0*.*\0", path, sizeof(path))) { snprintf(a->fxe, sizeof(a->fxe), "%s", path); a->smc[0] = a->fpk[0] = 0; app_create_machine(a); }
+        if (select_open_file(a->hwnd, "Open GP32 FXE", "GP32 executable (*.fxe)\0*.fxe\0All files\0*.*\0", path, sizeof(path))) app_open_game(a, path, 1);
         break;
     case IDM_FILE_OPEN_FPK:
-        if (select_open_file(a->hwnd, "Open GP32 FPK", "GP32 package (*.fpk)\0*.fpk\0All files\0*.*\0", path, sizeof(path))) { snprintf(a->fpk, sizeof(a->fpk), "%s", path); a->smc[0] = a->fxe[0] = 0; app_create_machine(a); }
+        if (select_open_file(a->hwnd, "Open GP32 FPK", "GP32 package (*.fpk)\0*.fpk\0All files\0*.*\0", path, sizeof(path))) app_open_game(a, path, 2);
         break;
     case IDM_FILE_SAVE_STATE: app_save_state_dialog(a); break;
     case IDM_FILE_LOAD_STATE: app_load_state_dialog(a); break;
@@ -657,19 +699,19 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpara
         return 0;
     case WM_KEYDOWN:
         if (a) {
-            if (wparam == VK_ESCAPE) { if (a->fullscreen) app_toggle_fullscreen(a); else PostMessageA(hwnd, WM_CLOSE, 0, 0); return 0; }
-            if (wparam == VK_F11) { app_toggle_fullscreen(a); return 0; }
+            if (wparam == VK_ESCAPE) { if (a->fullscreen) app_toggle_fullscreen(a); return 0; }
+            if (wparam == VK_F11) { if (!(lparam & (1L << 30))) app_toggle_fullscreen(a); return 0; }
             if (wparam == VK_F5) { app_save_state_dialog(a); return 0; }
             if (wparam == VK_F8) { app_load_state_dialog(a); return 0; }
             if (wparam == VK_F12) { app_screenshot_dialog(a); return 0; }
-            a->keyboard_buttons |= key_to_button(wparam);
+            a->keyboard_buttons |= gp32_win64_key_button(&a->preferences, wparam);
         }
         return 0;
     case WM_SYSKEYDOWN:
         if (a && wparam == VK_RETURN && (HIWORD(lparam) & KF_ALTDOWN)) { app_toggle_fullscreen(a); return 0; }
         return DefWindowProcA(hwnd, msg, wparam, lparam);
     case WM_KEYUP:
-        if (a) a->keyboard_buttons &= ~key_to_button(wparam);
+        if (a) a->keyboard_buttons &= ~gp32_win64_key_button(&a->preferences, wparam);
         return 0;
     case WM_ENTERMENULOOP:
     case WM_KILLFOCUS:
