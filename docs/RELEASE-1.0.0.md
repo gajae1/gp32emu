@@ -13,6 +13,9 @@ RetroArch cores for emulating the Game Park GP32.
 - Offers LCD persistence and frame interpolation, plus guest CPU speed options
   in RetroArch. Windows includes keyboard and gamepad input, fullscreen,
   BMP screenshots and MKV recording.
+- Removes the click noise in Astonishia Story R's music, caused by a bug in the
+  game's own decoder, and shortens silent card-loading pauses such as Blue
+  Angelo's dialogue opening. Both are on by default and can be turned off.
 
 ## Files
 
@@ -44,8 +47,7 @@ the exact original card.
 ## Known limitations
 
 Some cards need a BIOS, and Pinball Dreams can be silent with direct boot.
-Astonishia Story R's title music retains artifacts from the game's own decoder. Compatibility checks
-cover selected scenes, not complete playthroughs; audio fidelity and input
+Compatibility checks cover selected scenes, not complete playthroughs; audio fidelity and input
 latency have not been measured against a physical GP32. RetroArch rewind and
 run-ahead are unverified. Android cores have been compiled but runtime use is
 unverified; ARMv7 uses the slower interpreter.

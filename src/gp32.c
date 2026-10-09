@@ -79,6 +79,17 @@ struct gp32 {
     uint32_t direct_hle_pending_volume; /* bit 8 marks a pending six-bit value */
     int direct_cpu_running;
     int direct_fxe_mode;
+    uint8_t adpcm_fix_disabled;  /* host option; not serialized */
+    uint8_t adpcm_fix_patched;   /* derived from RAM on every run/load */
+    /* Fast loading: host policy and per-frame detector, never serialized. */
+    uint8_t fast_load_disabled;
+    uint8_t fast_load_active;
+    uint8_t fast_load_streak;
+    uint8_t fast_load_hash_valid;
+    uint32_t fast_load_frame;
+    uint32_t fast_load_last_iis;
+    uint64_t fast_load_mark;
+    uint64_t fast_load_hash;
     uint32_t direct_fxe_entry;
     uint32_t direct_fxe_stack;
     uint32_t direct_fxe_fb_addr;
@@ -1642,6 +1653,120 @@ static uint32_t direct_read32_if_ram(gp32_t *g, uint32_t addr) {
     if (!direct_ram_range(g, addr, 4u)) return 0u;
     return s3c2400_debug_read32(g->soc, addr);
 }
+
+/*
+ * Astonishia Story R's IMA-ADPCM decoder (0x0c0112a4) chooses the low or high
+ * nibble from the parity of the stream-wide sample counter (r7) instead of the
+ * position inside the 505-sample block. Every odd block therefore decodes with
+ * swapped nibbles, which is the ~12 clicks/s heard on the title screen; real
+ * hardware runs the same code. When this exact routine is resident, its
+ * "tst r7, #1" is replaced by a host trap that tests the in-block parity. The
+ * card image is never touched.
+ *
+ * Both parities read one byte per two samples, but they read at different
+ * samples inside an odd block. Switching in the middle of a block is safe only
+ * at an odd in-block position, where both have consumed the same bytes. The
+ * trap word records which parity the block in progress uses, so it is carried
+ * by savestates and RAM stays the only source of truth.
+ */
+#define GP32_ADPCM_FIX_FUNC 0x0c0112a4u
+#define GP32_ADPCM_FIX_PC   0x0c011364u
+#define GP32_ADPCM_FIX_TST  0xe3170001u  /* tst r7, #1 */
+#define GP32_ADPCM_FIX_ORIG 0xef47a0d0u  /* trap, block uses the game's parity */
+#define GP32_ADPCM_FIX_NEW  0xef47a0d1u  /* trap, block uses in-block parity */
+
+static const uint32_t direct_adpcm_fix_code[] = {
+    0xe92d4ff0u, 0xe24dd008u, 0xe1a05000u, 0xe3a00000u, 0xe5cd0000u, 0xe5917010u,
+    0xe1a04001u, 0xe087a002u, 0xe157000au, 0xe591901cu, 0xe3a06000u, 0xe3a08000u,
+    0xaa00005bu, 0xe1570009u, 0x1a000016u, 0xe5940018u, 0xe28d1004u, 0xe0809007u,
+    0xe5940014u, 0xe3a02004u, 0xe1590000u, 0x31a00009u, 0xe1a09000u, 0xe5940000u,
+    0xebffc278u, 0xe1dd00f4u, 0xe51f1764u, 0xe2877001u, 0xe2806902u, 0xe1a00806u,
+    0xe1a00840u, 0xe0c500b2u, 0xe5911004u, 0xe3510000u, 0x10c500b2u, 0xe5dd0006u,
+    0xe1a08180u, 0xea000004u, 0xe5d40020u, 0xe5946024u, 0xe5cd0000u, 0xe594002cu,
+    0xe1a08180u, 0xe159000au, 0xa1a0b00au, 0xb1a0b009u, 0xe157000bu, 0xaa000036u,
+    0xe3170001u, 0x05dd0000u, 0x01a00220u, 0x05cd0000u, 0x0a000003u, 0xe1a0100du,
+    0xe3a02001u, 0xe5940000u, 0xebffc258u, 0xe5dd0000u, 0xe51fc0fcu, 0xe51f37e8u,
+    0xe2002007u, 0xe1820008u, 0xe1a01080u, 0xe19c00f1u, 0xe5933004u, 0xe3530000u,
+    0x0a000011u, 0xe5dd3000u, 0xe3130008u, 0xe18820c2u, 0xe1a02082u, 0xe19c20f2u,
+    0xe08220c0u, 0x0a000004u, 0xe04620c2u, 0xe3520000u, 0xb3a02000u, 0xe0c520b2u,
+    0xea000005u, 0xe3a03801u, 0xe2433001u, 0xe08620c2u, 0xe1520003u, 0xc1a02003u,
+    0xe0c520b2u, 0xe5dd2000u, 0xe3120008u, 0x0a000003u, 0xe0466000u, 0xe3560000u,
+    0xb3a06000u, 0xea000004u, 0xe3a03801u, 0xe2433001u, 0xe0866000u, 0xe1560003u,
+    0xc1a06003u, 0xe51f0194u, 0xe0c560b2u, 0xe2877001u, 0xe157000bu, 0xe19080f1u,
+    0xbaffffc8u, 0xe157000au, 0xbaffffa3u, 0xe5847010u, 0xe5dd0000u, 0xe5c40020u,
+    0xe1a001c8u, 0xe584002cu, 0xe5846024u, 0xe584901cu, 0xe28dd008u, 0xe8bd8ff0u,
+};
+
+static void direct_update_swi_hook(gp32_t *g);
+
+static int direct_adpcm_fix_is_trap(uint32_t w) {
+    return w == GP32_ADPCM_FIX_ORIG || w == GP32_ADPCM_FIX_NEW;
+}
+
+static int direct_adpcm_fix_resident(gp32_t *g) {
+    const uint32_t n = (uint32_t)(sizeof(direct_adpcm_fix_code) / sizeof(direct_adpcm_fix_code[0]));
+    if (!direct_ram_range(g, GP32_ADPCM_FIX_FUNC, n * 4u)) return 0;
+    for (uint32_t i = 0; i < n; ++i) {
+        uint32_t addr = GP32_ADPCM_FIX_FUNC + i * 4u;
+        uint32_t w = s3c2400_debug_read32(g->soc, addr);
+        if (addr == GP32_ADPCM_FIX_PC ? (w != GP32_ADPCM_FIX_TST && !direct_adpcm_fix_is_trap(w))
+                                      : w != direct_adpcm_fix_code[i]) return 0;
+    }
+    return 1;
+}
+
+/* Cheap per-run check: one word read unless the routine has just appeared.
+ * A freshly installed trap starts in the game's parity because the block in
+ * progress was decoded by the original instruction. With fixes disabled the
+ * trap switches back at a safe position, then the original word returns.
+ * Pass flush = 0 only when the JIT cache is known to be empty. */
+static void direct_adpcm_fix_update(gp32_t *g, int flush) {
+    if (!g || !g->cpu) return;
+    uint32_t w = direct_read32_if_ram(g, GP32_ADPCM_FIX_PC);
+    int patched = direct_adpcm_fix_is_trap(w);
+    if (w == GP32_ADPCM_FIX_ORIG && g->adpcm_fix_disabled) {
+        direct_write32_if_ram(g, GP32_ADPCM_FIX_PC, GP32_ADPCM_FIX_TST);
+        if (flush) arm920t_flush_jit(g->cpu);
+        patched = 0;
+    } else if (w == GP32_ADPCM_FIX_TST && !g->adpcm_fix_disabled && direct_adpcm_fix_resident(g)) {
+        direct_write32_if_ram(g, GP32_ADPCM_FIX_PC, GP32_ADPCM_FIX_ORIG);
+        if (flush) arm920t_flush_jit(g->cpu);
+        patched = 1;
+    }
+    if (patched != g->adpcm_fix_patched) {
+        g->adpcm_fix_patched = (uint8_t)patched;
+        direct_update_swi_hook(g);
+    }
+}
+
+static int direct_adpcm_fix_swi(gp32_t *g, arm920t_t *cpu, uint32_t imm, uint32_t pc) {
+    if (pc != GP32_ADPCM_FIX_PC || (imm | 1u) != (GP32_ADPCM_FIX_NEW & 0x00ffffffu)) return 0;
+    /* The JIT may hold the decoded word; RAM holds the current mode. */
+    uint32_t word = direct_read32_if_ram(g, GP32_ADPCM_FIX_PC);
+    if (!direct_adpcm_fix_is_trap(word)) return 0;
+    uint32_t state = arm920t_get_reg(cpu, 4);
+    uint32_t pos = arm920t_get_reg(cpu, 7);
+    uint32_t end = arm920t_get_reg(cpu, 9);  /* next header, clipped to the stream length */
+    uint32_t spb = direct_read32_if_ram(g, state + 0x18u);
+    uint32_t total = direct_read32_if_ram(g, state + 0x14u);
+    uint32_t start = end - spb;
+    if (spb && end == total) {
+        uint32_t rem = total % spb;  /* a short final block starts at total - rem */
+        if (rem && pos >= total - rem) start = total - rem;
+    }
+    uint32_t local = pos - start;
+    int use_new = word == GP32_ADPCM_FIX_NEW;
+    if (use_new == (int)g->adpcm_fix_disabled && ((local & 1u) || !(start & 1u))) {
+        use_new = !use_new;
+        direct_write32_if_ram(g, GP32_ADPCM_FIX_PC, use_new ? GP32_ADPCM_FIX_NEW : GP32_ADPCM_FIX_ORIG);
+    }
+    uint32_t parity = use_new ? local : pos;
+    uint32_t cpsr = arm920t_get_cpsr(cpu) & ~0xc0000000u;  /* TST #1: N clear, C/V kept */
+    if (!(parity & 1u)) cpsr |= 0x40000000u;
+    arm920t_set_cpsr(cpu, cpsr);
+    return 1;
+}
+
 
 static uint16_t direct_read_u16_if_ram(gp32_t *g, uint32_t addr) {
     if (direct_ram_range(g, addr, 2u)) return s3c2400_read16(g->soc, addr);
@@ -3967,12 +4092,22 @@ static int direct_fxe_swi(void *user, arm920t_t *cpu, uint32_t imm, uint32_t pc,
     }
 }
 
-/* The hook only implements direct-FXE services. BIOS mode uses the CPU's
- * ordinary SWI exception path without an otherwise always-declined callback.
- * Keep this derived pointer synchronized with the serialized mode flag. */
+static int direct_swi_hook(void *user, arm920t_t *cpu, uint32_t imm, uint32_t pc, int thumb) {
+    gp32_t *g = (gp32_t *)user;
+    if (!thumb && g && g->adpcm_fix_patched && direct_adpcm_fix_swi(g, cpu, imm, pc)) return 1;
+    return direct_fxe_swi(user, cpu, imm, pc, thumb);
+}
+
+/* The hook implements direct-FXE services and the ADPCM trap. Otherwise BIOS
+ * mode uses the CPU's ordinary SWI exception path without a callback. Keep
+ * this derived pointer synchronized with both flags. */
+static void direct_update_swi_hook(gp32_t *g) {
+    arm920t_set_swi_handler(g->cpu, (g->direct_fxe_mode || g->adpcm_fix_patched) ? direct_swi_hook : NULL, g);
+}
+
 static void direct_set_fxe_mode(gp32_t *g, uint32_t mode) {
     g->direct_fxe_mode = mode;
-    arm920t_set_swi_handler(g->cpu, mode ? direct_fxe_swi : NULL, g);
+    direct_update_swi_hook(g);
     s3c2400_set_audio_idle(g->soc, !mode);
 }
 
@@ -4756,6 +4891,7 @@ static uint32_t direct_frame_budget(const gp32_t *g, uint64_t deadline) {
 
 static gp32_status_t gp32_run(gp32_t *g, uint32_t cycles, int timed) {
     if (!g->direct_callback.owner) direct_fix_gp32_additive_blend_shadow_endpoint(g);
+    direct_adpcm_fix_update(g, 1);
     uint32_t remaining = cycles;
     gp32_status_t status = GP32_OK;
     for (;;) {
@@ -4849,6 +4985,62 @@ gp32_status_t gp32_run_cycles(gp32_t *g, uint32_t cycles) {
     return gp32_run(g, cycles, 0);
 }
 
+/*
+ * Fast loading. Some games freeze the screen, stop audio and pull hundreds of
+ * KiB from SmartMedia through the GPIO bit-bang driver; Blue Angelo spends
+ * about 1.1 s of guest time this way whenever an NPC dialogue opens. While all
+ * of that holds, frames run the guest CPU at four times its programmed speed.
+ * Audio, timers and the LCD keep real time, so only the silent, frozen load
+ * ends sooner. Entry also requires audio to have stopped within the last 32
+ * frames, which keeps games that stream from the card during play (Little
+ * Girl Mill) at normal speed.
+ */
+#define GP32_FAST_LOAD_MIN_BYTES 1024u
+#define GP32_FAST_LOAD_RECENT    32u
+#define GP32_FAST_LOAD_ENTRY     3u
+#define GP32_FAST_LOAD_FACTOR    4u
+
+/* FNV-1a over the active 8/16-bpp LCD surface; 0 when it cannot be read. */
+static uint64_t direct_lcd_surface_hash(gp32_t *g) {
+    uint32_t lcdcon1 = s3c2400_debug_read32(g->soc, 0x14a00000u);
+    uint32_t bppmode = GP32_BITS(lcdcon1, 4, 1);
+    uint32_t bytes_per_pixel = bppmode == 0x0bu ? 1u : bppmode == 0x0cu ? 2u : 0u;
+    if (!(lcdcon1 & 1u) || !bytes_per_pixel) return 0u;
+    uint32_t height = GP32_BITS(s3c2400_debug_read32(g->soc, 0x14a00004u), 23, 14) + 1u;
+    uint32_t width = GP32_BITS(s3c2400_debug_read32(g->soc, 0x14a00008u), 18, 8) + 1u;
+    uint32_t fb_addr = s3c2400_debug_read32(g->soc, 0x14a00014u) << 1;
+    uint32_t span = (width * height * bytes_per_pixel) & ~3u;
+    if (!span || span > 320u * 320u * 2u || !direct_ram_range(g, fb_addr, span)) return 0u;
+    arm_bus_t bus = s3c2400_get_bus(g->soc);
+    const uint8_t *p = bus.fastmem(bus.user, fb_addr, span, 0);
+    if (!p) return 0u;
+    uint64_t h = 0xcbf29ce484222325ull;
+    for (uint32_t i = 0; i < span; i += 4u) h = (h ^ gp32_ld32le(p + i)) * 0x100000001b3ull;
+    return h ? h : 1u;
+}
+
+static void direct_fast_load_update(gp32_t *g) {
+    uint64_t total = s3c2400_smc_bytes_read(g->soc);
+    uint64_t bytes = total >= g->fast_load_mark ? total - g->fast_load_mark : 0u;
+    g->fast_load_mark = total;
+    g->fast_load_frame++;
+    int iis = s3c2400_iis_running(g->soc);
+    if (iis) g->fast_load_last_iis = g->fast_load_frame;
+    int busy = !g->fast_load_disabled && !iis && bytes >= GP32_FAST_LOAD_MIN_BYTES && !g->direct_callback.owner &&
+               (g->fast_load_active || g->fast_load_frame - g->fast_load_last_iis <= GP32_FAST_LOAD_RECENT);
+    if (busy) {
+        uint64_t h = direct_lcd_surface_hash(g);
+        busy = h && g->fast_load_hash_valid && h == g->fast_load_hash;
+        g->fast_load_hash = h;
+        g->fast_load_hash_valid = h != 0u;
+    } else {
+        g->fast_load_hash_valid = 0u;
+    }
+    if (!busy) g->fast_load_streak = 0u;
+    else if (g->fast_load_streak < 255u) g->fast_load_streak++;
+    g->fast_load_active = g->fast_load_streak >= GP32_FAST_LOAD_ENTRY;
+}
+
 gp32_status_t gp32_run_frame(gp32_t *g) {
     if (!g) return GP32_ERR_INVALID_ARGUMENT;
     if (!g->frame_time.valid) {
@@ -4861,7 +5053,15 @@ gp32_status_t gp32_run_frame(gp32_t *g) {
     uint32_t ns = 1000000000u + g->frame_time.remainder;
     g->frame_time.deadline_ns += ns / 60u;
     g->frame_time.remainder = ns % 60u;
+    uint32_t user_speed = 0u;
+    if (g->fast_load_active) {
+        user_speed = s3c2400_cpu_speed_percent(g->soc);
+        uint32_t boosted = user_speed * GP32_FAST_LOAD_FACTOR;
+        if (!s3c2400_set_cpu_speed_percent(g->soc, boosted > 400u ? 400u : boosted)) user_speed = 0u;
+    }
     gp32_status_t st = gp32_run(g, 0u, 1);
+    if (user_speed) (void)s3c2400_set_cpu_speed_percent(g->soc, user_speed);
+    direct_fast_load_update(g);
     if (direct_time_pending(g->frame_time.deadline_ns, g->elapsed.nanoseconds))
         memset(&g->frame_time, 0, sizeof(g->frame_time)); /* CPU stopped */
     return direct_service_reboot_request(g, st);
@@ -4912,6 +5112,20 @@ static uint32_t gp32_cpu_speed_to_nominal(gp32_t *g) {
 
 static void gp32_cpu_speed_restore(gp32_t *g, uint32_t percent) {
     if (percent != 100u) (void)s3c2400_set_cpu_speed_percent(g->soc, percent);
+}
+
+gp32_status_t gp32_set_fast_loading(gp32_t *g, int enabled) {
+    if (!g) return GP32_ERR_INVALID_ARGUMENT;
+    g->fast_load_disabled = enabled ? 0u : 1u;
+    if (!enabled) g->fast_load_active = g->fast_load_streak = 0u;
+    return GP32_OK;
+}
+
+gp32_status_t gp32_set_game_fixes(gp32_t *g, int enabled) {
+    if (!g || g->direct_cpu_running) return GP32_ERR_INVALID_ARGUMENT;
+    g->adpcm_fix_disabled = enabled ? 0u : 1u;
+    direct_adpcm_fix_update(g, 1);
+    return GP32_OK;
 }
 
 gp32_status_t gp32_set_hle_sef_rate(gp32_t *g, uint32_t sample_rate_hz) {
@@ -5590,6 +5804,7 @@ static void gp32_state_loaded(gp32_t *g, const gp32_state_image_t *direct, const
     }
     gp32_clear_audio(g);
     if (!g->direct_callback.owner) direct_fix_gp32_additive_blend_shadow_endpoint(g);
+    direct_adpcm_fix_update(g, 0);  /* the state load emptied the JIT cache */
 }
 
 size_t gp32_state_size(const gp32_t *g) {

@@ -19,6 +19,12 @@ Supply your own BIOS and game dumps; neither is included.
 - Supports save states and in-game SmartMedia saves when a writable card is mounted.
 - Offers optional LCD persistence and frame interpolation. RetroArch also offers
   guest CPU speed settings from 100% to 300%.
+- Shortens silent card-loading pauses: while a game stops audio, freezes the
+  screen and reads the card in bulk, its CPU runs at 4x speed. Blue Angelo's
+  dialogue-opening pause drops from about 1.1 s to 0.3 s.
+- Fixes the click noise in Astonishia Story R's music. The game's own ADPCM
+  decoder reads every other block with swapped nibbles; the emulator corrects
+  that instruction in memory without modifying the card image.
 
 ## Package contents
 
@@ -131,9 +137,8 @@ also rolls back in-game card progress.
 
 - Some cards need a BIOS. Direct boot is limited for titles including Astonishia
   Story R, Hany and Super Plusha. Pinball Dreams can be silent on the direct-boot path.
-- Astonishia Story R's title music retains artifacts from the game's own audio
-  decoder. Audio fidelity and input latency have not been measured against a
-  physical GP32.
+- Audio fidelity and input latency have not been measured against a physical
+  GP32.
 - Compatibility checks cover selected scenes, not complete playthroughs.
 - Rewind and run-ahead in a real RetroArch session are unverified.
 - Android runtime use is unverified. Qt runtime and browser playback are also

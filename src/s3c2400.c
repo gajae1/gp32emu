@@ -168,6 +168,9 @@ struct s3c2400 {
     /* Host option: guest instructions per emulated second, in percent of the
      * register-derived run clock. Peripheral clocks are unchanged. 0 = 100. */
     uint32_t cpu_speed_percent;
+    /* Host statistic: NAND data bytes read through the GPIO lines. Never
+     * serialized; readers use deltas and tolerate it moving backwards. */
+    uint64_t smc_bytes_read;
 };
 
 #if defined(_MSC_VER)
@@ -717,7 +720,10 @@ static void gp32_smc_update(s3c2400_t *s) {
     gp32_smc_lines_t *m = &s->smc_lines;
     if (!m->chip) { smc_lines_reset(m); return; }
     if (m->do_write && !m->read) gp32_smc_write(s, m->datatx);
-    else if (!m->do_write && m->do_read && m->read && !m->cmd_latch && !m->add_latch) m->datarx = gp32_smc_read(s);
+    else if (!m->do_write && m->do_read && m->read && !m->cmd_latch && !m->add_latch) {
+        m->datarx = gp32_smc_read(s);
+        s->smc_bytes_read++;
+    }
 }
 
 /* The GPIO bit-bang driver rewrites the same latched lines millions of times
@@ -1963,6 +1969,9 @@ uint32_t s3c2400_run_clock_hz(const s3c2400_t *s) {
 uint32_t s3c2400_cpu_speed_percent(const s3c2400_t *s) {
     return s && s->cpu_speed_percent ? s->cpu_speed_percent : 100u;
 }
+
+uint64_t s3c2400_smc_bytes_read(const s3c2400_t *s) { return s ? s->smc_bytes_read : 0u; }
+int s3c2400_iis_running(const s3c2400_t *s) { return s && (s->iis[0] & 1u); }
 
 static void audio_append_stereo(s3c2400_t *s, int16_t left, int16_t right, uint32_t rate) {
     if (!s) return;
