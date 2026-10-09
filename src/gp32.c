@@ -86,8 +86,7 @@ struct gp32 {
     uint8_t fast_load_active;
     uint8_t fast_load_streak;
     uint8_t fast_load_hash_valid;
-    uint32_t fast_load_frame;
-    uint32_t fast_load_last_iis;
+    uint8_t fast_load_recent_audio;
     uint64_t fast_load_mark;
     uint64_t fast_load_hash;
     uint32_t direct_fxe_entry;
@@ -1125,8 +1124,16 @@ static void direct_init_lcd_handoff(gp32_t *g) {
     s3c2400_write32(g->soc, 0x14a00000u, direct_lcdcon1(g, 0x0bu, 1));
 }
 
+static void direct_fast_load_reset(gp32_t *g) {
+    g->fast_load_active = g->fast_load_streak = g->fast_load_hash_valid = 0u;
+    g->fast_load_recent_audio = 0u;
+    g->fast_load_mark = s3c2400_smc_bytes_read(g->soc);
+    g->fast_load_hash = 0u;
+}
+
 static void direct_reset_hle_runtime(gp32_t *g, int preserve_hle_options) {
     if (!g) return;
+    direct_fast_load_reset(g);
     memset(&g->direct_callback, 0, sizeof(g->direct_callback));
     memset(&g->direct_tick, 0, sizeof(g->direct_tick));
     memset(&g->direct_vblank_time, 0, sizeof(g->direct_vblank_time));
@@ -4889,7 +4896,11 @@ static uint32_t direct_frame_budget(const gp32_t *g, uint64_t deadline) {
     return cycles > 32768u ? 32768u : (uint32_t)cycles;
 }
 
-static gp32_status_t gp32_run(gp32_t *g, uint32_t cycles, int timed) {
+static int direct_fast_load_audio_running(gp32_t *g) {
+    return s3c2400_iis_running(g->soc) || g->direct_hle_pcm_active || g->direct_hle_audio_asset;
+}
+
+static gp32_status_t gp32_run(gp32_t *g, uint32_t cycles, int timed, uint32_t restore_speed) {
     if (!g->direct_callback.owner) direct_fix_gp32_additive_blend_shadow_endpoint(g);
     direct_adpcm_fix_update(g, 1);
     uint32_t remaining = cycles;
@@ -4913,6 +4924,14 @@ static gp32_status_t gp32_run(gp32_t *g, uint32_t cycles, int timed) {
          * so a frontend can release it before this frame retires instead of
          * waiting out a guest frame that overruns real time. */
         if (g->host_pump) g->host_pump(g, g->host_pump_user);
+        /* Loading can finish inside a frame. Stop boosting before the next
+         * CPU slice once sound or a callback resumes; playing code must not
+         * inherit the load's faster instruction budget. */
+        if (restore_speed && (direct_fast_load_audio_running(g) || g->direct_callback.owner)) {
+            (void)s3c2400_set_cpu_speed_percent(g->soc, restore_speed);
+            restore_speed = 0u;
+            g->fast_load_active = g->fast_load_streak = 0u;
+        }
         if (timed) remaining = direct_frame_budget(g, g->frame_time.deadline_ns);
         if (!remaining) break;
         if (g->direct_callback.owner) {
@@ -4982,7 +5001,9 @@ gp32_status_t gp32_run_cycles(gp32_t *g, uint32_t cycles) {
     if (!g) return GP32_ERR_INVALID_ARGUMENT;
     /* Explicit stepping establishes a fresh origin for the next host frame. */
     memset(&g->frame_time, 0, sizeof(g->frame_time));
-    return gp32_run(g, cycles, 0);
+    gp32_status_t st = gp32_run(g, cycles, 0, 0u);
+    direct_fast_load_reset(g);
+    return st;
 }
 
 /*
@@ -5000,36 +5021,17 @@ gp32_status_t gp32_run_cycles(gp32_t *g, uint32_t cycles) {
 #define GP32_FAST_LOAD_ENTRY     3u
 #define GP32_FAST_LOAD_FACTOR    4u
 
-/* FNV-1a over the active 8/16-bpp LCD surface; 0 when it cannot be read. */
-static uint64_t direct_lcd_surface_hash(gp32_t *g) {
-    uint32_t lcdcon1 = s3c2400_debug_read32(g->soc, 0x14a00000u);
-    uint32_t bppmode = GP32_BITS(lcdcon1, 4, 1);
-    uint32_t bytes_per_pixel = bppmode == 0x0bu ? 1u : bppmode == 0x0cu ? 2u : 0u;
-    if (!(lcdcon1 & 1u) || !bytes_per_pixel) return 0u;
-    uint32_t height = GP32_BITS(s3c2400_debug_read32(g->soc, 0x14a00004u), 23, 14) + 1u;
-    uint32_t width = GP32_BITS(s3c2400_debug_read32(g->soc, 0x14a00008u), 18, 8) + 1u;
-    uint32_t fb_addr = s3c2400_debug_read32(g->soc, 0x14a00014u) << 1;
-    uint32_t span = (width * height * bytes_per_pixel) & ~3u;
-    if (!span || span > 320u * 320u * 2u || !direct_ram_range(g, fb_addr, span)) return 0u;
-    arm_bus_t bus = s3c2400_get_bus(g->soc);
-    const uint8_t *p = bus.fastmem(bus.user, fb_addr, span, 0);
-    if (!p) return 0u;
-    uint64_t h = 0xcbf29ce484222325ull;
-    for (uint32_t i = 0; i < span; i += 4u) h = (h ^ gp32_ld32le(p + i)) * 0x100000001b3ull;
-    return h ? h : 1u;
-}
-
 static void direct_fast_load_update(gp32_t *g) {
     uint64_t total = s3c2400_smc_bytes_read(g->soc);
     uint64_t bytes = total >= g->fast_load_mark ? total - g->fast_load_mark : 0u;
     g->fast_load_mark = total;
-    g->fast_load_frame++;
-    int iis = s3c2400_iis_running(g->soc);
-    if (iis) g->fast_load_last_iis = g->fast_load_frame;
-    int busy = !g->fast_load_disabled && !iis && bytes >= GP32_FAST_LOAD_MIN_BYTES && !g->direct_callback.owner &&
-               (g->fast_load_active || g->fast_load_frame - g->fast_load_last_iis <= GP32_FAST_LOAD_RECENT);
+    int audio = direct_fast_load_audio_running(g);
+    if (audio) g->fast_load_recent_audio = GP32_FAST_LOAD_RECENT;
+    int busy = !g->fast_load_disabled && !audio && bytes >= GP32_FAST_LOAD_MIN_BYTES && !g->direct_callback.owner &&
+               (g->fast_load_active || g->fast_load_recent_audio);
+    if (!audio && g->fast_load_recent_audio) --g->fast_load_recent_audio;
     if (busy) {
-        uint64_t h = direct_lcd_surface_hash(g);
+        uint64_t h = s3c2400_lcd_surface_hash(g->soc);
         busy = h && g->fast_load_hash_valid && h == g->fast_load_hash;
         g->fast_load_hash = h;
         g->fast_load_hash_valid = h != 0u;
@@ -5059,7 +5061,7 @@ gp32_status_t gp32_run_frame(gp32_t *g) {
         uint32_t boosted = user_speed * GP32_FAST_LOAD_FACTOR;
         if (!s3c2400_set_cpu_speed_percent(g->soc, boosted > 400u ? 400u : boosted)) user_speed = 0u;
     }
-    gp32_status_t st = gp32_run(g, 0u, 1);
+    gp32_status_t st = gp32_run(g, 0u, 1, user_speed);
     if (user_speed) (void)s3c2400_set_cpu_speed_percent(g->soc, user_speed);
     direct_fast_load_update(g);
     if (direct_time_pending(g->frame_time.deadline_ns, g->elapsed.nanoseconds))
@@ -5116,8 +5118,9 @@ static void gp32_cpu_speed_restore(gp32_t *g, uint32_t percent) {
 
 gp32_status_t gp32_set_fast_loading(gp32_t *g, int enabled) {
     if (!g) return GP32_ERR_INVALID_ARGUMENT;
-    g->fast_load_disabled = enabled ? 0u : 1u;
-    if (!enabled) g->fast_load_active = g->fast_load_streak = 0u;
+    uint8_t disabled = enabled ? 0u : 1u;
+    if (disabled != g->fast_load_disabled) direct_fast_load_reset(g);
+    g->fast_load_disabled = disabled;
     return GP32_OK;
 }
 
@@ -5780,6 +5783,7 @@ static int gp32_state_read(gp32_t *g, state_io_t *io, gp32_state_image_t *direct
 
 static void gp32_state_loaded(gp32_t *g, const gp32_state_image_t *direct, const gp32_resume_image_t *resume) {
     gp32_direct_state_apply(g, direct);
+    direct_fast_load_reset(g);
     g->direct_callback = resume->callback;
     g->direct_tick = resume->tick;
     g->direct_vblank_time = resume->vblank;

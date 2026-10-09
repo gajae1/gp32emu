@@ -1,4 +1,6 @@
 {
-    global: retro_*; gp32emu_android_flush_save;
+    /* The lifecycle hook exists only in Android builds. A wildcard leaves
+       ordinary Linux builds valid when that optional symbol is absent. */
+    global: retro_*; gp32emu_android_flush_save*;
     local: *;
 };

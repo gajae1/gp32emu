@@ -155,7 +155,7 @@ gp32_status_t gp32_set_cpu_speed_percent(gp32_t *gp32, uint32_t percent);
 uint32_t gp32_get_cpu_speed_percent(const gp32_t *gp32);
 /* Runtime fixes for bugs in a game's own code (default on). Currently this
  * corrects the ADPCM nibble order in Astonishia Story R's audio decoder. The
- * card image and savestates are never modified. */
+ * card image is never modified. Saved RAM retains the fix's current mode. */
 gp32_status_t gp32_set_game_fixes(gp32_t *gp32, int enabled);
 /* Shorten silent loading pauses (default on): while a game stops audio,
  * freezes the screen and reads the card in bulk, run its CPU at 4x speed.
@@ -288,6 +288,15 @@ typedef struct gp32_cpu_profile {
      * is proven safe or profitable. Counted poll sources are never ready. */
     uint64_t native_cross_exits[GP32_CPU_PROFILE_OP_KINDS + 1u];
     uint64_t native_dispatch_ready_exits[GP32_CPU_PROFILE_OP_KINDS + 1u];
+    /* Last-target prediction per compiled source block. Cold observations
+     * have no prior target; ready hits also pass the cached successor guards.
+     * These counters observe exits only, without fetching or chaining code. */
+    uint64_t native_exit_predictions;
+    uint64_t native_exit_prediction_hits;
+    uint64_t native_exit_prediction_ready_hits;
+    uint64_t native_exit_prediction_cold;
+    uint64_t native_exit_prediction_second_hits;
+    uint64_t native_exit_prediction_second_ready_hits;
 } gp32_cpu_profile_t;
 
 gp32_status_t gp32_get_cpu_profile(const gp32_t *gp32, gp32_cpu_profile_t *out);
