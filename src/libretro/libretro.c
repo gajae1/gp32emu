@@ -1241,6 +1241,15 @@ bool retro_load_game(const struct retro_game_info *game) {
     return true;
 }
 
+#ifdef __ANDROID__
+/* The standalone Android host flushes on lifecycle pause, on the same thread
+ * as retro_run. Android may kill a stopped app without an unload callback. */
+__attribute__((visibility("default"))) bool gp32emu_android_flush_save(void) {
+    return !emu || !smartmedia_save_path[0] ||
+           gp32_save_card_progress(emu, smartmedia_save_path) == GP32_OK;
+}
+#endif
+
 void retro_unload_game(void) {
     destroy_emu_with_save();
     content_path[0] = 0;

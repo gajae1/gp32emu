@@ -2,6 +2,7 @@
 *.a
 build*
 !scripts/build_android.ps1
+!scripts/build_android_app.py
 !docs/BUILDING.md
 third_party/sdl/build/
 third_party/sdl/install/

@@ -1,0 +1,5 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="org.gp32emu.app.test">
+    <uses-sdk android:minSdkVersion="23" android:targetSdkVersion="35" />
+    <application android:label="GP32emu input tests" />
+    <instrumentation android:name="org.gp32emu.app.InputTest" android:targetPackage="org.gp32emu.app" android:label="GP32emu input tests" />
+</manifest>

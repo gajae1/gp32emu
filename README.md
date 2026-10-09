@@ -1,7 +1,7 @@
 # GP32emu
 
 GP32emu emulates the Game Park GP32, the Korean handheld released in 2001. It
-provides a Windows application and a libretro core for RetroArch. This fork of
+provides Windows and Android applications and a libretro core for RetroArch. This fork of
 [gameblabla's gp32emu](https://github.com/gameblabla/gp32emu) focuses on performance,
 including on lower-powered ARM devices, and is maintained at
 [gajae1/gp32emu](https://github.com/gajae1/gp32emu).
@@ -30,9 +30,14 @@ Supply your own BIOS and game dumps; neither is included.
 | `gp32emu-1.0.0-android-arm64.zip` | `gp32emu_libretro_android.so`, `gp32emu_libretro.info` |
 | `gp32emu-1.0.0-android-armv7.zip` | `gp32emu_libretro_android.so`, `gp32emu_libretro.info` |
 
-The Linux core targets AArch64 with glibc 2.17 or newer. The Android cores target
-Android API 21 or newer; they have been compiled, but Android runtime use is
-unverified. ARMv7 uses the interpreter and is substantially slower than ARM64.
+The separate `gp32emu-1.0.0-android.apk` installs the Android application; it is
+not a ZIP archive and does not require RetroArch. It supports Android 6.0 or
+newer and includes ARM64 and ARMv7. ARM64 is recommended.
+
+The Linux core targets AArch64 with glibc 2.17 or newer. The Android RetroArch
+cores target API 21 or newer. ARMv7 uses the interpreter and is substantially
+slower than ARM64. Physical Android devices and Android RetroArch integration
+still need runtime testing.
 
 Each ZIP also contains this README, release notes, the
 [Korean manual](docs/MANUAL.ko.md), third-party notices in [licenses/](licenses/),
@@ -57,6 +62,21 @@ Use the arrow keys for directions, **Z/X** for GP32 **A/B**, **A/S** for **L/R**
 save/load dialogs; **F12** opens a BMP screenshot save dialog. **F11** or
 **Alt+Enter** toggles fullscreen. **Esc** only leaves fullscreen; it does not
 close the application. Use `File > Exit`, the close button or **Alt+F4** to quit.
+
+## Android application
+
+Install the APK from the release page. Tap **BIOS** to import your GP32 BIOS,
+then **Game** to import an extracted `.smc`, `.fxe` or `.fpk` file. The last game
+opens again on the next launch. **Touch** shows or hides the on-screen D-pad,
+A/B, L/R, Start and Select; the setting is remembered. Multiple buttons can be
+held together. Rotation, focus loss and backgrounding release held input.
+
+Keyboard controls match the Windows defaults. Gamepads work with touch controls
+hidden; the D-pad or left stick, A/B, L1/R1, Start and Select map to the GP32.
+Use Android Back to close the app. Imported files and in-game saves are kept in
+private app storage; original files are unchanged. Uninstalling the app removes
+these copies and saves. The APK uses an existing development signing key for
+sideloading; it is not a Play Store release.
 
 ## RetroArch
 
