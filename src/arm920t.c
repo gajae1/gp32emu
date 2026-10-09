@@ -1427,9 +1427,11 @@ static int arm_jit_insn_mentions_sp(uint32_t insn) {
     return 0;
 }
 
+/* Ignore the Rd/Rm fields in the shape mask, then require the same non-PC
+ * register. Flag-setting and shifted moves keep their architectural effects. */
 static int arm_jit_is_side_effect_free_nop(uint32_t insn) {
     if (insn == 0x00000000u) return 1;
-    if ((insn & 0x0ffffff0u) == 0x01a00000u) {
+    if ((insn & 0x0fff0ff0u) == 0x01a00000u) {
         unsigned rd = (insn >> 12) & 0xfu;
         unsigned rm = insn & 0xfu;
         return rd == rm && rd != 15u;

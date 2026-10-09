@@ -1806,6 +1806,89 @@ static void case_native_forwarding(void) {
         }
 }
 
+/* Self moves may disappear, but flags, shifted forms and PC writes may not.
+ * Record intermediate values before later instructions can hide a mistake. */
+static void case_native_self_move_noop(void) {
+    const uint32_t program[] = {
+        0xe1a05000u, /* MOV  r5,r0          ; r5 = seed                       */
+        0xe1a08000u, /* MOV  r8,r0          ; r8 = seed                       */
+        0xe2855001u, /* ADD  r5,r5,#1       ; r5 = seed+1, publishes EAX/w2   */
+        0xe1a05005u, /* MOV  r5,r5          ; no-op between producer/consumer */
+        0xe2854002u, /* ADD  r4,r5,#2       ; r4 = seed+3 through forwarded r5 */
+        0xe8aa0010u, /* STMIA r10!,{r4}                                    */
+        0xe1500000u, /* CMP  r0,r0          ; EQ always passes                */
+        0x01a04004u, /* MOVEQ r4,r4         ; taken conditional no-op         */
+        0x02844001u, /* ADDEQ r4,r4,#1                                     */
+        0xe8aa0010u, /* STMIA r10!,{r4}                                    */
+        0xe3500000u, /* CMP  r0,#0          ; NE is seed != 0                 */
+        0x11a04004u, /* MOVNE r4,r4         ; skipped when seed == 0          */
+        0x12844005u, /* ADDNE r4,r4,#5                                     */
+        0xe8aa0010u, /* STMIA r10!,{r4}                                    */
+        0xe128f00bu, /* MSR  CPSR_f,r11     ; NZCV = 0010 before MOVS         */
+        0xe1a05000u, /* MOV  r5,r0                                         */
+        0xe1b05005u, /* MOVS r5,r5          ; S=1 still writes N/Z, keeps C   */
+        0xe10f1000u, /* MRS  r1,CPSR                                       */
+        0xe8aa0002u, /* STMIA r10!,{r1}                                    */
+        0xe1a02080u, /* MOV  r2,r0,LSL#1                                   */
+        0xe1a02082u, /* MOV  r2,r2,LSL#1    ; shifted self-move still shifts   */
+        0xe8aa0004u, /* STMIA r10!,{r2}                                    */
+        0xe1a08028u, /* MOV  r8,r8,LSR#0    ; LSR #0 is LSR #32, not a no-op   */
+        0xe8aa0100u, /* STMIA r10!,{r8}                                    */
+        0xe1a0f00fu, /* MOV  pc,pc          ; still jumps to pc+8             */
+        0xe3a04000u, /* MOV  r4,#0          ; skipped by that jump            */
+        0xe2844001u, /* ADD  r4,r4,#1                                      */
+        0xe8aa0010u, /* STMIA r10!,{r4}                                    */
+        0xeafffffeu  /* B .                                                */
+    };
+    const uint32_t seeds[] = {0u, 1u, 0x7fffffffu, 0x80000000u, 0x12345678u, 0xffffffffu};
+    for (unsigned i = 0; i < GP32_ARRAY_COUNT(seeds); ++i) {
+        const uint32_t seed = seeds[i];
+        uint32_t expect;
+        for (unsigned partial = 0; partial < 2u; ++partial) {
+            current_case = "native-self-move-noop";
+            setup_pair();
+            load_both(program, GP32_ARRAY_COUNT(program));
+            set_reg_both(0u, seed);
+            set_reg_both(10u, DATA_ADDR);
+            set_reg_both(11u, 0x20000000u); /* deterministic NZCV before MOVS */
+            if (partial) {
+                CHECK(arm920t_run(cpu_jit, 2u) == arm920t_run(cpu_ref, 2u), "partial entry budget");
+                compare_state();
+            }
+            run_native_case();
+            /* Replay the entry after warming, so the observer also checks
+             * its native body rather than only the final park branch. */
+            set_reg_both(0u, seed);
+            set_reg_both(10u, DATA_ADDR);
+            set_reg_both(11u, 0x20000000u);
+            set_reg_both(15u, CODE_ADDR);
+            run_native_case();
+            const uint8_t *rec = bus_ref.ram + (DATA_ADDR - RAM_BASE);
+            CHECK(ref_reg(10u) == DATA_ADDR + 28u, "every self-move result recorded");
+            expect = seed + 3u;
+            CHECK(gp32_ld32le(rec) == expect, "plain self-move keeps its value");
+            expect += 1u;
+            CHECK(gp32_ld32le(rec + 4u) == expect, "taken MOVEQ self-move");
+            if (seed) expect += 5u;
+            CHECK(gp32_ld32le(rec + 8u) == expect, "MOVNE self-move follows its condition");
+            uint32_t nz = (seed & 0x80000000u) ? 0x80000000u :
+                          seed == 0u ? 0x40000000u : 0u;
+            CHECK((gp32_ld32le(rec + 12u) & 0xf0000000u) == (nz | 0x20000000u),
+                  "MOVS writes N/Z and preserves C");
+            CHECK(gp32_ld32le(rec + 16u) == (seed << 2), "shifted self-move still shifts");
+            CHECK(gp32_ld32le(rec + 20u) == 0u, "LSR #0 self-move still shifts by 32");
+            CHECK(gp32_ld32le(rec + 24u) == expect + 1u, "MOV pc,pc still jumps one instruction");
+            CHECK(ref_reg(4u) == expect + 1u && ref_reg(8u) == 0u,
+                  "register file matches the recorded values");
+            gp32_cpu_profile_t p;
+            arm920t_get_cpu_profile(cpu_jit, &p);
+            if (p.supported && p.native_backend)
+                CHECK(p.native_arm_insns > 0u, "self-move no-op case must run native");
+            teardown_pair();
+        }
+    }
+}
+
 /* Record every immediate result and NZCV before the next instruction can
  * overwrite it. A long initial budget exercises native blocks from entry. */
 static void case_native_immediates(void) {
@@ -4593,6 +4676,7 @@ int main(int argc, char **argv) {
     int poll_only = argc == 2 && !strcmp(argv[1], "--poll-progress");
     int psr_only = argc == 2 && !strcmp(argv[1], "--psr");
     int terminal_coproc_only = argc == 2 && !strcmp(argv[1], "--terminal-coproc");
+    int selfmove_only = argc == 2 && !strcmp(argv[1], "--self-move-nop");
     if (argc == 2 && !strcmp(argv[1], "--sflag-logic")) {
         case_native_sflag_logic();
     } else if (argc == 2 && !strcmp(argv[1], "--read-windows")) {
@@ -4624,6 +4708,8 @@ int main(int argc, char **argv) {
         case_native_data_pc();
     } else if (argc == 2 && !strcmp(argv[1], "--carry-arith")) {
         case_native_carry_arith();
+    } else if (selfmove_only) {
+        case_native_self_move_noop();
     } else if (argc == 2 && !strcmp(argv[1], "--psr-blocks")) {
         case_native_psr_continuation();
     } else if (argc == 2 && !strcmp(argv[1], "--cpsr")) {
@@ -4706,6 +4792,7 @@ int main(int argc, char **argv) {
     case_cache_modified(1);
     case_native_alu_region();
     case_native_forwarding();
+    case_native_self_move_noop();
     case_native_immediates();
     case_native_immshift();
     case_native_sflag_logic();
@@ -4772,7 +4859,7 @@ int main(int argc, char **argv) {
            (argc == 2 && !strcmp(argv[1], "--ldm-pc-native")) ? "ldm-pc-native" :
            (argc == 2 && !strcmp(argv[1], "--psr-blocks")) ? "psr-blocks" :
            (argc == 2 && !strcmp(argv[1], "--cpsr")) ? "cpsr" :
-           (argc == 2 && !strcmp(argv[1], "--carry-arith")) ? "carry-arith" : psr_only ? "spsr" : poll_only ? "poll-progress" : io_only ? "io-direct" : access_only ? "checked-access" : pairs_only ? "block-pairs/fences" : portable_only ? "portable-callback" : block_only ? "block-callback" : irq_only ? "callback-IRQ" : chain_only ? "branch-chain" : forward_only ? "forward-loop" : callback_only ? "callback-PC" : (leaf_only ? "unframed-leaf" : (ram_end_only ? "mapped-page-RAM-end" : (loops_only ? "loop-fences" : "flags/shift/branch/mem/half/block/mul/seeded/budget/loop-fences"))),
+           (argc == 2 && !strcmp(argv[1], "--carry-arith")) ? "carry-arith" : selfmove_only ? "self-move-nop" : psr_only ? "spsr" : poll_only ? "poll-progress" : io_only ? "io-direct" : access_only ? "checked-access" : pairs_only ? "block-pairs/fences" : portable_only ? "portable-callback" : block_only ? "block-callback" : irq_only ? "callback-IRQ" : chain_only ? "branch-chain" : forward_only ? "forward-loop" : callback_only ? "callback-PC" : (leaf_only ? "unframed-leaf" : (ram_end_only ? "mapped-page-RAM-end" : (loops_only ? "loop-fences" : "flags/shift/branch/mem/half/block/mul/seeded/budget/loop-fences"))),
            jit_events, jit_fallbacks);
     return 0;
 }

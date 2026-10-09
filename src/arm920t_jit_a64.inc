@@ -1721,6 +1721,9 @@ static void arm_jit_compile_native(arm920t_t *c, arm_jit_block_t *b) {
             e.nzcv_valid = 0;
             continue;
         }
+        /* A self move preserves the guest value and flags; any preceding
+         * forwarded result remains valid. Counts and exit PC commits stay. */
+        if (arm_jit_is_side_effect_free_nop(op->insn)) continue;
         size_t skip = 0;
         if (op->cond == 15u) {
             /* ARMv4 NV is never, unlike A64's condition 15 (always). */
