@@ -153,6 +153,14 @@ void gp32_set_host_pump(gp32_t *gp32, gp32_host_pump_fn fn, void *user);
  * LCD refresh keep real time. Savestates are portable between speeds. */
 gp32_status_t gp32_set_cpu_speed_percent(gp32_t *gp32, uint32_t percent);
 uint32_t gp32_get_cpu_speed_percent(const gp32_t *gp32);
+/* Runtime fixes for bugs in a game's own code (default on). Currently this
+ * corrects the ADPCM nibble order in Astonishia Story R's audio decoder. The
+ * card image and savestates are never modified. */
+gp32_status_t gp32_set_game_fixes(gp32_t *gp32, int enabled);
+/* Shorten silent loading pauses (default on): while a game stops audio,
+ * freezes the screen and reads the card in bulk, run its CPU at 4x speed.
+ * Audio pitch, timers and LCD refresh keep real time. */
+gp32_status_t gp32_set_fast_loading(gp32_t *gp32, int enabled);
 /* Overrides HLE playback rate for raw SEF PCM. 0 restores SDK-derived auto rate. */
 gp32_status_t gp32_set_hle_sef_rate(gp32_t *gp32, uint32_t sample_rate_hz);
 

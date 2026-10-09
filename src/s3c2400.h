@@ -83,6 +83,8 @@ uint32_t s3c2400_run_clock_hz(const s3c2400_t *soc);
  * Peripheral time is preserved. Call only between CPU runs. */
 int s3c2400_set_cpu_speed_percent(s3c2400_t *soc, uint32_t percent);
 uint32_t s3c2400_cpu_speed_percent(const s3c2400_t *soc);
+uint64_t s3c2400_smc_bytes_read(const s3c2400_t *soc);
+int s3c2400_iis_running(const s3c2400_t *soc);
 int s3c2400_state_save(const s3c2400_t *soc, FILE *f);
 int s3c2400_state_load(s3c2400_t *soc, FILE *f);
 int s3c2400_state_save_io(const s3c2400_t *soc, state_io_t *io);
