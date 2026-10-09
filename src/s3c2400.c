@@ -1843,6 +1843,41 @@ static int lcd_render_contiguous(s3c2400_t *s, uint32_t w, uint32_t h, uint32_t 
     return 1;
 }
 
+uint64_t s3c2400_lcd_surface_hash(s3c2400_t *s) {
+    if (!s || !(s->lcd_regs[0] & 1u)) return 0u;
+    uint32_t mode = GP32_BITS(s->lcd_regs[0], 4, 1);
+    uint32_t ppw = mode == BPPMODE_TFT_08 ? 4u : mode == BPPMODE_TFT_16 ? 2u : 0u;
+    if (!ppw) return 0u;
+    lcd_state_t previous = s->lcd;
+    lcd_dma_init(s);
+    uint32_t words = ((s->lcd.width + ppw - 1u) / ppw) * s->lcd.height;
+    uint32_t start = s->lcd.vramaddr_cur, end = s->lcd.vramaddr_max;
+    if (start >= end || !words) { s->lcd = previous; return 0u; }
+    uint64_t h = 0xcbf29ce484222325ull;
+    /* Use stored programming rather than LINECNT/VSTATUS readback. Layout,
+     * format and palette changes are display activity even with static RAM. */
+    for (unsigned i = 0; i < 8u; ++i)
+        h = (h ^ s->lcd_regs[i]) * 0x100000001b3ull;
+    if (ppw == 4u) {
+        for (unsigned i = 0; i < 256u; ++i)
+            h = (h ^ s->lcd_palette[i]) * 0x100000001b3ull;
+    }
+    uint32_t available = (uint32_t)(((uint64_t)end - start + 3u) / 4u);
+    uint32_t count = words < available ? words : available;
+    const uint8_t *p = ram_ptr(s, start, (size_t)count * 4u);
+    if (!s->lcd.offsize && p) {
+        for (uint32_t i = 0; i < count; ++i)
+            h = (h ^ gp32_ld32le(p + (size_t)i * 4u)) * 0x100000001b3ull;
+    } else {
+        /* The existing DMA walker handles halfword page wraps, OFFSIZE and
+         * partial RAM spans in the same order as the renderer. */
+        for (uint32_t i = 0; i < words && s->lcd.vramaddr_cur < end; ++i)
+            h = (h ^ lcd_dma_read(s)) * 0x100000001b3ull;
+    }
+    s->lcd = previous;
+    return h ? h : 1u;
+}
+
 void s3c2400_render_lcd(s3c2400_t *s) {
     if (!s || !(s->lcd_regs[0] & 1u)) return;
     lcd_dma_init(s);

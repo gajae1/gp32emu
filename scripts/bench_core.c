@@ -374,7 +374,15 @@ static void print_cpu_profile_json(const gp32_cpu_profile_t *p) {
     for (unsigned i = 0; i <= GP32_CPU_PROFILE_OP_KINDS; ++i)
         printf("%s\"%s\":%" PRIu64, i ? "," : "",
                i < GP32_CPU_PROFILE_OP_KINDS ? op_kind_names[i] : "loop_or_unknown", p->native_dispatch_ready_exits[i]);
-    printf("}}");
+    printf("},\"native_exit_predictions\":%" PRIu64
+           ",\"native_exit_prediction_hits\":%" PRIu64
+           ",\"native_exit_prediction_ready_hits\":%" PRIu64
+           ",\"native_exit_prediction_cold\":%" PRIu64
+           ",\"native_exit_prediction_second_hits\":%" PRIu64
+           ",\"native_exit_prediction_second_ready_hits\":%" PRIu64 "}",
+           p->native_exit_predictions, p->native_exit_prediction_hits,
+           p->native_exit_prediction_ready_hits, p->native_exit_prediction_cold,
+           p->native_exit_prediction_second_hits, p->native_exit_prediction_second_ready_hits);
 }
 
 int main(int argc, char **argv) {

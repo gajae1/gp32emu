@@ -337,6 +337,11 @@ struct arm920t {
     /* Compilation metadata, not reset with sampling counters. */
     uint8_t profile_native_loop[ARM_JIT_BLOCK_COUNT];
 #endif
+#if ARM920T_PROFILING
+    uint32_t profile_exit_pc[ARM_JIT_BLOCK_COUNT];
+    uint32_t profile_exit_second_pc[ARM_JIT_BLOCK_COUNT];
+    uint8_t profile_exit_seen[ARM_JIT_BLOCK_COUNT];
+#endif
 };
 _Static_assert(offsetof(arm920t_t, jit_cache_epoch) == offsetof(arm920t_t, jit_generation) + 4u &&
                offsetof(arm_jit_block_t, tag_cache_epoch) == offsetof(arm_jit_block_t, generation) + 4u,
@@ -1326,6 +1331,9 @@ static void arm920t_jit_invalidate_all(arm920t_t *c, unsigned cause) {
         c->jit_generation = 1;
         if (c->jit_blocks) memset(c->jit_blocks, 0, ARM_JIT_BLOCK_COUNT * sizeof(c->jit_blocks[0]));
     }
+#if ARM920T_PROFILING
+    memset(c->profile_exit_seen, 0, sizeof(c->profile_exit_seen));
+#endif
     c->jit_code_used = 0;
     c->jit_cold_floor = 0;
 }
@@ -1822,6 +1830,9 @@ static ARM_NOINLINE arm_jit_block_t *arm_jit_translate(arm920t_t *c, uint32_t pc
     b->native_ok = 0;
     b->native = NULL;
     b->deferred_inline_pc = 0;
+#if ARM920T_PROFILING
+    c->profile_exit_seen[b - c->jit_blocks] = 0u;
+#endif
     uint32_t cur = pc & ~3u;
     /* Superblock trace extension: an unconditional BL the leaf collectors
      * above cannot flatten still continues this trace inside its callee, and
@@ -4253,6 +4264,21 @@ static void arm_profile_native_exit(arm920t_t *c, const arm_jit_block_t *b,
 #endif
     if (kind > GP32_CPU_PROFILE_OP_KINDS) kind = GP32_CPU_PROFILE_OP_KINDS;
     c->prof.native_cross_exits[kind]++;
+    size_t slot = (size_t)(b - c->jit_blocks);
+    int predicted = c->profile_exit_seen[slot] && c->profile_exit_pc[slot] == pc;
+    int second = !predicted && c->profile_exit_seen[slot] == 2u && c->profile_exit_second_pc[slot] == pc;
+    if (c->profile_exit_seen[slot]) {
+        c->prof.native_exit_predictions++;
+        if (predicted) c->prof.native_exit_prediction_hits++;
+        if (second) c->prof.native_exit_prediction_second_hits++;
+    } else {
+        c->prof.native_exit_prediction_cold++;
+    }
+    if (!predicted) {
+        c->profile_exit_second_pc[slot] = c->profile_exit_pc[slot];
+        c->profile_exit_pc[slot] = pc;
+        c->profile_exit_seen[slot] = c->profile_exit_seen[slot] ? 2u : 1u;
+    }
     if ((b->poll_backedge >> 1) || c->halted || c->trace || thumb(c) || !c->jit_enabled ||
         (c->irq_line && !(c->cpsr & I_FLAG)) || (c->fiq_line && !(c->cpsr & F_FLAG)) ||
         run_done >= c->run_limit || done > c->run_limit - run_done) return;
@@ -4263,6 +4289,8 @@ static void arm_profile_native_exit(arm920t_t *c, const arm_jit_block_t *b,
             next->tag_cache_epoch == c->jit_cache_epoch && next->native_ok == 1u &&
             !(next->poll_backedge >> 1) && !next->deferred_inline_pc && budget >= next->count) {
             c->prof.native_dispatch_ready_exits[kind]++;
+            if (predicted) c->prof.native_exit_prediction_ready_hits++;
+            if (second) c->prof.native_exit_prediction_second_ready_hits++;
             return;
         }
     }
@@ -4537,7 +4565,10 @@ void arm920t_get_cpu_profile(const arm920t_t *c, gp32_cpu_profile_t *out) {
 
 void arm920t_reset_cpu_profile(arm920t_t *c) {
 #if ARM920T_PROFILING
-    if (c) memset(&c->prof, 0, sizeof(c->prof));
+    if (c) {
+        memset(&c->prof, 0, sizeof(c->prof));
+        memset(c->profile_exit_seen, 0, sizeof(c->profile_exit_seen));
+    }
 #else
     GP32_UNUSED(c);
 #endif

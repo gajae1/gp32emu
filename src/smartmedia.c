@@ -672,6 +672,8 @@ int smc_save_file(smc_t *s, const char *path, char *err, size_t err_len) {
     }
     if (!save_atomic_commit(&stage, path, err, err_len)) return 0;
     s->dirty = 0;
+    s->persist_dirty = 0;
+    s->autosave_error = 0;
     return 1;
 }
 

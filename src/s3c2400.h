@@ -65,6 +65,9 @@ void s3c2400_audio_clear(s3c2400_t *soc);
  * diagnostics and direct-HLE software mixers; gp32 enables it for BIOS mode. */
 void s3c2400_set_audio_idle(s3c2400_t *soc, int enabled);
 void s3c2400_render_lcd(s3c2400_t *soc);
+/* Hash the active 8/16-bpp scanout, including palette and DMA layout.
+ * Returns 0 for an inactive/unsupported surface; does not advance scanout. */
+uint64_t s3c2400_lcd_surface_hash(s3c2400_t *soc);
 /* Frame period of the live TFT programming, as period_ns + period_frac/2^20 ns.
  * Returns 0 when no panel frame clock can be derived: ENVID off, STN mode, a
  * zero divider, or a period outside the 5..500 Hz sanity window. One pixel is
