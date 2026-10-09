@@ -46,14 +46,18 @@ public final class InputTest extends Instrumentation {
             launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
             activity = (MainActivity)startActivitySync(launch);
             waitForIdleSync();
-            if (activity.getPreferences(0).contains("game")) {
+            java.lang.reflect.Field list = MainActivity.class.getDeclaredField("games");
+            list.setAccessible(true);
+            final java.util.List<?> games = (java.util.List<?>)list.get(activity);
+            if (!games.isEmpty()) {
+                ui(() -> activity.launch((File)games.get(0)));
                 java.lang.reflect.Field loaded = MainActivity.class.getDeclaredField("gameLoaded");
                 loaded.setAccessible(true);
                 long deadline = SystemClock.uptimeMillis() + 10000;
                 while (!loaded.getBoolean(activity) && SystemClock.uptimeMillis() < deadline) SystemClock.sleep(25);
                 check(loaded.getBoolean(activity), "imported game loads through JNI");
             }
-            ui(() -> activity.touchSwitch.setChecked(true));
+            ui(() -> activity.setTouchEnabled(true));
             long layoutDeadline = SystemClock.uptimeMillis() + 3000;
             final boolean[] laidOut = {false};
             do {
@@ -79,7 +83,7 @@ public final class InputTest extends Instrumentation {
                 }
                 activity.input.key(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_Z));
                 touch(MotionEvent.ACTION_DOWN, InputState.B);
-                activity.touchSwitch.setChecked(false);
+                activity.setTouchEnabled(false);
                 check(activity.touchPad.getVisibility() == View.GONE, "Touch OFF must hide controls");
                 check(activity.input.mask() == InputState.A, "Touch OFF must preserve keyboard input");
                 activity.input.key(new KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_Z));
@@ -90,7 +94,7 @@ public final class InputTest extends Instrumentation {
                 check(activity.input.mask() == InputState.A, "keyboard release must preserve gamepad A");
                 activity.input.key(new KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_BUTTON_A));
                 check(activity.input.mask() == 0, "gamepad release");
-                activity.touchSwitch.setChecked(true);
+                activity.setTouchEnabled(true);
                 touch(MotionEvent.ACTION_DOWN, InputState.L);
                 activity.onWindowFocusChanged(false);
                 check(activity.input.mask() == 0, "focus loss must clear input");

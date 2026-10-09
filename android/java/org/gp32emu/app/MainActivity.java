@@ -3,6 +3,7 @@ package org.gp32emu.app;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.res.Configuration;
 import android.database.Cursor;
 import android.graphics.Bitmap;
@@ -10,31 +11,43 @@ import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.Rect;
+import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
 import android.media.AudioAttributes;
 import android.media.AudioFormat;
 import android.media.AudioManager;
 import android.media.AudioTrack;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.provider.OpenableColumns;
 import android.util.AtomicFile;
+import android.view.DisplayCutout;
+import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
 import android.view.View;
+import android.view.ViewGroup;
+import android.view.WindowInsets;
 import android.view.WindowManager;
+import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
-import android.widget.Switch;
+import android.widget.ListView;
 import android.widget.TextView;
+import android.widget.Toast;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -42,20 +55,31 @@ import java.util.concurrent.locks.LockSupport;
 
 public final class MainActivity extends Activity implements SurfaceHolder.Callback {
     private static final int PICK_BIOS = 1, PICK_GAME = 2;
+    private static final int ACCENT = Color.rgb(127, 209, 185), PANEL = Color.rgb(31, 37, 48);
     /* An old Activity can finish its save flush while the new one starts. */
     private static final Object CORE_OWNER = new Object();
     private final Object wake = new Object();
     final InputState input = new InputState();
     TouchPadView touchPad;
-    Switch touchSwitch;
     private SurfaceView screen;
-    private TextView status;
+    private FrameLayout play;
+    private Button menuButton;
+    private LinearLayout home;
+    private TextView biosStatus;
+    private Button biosButton, continueButton;
+    private TextView emptyText;
+    private final List<File> games = new ArrayList<>();
+    private ArrayAdapter<File> gameAdapter;
+    private SharedPreferences prefs;
     private Thread worker;
     private final ExecutorService importer = Executors.newSingleThreadExecutor();
     private volatile boolean paused = true, stopped, surfaceReady, focusGranted, importing;
-    private volatile boolean gameLoaded;
+    private volatile boolean gameLoaded, uiHold = true, resetRequested;
+    volatile boolean touchEnabled, integerScale;
+    private volatile String runningGame;
     private String pendingGame;
     private volatile int pauseSequence;
+    private AlertDialog menu;
     private AudioManager audioManager;
     private final AudioManager.OnAudioFocusChangeListener audioFocus = change -> {
         focusGranted = change == AudioManager.AUDIOFOCUS_GAIN;
@@ -67,48 +91,267 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         super.onCreate(state);
         setVolumeControlStream(AudioManager.STREAM_MUSIC);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        if (Build.VERSION.SDK_INT >= 28) getWindow().getAttributes().layoutInDisplayCutoutMode =
+                WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
         audioManager = (AudioManager)getSystemService(AUDIO_SERVICE);
-        LinearLayout layout = new LinearLayout(this);
-        layout.setOrientation(LinearLayout.VERTICAL);
-        layout.setBackgroundColor(Color.rgb(20, 22, 27));
-        // Respect navigation/status bars, including Android 15 edge-to-edge.
-        layout.setOnApplyWindowInsetsListener((view, insets) -> {
-            view.setPadding(insets.getSystemWindowInsetLeft(), insets.getSystemWindowInsetTop(),
-                            insets.getSystemWindowInsetRight(), insets.getSystemWindowInsetBottom());
-            return insets.consumeSystemWindowInsets();
-        });
-        LinearLayout toolbar = new LinearLayout(this);
-        toolbar.setGravity(android.view.Gravity.CENTER_VERTICAL);
-        addButton(toolbar, "BIOS", () -> choose(PICK_BIOS));
-        addButton(toolbar, "Game", () -> choose(PICK_GAME));
-        touchSwitch = new Switch(this);
-        touchSwitch.setText("Touch");
-        touchSwitch.setContentDescription("Show touch controls");
-        touchSwitch.setMinHeight(dp(48));
-        touchSwitch.setChecked(getPreferences(0).getBoolean("touch", true));
-        toolbar.addView(touchSwitch, new LinearLayout.LayoutParams(0, -2, 1));
-        addButton(toolbar, "Info", this::showInfo);
-        layout.addView(toolbar);
-        status = new TextView(this);
-        status.setTextSize(12);
-        status.setPadding(dp(8), dp(2), dp(8), dp(2));
-        status.setText("Select your BIOS, then an SMC, FXE or FPK game (extract ZIPs first).");
-        layout.addView(status);
-        FrameLayout play = new FrameLayout(this);
+        prefs = getPreferences(0);
+        touchEnabled = prefs.getBoolean("touch", true);
+        integerScale = prefs.getBoolean("integer", false);
+
+        FrameLayout root = new FrameLayout(this);
+        root.setBackgroundColor(Color.BLACK);
+        play = new FrameLayout(this);
         screen = new SurfaceView(this);
         screen.getHolder().addCallback(this);
         play.addView(screen, new FrameLayout.LayoutParams(-1, -1));
         touchPad = new TouchPadView(this, input);
+        touchPad.setHaptics(prefs.getBoolean("haptics", true));
         play.addView(touchPad, new FrameLayout.LayoutParams(-1, -1));
-        setTouchEnabled(touchSwitch.isChecked());
-        touchSwitch.setOnCheckedChangeListener((button, enabled) -> setTouchEnabled(enabled));
-        layout.addView(play, new LinearLayout.LayoutParams(-1, 0, 1));
-        setContentView(layout);
+        menuButton = new Button(this);
+        menuButton.setText("\u2261");
+        menuButton.setTextSize(22);
+        menuButton.setTextColor(Color.WHITE);
+        menuButton.setContentDescription(getString(R.string.menu));
+        menuButton.setBackground(rounded(Color.argb(110, 26, 34, 46), 12));
+        menuButton.setAlpha(0.8f);
+        menuButton.setPadding(0, 0, 0, 0);
+        menuButton.setOnClickListener(v -> showMenu());
+        play.addView(menuButton, new FrameLayout.LayoutParams(dp(48), dp(48)));
+        placeMenuButton(getResources().getConfiguration());
+        play.setOnApplyWindowInsetsListener((view, insets) -> { padForInsets(view, insets); return insets; });
+        root.addView(play, new FrameLayout.LayoutParams(-1, -1));
+        home = buildHome();
+        root.addView(home, new FrameLayout.LayoutParams(-1, -1));
+        setContentView(root);
+        setTouchEnabled(touchEnabled);
         directory("system"); directory("games"); directory("saves");
-        String previous = getPreferences(0).getString("game", null);
-        if (previous != null && new File(previous).isFile()) pendingGame = previous;
+        refreshHome();
         worker = new Thread(this::emulate, "GP32 emulation");
         worker.start();
+    }
+
+    private LinearLayout buildHome() {
+        LinearLayout page = new LinearLayout(this);
+        page.setOrientation(LinearLayout.VERTICAL);
+        page.setBackgroundColor(Color.rgb(20, 22, 27));
+        page.setClickable(true); // The game surface below must not receive taps.
+        page.setOnApplyWindowInsetsListener((view, insets) -> {
+            padForInsets(view, insets);
+            view.setPadding(view.getPaddingLeft() + dp(20), view.getPaddingTop() + dp(16),
+                            view.getPaddingRight() + dp(20), view.getPaddingBottom() + dp(12));
+            return insets;
+        });
+        TextView title = new TextView(this);
+        title.setText(R.string.app_name);
+        title.setTextSize(28);
+        title.setTypeface(Typeface.DEFAULT_BOLD);
+        title.setTextColor(Color.WHITE);
+        page.addView(title);
+        TextView tagline = new TextView(this);
+        tagline.setText(R.string.tagline);
+        tagline.setTextColor(Color.rgb(160, 170, 185));
+        page.addView(tagline);
+
+        LinearLayout bios = new LinearLayout(this);
+        bios.setGravity(Gravity.CENTER_VERTICAL);
+        bios.setPadding(dp(14), dp(8), dp(8), dp(8));
+        bios.setBackground(rounded(PANEL, 12));
+        biosStatus = new TextView(this);
+        biosStatus.setTextColor(Color.rgb(220, 226, 235));
+        biosStatus.setTextSize(14);
+        bios.addView(biosStatus, new LinearLayout.LayoutParams(0, -2, 1));
+        biosButton = new Button(this, null, android.R.attr.borderlessButtonStyle);
+        biosButton.setTextColor(ACCENT);
+        biosButton.setAllCaps(false);
+        biosButton.setMinHeight(dp(48));
+        biosButton.setOnClickListener(v -> choose(PICK_BIOS));
+        bios.addView(biosButton, new LinearLayout.LayoutParams(-2, dp(48)));
+        LinearLayout.LayoutParams biosParams = new LinearLayout.LayoutParams(-1, -2);
+        biosParams.topMargin = dp(18);
+        page.addView(bios, biosParams);
+
+        continueButton = primaryButton();
+        continueButton.setSingleLine(true);
+        continueButton.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        continueButton.setPadding(dp(16), 0, dp(16), 0);
+        continueButton.setOnClickListener(v -> {
+            if (gameLoaded) showGame(); else if (!games.isEmpty()) launch(games.get(0));
+        });
+        LinearLayout.LayoutParams continueParams = new LinearLayout.LayoutParams(-1, dp(56));
+        continueParams.topMargin = dp(16);
+        page.addView(continueButton, continueParams);
+        Button add = primaryButton();
+        add.setTextColor(ACCENT);
+        GradientDrawable outline = rounded(Color.TRANSPARENT, 14);
+        outline.setStroke(dp(2), ACCENT);
+        add.setBackground(outline);
+        add.setText(R.string.add_game);
+        add.setOnClickListener(v -> choose(PICK_GAME));
+        LinearLayout.LayoutParams addParams = new LinearLayout.LayoutParams(-1, dp(56));
+        addParams.topMargin = dp(10);
+        page.addView(add, addParams);
+
+        TextView header = new TextView(this);
+        header.setText(R.string.library);
+        header.setTextColor(Color.WHITE);
+        header.setTextSize(16);
+        header.setTypeface(Typeface.DEFAULT_BOLD);
+        header.setPadding(0, dp(22), 0, dp(2));
+        page.addView(header);
+        TextView hint = new TextView(this);
+        hint.setText(R.string.library_hint);
+        hint.setTextColor(Color.rgb(140, 150, 165));
+        hint.setTextSize(12);
+        page.addView(hint);
+        emptyText = new TextView(this);
+        emptyText.setText(R.string.library_empty);
+        emptyText.setTextColor(Color.rgb(170, 178, 190));
+        emptyText.setPadding(0, dp(16), 0, 0);
+        page.addView(emptyText);
+
+        ListView list = new ListView(this);
+        list.setDividerHeight(dp(6));
+        list.setDivider(null);
+        gameAdapter = new ArrayAdapter<File>(this, 0, games) {
+            @Override public View getView(int position, View reuse, ViewGroup parent) {
+                TextView row = reuse instanceof TextView ? (TextView)reuse : new TextView(MainActivity.this);
+                File file = getItem(position);
+                row.setText(title(file) + "\n" + String.format(Locale.ROOT, "%.1f MB", file.length() / 1048576.0));
+                row.setTextColor(Color.WHITE);
+                row.setTextSize(15);
+                row.setMinHeight(dp(56));
+                row.setGravity(Gravity.CENTER_VERTICAL);
+                row.setPadding(dp(14), dp(8), dp(14), dp(8));
+                row.setBackground(rounded(file.getAbsolutePath().equals(runningGame) ? Color.rgb(36, 60, 58) : PANEL, 10));
+                return row;
+            }
+        };
+        list.setAdapter(gameAdapter);
+        list.setOnItemClickListener((parent, view, position, id) -> launch(games.get(position)));
+        list.setOnItemLongClickListener((parent, view, position, id) -> { confirmRemove(games.get(position)); return true; });
+        LinearLayout.LayoutParams listParams = new LinearLayout.LayoutParams(-1, 0, 1);
+        listParams.topMargin = dp(10);
+        page.addView(list, listParams);
+        return page;
+    }
+
+    private Button primaryButton() {
+        Button b = new Button(this, null, android.R.attr.borderlessButtonStyle);
+        b.setAllCaps(false);
+        b.setTextSize(16);
+        b.setTextColor(Color.rgb(16, 32, 30));
+        b.setBackground(rounded(ACCENT, 14));
+        return b;
+    }
+    private GradientDrawable rounded(int color, int radius) {
+        GradientDrawable d = new GradientDrawable();
+        d.setColor(color);
+        d.setCornerRadius(dp(radius));
+        return d;
+    }
+    private void padForInsets(View view, WindowInsets insets) {
+        int l = insets.getSystemWindowInsetLeft(), t = insets.getSystemWindowInsetTop();
+        int r = insets.getSystemWindowInsetRight(), b = insets.getSystemWindowInsetBottom();
+        if (Build.VERSION.SDK_INT >= 28 && insets.getDisplayCutout() != null) {
+            DisplayCutout c = insets.getDisplayCutout();
+            l = Math.max(l, c.getSafeInsetLeft()); t = Math.max(t, c.getSafeInsetTop());
+            r = Math.max(r, c.getSafeInsetRight()); b = Math.max(b, c.getSafeInsetBottom());
+        }
+        view.setPadding(l, t, r, b);
+    }
+    private static String title(File file) {
+        String name = file.getName();
+        int dot = name.lastIndexOf('.');
+        return dot > 0 ? name.substring(0, dot) : name;
+    }
+
+    private void refreshHome() {
+        boolean haveBios = new File(directory("system"), "gp32166m.bin").isFile();
+        biosStatus.setText(haveBios ? R.string.bios_ready : R.string.bios_missing);
+        biosButton.setText(haveBios ? R.string.change_bios : R.string.choose_bios);
+        games.clear();
+        File[] folders = directory("games").listFiles();
+        if (folders != null) for (File folder : folders) {
+            File[] files = folder.listFiles();
+            if (files != null) for (File f : files) if (f.isFile()) games.add(f);
+        }
+        games.sort((a, b) -> Long.compare(b.lastModified(), a.lastModified()));
+        gameAdapter.notifyDataSetChanged();
+        emptyText.setVisibility(games.isEmpty() ? View.VISIBLE : View.GONE);
+        File resume = gameLoaded && runningGame != null ? new File(runningGame) : games.isEmpty() ? null : games.get(0);
+        continueButton.setVisibility(resume == null ? View.GONE : View.VISIBLE);
+        if (resume != null) continueButton.setText(getString(R.string.resume_game, title(resume)));
+    }
+    private void showHome() {
+        clearInput();
+        uiHold = true; signal();
+        refreshHome();
+        home.setVisibility(View.VISIBLE);
+        setFullscreen(false);
+    }
+    void showGame() {
+        home.setVisibility(View.GONE);
+        setFullscreen(true);
+        uiHold = menu != null && menu.isShowing();
+        signal();
+    }
+    @SuppressWarnings("deprecation")
+    private void setFullscreen(boolean immersive) {
+        getWindow().getDecorView().setSystemUiVisibility(immersive
+            ? View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY | View.SYSTEM_UI_FLAG_FULLSCREEN | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+              | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+            : View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
+    }
+    void launch(File game) {
+        game.setLastModified(System.currentTimeMillis());
+        if (!game.getAbsolutePath().equals(runningGame) || !gameLoaded) {
+            gameLoaded = false;
+            synchronized (wake) { pendingGame = game.getAbsolutePath(); wake.notifyAll(); }
+            toast(getString(R.string.loading, title(game)));
+        }
+        showGame();
+    }
+    private void confirmRemove(File game) {
+        if (game.getAbsolutePath().equals(runningGame)) { toast(getString(R.string.remove_running)); return; }
+        new AlertDialog.Builder(this).setTitle(getString(R.string.remove_title, title(game)))
+            .setMessage(R.string.remove_message).setNegativeButton(R.string.cancel, null)
+            .setPositiveButton(R.string.remove, (d, w) -> {
+                File folder = game.getParentFile();
+                deleteTree(folder);
+                deleteTree(new File(directory("saves"), folder.getName()));
+                refreshHome();
+            }).show();
+    }
+    private static void deleteTree(File f) {
+        File[] children = f.listFiles();
+        if (children != null) for (File c : children) deleteTree(c);
+        f.delete();
+    }
+
+    private void showMenu() {
+        if (menu != null && menu.isShowing()) return;
+        clearInput();
+        uiHold = true; signal();
+        List<String> labels = new ArrayList<>();
+        List<Runnable> actions = new ArrayList<>();
+        labels.add(getString(R.string.menu_resume)); actions.add(() -> {});
+        labels.add(getString(R.string.menu_reset)); actions.add(() -> { resetRequested = true; });
+        labels.add(getString(touchEnabled ? R.string.menu_touch_off : R.string.menu_touch_on));
+        actions.add(() -> setTouchEnabled(!touchEnabled));
+        labels.add(getString(touchPad.haptics() ? R.string.menu_haptics_off : R.string.menu_haptics_on));
+        actions.add(() -> { touchPad.setHaptics(!touchPad.haptics()); prefs.edit().putBoolean("haptics", touchPad.haptics()).apply(); });
+        labels.add(getString(integerScale ? R.string.menu_scale_fit : R.string.menu_scale_integer));
+        actions.add(() -> { integerScale = !integerScale; prefs.edit().putBoolean("integer", integerScale).apply(); });
+        labels.add(getString(R.string.menu_library)); actions.add(this::showHome);
+        labels.add(getString(R.string.menu_about)); actions.add(this::showInfo);
+        labels.add(getString(R.string.menu_quit)); actions.add(this::finish);
+        menu = new AlertDialog.Builder(this).setTitle(runningGame == null ? getString(R.string.menu) : title(new File(runningGame)))
+            .setItems(labels.toArray(new String[0]), (d, which) -> actions.get(which).run())
+            .setOnDismissListener(d -> {
+                menu = null;
+                if (home.getVisibility() != View.VISIBLE) { uiHold = false; setFullscreen(true); signal(); }
+            }).create();
+        menu.show();
     }
 
     private int dp(int value) { return Math.round(value * getResources().getDisplayMetrics().density); }
@@ -117,29 +360,23 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         if (!d.isDirectory() && !d.mkdirs()) throw new IllegalStateException("Cannot create " + name);
         return d;
     }
-    private void addButton(LinearLayout bar, String label, Runnable action) {
-        Button b = new Button(this);
-        b.setText(label); b.setMinWidth(dp(56)); b.setMinimumWidth(dp(56));
-        b.setPadding(dp(6), 0, dp(6), 0);
-        b.setOnClickListener(v -> { clearInput(); action.run(); });
-        bar.addView(b, new LinearLayout.LayoutParams(dp(62), dp(48)));
-    }
     void setTouchEnabled(boolean enabled) {
+        touchEnabled = enabled;
         if (touchPad == null) return;
         touchPad.release();
         touchPad.setVisibility(enabled ? View.VISIBLE : View.GONE);
-        getPreferences(0).edit().putBoolean("touch", enabled).apply();
+        prefs.edit().putBoolean("touch", enabled).apply();
     }
     private void clearInput() {
         input.clear();
         if (touchPad != null) touchPad.release();
     }
     private void signal() { synchronized (wake) { wake.notifyAll(); } }
-    private void tell(String message) {
-        runOnUiThread(() -> { if (!isDestroyed()) status.setText(message); });
+    private void toast(String message) {
+        runOnUiThread(() -> { if (!isDestroyed()) Toast.makeText(this, message, Toast.LENGTH_SHORT).show(); });
     }
     private void choose(int request) {
-        if (importing) { tell("A file is still being imported."); return; }
+        if (importing) { toast(getString(R.string.import_busy)); return; }
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
         intent.addCategory(Intent.CATEGORY_OPENABLE);
         intent.setType("*/*");
@@ -151,7 +388,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         if (request != PICK_BIOS && request != PICK_GAME) return;
         Uri uri = data.getData();
         importing = true;
-        tell("Importing…");
+        toast(getString(R.string.importing));
         importer.execute(() -> {
             File temporary = null;
             try {
@@ -162,23 +399,23 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
                 name = name.replaceAll("[\\\\/\\p{Cntrl}]", "_");
                 String ext = name.toLowerCase(Locale.ROOT);
                 if (request == PICK_GAME && !(ext.endsWith(".smc") || ext.endsWith(".fxe") || ext.endsWith(".fpk")))
-                    throw new IllegalArgumentException("Choose an SMC, FXE or FPK file. Extract ZIP archives first.");
+                    throw new IllegalArgumentException(getString(R.string.import_type));
                 temporary = File.createTempFile("gp32-import-", ".tmp", getCacheDir());
                 MessageDigest digest = MessageDigest.getInstance("SHA-256");
                 long total = 0, limit = request == PICK_BIOS ? 2L * 1024 * 1024 : 256L * 1024 * 1024;
                 try (InputStream in = getContentResolver().openInputStream(uri);
                      FileOutputStream out = new FileOutputStream(temporary)) {
-                    if (in == null) throw new IllegalArgumentException("Cannot read the selected file.");
+                    if (in == null) throw new IllegalArgumentException(getString(R.string.import_read));
                     byte[] buffer = new byte[65536];
                     int n;
                     while ((n = in.read(buffer)) != -1) {
                         total += n;
-                        if (total > limit) throw new IllegalArgumentException("The selected file is too large.");
+                        if (total > limit) throw new IllegalArgumentException(getString(R.string.import_large));
                         out.write(buffer, 0, n); digest.update(buffer, 0, n);
                     }
                     out.getFD().sync();
                 }
-                if (total == 0) throw new IllegalArgumentException("The selected file is empty.");
+                if (total == 0) throw new IllegalArgumentException(getString(R.string.import_empty));
                 if (request == PICK_BIOS) {
                     AtomicFile target = new AtomicFile(new File(directory("system"), "gp32166m.bin"));
                     FileOutputStream out = null;
@@ -188,16 +425,16 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
                         while ((n = in.read(buffer)) != -1) out.write(buffer, 0, n);
                         target.finishWrite(out); out = null;
                     } finally { if (out != null) target.failWrite(out); }
-                    tell("BIOS imported. Open a game to use it.");
+                    toast(getString(R.string.bios_imported));
+                    runOnUiThread(this::refreshHome);
                 } else {
                     StringBuilder id = new StringBuilder();
                     for (byte b : digest.digest()) id.append(String.format(Locale.ROOT, "%02x", b & 255));
                     File dest = new File(directory("games/" + id), name);
-                    if (!dest.exists() && !temporary.renameTo(dest)) throw new IllegalStateException("Cannot store the game.");
-                    synchronized (wake) { pendingGame = dest.getAbsolutePath(); wake.notifyAll(); }
-                    getPreferences(0).edit().putString("game", dest.getAbsolutePath()).apply();
+                    if (!dest.exists() && !temporary.renameTo(dest)) throw new IllegalStateException(getString(R.string.import_store));
+                    runOnUiThread(() -> { refreshHome(); launch(dest); });
                 }
-            } catch (Exception e) { tell("Import failed: " + e.getMessage()); }
+            } catch (Exception e) { toast(getString(R.string.import_failed, e.getMessage())); }
             finally { if (temporary != null) temporary.delete(); importing = false; }
         });
     }
@@ -205,6 +442,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private void emulate() {
         synchronized (CORE_OWNER) { runCore(); }
     }
+    private boolean held() { return paused || uiHold || !surfaceReady || !focusGranted || !gameLoaded; }
     private void runCore() {
         AudioTrack track = null;
         Bitmap image = null;
@@ -229,7 +467,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             while (!stopped) {
                 int requestedPause = pauseSequence;
                 if (nativeOpened && requestedPause != flushedPause) {
-                    if (!NativeCore.flush()) tell("Could not save progress. Check available storage.");
+                    if (!NativeCore.flush()) toast(getString(R.string.save_failed));
                     flushedPause = requestedPause;
                 }
                 String game;
@@ -241,18 +479,20 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
                     File saves = directory("saves/" + source.getParentFile().getName());
                     nativeOpened = true;
                     String error = NativeCore.open(directory("system").getAbsolutePath(), saves.getAbsolutePath(), game);
+                    runningGame = error == null ? game : null;
                     gameLoaded = error == null;
-                    tell(error == null ? source.getName() : error);
+                    if (error != null) { toast(error); runOnUiThread(this::showHome); }
                     deadline = 0;
                 }
-                if (paused || !surfaceReady || !focusGranted || !gameLoaded) {
+                if (gameLoaded && resetRequested) { resetRequested = false; NativeCore.reset(); }
+                if (held()) {
                     if (!suspended) {
                         track.pause(); track.flush();
-                        if (!NativeCore.flush()) tell("Could not save progress. Check available storage.");
+                        if (!NativeCore.flush()) toast(getString(R.string.save_failed));
                         suspended = true;
                     }
                     synchronized (wake) {
-                        if (!stopped && pendingGame == null && (paused || !surfaceReady || !focusGranted || !gameLoaded)) wake.wait();
+                        if (!stopped && pendingGame == null && !resetRequested && held()) wake.wait();
                     }
                     deadline = 0;
                     continue;
@@ -268,7 +508,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
                 }
                 drawFrame(image, paint, dest);
                 String message = NativeCore.message();
-                if (message != null) tell(message);
+                if (message != null) toast(message);
                 // Keep guest speed at 60 frontend frames/s even during silence.
                 long now = System.nanoTime();
                 if (deadline == 0 || now - deadline > 100_000_000L) deadline = now;
@@ -277,7 +517,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
                 if (remaining > 0) LockSupport.parkNanos(remaining);
             }
         } catch (Exception | LinkageError e) {
-            tell("Emulation stopped: " + e.getMessage());
+            toast(getString(R.string.stopped, e.getMessage()));
         } finally {
             gameLoaded = false;
             if (track != null) { track.pause(); track.flush(); track.release(); }
@@ -293,31 +533,48 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             if (canvas == null) return;
             canvas.drawColor(Color.BLACK);
             int width = canvas.getWidth(), height = canvas.getHeight();
-            int available = height;
-            if (height > width && getPreferences(0).getBoolean("touch", true)) available = Math.max(1, height - dp(235));
-            int w = Math.min(width, available * 4 / 3), h = w * 3 / 4;
-            int x = (width - w) / 2, y = (available - h) / 2;
+            int top = 0, bottom = height;
+            if (height > width) {
+                top = dp(60); // Menu button row in portrait.
+                if (touchEnabled) bottom = Math.max(top + 1, (int)touchPad.controlsTop() - dp(8));
+            }
+            int areaW = width, areaH = Math.max(1, bottom - top);
+            int w, h;
+            if (integerScale && Math.min(areaW / 320, areaH / 240) >= 1) {
+                int scale = Math.min(areaW / 320, areaH / 240);
+                w = 320 * scale; h = 240 * scale;
+            } else {
+                w = Math.min(areaW, areaH * 4 / 3); h = w * 3 / 4;
+            }
+            int x = (width - w) / 2, y = top + (areaH - h) / 2;
             dest.set(x, y, x + w, y + h);
             canvas.drawBitmap(image, null, dest, paint);
         } finally { if (canvas != null) screen.getHolder().unlockCanvasAndPost(canvas); }
     }
     private void showInfo() {
-        paused = true; clearInput(); signal();
-        String text = "GP32emu 1.0.0\n\nBIOS: select your GP32 BIOS. Game: select an extracted SMC, FXE or FPK. The last game reopens next time.\n\nTouch switches the on-screen controls on/off. Bluetooth/USB gamepads work with Touch off. Keyboard: arrows, Z/X = A/B, A/S = L/R, Enter = Start, Shift = Select.\n\nGame files are copied into app storage; originals are unchanged. In-game saves are automatic. Back closes the game and exits. Uninstalling deletes imported files and saves.\n\nBased on gameblabla/gp32emu. Source: github.com/gajae1/gp32emu";
-        new AlertDialog.Builder(this).setTitle("GP32emu").setMessage(text)
-            .setPositiveButton("OK", null).setNeutralButton("Licenses", (d, w) -> showLicenses())
-            .setOnDismissListener(d -> { paused = false; signal(); }).show();
+        clearInput();
+        uiHold = true; signal();
+        new AlertDialog.Builder(this).setTitle(R.string.about).setMessage(R.string.about_text)
+            .setPositiveButton(R.string.ok, null).setNeutralButton(R.string.licenses, (d, w) -> showLicenses())
+            .setOnDismissListener(d -> {
+                if (home.getVisibility() != View.VISIBLE && (menu == null || !menu.isShowing())) { uiHold = false; signal(); }
+            }).show();
     }
     private void showLicenses() {
         StringBuilder text = new StringBuilder();
         try {
             readLicenses("licenses", text);
         } catch (Exception e) { text.append(e.getMessage()); }
-        new AlertDialog.Builder(this).setTitle("Licenses").setMessage(text).setPositiveButton("OK", null).show();
+        uiHold = true; signal();
+        new AlertDialog.Builder(this).setTitle(R.string.licenses).setMessage(text).setPositiveButton(R.string.ok, null)
+            .setOnDismissListener(d -> {
+                if (home.getVisibility() != View.VISIBLE) { uiHold = false; signal(); }
+            }).show();
     }
     private void readLicenses(String path, StringBuilder text) throws java.io.IOException {
         String[] names = getAssets().list(path);
         if (names != null && names.length > 0) {
+            Arrays.sort(names);
             for (String name : names) readLicenses(path + "/" + name, text);
         } else {
             text.append(path).append("\n\n");
@@ -329,18 +586,25 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             }
         }
     }
+    private boolean inGame() { return home.getVisibility() != View.VISIBLE && gameLoaded; }
     @Override public boolean dispatchKeyEvent(KeyEvent event) {
-        if (gameLoaded && input.key(event)) return true;
+        int code = event.getKeyCode();
+        if (code == KeyEvent.KEYCODE_BUTTON_MODE || code == KeyEvent.KEYCODE_MENU) {
+            if (event.getAction() == KeyEvent.ACTION_UP && inGame()) showMenu();
+            return true;
+        }
+        if (inGame() && !uiHold && input.key(event)) return true;
         return super.dispatchKeyEvent(event);
     }
     @Override public boolean dispatchGenericMotionEvent(MotionEvent event) {
-        if (gameLoaded && input.motion(event)) return true;
+        if (inGame() && !uiHold && input.motion(event)) return true;
         return super.dispatchGenericMotionEvent(event);
     }
     @Override protected void onResume() {
         super.onResume(); paused = false;
         focusGranted = audioManager.requestAudioFocus(audioFocus, AudioManager.STREAM_MUSIC,
                 AudioManager.AUDIOFOCUS_GAIN) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED;
+        if (home.getVisibility() != View.VISIBLE) setFullscreen(true);
         signal();
     }
     @Override protected void onPause() {
@@ -352,10 +616,32 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         stopped = true; clearInput(); signal(); importer.shutdown();
         super.onDestroy();
     }
-    @Override public void onConfigurationChanged(Configuration config) { super.onConfigurationChanged(config); clearInput(); }
-    @Override public void onWindowFocusChanged(boolean hasFocus) { super.onWindowFocusChanged(hasFocus); if (!hasFocus) clearInput(); }
+    @Override public void onConfigurationChanged(Configuration config) {
+        super.onConfigurationChanged(config);
+        clearInput();
+        placeMenuButton(config);
+    }
+    @Override public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (!hasFocus) clearInput();
+        else if (home.getVisibility() != View.VISIBLE) setFullscreen(true);
+    }
     @Override public void surfaceCreated(SurfaceHolder holder) { surfaceReady = true; signal(); }
     @Override public void surfaceChanged(SurfaceHolder holder, int format, int width, int height) { clearInput(); signal(); }
     @Override public void surfaceDestroyed(SurfaceHolder holder) { surfaceReady = false; clearInput(); signal(); }
-    @Override public void onBackPressed() { clearInput(); finish(); }
+    @Override public void onBackPressed() {
+        if (home.getVisibility() != View.VISIBLE) showMenu();
+        else if (gameLoaded) showGame();
+        else finish();
+    }
+    /** Portrait: top-right above the picture. Landscape: top centre, clear of L/R. */
+    private void placeMenuButton(Configuration config) {
+        FrameLayout.LayoutParams p = (FrameLayout.LayoutParams)menuButton.getLayoutParams();
+        p.gravity = Gravity.TOP | (config.orientation == Configuration.ORIENTATION_LANDSCAPE
+                ? Gravity.CENTER_HORIZONTAL : Gravity.END);
+        // Over the picture in landscape, so keep it faint there.
+        menuButton.setAlpha(config.orientation == Configuration.ORIENTATION_LANDSCAPE ? 0.45f : 0.8f);
+        p.setMargins(dp(6), dp(6), dp(6), dp(6));
+        menuButton.setLayoutParams(p);
+    }
 }

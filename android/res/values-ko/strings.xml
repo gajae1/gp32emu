@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="tagline">Game Park GP32 에뮬레이터</string>
+    <string name="bios_ready">BIOS 준비됨</string>
+    <string name="bios_missing">BIOS가 없습니다. 대부분의 상용 게임은 BIOS가 필요합니다.</string>
+    <string name="choose_bios">BIOS 선택</string>
+    <string name="change_bios">BIOS 변경</string>
+    <string name="add_game">게임 추가</string>
+    <string name="resume_game">이어하기: %1$s</string>
+    <string name="library">게임 목록</string>
+    <string name="library_empty">아직 게임이 없습니다. 게임 추가를 눌러 SMC, FXE, FPK 파일을 선택하세요. ZIP은 먼저 압축을 풀어 주세요.</string>
+    <string name="library_hint">눌러서 실행하고, 길게 눌러 삭제합니다.</string>
+    <string name="menu">메뉴</string>
+    <string name="menu_resume">계속하기</string>
+    <string name="menu_reset">처음부터 다시 시작</string>
+    <string name="menu_touch_on">터치 조작 표시</string>
+    <string name="menu_touch_off">터치 조작 숨기기</string>
+    <string name="menu_haptics_on">터치 진동 켜기</string>
+    <string name="menu_haptics_off">터치 진동 끄기</string>
+    <string name="menu_scale_integer">화면: 선명한 픽셀</string>
+    <string name="menu_scale_fit">화면: 꽉 차게</string>
+    <string name="menu_library">게임 목록</string>
+    <string name="menu_about">정보</string>
+    <string name="menu_quit">종료</string>
+    <string name="about">정보</string>
+    <string name="licenses">라이선스</string>
+    <string name="ok">확인</string>
+    <string name="cancel">취소</string>
+    <string name="remove">삭제</string>
+    <string name="remove_title">%1$s 삭제?</string>
+    <string name="remove_message">앱에 복사된 게임과 세이브가 삭제됩니다. 원본 파일은 그대로 남습니다.</string>
+    <string name="remove_running">실행 중인 게임은 삭제할 수 없습니다. 다른 게임을 먼저 실행하세요.</string>
+    <string name="importing">가져오는 중…</string>
+    <string name="import_busy">아직 파일을 가져오는 중입니다.</string>
+    <string name="import_failed">가져오기 실패: %1$s</string>
+    <string name="import_type">SMC, FXE, FPK 파일을 선택하세요. ZIP은 먼저 압축을 풀어 주세요.</string>
+    <string name="import_read">선택한 파일을 읽을 수 없습니다.</string>
+    <string name="import_large">선택한 파일이 너무 큽니다.</string>
+    <string name="import_empty">선택한 파일이 비어 있습니다.</string>
+    <string name="import_store">게임을 저장할 수 없습니다.</string>
+    <string name="bios_imported">BIOS를 가져왔습니다.</string>
+    <string name="loading">%1$s 불러오는 중…</string>
+    <string name="save_failed">진행 상황을 저장하지 못했습니다. 저장 공간을 확인하세요.</string>
+    <string name="stopped">에뮬레이션 중지: %1$s</string>
+    <string name="about_text">GP32emu 1.0.0\n\n게임 중 뒤로가기나 메뉴 버튼을 누르면 일시정지 메뉴가 열립니다. 터치 조작을 숨기면 키보드(방향키, Z/X = A/B, A/S = L/R, Enter = Start, Shift = Select)나 게임패드로 조작할 수 있습니다.\n\n게임은 앱 저장소로 복사되고 세이브는 자동으로 저장됩니다. 앱을 삭제하면 복사본과 세이브도 함께 삭제됩니다.\n\ngameblabla/gp32emu 기반\ngithub.com/gajae1/gp32emu</string>
+</resources>

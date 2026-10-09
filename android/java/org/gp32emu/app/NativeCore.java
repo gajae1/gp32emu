@@ -7,6 +7,7 @@ final class NativeCore {
     static native String open(String system, String saves, String path);
     static native int frame(int input, Bitmap image, short[] pcm);
     static native boolean flush();
+    static native void reset();
     static native String message();
     static native void close();
     private NativeCore() {}
