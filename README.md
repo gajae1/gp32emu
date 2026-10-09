@@ -141,8 +141,10 @@ also rolls back in-game card progress.
   GP32.
 - Compatibility checks cover selected scenes, not complete playthroughs.
 - Rewind and run-ahead in a real RetroArch session are unverified.
-- Android runtime use is unverified. Qt runtime and browser playback are also
-  unverified; these frontends are available in source form.
+- Android app and core smoke checks have passed in an Android 11 AVD. Native
+  ARM device performance and Android RetroArch integration remain unverified.
+  Qt runtime and browser playback are also unverified; these frontends are
+  available in source form.
 
 ## Building from source
 
