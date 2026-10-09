@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">GP32emu</string>
+    <string name="tagline">Game Park GP32 emulator</string>
+    <string name="bios_ready">BIOS ready</string>
+    <string name="bios_missing">No BIOS. Most commercial games need one.</string>
+    <string name="choose_bios">Choose BIOS</string>
+    <string name="change_bios">Change BIOS</string>
+    <string name="add_game">Add game</string>
+    <string name="resume_game">Continue %1$s</string>
+    <string name="library">Games</string>
+    <string name="library_empty">No games yet. Tap Add game and choose an SMC, FXE or FPK file. Extract ZIP files first.</string>
+    <string name="library_hint">Tap to play. Touch and hold to remove.</string>
+    <string name="game_details">%1$s · %2$s</string>
+    <string name="menu">Menu</string>
+    <string name="menu_resume">Resume</string>
+    <string name="menu_reset">Restart game</string>
+    <string name="menu_touch_on">Show touch controls</string>
+    <string name="menu_touch_off">Hide touch controls</string>
+    <string name="menu_haptics_on">Vibrate on touch</string>
+    <string name="menu_haptics_off">Stop vibration</string>
+    <string name="menu_scale_integer">Screen: sharp pixels</string>
+    <string name="menu_scale_fit">Screen: fill</string>
+    <string name="menu_library">Game list</string>
+    <string name="menu_about">About</string>
+    <string name="menu_quit">Quit</string>
+    <string name="about">About</string>
+    <string name="licenses">Licenses</string>
+    <string name="ok">OK</string>
+    <string name="cancel">Cancel</string>
+    <string name="remove">Remove</string>
+    <string name="remove_title">Remove %1$s?</string>
+    <string name="remove_message">The imported copy and its saves are deleted. The original file stays unchanged.</string>
+    <string name="remove_running">Close this game before removing it. Open another game first.</string>
+    <string name="importing">Importing…</string>
+    <string name="import_busy">A file is still being imported.</string>
+    <string name="import_failed">Import failed: %1$s</string>
+    <string name="import_type">Choose an SMC, FXE or FPK file. Extract ZIP files first.</string>
+    <string name="import_read">Cannot read the selected file.</string>
+    <string name="import_large">The selected file is too large.</string>
+    <string name="import_empty">The selected file is empty.</string>
+    <string name="import_store">Cannot store the game.</string>
+    <string name="bios_imported">BIOS imported.</string>
+    <string name="loading">Loading %1$s…</string>
+    <string name="save_failed">Could not save progress. Check free storage.</string>
+    <string name="stopped">Emulation stopped: %1$s</string>
+    <string name="about_text">GP32emu 1.0.0\n\nIn game, press Back or the menu button to pause. Use a keyboard (arrows, Z/X = A/B, A/S = L/R, Enter = Start, Shift = Select) or a gamepad with touch controls hidden.\n\nGames are copied into app storage and saves are automatic. Uninstalling the app deletes copies and saves.\n\nBased on gameblabla/gp32emu.\ngithub.com/gajae1/gp32emu</string>
+</resources>

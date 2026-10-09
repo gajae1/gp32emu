@@ -16,7 +16,8 @@ static uint32_t pixels[320 * 240];
 static int16_t audio[8192];
 static size_t audio_samples;
 static unsigned buttons;
-static void (*core_init)(void), (*core_deinit)(void), (*core_run)(void), (*core_unload)(void);
+static void (*core_init)(void), (*core_deinit)(void), (*core_run)(void), (*core_unload)(void),
+            (*core_reset)(void);
 static bool (*core_load)(const struct retro_game_info *), (*core_flush)(void);
 
 static void log_message(int level, const char *fmt, ...) {
@@ -121,6 +122,7 @@ JNIEXPORT jstring JNICALL Java_org_gp32emu_app_NativeCore_open
         RESOLVE(core_init, "retro_init"); RESOLVE(core_deinit, "retro_deinit");
         RESOLVE(core_load, "retro_load_game"); RESOLVE(core_unload, "retro_unload_game");
         RESOLVE(core_run, "retro_run"); RESOLVE(core_flush, "gp32emu_android_flush_save");
+        RESOLVE(core_reset, "retro_reset");
         RESOLVE(set_environment, "retro_set_environment"); RESOLVE(set_video, "retro_set_video_refresh");
         RESOLVE(set_batch, "retro_set_audio_sample_batch"); RESOLVE(set_sample, "retro_set_audio_sample");
         RESOLVE(set_poll, "retro_set_input_poll"); RESOLVE(set_input, "retro_set_input_state");
@@ -159,6 +161,14 @@ JNIEXPORT jint JNICALL Java_org_gp32emu_app_NativeCore_frame
 }
 JNIEXPORT jboolean JNICALL Java_org_gp32emu_app_NativeCore_flush
   (JNIEnv *env, jclass cls) { (void)env; (void)cls; return !loaded || core_flush(); }
+JNIEXPORT void JNICALL Java_org_gp32emu_app_NativeCore_reset
+  (JNIEnv *env, jclass cls) {
+    (void)env; (void)cls;
+    if (!loaded) return;
+    core_flush(); /* Keep card progress made before the restart. */
+    core_reset();
+    audio_samples = 0;
+}
 JNIEXPORT jstring JNICALL Java_org_gp32emu_app_NativeCore_message
   (JNIEnv *env, jclass cls) {
     (void)cls;

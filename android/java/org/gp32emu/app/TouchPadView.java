@@ -7,6 +7,7 @@ import android.graphics.Paint;
 import android.graphics.RectF;
 import android.util.TypedValue;
 import android.view.MotionEvent;
+import android.view.HapticFeedbackConstants;
 import android.view.View;
 import android.view.ViewParent;
 
@@ -30,6 +31,8 @@ public final class TouchPadView extends View {
     private final float buttonTextSize;
     private int touchMask;
     private boolean tracking;
+    private boolean haptics = true;
+    private volatile float controlsTop = Float.MAX_VALUE;
 
     public TouchPadView(Context context, InputState input) {
         super(context);
@@ -68,10 +71,20 @@ public final class TouchPadView extends View {
         return new RectF();
     }
 
+    void setHaptics(boolean enabled) { haptics = enabled; }
+    boolean haptics() { return haptics; }
+
+    /** Highest control edge, so portrait video can sit above the controls.
+     *  Safe to read from the emulation thread. */
+    float controlsTop() { return controlsTop; }
+
     @Override protected void onSizeChanged(int w, int h, int oldw, int oldh) {
         super.onSizeChanged(w, h, oldw, oldh);
         release();
         layoutControls(w, h);
+        float top = h;
+        for (RectF rect : bounds) if (!rect.isEmpty()) top = Math.min(top, rect.top);
+        controlsTop = top;
     }
 
     private void layoutControls(int width, int height) {
@@ -86,6 +99,17 @@ public final class TouchPadView extends View {
         float unit = Math.min(preferred,
                 Math.min((availableWidth - gap) / 6, (availableHeight - gap) / 4));
         if (unit <= 0) return;
+        boolean landscape = width > height, column = false;
+        if (landscape) {
+            /* Each side column stacks a shoulder, Select/Start and a 3-unit
+             * pad. Shrink to fit (never below 40dp) and keep the columns beside
+             * the 4:3 picture when the screen is wide enough. */
+            float fullHeight = height - getPaddingTop() - getPaddingBottom() - 2 * margin;
+            float vertical = (fullHeight - 2 * gap) / 4.8f;
+            if (vertical >= 40 * density) { unit = Math.min(unit, vertical); column = true; }
+            float beside = ((width - height * 4f / 3f) / 2f - margin) / 3f;
+            if (beside >= 40 * density) unit = Math.min(unit, beside);
+        }
 
         float left = getPaddingLeft() + margin;
         float right = width - getPaddingRight() - margin;
@@ -104,6 +128,21 @@ public final class TouchPadView extends View {
         float rowTop = dpad.top - gap - unit;
         float rowBottom = rowTop + unit;
         float center = (left + right) / 2;
+        if (landscape) {
+            float shoulderTop = getPaddingTop() + margin;
+            bounds[6].set(left, shoulderTop, left + 1.5f * unit, shoulderTop + unit);
+            bounds[7].set(right - 1.5f * unit, shoulderTop, right, shoulderTop + unit);
+            float small = 0.8f * unit;
+            if (column) {
+                float middle = (shoulderTop + unit + dpad.top - small) / 2f;
+                bounds[9].set(left, middle, left + 1.5f * unit, middle + small);
+                bounds[8].set(right - 1.5f * unit, middle, right, middle + small);
+            } else {
+                bounds[8].set(center + gap / 2, bottom - small, center + gap / 2 + 1.5f * unit, bottom);
+                bounds[9].set(center - gap / 2 - 1.5f * unit, bottom - small, center - gap / 2, bottom);
+            }
+            return;
+        }
         bounds[6].set(left, rowTop, left + 1.2f * unit, rowBottom);
         bounds[7].set(right - 1.2f * unit, rowTop, right, rowBottom);
         bounds[8].set(center + gap / 2, rowTop, center + gap / 2 + 1.5f * unit, rowBottom);
@@ -190,6 +229,7 @@ public final class TouchPadView extends View {
         for (int pointer = 0; pointer < event.getPointerCount(); pointer++) {
             if (pointer != released) next |= hit(event.getX(pointer), event.getY(pointer));
         }
+        if (haptics && (next & ~touchMask) != 0) performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY);
         touchMask = next;
         input.setTouch(next);
         invalidate();

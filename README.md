@@ -65,15 +65,21 @@ close the application. Use `File > Exit`, the close button or **Alt+F4** to quit
 
 ## Android application
 
-Install the APK from the release page. Tap **BIOS** to import your GP32 BIOS,
-then **Game** to import an extracted `.smc`, `.fxe` or `.fpk` file. The last game
-opens again on the next launch. **Touch** shows or hides the on-screen D-pad,
-A/B, L/R, Start and Select; the setting is remembered. Multiple buttons can be
-held together. Rotation, focus loss and backgrounding release held input.
+Install the APK from the release page. On the start screen, choose your GP32
+BIOS, then **Add game** to import an extracted `.smc`, `.fxe` or `.fpk` file.
+Imported games appear in the game list; the most recent one has a **Continue**
+button. Touch and hold a game to remove its copy and saves. The app follows the
+system language (Korean or English).
+
+During play, Back or the ≡ button pauses and opens the menu: resume, restart,
+show or hide touch controls, touch vibration, sharp integer scaling, game list,
+about and quit. Touch controls cover the D-pad, A/B, L/R, Start and Select, and
+move beside the picture in landscape. Multiple buttons can be held together.
+Rotation, focus loss and backgrounding release held input.
 
 Keyboard controls match the Windows defaults. Gamepads work with touch controls
 hidden; the D-pad or left stick, A/B, L1/R1, Start and Select map to the GP32.
-Use Android Back to close the app. Imported files and in-game saves are kept in
+A gamepad's Mode/Menu button opens the menu. Imported files and in-game saves are kept in
 private app storage; original files are unchanged. Uninstalling the app removes
 these copies and saves. The APK uses an existing development signing key for
 sideloading; it is not a Play Store release.
