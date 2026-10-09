@@ -10,13 +10,14 @@ BIOS와 게임 파일은 포함하지 않습니다. 직접 보유한 덤프를 �
 | Windows x64 독립 실행 | `gp32emu-1.0.0-windows-x64.zip`: `gp32emu_win64.exe`, `SDL3.dll` |
 | Windows x64 RetroArch | `gp32emu-1.0.0-libretro-windows-x64.zip`: `gp32emu_libretro.dll` |
 | Linux AArch64 RetroArch | `gp32emu-1.0.0-linux-aarch64.zip`: `gp32emu_libretro.so` |
+| Android 앱 | `gp32emu-1.0.0-android.apk`: 별도 설치, RetroArch 불필요 |
 | Android ARM64 RetroArch | `gp32emu-1.0.0-android-arm64.zip`: `gp32emu_libretro_android.so` |
 | Android ARMv7 RetroArch | `gp32emu-1.0.0-android-armv7.zip`: `gp32emu_libretro_android.so` |
 
 각 코어 ZIP에는 `gp32emu_libretro.info`도 포함되어 있습니다. 모든 ZIP에는 README,
 릴리스 노트, 이 설명서, `licenses/`, `manifest.json`이 함께 들어 있습니다.
 Linux 코어는 glibc 2.17 이상, Android 코어는 API 21 이상을 대상으로 합니다.
-Android는 컴파일만 확인했으며 실제 실행은 미검증입니다. ARMv7은 JIT 없이 동작하므로
+Android 앱은 Android 6.0 이상이 필요합니다. 실제 ARM 휴대전화 검증은 아직 남아 있습니다. ARMv7은 JIT 없이 동작하므로
 ARM64보다 상당히 느립니다.
 
 게임은 `.smc` 카드 이미지와 `.fxe`, `.fpk` 형식을 엽니다. GP32 BIOS 1.6.6 사용을
@@ -105,11 +106,20 @@ retroarch -L ./gp32emu_libretro.so "game.smc"
 
 ### Android
 
+독립 실행 앱은 APK를 설치한 뒤 **BIOS**로 보유한 GP32 BIOS를, **Game**으로
+압축을 푼 `.smc`, `.fxe`, `.fpk`를 선택합니다. 마지막 게임은 다음 실행 때 다시 열립니다.
+**Touch** 스위치로 화면 방향키와 A/B/L/R/Start/Select를 켜거나 끌 수 있으며 설정은
+기억됩니다. 여러 버튼을 동시에 누를 수 있고, 회전·일시정지·화면 전환 시 입력은 해제됩니다.
+터치를 꺼도 키보드와 게임패드는 사용할 수 있습니다. 키보드는 Windows 기본 배치와
+같고, 게임패드는 방향키/왼쪽 스틱, A/B, L1/R1, Start/Select를 사용합니다.
+Android 뒤로가기로 종료합니다. 파일은 앱 내부로 복사되며 원본은 바뀌지 않습니다.
+앱 삭제 시 가져온 파일과 세이브도 삭제됩니다. APK는 기존 개발용 키로 서명한 직접 설치용입니다.
+
 RetroArch 앱의 아키텍처에 맞춰 ARM64 또는 ARMv7 코어를 선택합니다. 기기의 운영체제가
 64비트여도 앱이 32비트라면 ARMv7 코어가 필요합니다. 앱에서 제공하는 로컬 코어 설치 기능으로
 `gp32emu_libretro_android.so`를 설치한 뒤, 정보 파일과 BIOS를 앱에 설정된 폴더에 넣고
 콘텐츠를 불러옵니다. 코어 설치 방법과 파일 접근 권한은 RetroArch 배포판에 따라 다릅니다.
-Android에서의 실행과 조작은 아직 확인되지 않았습니다.
+Android RetroArch에서의 실행과 조작은 아직 확인되지 않았습니다.
 
 ### 조작
 
@@ -198,7 +208,7 @@ RetroArch에서는 프런트엔드의 스테이트 저장·불러오기 기능�
 - **RetroArch가 종료됨:** `retroarch --verbose`로 로그를 확인하세요.
 
 호환성 확인은 일부 장면에 한정되며 전체 게임 완주를 보장하지 않습니다. 실제 GP32와의 소리·입력
-지연 비교, 장시간 플레이는 미확인입니다. Android 실행, Qt 실행, 브라우저 재생도 미검증입니다.
+지연 비교, 장시간 플레이는 미확인입니다. 실제 ARM Android 기기, Qt 실행, 브라우저 재생도 미검증입니다.
 
 프로젝트 출처와 라이선스 고지는 [README](../README.md#credits-and-licensing)와
 [licenses/](../licenses/)에 있습니다. Windows ZIP에는 `SDL3-LICENSE.txt`도 들어 있습니다.
