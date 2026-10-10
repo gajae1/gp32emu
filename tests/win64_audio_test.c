@@ -677,6 +677,47 @@ int main(void) {
     CHECK(g_audio.underrun == 0, "a short ring raises no gap while the endpoint is buffered");
     CHECK(g_audio.frame_count == 0u, "the real frames were consumed");
 
+    /* Endpoint drained while produced PCM is already queued: the late
+     * producer order must not restart the device at full level.  The pump arms
+     * a delivery-side ramp, keeps the stream started, and leaves the
+     * producer-owned resampler untouched. */
+    static int16_t drain_chunk[100 * 2];
+    for (int i = 0; i < 100; ++i) { drain_chunk[i * 2 + 0] = 20000; drain_chunk[i * 2 + 1] = 20000; }
+    ring_write_bulk_unlocked(&g_audio, drain_chunk, 100u);
+    g_client.padding = 0;
+    gp32_audio_resampler_t resampler_before = g_audio.resampler;
+    g_start_calls = 0; g_stop_calls = 0; g_reset_calls = 0;
+    g_client_stopped = 0; g_stop_before_reset = 0;
+    g_render_calls = 0; g_requested_frames = 0; g_released_frames = 0;
+    CHECK(gp32_win64_audio_pump_backend(&g_audio) == 0, "drained-with-queue pump returns 0");
+    CHECK(g_stop_calls == 0 && g_reset_calls == 0 && g_start_calls == 0,
+          "drained endpoint with queued PCM keeps the stream instead of stopping it");
+    CHECK(g_audio.playback_started == 1 && g_audio.wasapi_started == 1,
+          "drained endpoint with queued PCM stays in playback");
+    CHECK(memcmp(&resampler_before, &g_audio.resampler, sizeof resampler_before) == 0,
+          "the delivery fade never touches the producer-owned resampler");
+    CHECK(g_requested_frames == 100u && g_released_frames == 100u,
+          "the queued frames still reach the endpoint exactly once");
+    CHECK(g_render_scratch[0] > 0 && g_render_scratch[0] < 500,
+          "the drained restart begins near silence, not at content level");
+    int ramp_rises = 1;
+    for (uint32_t i = 1; i < 48u; ++i)
+        if (g_render_scratch[i * 2 + 0] < g_render_scratch[(i - 1u) * 2 + 0]) ramp_rises = 0;
+    CHECK(ramp_rises, "the drained restart ramps up monotonically");
+    CHECK(g_render_scratch[47 * 2 + 0] == 20000, "the ramp reaches the content inside the window");
+    CHECK(g_render_scratch[60 * 2 + 0] == 20000, "frames past the ramp window keep the content");
+    CHECK(g_audio.delivery_fade_left == 0u, "the delivery fade is consumed by the restart delivery");
+    CHECK(g_audio.underrun == 0, "the queued-PCM path raises no producer gap flag");
+
+    /* Once the endpoint is buffered again the next delivery is a plain
+     * continuation: the fade must not re-arm and dip the stream twice. */
+    ring_write_bulk_unlocked(&g_audio, drain_chunk, 100u);
+    g_client.padding = 1024;
+    g_render_calls = 0; g_requested_frames = 0; g_released_frames = 0;
+    CHECK(gp32_win64_audio_pump_backend(&g_audio) == 0, "buffered pump returns 0");
+    CHECK(g_render_scratch[0] == 20000,
+          "a delivery with the endpoint buffered is not ramped again");
+
     /* A resume that carries real content must still rise from the silence
      * instead of stepping straight to the content level. */
     free(g_audio.queue);

@@ -151,6 +151,72 @@ static void poly_history_prime(gp32_audio_resampler_t *r, const int16_t *src) {
     }
 }
 
+/* Carried source frame `back` intervals before prev (0 is prev itself). */
+static int32_t poly_history_at(const gp32_audio_resampler_t *r, uint64_t back, int right) {
+    if (!back) return right ? r->prev_r : r->prev_l;
+    if (back > GP32_AUDIO_POLY_HISTORY) back = GP32_AUDIO_POLY_HISTORY;
+    size_t at = GP32_AUDIO_POLY_HISTORY - (size_t)back;
+    return right ? r->poly_hist_r[at] : r->poly_hist_l[at];
+}
+
+static int32_t poly_history_lerp(const gp32_audio_resampler_t *r, uint64_t back_q16, int right) {
+    uint64_t whole = back_q16 >> 16;
+    if (whole >= GP32_AUDIO_POLY_HISTORY) return poly_history_at(r, GP32_AUDIO_POLY_HISTORY, right);
+    int32_t a = poly_history_at(r, whole, right);
+    int32_t b = poly_history_at(r, whole + 1u, right);
+    return a + (int32_t)(((int64_t)(b - a) * (int64_t)(back_q16 & 0xffffu)) / 65536);
+}
+
+/* A source-rate change keeps the same wall-clock signal but the kernel reads
+ * its history in source intervals.  Re-express the carried frames on the new
+ * grid so the first band-limited outputs reconstruct the waveform that was
+ * actually playing, instead of the old samples squeezed or stretched by the
+ * new tap spacing.  The first new frame follows prev by one old interval, so
+ * the new grid ends one new interval before that frame; a slot between prev
+ * and that frame interpolates the two.  Decimation averages across each new
+ * interval so the re-sampled history stays inside the new band. */
+static void poly_history_regrid(gp32_audio_resampler_t *r, uint32_t old_rate, uint32_t new_rate,
+                                const int16_t *first) {
+    int16_t next_l[GP32_AUDIO_POLY_HISTORY + 1u];
+    int16_t next_r[GP32_AUDIO_POLY_HISTORY + 1u];
+    uint64_t step_q16 = ((uint64_t)old_rate << 16) / new_rate;
+    if (!step_q16) step_q16 = 1u;
+    unsigned points = step_q16 > 65536u ? (unsigned)((step_q16 + 65535u) >> 16) : 1u;
+    if (points > 8u) points = 8u;
+    for (unsigned back = 0; back <= GP32_AUDIO_POLY_HISTORY; ++back) {
+        int64_t center = (int64_t)(step_q16 * (back + 1u)) - 65536;
+        int64_t sum_l = 0, sum_r = 0;
+        for (unsigned k = 0; k < points; ++k) {
+            int64_t offset = ((int64_t)step_q16 * (int64_t)(2 * (int)k + 1 - (int)points)) /
+                             (int64_t)(2u * points);
+            int64_t pos = center + offset;
+            if (pos < 0) {
+                int64_t ahead = pos < -65536 ? 65536 : -pos;
+                sum_l += r->prev_l + (((int64_t)first[0] - r->prev_l) * ahead) / 65536;
+                sum_r += r->prev_r + (((int64_t)first[1] - r->prev_r) * ahead) / 65536;
+            } else {
+                sum_l += poly_history_lerp(r, (uint64_t)pos, 0);
+                sum_r += poly_history_lerp(r, (uint64_t)pos, 1);
+            }
+        }
+        next_l[back] = (int16_t)(sum_l / (int64_t)points);
+        next_r[back] = (int16_t)(sum_r / (int64_t)points);
+    }
+    r->prev_l = next_l[0];
+    r->prev_r = next_r[0];
+    for (unsigned back = 1; back <= GP32_AUDIO_POLY_HISTORY; ++back) {
+        r->poly_hist_l[GP32_AUDIO_POLY_HISTORY - back] = next_l[back];
+        r->poly_hist_r[GP32_AUDIO_POLY_HISTORY - back] = next_r[back];
+    }
+}
+
+static uint32_t transition_frames(uint32_t dst_rate_hz) {
+    uint32_t fade = dst_rate_hz ? dst_rate_hz / 1000u : 48u; /* about 1 ms */
+    if (fade < GP32_AUDIO_FADE_MIN_FRAMES) fade = GP32_AUDIO_FADE_MIN_FRAMES;
+    if (fade > GP32_AUDIO_FADE_MAX_FRAMES) fade = GP32_AUDIO_FADE_MAX_FRAMES;
+    return fade;
+}
+
 /* Band-limited value at the virtual source index n + frac, one filter delay
  * of GP32_AUDIO_POLY_HALF source frames behind the linearly interpolated one.
  * Virtual index 0 is prev; index k >= 1 is src[k - 1] when the block carries a
@@ -216,9 +282,7 @@ void gp32_audio_resampler_reset(gp32_audio_resampler_t *r) {
 void gp32_audio_resampler_mark_gap(gp32_audio_resampler_t *r, uint32_t dst_rate_hz) {
     if (!r) return;
     gp32_audio_resampler_reset(r);
-    uint32_t fade = dst_rate_hz ? dst_rate_hz / 1000u : 48u; /* about 1 ms */
-    if (fade < GP32_AUDIO_FADE_MIN_FRAMES) fade = GP32_AUDIO_FADE_MIN_FRAMES;
-    if (fade > GP32_AUDIO_FADE_MAX_FRAMES) fade = GP32_AUDIO_FADE_MAX_FRAMES;
+    uint32_t fade = transition_frames(dst_rate_hz);
     r->fade_left = fade;
     r->fade_total = fade;
 }
@@ -294,7 +358,20 @@ size_t gp32_audio_resampler_process(gp32_audio_resampler_t *r,
                                     int16_t *dst_s16_stereo,
                                     size_t dst_cap_frames) {
     if (!r || !src_s16_stereo || !dst_s16_stereo || !input_frames || !src_rate_hz || !dst_rate_hz || !dst_cap_frames) return 0;
+    uint32_t old_src = r->src_rate;
+    int regrid = r->have_prev && old_src && old_src != src_rate_hz && r->dst_rate == dst_rate_hz;
     set_rates(r, src_rate_hz, dst_rate_hz);
+    if (regrid) {
+        /* The filter delay is a fixed number of source frames, so a new rate
+         * also moves the reconstructed instant.  Glide over that jump from the
+         * last delivered sample, as a gap recovery does. */
+        poly_history_regrid(r, old_src, src_rate_hz, src_s16_stereo);
+        uint32_t fade = transition_frames(dst_rate_hz);
+        if (r->fade_left < fade) {
+            r->fade_left = fade;
+            r->fade_total = fade;
+        }
+    }
     if (r->poly_src_rate != src_rate_hz || r->poly_dst_rate != dst_rate_hz)
         poly_build_table(r, src_rate_hz, dst_rate_hz);
 

@@ -4,6 +4,7 @@
  * Link this translation unit with gp32emu, not a second copy of libretro.c.
  */
 #include <stdio.h>
+#include <stdlib.h>
 #include <math.h>
 static unsigned state_file_opens;
 static FILE *counted_fopen(const char *path, const char *mode) {
@@ -443,6 +444,46 @@ static void test_source_rate_phase(void) {
     const int16_t want[] = {0, 0, 0, 0, 0, 0, 0, 0};
     CHECK(n == 4 && !memcmp(out, want, sizeof(want)),
           "rate switch preserves wall-time phase and the previous sample");
+}
+
+/* A sound-rate switch (BIOS menu to game, or between game modes) must join the
+ * two streams: the largest output step across the switch stays at the size of
+ * the tone's own steps instead of a click from mis-spaced filter history. */
+static void test_source_rate_switch_continuity(void) {
+    static const uint32_t cases[][3] = {{44100u, 22050u, 1u}, {11025u, 44100u, 0u},
+                                        {22050u, 11025u, 0u}, {23144u, 44100u, 0u}};
+    static int16_t in[1024u * 2u], out[4096u * 2u];
+    for (unsigned k = 0; k < GP32_ARRAY_COUNT(cases); ++k) {
+        gp32_audio_resampler_t r;
+        gp32_audio_resampler_init(&r);
+        double t = 0.0;
+        int16_t last = 0;
+        int steady = 0, across = 0;
+        for (unsigned block = 0; block < 24u; ++block) {
+            uint32_t rate = block < 12u ? cases[k][0] : cases[k][1];
+            size_t n = rate / 60u;
+            for (size_t i = 0; i < n; ++i) {
+                int16_t v = (int16_t)(20000.0 * sin(2.0 * 3.14159265358979323846 * 1000.0 * t));
+                in[i * 2u] = v;
+                in[i * 2u + 1u] = (int16_t)-v;
+                t += 1.0 / rate;
+            }
+            size_t m = cases[k][2] && block < 12u
+                ? gp32_audio_resampler_copy(&r, in, n, rate, out)
+                : gp32_audio_resampler_process(&r, in, n, rate, 44100u, 0, out, 4096u);
+            int worst = 0;
+            for (size_t i = 0; i < m; ++i) {
+                int prev = i ? out[(i - 1u) * 2u] : last;
+                int step = abs(out[i * 2u] - prev);
+                if ((block || i) && step > worst) worst = step;
+            }
+            if (m) last = out[(m - 1u) * 2u];
+            if (block >= 2u && block < 12u && worst > steady) steady = worst;
+            if (block == 12u) across = worst;
+        }
+        CHECK(across <= steady + steady / 4,
+              "a source-rate switch must not add a step larger than the tone's own");
+    }
 }
 
 static void test_silence_and_gap(void) {
@@ -995,6 +1036,7 @@ int main(int argc, char **argv) {
     test_resampled_and_sample_callback();
     test_mixed_spans();
     test_source_rate_phase();
+    test_source_rate_switch_continuity();
     test_silence_and_gap();
     test_idle_boundaries();
     test_idle_rate_counts();
