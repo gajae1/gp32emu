@@ -3,6 +3,11 @@
 #define IDI_GP32EMU 101
 IDI_GP32EMU ICON "../../resources/gp32emu.ico"
 
+/* Common Controls v6, UTF-8 active code page and long path awareness.  The
+   UTF-8 code page keeps the existing A-suffixed Win32 path calls correct for
+   Korean and other non-ACP filenames. */
+1 24 "gp32emu.manifest"
+
 IDD_KEYBOARD DIALOGEX 0, 0, 285, 226
 STYLE DS_SETFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Keyboard controls"

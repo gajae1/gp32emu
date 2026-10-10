@@ -1,5 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
-project(gp32emu C CXX)
+# Only the optional Qt frontend is C++. Enabling CXX for every build makes
+# CMake probe a C++ standard library that cross toolchains may not provide.
+project(gp32emu C)
 
 option(GP32EMU_BUILD_SDL12 "Build optional SDL 1.2 platform backend and frontend" OFF)
 option(GP32EMU_BUILD_SDL3 "Build optional SDL3 platform backend and frontend" OFF)
@@ -171,6 +173,7 @@ if (GP32EMU_BUILD_SDL3)
 endif()
 
 if (GP32EMU_BUILD_QT6)
+    enable_language(CXX)
     find_package(Qt6 REQUIRED COMPONENTS Widgets)
     find_package(SDL3 CONFIG)
     if (NOT TARGET gp32emu_sdl3)
@@ -204,10 +207,15 @@ if (GP32EMU_BUILD_QT6)
 endif()
 
 if (GP32EMU_BUILD_WIN64_FRONTEND)
-    if (NOT WIN32 OR NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
+    # Some cross compilers cannot report the pointer size to CMake; the
+    # frontend source also asserts a 64-bit target at compile time.
+    if (NOT WIN32 OR (CMAKE_SIZEOF_VOID_P AND NOT CMAKE_SIZEOF_VOID_P EQUAL 8))
         message(FATAL_ERROR "GP32EMU_BUILD_WIN64_FRONTEND is Win64-only; no Win32 frontend is provided.")
     endif()
     find_package(SDL3 REQUIRED CONFIG)
+    # The resource script embeds the application manifest.
+    set_source_files_properties(src/win64/gp32emu.rc PROPERTIES
+        OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/win64/gp32emu.manifest;${CMAKE_CURRENT_SOURCE_DIR}/resources/gp32emu.ico")
     add_executable(gp32emu_win64 WIN32
         src/win64/gp32_win64_main.c
         src/win64/gp32_win64_ui.c

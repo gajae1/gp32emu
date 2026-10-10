@@ -101,7 +101,7 @@ int main(int argc, char **argv) {
     snprintf(a.smc, sizeof(a.smc), "%s", original);
     CHECK(gp32_save_state(a.emu, a.state_path) == GP32_OK);
     app_destroy_machine(&a);
-    CHECK(GetFileAttributesA(saved) != INVALID_FILE_ATTRIBUTES);
+    CHECK(GetFileAttributesA(saved) == INVALID_FILE_ATTRIBUTES); /* an unchanged card writes no save */
     CHECK(marker(original) == 0xff);
     char error[256];
     smc_t *s = smc_create();
@@ -162,6 +162,19 @@ int main(int argc, char **argv) {
     CHECK(a.keyboard_buttons == GP32_BUTTON_A);
     wndproc(window, WM_KEYUP, 'Q', 0);
     CHECK(!a.keyboard_buttons);
+    /* F-key dialogs ignore auto-repeat (bit 30) instead of stacking. */
+    wndproc(window, WM_KEYDOWN, VK_F5, 1L << 30);
+    CHECK(!a.keyboard_buttons);
+    wndproc(window, WM_KEYDOWN, VK_F12, 1L << 30);
+    CHECK(!a.keyboard_buttons);
+    /* Status text is a short-lived title suffix owned by the frontend. */
+    a.running = 1;
+    app_set_status(&a, "State saved");
+    CHECK(strstr(a.status_msg, "State saved") && a.status_active);
+    SetWindowTextA(window, "GP32emu - probe");
+    app_set_status(&a, "");
+    CHECK(!a.status_active && !a.status_msg[0]);
+    a.running = 0;
     char ini[MAX_PATH], relative_ini[MAX_PATH];
     snprintf(relative_ini, sizeof(relative_ini), "%s/preferences.ini", root);
     CHECK(GetFullPathNameA(relative_ini, MAX_PATH, ini, NULL) > 0);
@@ -170,6 +183,15 @@ int main(int argc, char **argv) {
     gp32_win64_preferences_t restored;
     gp32_win64_preferences_load(&restored, ini);
     CHECK(restored.keys[4] == 'Q' && !strcmp(restored.game_folder, root));
+    CHECK(restored.audio_mode == GP32_WIN64_AUDIO_WAVEOUT_ID && !strcmp(restored.video_backend, "d3d11"));
+    a.preferences.audio_mode = GP32_WIN64_AUDIO_WASAPI_EXCLUSIVE_ID;
+    snprintf(a.preferences.video_backend, sizeof(a.preferences.video_backend), "%s", "gdi");
+    gp32_win64_preferences_save(&a.preferences, ini);
+    gp32_win64_preferences_load(&restored, ini);
+    CHECK(restored.audio_mode == GP32_WIN64_AUDIO_WASAPI_EXCLUSIVE_ID && !strcmp(restored.video_backend, "gdi"));
+    a.preferences.audio_mode = GP32_WIN64_AUDIO_WAVEOUT_ID;
+    snprintf(a.preferences.video_backend, sizeof(a.preferences.video_backend), "%s", "d3d11");
+    gp32_win64_preferences_save(&a.preferences, ini);
     CHECK(gp32_win64_key_button(&restored, VK_RSHIFT) == GP32_BUTTON_SELECT);
     CHECK(gp32_win64_is_game("Title.SMC") && gp32_win64_is_game("Homebrew.FXE"));
     CHECK(!gp32_win64_is_game("Title.smc.gp32.smc.gp32.smc"));

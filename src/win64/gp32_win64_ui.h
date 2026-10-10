@@ -18,9 +18,16 @@
 #include <stdint.h>
 
 #define GP32_KEY_COUNT 10
+/* Playback selections the dialogs can change; the main file persists them
+   with the rest of the configuration. */
+#define GP32_WIN64_AUDIO_WAVEOUT_ID 0
+#define GP32_WIN64_AUDIO_WASAPI_SHARED_ID 1
+#define GP32_WIN64_AUDIO_WASAPI_EXCLUSIVE_ID 2
 typedef struct gp32_win64_preferences {
     UINT keys[GP32_KEY_COUNT];
     char game_folder[MAX_PATH];
+    int audio_mode;
+    char video_backend[16];
 } gp32_win64_preferences_t;
 
 void gp32_win64_preferences_load(gp32_win64_preferences_t *p, const char *ini);

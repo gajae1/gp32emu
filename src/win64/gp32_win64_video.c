@@ -170,7 +170,7 @@ static void calc_dest(const gp32_win64_video_t *v, RECT *out) {
     unsigned dw = ww;
     unsigned dh = wh;
 
-    if (v->integer_scaling && !v->fullscreen) {
+    if (v->integer_scaling) {
         unsigned sx = ww / GP32_LCD_W;
         unsigned sy = wh / GP32_LCD_H;
         unsigned scale = sx < sy ? sx : sy;

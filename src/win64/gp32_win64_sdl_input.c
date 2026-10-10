@@ -15,6 +15,15 @@ struct gp32_win64_sdl_input {
     gp32_sdl3_input_state_t shared;
 };
 
+/* This frontend owns the keyboard through its own window procedure, which
+   implements the documented Esc contract (leave fullscreen, never quit).
+   Drop SDL key events so Esc and the F-key actions cannot bypass it, while
+   joystick, device and quit events keep flowing. */
+static bool SDLCALL win64_sdl_event_filter(void *userdata, SDL_Event *ev) {
+    (void)userdata;
+    return ev->type != SDL_EVENT_KEY_DOWN && ev->type != SDL_EVENT_KEY_UP;
+}
+
 gp32_win64_sdl_input_t *gp32_win64_sdl_input_create(int enable_joystick_axis) {
     gp32_win64_sdl_input_t *s = (gp32_win64_sdl_input_t *)calloc(1, sizeof(*s));
     if (!s) return NULL;
@@ -22,6 +31,8 @@ gp32_win64_sdl_input_t *gp32_win64_sdl_input_create(int enable_joystick_axis) {
     SDL_SetMainReady();
     if (SDL_InitSubSystem(SDL_INIT_JOYSTICK | SDL_INIT_EVENTS)) {
         s->initialized = 1;
+        SDL_SetEventFilter(win64_sdl_event_filter, NULL);
+        SDL_PumpEvents(); /* apply the filter to key events already queued */
         gp32_sdl3_input_state_init(&s->shared, 1, enable_joystick_axis);
         gp32_sdl3_input_open_first_joystick(&s->shared);
         snprintf(s->status, sizeof(s->status), "SDL3 joystick input%s%s", gp32_sdl3_input_error(&s->shared)[0] ? ": " : "", gp32_sdl3_input_error(&s->shared));
