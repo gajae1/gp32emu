@@ -783,6 +783,14 @@ void s3c2400_audio_set_volume(s3c2400_t *s, uint32_t volume) {
     gp32_codec_data(&s->codec, GP32_CODEC_ADDR_DATA, 0x80u);
     s->codec_gain_q16 = gp32_codec_gain_q16(&s->codec);
 }
+int s3c2400_audio_replace_codec_volume(s3c2400_t *s, uint8_t status,
+                                     uint8_t control, uint8_t from, uint8_t to) {
+    if (!s || to > 63u || s->codec.status != status ||
+        s->codec.control != control || s->codec.volume != from) return 0;
+    s->codec.volume = to;
+    s->codec_gain_q16 = gp32_codec_gain_q16(&s->codec);
+    return 1;
+}
 static void iis_refresh_clock_cache(s3c2400_t *s);
 
 /*

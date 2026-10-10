@@ -59,6 +59,10 @@ void s3c2400_audio_append_u8_mono(s3c2400_t *soc, const uint8_t *samples, uint32
 void s3c2400_audio_append_s16_stereo(s3c2400_t *soc, int16_t left, int16_t right, uint32_t sample_rate_hz);
 /* HLE GpControlVolume: call only after settling audio for elapsed cycles. */
 void s3c2400_audio_set_volume(s3c2400_t *soc, uint32_t volume);
+/* Conditional runtime compatibility repair. Keep control/transport state and
+ * already queued PCM; only an exact codec register tuple may change volume. */
+int s3c2400_audio_replace_codec_volume(s3c2400_t *soc, uint8_t status,
+                                     uint8_t control, uint8_t from, uint8_t to);
 int s3c2400_audio_consume(s3c2400_t *soc, uint64_t frames);
 void s3c2400_audio_clear(s3c2400_t *soc);
 /* Capture timed silence while IIS is stopped. Disabled for standalone SoC

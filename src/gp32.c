@@ -79,7 +79,7 @@ struct gp32 {
     uint32_t direct_hle_pending_volume; /* bit 8 marks a pending six-bit value */
     int direct_cpu_running;
     int direct_fxe_mode;
-    uint8_t adpcm_fix_disabled;  /* host option; not serialized */
+    uint8_t adpcm_fix_disabled;  /* host game-fixes option; not serialized */
     uint8_t adpcm_fix_patched;   /* derived from RAM on every run/load */
     /* Fast loading: host policy and per-frame detector, never serialized. */
     uint8_t fast_load_disabled;
@@ -1659,6 +1659,56 @@ static void direct_fix_gp32_additive_blend_shadow_endpoint(gp32_t *g) {
 static uint32_t direct_read32_if_ram(gp32_t *g, uint32_t addr) {
     if (!direct_ram_range(g, addr, 4u)) return 0u;
     return s3c2400_debug_read32(g->soc, addr);
+}
+
+/* Pinball's captured startup sequence writes VC=63, then starts its IIS mixer
+ * without a later volume restore, even with MUSIC ON. The modeled DAC correctly
+ * mutes VC=63. This optional compatibility fix changes only the exact resident
+ * initialization routine, retaining the game's software SFX/music controls.
+ * It is not a claim about unmeasured original GP32 DAC/board behavior.
+ *
+ * RAM records installation. A previously initialized state needs the matching
+ * codec tuple repaired once; subsequent guest volume/mute writes are respected.
+ * Neither the card nor queued PCM is rewritten. */
+#define GP32_PINBALL_FIX_FUNC 0x0c22a464u
+#define GP32_PINBALL_FIX_PC   0x0c22a4e8u
+#define GP32_PINBALL_FIX_ORIG 0xe3a0003fu /* mov r0, #63 */
+#define GP32_PINBALL_FIX_NEW  0xe3a00000u /* mov r0, #0 */
+
+static const uint32_t direct_pinball_fix_code[] = {
+    0xe1a0c00du, 0xe92dd830u, 0xe59f40f8u, 0xe3a02a02u, 0xe3a01000u, 0xe59f50f0u,
+    0xe1a00004u, 0xe24cb004u, 0xeb000cbbu, 0xe59f10e4u, 0xe3a0c004u, 0xe585c000u,
+    0xe5910000u, 0xe59fc0d8u, 0xe3c02c0eu, 0xe382ec06u, 0xe581e000u, 0xe59c0000u,
+    0xe241e004u, 0xe3803c0eu, 0xe58c3000u, 0xe59ec000u, 0xe3a00016u, 0xe3cc273fu,
+    0xe382c715u, 0xe58ec000u, 0xebffff4eu, 0xe3a01001u, 0xe3a00008u, 0xebffff8bu,
+    0xe3a00014u, 0xebffff49u, 0xe3a01001u, 0xe3a0003fu, 0xebffff86u, 0xe3a00014u,
+    0xebffff44u, 0xe3a00090u, 0xe3a01001u, 0xebffff81u, 0xe59fc070u, 0xe59f3070u,
+    0xe3a00042u, 0xe3a01026u, 0xe5830000u, 0xe58c1000u, 0xe59f1060u, 0xe2802057u,
+    0xe2430004u, 0xe3a03c0au, 0xe5802000u, 0xe5813000u, 0xe59c2000u, 0xe59f3048u,
+    0xe3820001u, 0xe58c0000u, 0xe59fc040u, 0xe59f1040u, 0xe59f2040u, 0xe28c0004u,
+    0xe58c3000u, 0xe5814000u, 0xe5802000u, 0xe3a00002u, 0xe5850000u, 0xe91ba830u,
+    0x0c432d92u, 0x14600058u, 0x15600030u, 0x15600034u, 0x15508000u, 0x15508008u,
+    0x1550800cu, 0x75508010u, 0x14600044u, 0x14600040u, 0x50a00800u,
+};
+
+static void direct_pinball_fix_update(gp32_t *g, int flush) {
+    if (!g || !g->cpu) return;
+    uint32_t word = direct_read32_if_ram(g, GP32_PINBALL_FIX_PC);
+    int disabling = g->adpcm_fix_disabled && word == GP32_PINBALL_FIX_NEW;
+    int installing = !g->adpcm_fix_disabled && word == GP32_PINBALL_FIX_ORIG;
+    if (!disabling && !installing) return;
+    uint32_t count = (uint32_t)GP32_ARRAY_COUNT(direct_pinball_fix_code);
+    if (!direct_ram_range(g, GP32_PINBALL_FIX_FUNC, count * 4u)) return;
+    for (uint32_t i = 0; i < count; ++i) {
+        uint32_t addr = GP32_PINBALL_FIX_FUNC + i * 4u;
+        if (addr != GP32_PINBALL_FIX_PC &&
+            direct_read32_if_ram(g, addr) != direct_pinball_fix_code[i]) return;
+    }
+    direct_write32_if_ram(g, GP32_PINBALL_FIX_PC,
+                         installing ? GP32_PINBALL_FIX_NEW : GP32_PINBALL_FIX_ORIG);
+    if (installing)
+        (void)s3c2400_audio_replace_codec_volume(g->soc, 0x08u, 0x90u, 63u, 0u);
+    if (flush) arm920t_flush_jit(g->cpu);
 }
 
 /*
@@ -4903,6 +4953,7 @@ static int direct_fast_load_audio_running(gp32_t *g) {
 static gp32_status_t gp32_run(gp32_t *g, uint32_t cycles, int timed, uint32_t restore_speed) {
     if (!g->direct_callback.owner) direct_fix_gp32_additive_blend_shadow_endpoint(g);
     direct_adpcm_fix_update(g, 1);
+    direct_pinball_fix_update(g, 1);
     uint32_t remaining = cycles;
     gp32_status_t status = GP32_OK;
     for (;;) {
@@ -5128,6 +5179,7 @@ gp32_status_t gp32_set_game_fixes(gp32_t *g, int enabled) {
     if (!g || g->direct_cpu_running) return GP32_ERR_INVALID_ARGUMENT;
     g->adpcm_fix_disabled = enabled ? 0u : 1u;
     direct_adpcm_fix_update(g, 1);
+    direct_pinball_fix_update(g, 1);
     return GP32_OK;
 }
 
@@ -5809,6 +5861,7 @@ static void gp32_state_loaded(gp32_t *g, const gp32_state_image_t *direct, const
     gp32_clear_audio(g);
     if (!g->direct_callback.owner) direct_fix_gp32_additive_blend_shadow_endpoint(g);
     direct_adpcm_fix_update(g, 0);  /* the state load emptied the JIT cache */
+    direct_pinball_fix_update(g, 0);
 }
 
 size_t gp32_state_size(const gp32_t *g) {
