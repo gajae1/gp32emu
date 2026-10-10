@@ -56,6 +56,10 @@ struct gp32_win64_audio {
      * resampler.  The pump thread uses the locked a->underrun flag instead. */
     gp32_audio_resampler_t resampler;
     int underrun;
+    /* Pump-owned delivery-side resume fade: frames still to ramp when the
+     * endpoint drained while produced PCM was already queued. */
+    uint32_t delivery_fade_left;
+    uint32_t delivery_fade_total;
     int playback_started;
     int16_t last_ring_l;
     int16_t last_ring_r;
@@ -226,6 +230,37 @@ static uint32_t ring_read(gp32_win64_audio_t *a, int16_t *out, uint32_t frames) 
     uint32_t n = ring_read_unlocked(a, out, frames);
     audio_unlock(a);
     return n;
+}
+
+/* Endpoint drained while already-produced PCM is waiting: the device restarts
+ * inside a continuous stream, so the first frames handed to it must rise from
+ * the silence the device has been playing instead of stepping straight to the
+ * content level.  The fade lives only in the delivered copy; the ring and the
+ * producer-owned resampler are never modified here.  Caller holds the lock. */
+static void arm_delivery_resume_from_silence(gp32_win64_audio_t *a) {
+    uint32_t fade = a->sample_rate ? a->sample_rate / 1000u : 44u;
+    if (fade < 16u) fade = 16u;
+    if (fade > 96u) fade = 96u;
+    a->delivery_fade_total = fade;
+    a->delivery_fade_left = fade;
+}
+
+/* Applies the armed ramp to one delivery, continuing across split fills. */
+static void apply_delivery_resume_fade(gp32_win64_audio_t *a, int16_t *samples, uint32_t frames) {
+    if (!a || !samples || !frames) return;
+    audio_lock(a);
+    uint32_t total = a->delivery_fade_total;
+    uint32_t left = a->delivery_fade_left;
+    uint32_t n = frames < left ? frames : left;
+    for (uint32_t i = 0; i < n; ++i) {
+        int32_t step = (int32_t)(total - left + i + 1u);
+        int16_t *p = samples + (size_t)i * 2u;
+        p[0] = (int16_t)((int32_t)p[0] * step / (int32_t)total);
+        p[1] = (int16_t)((int32_t)p[1] * step / (int32_t)total);
+    }
+    a->delivery_fade_left = left - n;
+    if (!a->delivery_fade_left) a->delivery_fade_total = 0u;
+    audio_unlock(a);
 }
 
 
@@ -462,6 +497,7 @@ static uint32_t fill_wasapi_buffer(gp32_win64_audio_t *a, BYTE *dst, UINT32 fram
         UINT32 chunk = frames - done;
         if (chunk > 4096u) chunk = 4096u;
         uint32_t got = ring_read(a, tmp, chunk);
+        apply_delivery_resume_fade(a, tmp, chunk);
         BYTE *base = dst + (size_t)done * fmt->nBlockAlign;
         if (is_float && bits == 32) {
             float *out = (float *)base;
@@ -530,6 +566,18 @@ static int wasapi_pump(gp32_win64_audio_t *a) {
     HRESULT hr = IAudioClient_GetCurrentPadding(a->client, &padding);
     if (FAILED(hr)) return -1;
 
+    /* The endpoint ran dry.  Record that independently of the ring contents:
+       already-produced PCM must not restart at full level, so arm the
+       delivery-side fade.  An empty ring keeps the Stop/Reset/re-preroll
+       policy below, where the producer's gap mark covers the resume.  Only the
+       delivered copy is faded, so the producer-owned resampler is never reset
+       from this thread. */
+    if (started && padding == 0u) {
+        audio_lock(a);
+        if (a->frame_count) arm_delivery_resume_from_silence(a);
+        audio_unlock(a);
+    }
+
     /* Resetting discards whatever the endpoint still holds, so wait for a
      * fully drained buffer before re-arming the prebuffer. */
     if (started && queued == 0u && padding == 0u) {
@@ -539,6 +587,8 @@ static int wasapi_pump(gp32_win64_audio_t *a) {
         audio_lock(a);
         a->playback_started = 0;
         a->underrun = 1;
+        a->delivery_fade_left = 0u;
+        a->delivery_fade_total = 0u;
         audio_unlock(a);
         /* Signal through a->underrun only; the gap mark belongs to the
          * producer thread, which consumes this flag before resuming output,
@@ -719,6 +769,8 @@ void gp32_win64_audio_reset(gp32_win64_audio_t *a) {
     a->read_frame = 0;
     a->frame_count = 0;
     a->underrun = 0;
+    a->delivery_fade_left = 0;
+    a->delivery_fade_total = 0;
     a->playback_started = 0;
     a->last_ring_l = 0;
     a->last_ring_r = 0;

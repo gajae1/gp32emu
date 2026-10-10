@@ -159,9 +159,11 @@ static gp32_status_t sdl3_audio_submit(gp32_audio_backend_t *backend, const gp32
     if (queued_bytes > max_queued ||
         (queued_bytes <= soft_queued && queued_bytes > max_queued - (int)bytes)) {
         /* Clearing the stream empties it, so the device falls to silence
-         * before the next chunk plays. */
+         * before this chunk plays.  Generation stayed continuous, so keep the
+         * resampler and ease this chunk in from that silence. */
         (void)SDL_ClearAudioStream(a->stream);
-        gp32_audio_resampler_mark_gap_from_silence(&a->resampler, dst_rate);
+        a->ramp_pending = 0;
+        a->silence_resume = 1;
         queued_bytes = 0;
     } else if (queued_bytes > soft_queued) {
         a->ramp_pending = 1;
