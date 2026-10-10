@@ -373,7 +373,7 @@ void retro_set_environment(retro_environment_t cb) {
         { "gp32emu_lcd_persistence", "LCD persistence / GP32 FLU ghosting; disabled|enabled" },
         { "gp32emu_frame_interpolation", "Frame interpolation; disabled|enabled" },
         { "gp32emu_cpu_speed", "CPU speed (guest overclock, may affect compatibility); 100%|125%|150%|175%|200%|250%|300%" },
-        { "gp32emu_game_fixes", "Fix game code bugs (Astonishia Story R audio clicks); enabled|disabled" },
+        { "gp32emu_game_fixes", "Fix game code bugs (ASR audio clicks / Pinball startup mute); enabled|disabled" },
         { "gp32emu_fast_loading", "Fast loading (shortens silent card-loading pauses); enabled|disabled" },
         { NULL, NULL }
     };

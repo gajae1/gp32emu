@@ -137,7 +137,8 @@ also rolls back in-game card progress.
 
 - Some cards need a BIOS. Direct boot is limited for titles including Astonishia
   Story R, Hany and Super Plusha.
-- Pinball Dreams can remain silent during startup, including with a BIOS.
+- Keep game compatibility fixes enabled for Astonishia Story R's audio clicks
+  and Pinball Dreams' startup mute. These corrections leave the ROM unchanged.
 - Audio fidelity and input latency have not been measured against a physical
   GP32.
 - Compatibility checks cover selected scenes, not complete playthroughs.

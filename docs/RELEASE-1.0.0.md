@@ -46,7 +46,8 @@ the exact original card.
 
 ## Known limitations
 
-Some cards need a BIOS. Pinball Dreams can remain silent during startup, including with a BIOS.
+Some cards need a BIOS. Keep game compatibility fixes enabled for Astonishia Story R's
+audio clicks and Pinball Dreams' startup mute; the original ROM files remain unchanged.
 Compatibility checks cover selected scenes, not complete playthroughs; audio fidelity and input
 latency have not been measured against a physical GP32. RetroArch rewind and
 run-ahead are unverified. Android cores have been compiled but runtime use is
