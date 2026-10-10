@@ -1678,6 +1678,15 @@ static void arm_jit_compile_native(arm920t_t *c, arm_jit_block_t *b) {
         const arm_jit_op_t *op = &arm_jit_ops(c, b)[i];
         e.expected_next = i + 1u < b->count ? arm_jit_ops(c, b)[i + 1u].pc : op->pc + 4u;
         e.generation = b->generation;
+        uint32_t folded;
+        if (i + 1u < b->count && arm_jit_fold_const_data(op, &arm_jit_ops(c, b)[i + 1u], &folded)) {
+            a64_imm(&e, 2, folded);
+            a64_put_guest(&e, op->c, 2);
+            e.fwd_guest = (int)op->c;
+            e.nzcv_valid = 0;
+            ++i; /* The two guest ops still own two clocks and their original PCs. */
+            continue;
+        }
         /* A register-only leaf preserves its BL link and execution state.
          * Keep the architectural PC visible to subsequent callbacks, but a
          * decoded caller successor needs no dynamic return-target guard. The

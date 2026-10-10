@@ -4656,6 +4656,92 @@ static void case_io_direct_word(void) {
     }
 }
 
+/* Compile-time constant folding must preserve intermediate values when a
+ * run stops between the two ops, and commit cached values before callbacks. */
+static void case_native_const_data(void) {
+    const uint32_t positive[] = {
+        0xe3a004aeu, 0xe1a00b40u, /* MOV #ae000000; ASR #22 */
+        0xe3e01f52u, 0xe2411001u, /* MVN #148; SUB #1 */
+        0xe3a02081u, 0xe1a02022u, /* LSR #32 */
+        0xe3e03000u, 0xe1a03043u, /* ASR #32 sign-fill */
+        0xe3a04008u, 0xe1a04264u, /* ROR #4 */
+        0xe3a050ffu, 0xe2855001u, /* ADD */
+        0xe3a060ffu, 0xe20660f0u, /* AND */
+        0xe3a070ffu, 0xe227705au, /* EOR */
+        0xe3a08020u, 0xe26880a0u, /* RSB */
+        0xe3a0a0f0u, 0xe1e0a00au, /* register MVN */
+        0xe88c05ffu,             /* record r0-r8,r10 before callback */
+        0xe5890000u,             /* callback sees folded r0 at original PC */
+        0xe3a044aeu, 0xe1a04b44u, /* replace callback's dirty r4 */
+        0xe284b002u, 0xe58cb080u, /* next consumer uses folded value */
+        0xeafffffeu
+    };
+    const uint32_t rejected[] = {
+        0xe3a00003u, 0xe1a00060u, 0xe48c0004u, /* RRX depends on guest C */
+        0xe3a01008u, 0xe1a01a11u, 0xe48c1004u, /* register shift uses r10 */
+        0xe3a02081u, 0xe1b020a2u, 0xe10f8000u, 0xe8ac0104u, /* shifter C */
+        0xe3a03011u, 0xe2533011u, 0xe10f8000u, 0xe8ac0108u, /* arithmetic S */
+        0xe3a04007u, 0x12844001u, 0xe48c4004u, /* failed predicate */
+        0xe3b05005u, 0xe3a05007u, 0xe10f8000u, 0xe8ac0120u, /* producer S */
+        0xe3a05005u, 0xe1a05006u, 0xe48c5004u, /* other source register */
+        0xe3a07007u, 0xe2a77001u, 0xe48c7004u, /* ADC keeps live carry */
+        0xeafffffeu
+    };
+    const uint32_t expected[] = {0xfffffeb8u, 0xfffffeb6u, 0u, UINT32_MAX,
+        0x80000000u, 0x100u, 0xf0u, 0xa5u, 0x80u, 0xffffff0fu};
+    for (unsigned negative = 0; negative < 2u; ++negative)
+    for (unsigned carry = 0; carry < 2u; ++carry)
+    for (unsigned split = 0; split < 2u; ++split) {
+        current_case = negative ? "const-data-boundaries" : "const-data-native";
+        setup_pair();
+        load_both(negative ? rejected : positive,
+                  negative ? GP32_ARRAY_COUNT(rejected) : GP32_ARRAY_COUNT(positive));
+        set_cpsr_both(0x13u | (carry ? 0x20000000u : 0u));
+        set_reg_both(6u, 9u); set_reg_both(9u, IO_ADDR);
+        set_reg_both(10u, 2u); set_reg_both(12u, DATA_ADDR);
+        if (!negative) {
+            bus_jit.observe_cpu = cpu_jit; bus_ref.observe_cpu = cpu_ref;
+            bus_jit.mem_probe = bus_ref.mem_probe = 1u;
+            bus_jit.mem_effect = bus_ref.mem_effect = 10u;
+        }
+        if (split) {
+            const unsigned cuts[] = {1u, 1u, 2u, 5u, 55u};
+            for (unsigned j = 0; j < GP32_ARRAY_COUNT(cuts); ++j) {
+                CHECK(arm920t_run(cpu_jit, cuts[j]) == cuts[j], "folded native budget");
+                CHECK(arm920t_run(cpu_ref, cuts[j]) == cuts[j], "folded reference budget");
+                compare_state();
+                if (!negative && j == 0u) CHECK(ref_reg(0u) == 0xae000000u,
+                    "cut between pair retains the original producer result");
+            }
+        } else run_cache_pair(CODE_ADDR, 64u);
+        if (!negative) {
+            for (unsigned j = 0; j < GP32_ARRAY_COUNT(expected); ++j)
+                CHECK(gp32_ld32le(bus_ref.ram + DATA_ADDR - RAM_BASE + 4u*j) == expected[j],
+                      "folded fixture result");
+            CHECK(bus_jit.mem_calls == 1u && bus_ref.mem_calls == 1u &&
+                  bus_jit.mem_pc == CODE_ADDR + 88u && bus_ref.mem_pc == CODE_ADDR + 88u &&
+                  bus_jit.mem_value == 0xfffffeb8u && bus_ref.mem_value == 0xfffffeb8u,
+                  "callback observes original PC and folded value");
+            CHECK(ref_reg(2u) == 0xabcdef01u && ref_reg(11u) == 0xfffffebau,
+                  "callback mutation and following forwarded consumer survive");
+        } else {
+            CHECK(gp32_ld32le(bus_ref.ram + DATA_ADDR - RAM_BASE) ==
+                  (carry ? 0x80000001u : 1u), "RRX uses input carry");
+            CHECK(gp32_ld32le(bus_ref.ram + DATA_ADDR - RAM_BASE + 4u) == 32u,
+                  "register-controlled shift uses live amount");
+            CHECK(ref_reg(4u) == 7u && ref_reg(5u) == 9u && ref_reg(7u) == 9u,
+                  "predicates, external operands and carry remain live");
+        }
+        gp32_cpu_profile_t profile;
+        arm920t_get_cpu_profile(cpu_jit, &profile);
+        if (!split && profile.supported && profile.native_backend) {
+            CHECK(profile.native_block_calls != 0u, "constant-fold native coverage");
+            if (!negative) CHECK(profile.helper_op_kinds[1] == 0u, "constant DATA needs no helper");
+        }
+        teardown_pair();
+    }
+}
+
 int main(int argc, char **argv) {
     /* Native gate triage can isolate this mapped physical-boundary case
      * without rerunning unrelated differential workloads. */
@@ -4679,6 +4765,8 @@ int main(int argc, char **argv) {
     int selfmove_only = argc == 2 && !strcmp(argv[1], "--self-move-nop");
     if (argc == 2 && !strcmp(argv[1], "--sflag-logic")) {
         case_native_sflag_logic();
+    } else if (argc == 2 && !strcmp(argv[1], "--const-data")) {
+        case_native_const_data();
     } else if (argc == 2 && !strcmp(argv[1], "--word-probes")) {
         case_native_read_windows();
         case_live_read32();
@@ -4796,6 +4884,7 @@ int main(int argc, char **argv) {
     case_cache_modified(0);
     case_cache_modified(1);
     case_native_alu_region();
+    case_native_const_data();
     case_native_forwarding();
     case_native_self_move_noop();
     case_native_immediates();

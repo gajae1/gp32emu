@@ -2584,6 +2584,47 @@ static void arm_jit_exception_return_helper(arm920t_t *c, uint32_t result) {
     write_r(c, 15u, result);
 }
 
+#if defined(__x86_64__) || defined(_M_X64) || defined(__aarch64__)
+/* Fold an adjacent pure DATA pair, not its two guest instruction clocks.
+ * The native entry budget covers both; shorter runs use the original ops.
+ * No helper, predicate, flags, PC write or trace metadata may intervene. */
+static int arm_jit_fold_const_data(const arm_jit_op_t *first, const arm_jit_op_t *next,
+                                   uint32_t *value) {
+    if (first->kind != ARM_JIT_OP_DATA || next->kind != ARM_JIT_OP_DATA ||
+        first->cond != 14u || next->cond != 14u || first->stop || next->stop ||
+        first->reserved || next->reserved || first->c == 15u || next->c != first->c ||
+        next->pc != first->pc + 4u || (first->a != 13u && first->a != 15u) ||
+        (first->d & (ARM_BC_DATA_IMM | ARM_BC_DATA_S)) != ARM_BC_DATA_IMM ||
+        (next->d & (ARM_BC_DATA_S | ARM_BC_DATA_REGSHIFT))) return 0;
+    uint32_t lhs = first->a == 15u ? ~first->imm : first->imm;
+    uint32_t rhs = next->imm;
+    if (!(next->d & ARM_BC_DATA_IMM)) {
+        if (next->e != first->c || next->g > 3u || next->h > 31u) return 0;
+        unsigned n = next->h;
+        switch (next->g) {
+        case 0: rhs = lhs << n; break;
+        case 1: rhs = n ? lhs >> n : 0u; break;
+        case 2: rhs = n ? (lhs >> n) | ((0u - (lhs >> 31)) << (32u - n)) : 0u - (lhs >> 31); break;
+        default: if (!n) return 0; rhs = gp32_ror32(lhs, n); break; /* RRX depends on guest C */
+        }
+    }
+    if (next->a != 13u && next->a != 15u && next->b != first->c) return 0;
+    switch (next->a) {
+    case 0: *value = lhs & rhs; break;
+    case 1: *value = lhs ^ rhs; break;
+    case 2: *value = lhs - rhs; break;
+    case 3: *value = rhs - lhs; break;
+    case 4: *value = lhs + rhs; break;
+    case 12: *value = lhs | rhs; break;
+    case 13: *value = rhs; break;
+    case 14: *value = lhs & ~rhs; break;
+    case 15: *value = ~rhs; break;
+    default: return 0; /* Tests and ADC/SBC/RSC retain their live CPSR inputs. */
+    }
+    return 1;
+}
+#endif
+
 #if defined(__x86_64__) || defined(_M_X64)
 #ifndef ARM_JIT_CODE_SIZE
 #define ARM_JIT_CODE_SIZE (64u * 1024u * 1024u)
@@ -4003,6 +4044,14 @@ static void arm_jit_compile_native(arm920t_t *c, arm_jit_block_t *b) {
         e.expected_next = i + 1u < b->count ? arm_jit_ops(c, b)[i + 1u].pc : op->pc + 4u;
         e.done = (uint32_t)i + 1u;
         e.guest_pc = op->pc;
+        uint32_t folded;
+        if (i + 1u < b->count && arm_jit_fold_const_data(op, &arm_jit_ops(c, b)[i + 1u], &folded)) {
+            x64_mov_r32_imm(&e, X64_EAX, folded);
+            x64_emit_store_arm_reg(&e, op->c, X64_EAX);
+            e.fwd_guest = (int)op->c;
+            ++i; /* Both raw ops remain in the block's count and partial path. */
+            continue;
+        }
         size_t patches[3];
         unsigned npatch = 0;
         /* A real BL and register-only leaf preserve the link/execution state.
