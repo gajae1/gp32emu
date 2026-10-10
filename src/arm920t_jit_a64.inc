@@ -88,6 +88,7 @@ typedef struct a64_emit {
                      * pre-indexed store without writeback. Other emitters and
                      * all helper/cold continuations clear it. */
     uint32_t expected_next, generation;
+    int want_nzcv;  /* the next decoded op is conditional */
     uint32_t loop_done, block_count;
     size_t loop_head;
     const arm_live_read32_t *live_read32;
@@ -787,6 +788,17 @@ static int a64_data(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
     if (load_rm && op->e == (unsigned)fwd && plain_op2) { load_rm = 0; rm = 2u; }
     /* Both operands naming one guest register need a single reload. */
     else if (load_rm && reads_rn && op->b == op->e && plain_op2) { load_rm = 0; rm = rn; }
+    /* A cached guest register is read straight from its host copy. The
+     * second operand qualifies only while it reaches the ALU unchanged. */
+    if (load_rn && op->b < 15u && e->cache_host[op->b]) {
+        load_rn = 0;
+        if (rm == rn && !load_rm) rm = e->cache_host[op->b];
+        rn = e->cache_host[op->b];
+    }
+    if (load_rm && plain_op2 && op->e < 15u && e->cache_host[op->e]) {
+        load_rm = 0;
+        rm = e->cache_host[op->e];
+    }
     /* A rotated-immediate logical operand is itself an A64 logical immediate,
      * so the ALU instruction carries it directly and the materialization into
      * w1/w2 disappears. BIC and MVN use the complement, which is encodable for
@@ -852,7 +864,10 @@ static int a64_data(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
         }
         a64_bfxil_low(e, 5, 3, logical ? 29u : 28u);
         a64_store(e, 5, offsetof(arm920t_t, cpsr));
-        e->nzcv_valid = !logical;
+        /* Logical flags merge the old C/V; when the next op is conditional,
+         * hand it the merged flags in NZCV instead of a CPSR reload. */
+        if (logical && e->want_nzcv) a64_u32(e, 0xd51b4205u); /* msr nzcv, x5 */
+        e->nzcv_valid = !logical || e->want_nzcv;
     }
     if (!test) {
         if (op->c == 15u && flags) {
@@ -1063,19 +1078,24 @@ static int a64_single_dt(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
             if (op->e == 3u && !op->f) a64_load(e, 3, offsetof(arm920t_t, cpsr));
             a64_shift(e, op->e, op->f, 0);
         }
-        a64_guest(e, 0, op->a, op->pc);
         /* A pre-indexed access without writeback never needs the base+offset sum
          * as a guest value, so form it directly in the address register instead of
          * copying w2 into w0. Post-indexed and writeback forms keep w2. */
         int folded = (d & ARM_BC_SD_P) && !wb;
         unsigned sum = folded ? 0u : 2u;
+        /* That sum may read a cached base in place; every other shape needs
+         * the base itself in w0. */
+        unsigned base = 0u;
+        if (folded && ((d & ARM_BC_SD_REGOFF) || op->imm) && op->a < 15u && e->cache_host[op->a])
+            base = e->cache_host[op->a];
+        else a64_guest(e, 0, op->a, op->pc);
         if (d & ARM_BC_SD_REGOFF)
-            a64_rr(e, (d & ARM_BC_SD_U) ? 0x0b000000u : 0x4b000000u, sum, 0, 1);
+            a64_rr(e, (d & ARM_BC_SD_U) ? 0x0b000000u : 0x4b000000u, sum, base, 1);
         else if (op->imm)
             /* ARM's 12-bit transfer offset fits ADD/SUB W immediate exactly.
              * Neither form sets flags; W arithmetic preserves address wrap. */
             a64_u32(e, ((d & ARM_BC_SD_U) ? 0x11000000u : 0x51000000u) |
-                       (op->imm << 10) | sum);
+                       (op->imm << 10) | (base << 5) | sum);
         else if (!folded)
             a64_mov(e, 2, 0); /* retain the original base for writeback */
         if ((d & ARM_BC_SD_P) && !folded) a64_mov(e, 0, 2);
@@ -1890,6 +1910,7 @@ static void arm_jit_compile_host(arm920t_t *c, arm_jit_block_t *b) {
         const arm_jit_op_t *op = &arm_jit_ops(c, b)[i];
         e.expected_next = i + 1u < b->count ? arm_jit_ops(c, b)[i + 1u].pc : op->pc + 4u;
         e.generation = b->generation;
+        e.want_nzcv = i + 1u < b->count && arm_jit_ops(c, b)[i + 1u].cond < 14u;
         uint32_t folded;
         unsigned nfold = arm_jit_fold_const_data(arm_jit_ops(c, b), b->count, i, &folded);
         if (nfold) {
