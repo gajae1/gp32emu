@@ -14,12 +14,15 @@ extern "C" {
 #endif
 
 typedef struct gp32_sdl3_input_state {
-    SDL_Joystick *joy;
+    SDL_Gamepad *pad;   /* recognised controller: standard layout */
+    SDL_Joystick *joy;  /* raw fallback for devices SDL has no mapping for */
+    SDL_JoystickID device_id;
     int enable_joystick;
     int enable_joystick_axis;
     int num_axes;
     int num_buttons;
     int num_hats;
+    char device_name[128];
     int axis_centered[2];
     int axis_state[2];
     int axis_pending[2];
@@ -37,6 +40,7 @@ uint32_t gp32_sdl3_input_joystick_buttons(gp32_sdl3_input_state_t *s);
 uint32_t gp32_sdl3_input_take_actions(gp32_sdl3_input_state_t *s);
 gp32_status_t gp32_sdl3_input_poll(gp32_sdl3_input_state_t *s, int include_keyboard, uint32_t extra_buttons, uint32_t *out_buttons, int *out_quit);
 const char *gp32_sdl3_input_error(const gp32_sdl3_input_state_t *s);
+const char *gp32_sdl3_input_device_name(const gp32_sdl3_input_state_t *s);
 
 #ifdef __cplusplus
 }

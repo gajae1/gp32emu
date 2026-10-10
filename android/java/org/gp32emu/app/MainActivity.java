@@ -45,8 +45,10 @@ import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.text.DateFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Date;
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.ExecutorService;
@@ -55,6 +57,7 @@ import java.util.concurrent.locks.LockSupport;
 
 public final class MainActivity extends Activity implements SurfaceHolder.Callback {
     private static final int PICK_BIOS = 1, PICK_GAME = 2;
+    private static final int STATE_SLOTS = 3;
     private static final int ACCENT = Color.rgb(127, 209, 185), PANEL = Color.rgb(31, 37, 48);
     /* An old Activity can finish its save flush while the new one starts. */
     private static final Object CORE_OWNER = new Object();
@@ -81,9 +84,19 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     volatile boolean touchEnabled, integerScale;
     private volatile String runningGame;
     private String pendingGame;
+    /** Guarded by wake; consumed on the emulation thread. */
+    private StateRequest stateRequest;
+    private int openDialogs; // UI thread only
     private volatile int pauseSequence;
     private AlertDialog menu;
     private AudioManager audioManager;
+
+    private static final class StateRequest {
+        final boolean save;
+        final String game;
+        final int slot;
+        StateRequest(boolean save, String game, int slot) { this.save = save; this.game = game; this.slot = slot; }
+    }
     private final AudioManager.OnAudioFocusChangeListener audioFocus = change -> {
         // A short notification may lower our volume; keep playing through it.
         focusGranted = change == AudioManager.AUDIOFOCUS_GAIN
@@ -217,6 +230,9 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         ListView list = new ListView(this);
         list.setDividerHeight(dp(6));
         list.setDivider(null);
+        // Rows paint their own background, so draw the selector over them for D-pad/gamepad navigation.
+        list.setSelector(rounded(Color.argb(70, 127, 209, 185), 10));
+        list.setDrawSelectorOnTop(true);
         gameAdapter = new ArrayAdapter<File>(this, 0, games) {
             @Override public View getView(int position, View reuse, ViewGroup parent) {
                 TextView row = reuse instanceof TextView ? (TextView)reuse : new TextView(MainActivity.this);
@@ -297,7 +313,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     void showGame() {
         home.setVisibility(View.GONE);
         setFullscreen(true);
-        uiHold = menu != null && menu.isShowing();
+        uiHold = openDialogs > 0;
         signal();
     }
     @SuppressWarnings("deprecation")
@@ -335,11 +351,11 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
 
     private void showMenu() {
         if (menu != null && menu.isShowing()) return;
-        clearInput();
-        uiHold = true; signal();
         List<String> labels = new ArrayList<>();
         List<Runnable> actions = new ArrayList<>();
         labels.add(getString(R.string.menu_resume)); actions.add(() -> {});
+        labels.add(getString(R.string.menu_save_state)); actions.add(() -> showStateSlots(true));
+        labels.add(getString(R.string.menu_load_state)); actions.add(() -> showStateSlots(false));
         labels.add(getString(R.string.menu_reset)); actions.add(() -> { resetRequested = true; });
         labels.add(getString(touchEnabled ? R.string.menu_touch_off : R.string.menu_touch_on));
         actions.add(() -> setTouchEnabled(!touchEnabled));
@@ -352,11 +368,61 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         labels.add(getString(R.string.menu_quit)); actions.add(this::finish);
         menu = new AlertDialog.Builder(this).setTitle(runningGame == null ? getString(R.string.menu) : title(new File(runningGame)))
             .setItems(labels.toArray(new String[0]), (d, which) -> actions.get(which).run())
-            .setOnDismissListener(d -> {
-                menu = null;
-                if (home.getVisibility() != View.VISIBLE) { uiHold = false; setFullscreen(true); signal(); }
-            }).create();
-        menu.show();
+            .create();
+        present(menu);
+    }
+
+    /** Shows a dialog and keeps the game paused until every dialog is closed.
+     *  A gamepad's Mode/Menu button closes it again, since dialogs get the keys first. */
+    private void present(AlertDialog dialog) {
+        clearInput();
+        ++openDialogs;
+        uiHold = true; signal();
+        dialog.setOnKeyListener((d, code, event) -> {
+            if ((code == KeyEvent.KEYCODE_BUTTON_MODE || code == KeyEvent.KEYCODE_MENU) && event.getAction() == KeyEvent.ACTION_UP) {
+                d.dismiss();
+                return true;
+            }
+            return false;
+        });
+        dialog.setOnDismissListener(d -> {
+            if (d == menu) menu = null;
+            if (--openDialogs == 0 && home.getVisibility() != View.VISIBLE) { uiHold = false; setFullscreen(true); signal(); }
+        });
+        dialog.show();
+    }
+
+    private File stateFile(String game, int slot) {
+        return new File(new File(getFilesDir(), "saves/" + new File(game).getParentFile().getName()), "state" + slot + ".gp32st");
+    }
+    private void showStateSlots(boolean save) {
+        String game = runningGame;
+        if (game == null || !gameLoaded) return;
+        DateFormat format = DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT);
+        String[] labels = new String[STATE_SLOTS];
+        boolean[] filled = new boolean[STATE_SLOTS];
+        for (int i = 0; i < STATE_SLOTS; ++i) {
+            File file = stateFile(game, i + 1);
+            filled[i] = file.isFile() && file.length() > 0;
+            labels[i] = getString(R.string.slot, i + 1) + "  \u00b7  "
+                    + (filled[i] ? format.format(new Date(file.lastModified())) : getString(R.string.slot_empty));
+        }
+        // Loading needs a saved state, so empty slots are shown but disabled.
+        ArrayAdapter<String> adapter = new ArrayAdapter<String>(this, android.R.layout.simple_list_item_1, labels) {
+            @Override public boolean isEnabled(int position) { return save || filled[position]; }
+            @Override public View getView(int position, View reuse, ViewGroup parent) {
+                View row = super.getView(position, reuse, parent);
+                row.setAlpha(isEnabled(position) ? 1f : 0.4f);
+                return row;
+            }
+        };
+        present(new AlertDialog.Builder(this)
+            .setTitle(save ? R.string.menu_save_state : R.string.menu_load_state)
+            .setAdapter(adapter, (d, which) -> requestState(save, game, which + 1))
+            .setNegativeButton(R.string.cancel, null).create());
+    }
+    private void requestState(boolean save, String game, int slot) {
+        synchronized (wake) { stateRequest = new StateRequest(save, game, slot); wake.notifyAll(); }
     }
 
     private int dp(int value) { return Math.round(value * getResources().getDisplayMetrics().density); }
@@ -509,6 +575,20 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
                     NativeCore.reset();
                     deadline = 0;
                 }
+                StateRequest request;
+                synchronized (wake) { request = stateRequest; stateRequest = null; }
+                if (request != null && gameLoaded && request.game.equals(runningGame)) {
+                    // Runs here so the core is only ever touched by this thread.
+                    String path = stateFile(request.game, request.slot).getAbsolutePath();
+                    String error = request.save ? NativeCore.saveState(path) : NativeCore.loadState(path);
+                    if (error != null) toast(getString(request.save ? R.string.state_save_failed : R.string.state_load_failed, error));
+                    else toast(getString(request.save ? R.string.state_saved : R.string.state_loaded, request.slot));
+                    if (!request.save && error == null) {
+                        // Drop sound queued before the load and restart the frame clock.
+                        track.pause(); track.flush(); suspended = true;
+                        deadline = 0;
+                    }
+                }
                 if (held()) {
                     if (!suspended) {
                         track.pause(); track.flush();
@@ -516,7 +596,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
                         suspended = true;
                     }
                     synchronized (wake) {
-                        if (!stopped && pendingGame == null && !resetRequested && held()) wake.wait();
+                        if (!stopped && pendingGame == null && !resetRequested && stateRequest == null && held()) wake.wait();
                     }
                     deadline = 0;
                     continue;
@@ -580,24 +660,16 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         }
     }
     private void showInfo() {
-        clearInput();
-        uiHold = true; signal();
-        new AlertDialog.Builder(this).setTitle(R.string.about).setMessage(R.string.about_text)
+        present(new AlertDialog.Builder(this).setTitle(R.string.about).setMessage(R.string.about_text)
             .setPositiveButton(R.string.ok, null).setNeutralButton(R.string.licenses, (d, w) -> showLicenses())
-            .setOnDismissListener(d -> {
-                if (home.getVisibility() != View.VISIBLE && (menu == null || !menu.isShowing())) { uiHold = false; signal(); }
-            }).show();
+            .create());
     }
     private void showLicenses() {
         StringBuilder text = new StringBuilder();
         try {
             readLicenses("licenses", text);
         } catch (Exception e) { text.append(e.getMessage()); }
-        uiHold = true; signal();
-        new AlertDialog.Builder(this).setTitle(R.string.licenses).setMessage(text).setPositiveButton(R.string.ok, null)
-            .setOnDismissListener(d -> {
-                if (home.getVisibility() != View.VISIBLE) { uiHold = false; signal(); }
-            }).show();
+        present(new AlertDialog.Builder(this).setTitle(R.string.licenses).setMessage(text).setPositiveButton(R.string.ok, null).create());
     }
     private void readLicenses(String path, StringBuilder text) throws java.io.IOException {
         String[] names = getAssets().list(path);
@@ -621,7 +693,11 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             if (event.getAction() == KeyEvent.ACTION_UP && inGame()) showMenu();
             return true;
         }
-        if (inGame() && !uiHold && input.key(event)) return true;
+        if (inGame() && !uiHold && input.key(event)) {
+            // Start+Select together on a gamepad or keyboard opens the menu.
+            if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0 && input.menuChord()) showMenu();
+            return true;
+        }
         return super.dispatchKeyEvent(event);
     }
     @Override public boolean dispatchGenericMotionEvent(MotionEvent event) {

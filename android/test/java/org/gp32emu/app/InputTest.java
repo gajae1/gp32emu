@@ -94,6 +94,11 @@ public final class InputTest extends Instrumentation {
                 check(activity.input.mask() == InputState.A, "keyboard release must preserve gamepad A");
                 activity.input.key(new KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_BUTTON_A));
                 check(activity.input.mask() == 0, "gamepad release");
+                activity.input.key(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_BUTTON_START));
+                check(!activity.input.menuChord(), "Start alone is not the menu chord");
+                activity.input.key(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_BUTTON_SELECT));
+                check(activity.input.menuChord(), "Start+Select is the menu chord");
+                activity.input.clear();
                 activity.setTouchEnabled(true);
                 touch(MotionEvent.ACTION_DOWN, InputState.L);
                 activity.onWindowFocusChanged(false);

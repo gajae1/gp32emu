@@ -50,21 +50,39 @@ save files are not included.
 ## Windows application
 
 1. Extract the package and keep `SDL3.dll` beside `gp32emu_win64.exe`.
-2. Run the executable. Use `Config > Set BIOS path...` to select your BIOS.
-3. Use `File > Open SmartMedia image...`, `Open FXE...` or `Open FPK...` to open a game.
+2. Run the executable. On first start it offers to select your GP32 BIOS; you can
+   change it later with `Settings > Set BIOS...`.
+3. Open a game with `File > Open Game...`, `File > Game Library...` or
+   `File > Recent Games`, or drop an SMC, FXE or FPK file on the window.
 
-The BIOS path and settings are stored in `GP32emu.ini` beside the executable, so
-use a writable folder. A BIOS is recommended for commercial games.
-Use `File > Game library...` to register a game folder and launch games from its
-list. It lists SMC, FXE and FPK files directly inside that folder, excluding save
-images; extract ZIP archives first. `Config > Keyboard controls...` lets you
-remap the GP32 buttons. The folder and key assignments are remembered.
+Settings, states, screenshots and recordings are kept beside the executable
+(`GP32emu.ini` and the `states`, `screenshots` and `recordings` folders), so
+use a writable folder. A BIOS is recommended for commercial games. The game
+library lists SMC, FXE and FPK files directly inside one registered folder,
+excluding save files; extract ZIP archives first. Menus follow the Windows display
+language (Korean or English); set `Language=ko` or `Language=en` under `[UI]` in
+`GP32emu.ini` to choose one.
 
-Use the arrow keys for directions, **Z/X** for GP32 **A/B**, **A/S** for **L/R**,
-**Enter** for **Start**, and **Shift** for **Select**. **F5/F8** open save-state
-save/load dialogs; **F12** opens a BMP screenshot save dialog. **F11** or
-**Alt+Enter** toggles fullscreen. **Esc** only leaves fullscreen; it does not
-close the application. Use `File > Exit`, the close button or **Alt+F4** to quit.
+| Key | Action |
+| --- | --- |
+| Arrow keys | D-pad |
+| Z / X | A / B |
+| A / S | L / R |
+| Enter / Shift | Start / Select |
+| F5 / F8 | Save / load the state in the current slot |
+| F6 / F7 | Previous / next state slot (1-9) |
+| F9 | Pause or resume |
+| Tab (hold) | Fast forward, with sound muted |
+| F11 or Alt+Enter | Fullscreen; Esc leaves fullscreen |
+| F12 | Screenshot into the `screenshots` folder |
+
+`Settings > Keyboard Controls...` remaps the GP32 buttons. Esc, Tab, Alt, the
+Windows keys and F5-F12 stay reserved for the shortcuts above. Gamepads are
+detected when plugged in: the D-pad or left stick moves, the bottom and right
+face buttons are A and B, the shoulder buttons or triggers are L and R, and
+Start and Back/View are Start and Select. `Help > Controls and Shortcuts` shows
+the current keys. Esc does not close the application; use `File > Exit`, the
+close button or Alt+F4.
 
 ## Android application
 
@@ -74,15 +92,17 @@ Imported games appear in the game list; the most recent one has a **Continue**
 button. Touch and hold a game to remove its copy and saves. The app follows the
 system language (Korean or English).
 
-During play, Back or the ≡ button pauses and opens the menu: resume, restart,
-show or hide touch controls, touch vibration, sharp integer scaling, game list,
-about and quit. Touch controls cover the D-pad, A/B, L/R, Start and Select, and
+During play, Back or the ≡ button pauses and opens the menu: resume, save state,
+load state, restart, show or hide touch controls, touch vibration, sharp integer
+scaling, game list, about and quit. Each game has three state slots. Touch
+controls cover the D-pad, A/B, L/R, Start and Select, and
 move beside the picture in landscape. Multiple buttons can be held together.
 Rotation, focus loss and backgrounding release held input.
 
 Keyboard controls match the Windows defaults. Gamepads work with touch controls
-hidden; the D-pad or left stick, A/B, L1/R1, Start and Select map to the GP32.
-A gamepad's Mode/Menu button opens the menu. Imported files and in-game saves are kept in
+hidden; the D-pad or left stick, A/B, L1/R1 or L2/R2, Start and Select map to the
+GP32. A gamepad's Mode/Menu button, or Start and Select pressed together, opens
+the menu. Imported files, in-game saves and states are kept in
 private app storage; original files are unchanged. Uninstalling the app removes
 these copies and saves. If playback stops with an internal error, the app returns
 to the game list. The APK uses an existing development signing key for

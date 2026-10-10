@@ -10,11 +10,24 @@ static const UINT default_keys[GP32_KEY_COUNT] = {
 static const char *const key_names[GP32_KEY_COUNT] = {
     "Up", "Down", "Left", "Right", "A", "B", "L", "R", "Start", "Select"
 };
+static const char *const key_labels_ko[GP32_KEY_COUNT] = {
+    "위", "아래", "왼쪽", "오른쪽", "A", "B", "L", "R", "Start", "Select"
+};
 static const uint32_t button_bits[GP32_KEY_COUNT] = {
     GP32_BUTTON_UP, GP32_BUTTON_DOWN, GP32_BUTTON_LEFT, GP32_BUTTON_RIGHT,
     GP32_BUTTON_A, GP32_BUTTON_B, GP32_BUTTON_L, GP32_BUTTON_R,
     GP32_BUTTON_START, GP32_BUTTON_SELECT
 };
+
+int gp32_win64_korean;
+
+void gp32_win64_ui_init_language(const char *ini) {
+    char lang[8] = "auto";
+    if (ini && ini[0]) GetPrivateProfileStringA("UI", "Language", "auto", lang, (DWORD)sizeof(lang), ini);
+    if (!_stricmp(lang, "ko")) gp32_win64_korean = 1;
+    else if (!_stricmp(lang, "en")) gp32_win64_korean = 0;
+    else gp32_win64_korean = PRIMARYLANGID(GetUserDefaultUILanguage()) == LANG_KOREAN;
+}
 
 static UINT normalize_key(UINT key) {
     if (key == VK_LSHIFT || key == VK_RSHIFT) return VK_SHIFT;
@@ -23,9 +36,10 @@ static UINT normalize_key(UINT key) {
 }
 
 static int valid_key(UINT key) {
-    return key >= VK_BACK && key < 256 && key != VK_ESCAPE && key != VK_MENU &&
+    /* Esc, Tab, Alt, Windows and F5-F12 are emulator or window commands. */
+    return key >= VK_BACK && key < 256 && key != VK_ESCAPE && key != VK_TAB && key != VK_MENU &&
         key != VK_LMENU && key != VK_RMENU && key != VK_LWIN && key != VK_RWIN &&
-        key != VK_F5 && key != VK_F8 && key != VK_F11 && key != VK_F12 && key != VK_F10;
+        !(key >= VK_F5 && key <= VK_F12);
 }
 
 void gp32_win64_preferences_load(gp32_win64_preferences_t *p, const char *ini) {
@@ -71,6 +85,13 @@ uint32_t gp32_win64_key_button(const gp32_win64_preferences_t *p, WPARAM vk) {
     return 0;
 }
 
+void gp32_win64_key_name(UINT key, char *out, size_t size) {
+    LONG scan = (LONG)(MapVirtualKeyA(key, MAPVK_VK_TO_VSC) << 16);
+    if ((key >= VK_PRIOR && key <= VK_DOWN) || key == VK_INSERT || key == VK_DELETE || key == VK_DIVIDE)
+        scan |= 1L << 24;
+    if (!GetKeyNameTextA(scan, out, (int)size)) snprintf(out, size, "Key %u", key);
+}
+
 int gp32_win64_is_card_save(const char *path) {
     size_t n = strlen(path);
     return n >= 9 && (!_stricmp(path + n - 9, ".gp32.smc") || !_stricmp(path + n - 9, ".gp32.sav"));
@@ -89,14 +110,15 @@ typedef struct keyboard_dialog {
     int capturing;
 } keyboard_dialog_t;
 
+static const char *keyboard_hint(void) {
+    return GP32_TR("Click a control, then press a key. Duplicate keys are swapped.",
+                   "바꿀 버튼을 누른 뒤 원하는 키를 누르세요. 이미 쓰던 키는 서로 바뀝니다.");
+}
+
 static void key_labels(HWND dlg, keyboard_dialog_t *d) {
     for (int i = 0; i < GP32_KEY_COUNT; ++i) {
         char name[64];
-        UINT key = d->pending.keys[i];
-        LONG scan = (LONG)(MapVirtualKeyA(key, MAPVK_VK_TO_VSC) << 16);
-        if ((key >= VK_PRIOR && key <= VK_DOWN) || key == VK_INSERT || key == VK_DELETE || key == VK_DIVIDE)
-            scan |= 1L << 24;
-        if (!GetKeyNameTextA(scan, name, sizeof(name))) snprintf(name, sizeof(name), "Key %u", key);
+        gp32_win64_key_name(d->pending.keys[i], name, sizeof(name));
         SetDlgItemTextA(dlg, IDC_KEY_FIRST + i, name);
     }
 }
@@ -111,7 +133,8 @@ static LRESULT CALLBACK capture_key(HWND button, UINT msg, WPARAM wp, LPARAM lp)
             UINT key = normalize_key((UINT)wp);
             if (key != VK_ESCAPE) {
                 if (!valid_key(key)) {
-                    SetDlgItemTextA(dlg, IDC_KEY_HINT, "That key is reserved for window or emulator commands.");
+                    SetDlgItemTextA(dlg, IDC_KEY_HINT, GP32_TR("That key is reserved for emulator commands. Choose another key.",
+                                                               "에뮬레이터 단축키로 쓰는 키입니다. 다른 키를 누르세요."));
                     return 0;
                 }
                 /* Swap duplicate assignments, keeping every control usable. */
@@ -122,7 +145,7 @@ static LRESULT CALLBACK capture_key(HWND button, UINT msg, WPARAM wp, LPARAM lp)
             }
             d->capturing = -1;
             key_labels(dlg, d);
-            SetDlgItemTextA(dlg, IDC_KEY_HINT, "Click a control, then press a key. Duplicate keys are swapped.");
+            SetDlgItemTextA(dlg, IDC_KEY_HINT, keyboard_hint());
             return 0;
         }
     }
@@ -136,6 +159,13 @@ static INT_PTR CALLBACK keyboard_proc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) 
         SetWindowLongPtrA(dlg, DWLP_USER, (LONG_PTR)d);
         for (int i = 0; i < GP32_KEY_COUNT; ++i)
             d->button_proc = (WNDPROC)SetWindowLongPtrA(GetDlgItem(dlg, IDC_KEY_FIRST + i), GWLP_WNDPROC, (LONG_PTR)capture_key);
+        SetWindowTextA(dlg, GP32_TR("Keyboard Controls", "키보드 설정"));
+        for (int i = 0; i < GP32_KEY_COUNT; ++i)
+            SetDlgItemTextA(dlg, IDC_KEY_LABEL_FIRST + i, GP32_TR(key_names[i], key_labels_ko[i]));
+        SetDlgItemTextA(dlg, IDC_KEY_HINT, keyboard_hint());
+        SetDlgItemTextA(dlg, IDC_KEY_DEFAULTS, GP32_TR("Defaults", "기본값"));
+        SetDlgItemTextA(dlg, IDOK, GP32_TR("OK", "확인"));
+        SetDlgItemTextA(dlg, IDCANCEL, GP32_TR("Cancel", "취소"));
         key_labels(dlg, d);
         return TRUE;
     }
@@ -144,13 +174,15 @@ static INT_PTR CALLBACK keyboard_proc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) 
         if (id >= IDC_KEY_FIRST && id < IDC_KEY_FIRST + GP32_KEY_COUNT) {
             key_labels(dlg, d);
             d->capturing = id - IDC_KEY_FIRST;
-            SetDlgItemTextA(dlg, id, "Press a key...");
-            SetDlgItemTextA(dlg, IDC_KEY_HINT, "Esc cancels this assignment. F5/F8/F10/F11/F12 and Alt are reserved.");
+            SetDlgItemTextA(dlg, id, GP32_TR("Press a key...", "키를 누르세요..."));
+            SetDlgItemTextA(dlg, IDC_KEY_HINT, GP32_TR("Esc cancels. F5-F12, Tab and Alt are emulator shortcuts and cannot be used.",
+                                                       "Esc는 취소입니다. F5~F12, Tab, Alt는 에뮬레이터 단축키라 쓸 수 없습니다."));
             SetFocus(GetDlgItem(dlg, id));
         } else if (id == IDC_KEY_DEFAULTS) {
             d->capturing = -1;
             memcpy(d->pending.keys, default_keys, sizeof(default_keys));
             key_labels(dlg, d);
+            SetDlgItemTextA(dlg, IDC_KEY_HINT, keyboard_hint());
         } else if (id == IDOK || id == IDCANCEL) {
             if (id == IDOK) *d->target = d->pending;
             EndDialog(dlg, id);
@@ -177,18 +209,20 @@ static void library_refresh(HWND dlg, library_dialog_t *d) {
     const char *folder = d->prefs->game_folder;
     SetDlgItemTextA(dlg, IDC_GAME_FOLDER, folder);
     if (!folder[0]) {
-        SetDlgItemTextA(dlg, IDC_GAME_HINT, "Choose a folder containing SMC, FXE or FPK games.");
+        SetDlgItemTextA(dlg, IDC_GAME_HINT, GP32_TR("Choose a folder containing SMC, FXE or FPK games.",
+                                                    "SMC, FXE, FPK 게임이 들어 있는 폴더를 고르세요."));
         return;
     }
     char pattern[MAX_PATH];
     if (snprintf(pattern, sizeof(pattern), "%s\\*", folder) >= (int)sizeof(pattern)) {
-        SetDlgItemTextA(dlg, IDC_GAME_HINT, "Folder path is too long.");
+        SetDlgItemTextA(dlg, IDC_GAME_HINT, GP32_TR("Folder path is too long.", "폴더 경로가 너무 깁니다."));
         return;
     }
     WIN32_FIND_DATAA entry;
     HANDLE find = FindFirstFileA(pattern, &entry);
     if (find == INVALID_HANDLE_VALUE) {
-        SetDlgItemTextA(dlg, IDC_GAME_HINT, "Cannot read this folder. Check its location and permissions.");
+        SetDlgItemTextA(dlg, IDC_GAME_HINT, GP32_TR("Cannot read this folder. Check its location and permissions.",
+                                                    "이 폴더를 읽을 수 없습니다. 위치와 권한을 확인하세요."));
         return;
     }
     int skipped = 0;
@@ -205,9 +239,16 @@ static void library_refresh(HWND dlg, library_dialog_t *d) {
         SendMessageA(list, LB_SETCURSEL, 0, 0);
         EnableWindow(GetDlgItem(dlg, IDOK), TRUE);
     }
-    SetDlgItemTextA(dlg, IDC_GAME_HINT, skipped || error != ERROR_NO_MORE_FILES ?
-        "Some entries could not be listed (path length or folder access)." :
-        "Double-click to play. Subfolders, ZIPs and save images are not listed.");
+    char hint[192];
+    if (skipped || error != ERROR_NO_MORE_FILES)
+        snprintf(hint, sizeof(hint), "%s", GP32_TR("Some entries could not be listed (path length or folder access).",
+                                                  "일부 파일은 표시하지 못했습니다 (경로 길이나 폴더 권한)."));
+    else if (!count)
+        snprintf(hint, sizeof(hint), "%s", GP32_TR("No games here. Subfolders, ZIPs and save files are not listed.",
+                                                  "게임이 없습니다. 하위 폴더, ZIP, 저장 파일은 표시하지 않습니다."));
+    else
+        snprintf(hint, sizeof(hint), GP32_TR("%d games. Double-click to play.", "게임 %d개. 두 번 클릭하면 실행합니다."), (int)count);
+    SetDlgItemTextA(dlg, IDC_GAME_HINT, hint);
 }
 
 static int CALLBACK browse_init(HWND hwnd, UINT msg, LPARAM lp, LPARAM data) {
@@ -222,8 +263,15 @@ static INT_PTR CALLBACK library_proc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
     if (msg == WM_INITDIALOG) {
         d = (library_dialog_t *)lp;
         SetWindowLongPtrA(dlg, DWLP_USER, (LONG_PTR)d);
+        SetWindowTextA(dlg, GP32_TR("Game Library", "게임 목록"));
+        SetDlgItemTextA(dlg, IDC_GAME_BROWSE, GP32_TR("Choose folder...", "폴더 선택..."));
+        SetDlgItemTextA(dlg, IDC_GAME_REFRESH, GP32_TR("Refresh", "새로 고침"));
+        SetDlgItemTextA(dlg, IDOK, GP32_TR("Play", "실행"));
+        SetDlgItemTextA(dlg, IDCANCEL, GP32_TR("Close", "닫기"));
         library_refresh(dlg, d);
-        return TRUE;
+        /* Start in the list so arrow keys and Enter pick a game at once. */
+        SetFocus(GetDlgItem(dlg, IDC_GAME_LIST));
+        return FALSE;
     }
     if (msg == WM_COMMAND && d) {
         int id = LOWORD(wp);
@@ -231,7 +279,7 @@ static INT_PTR CALLBACK library_proc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
             HRESULT hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
             BROWSEINFOA info = {0};
             info.hwndOwner = dlg;
-            info.lpszTitle = "Choose your GP32 game folder";
+            info.lpszTitle = GP32_TR("Choose your GP32 game folder", "GP32 게임 폴더를 고르세요");
             info.ulFlags = BIF_RETURNONLYFSDIRS | (SUCCEEDED(hr) ? BIF_NEWDIALOGSTYLE : 0);
             info.lpfn = browse_init;
             info.lParam = (LPARAM)d->prefs->game_folder;
