@@ -58,6 +58,9 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private static final int ACCENT = Color.rgb(127, 209, 185), PANEL = Color.rgb(31, 37, 48);
     /* An old Activity can finish its save flush while the new one starts. */
     private static final Object CORE_OWNER = new Object();
+    /** Held while drawing and while the surface is destroyed, so surfaceDestroyed
+     *  returns only after the emulation thread has released the canvas. */
+    private final Object surfaceLock = new Object();
     private final Object wake = new Object();
     final InputState input = new InputState();
     TouchPadView touchPad;
@@ -82,7 +85,9 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private AlertDialog menu;
     private AudioManager audioManager;
     private final AudioManager.OnAudioFocusChangeListener audioFocus = change -> {
-        focusGranted = change == AudioManager.AUDIOFOCUS_GAIN;
+        // A short notification may lower our volume; keep playing through it.
+        focusGranted = change == AudioManager.AUDIOFOCUS_GAIN
+                || change == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK;
         if (!focusGranted) clearInput();
         signal();
     };
@@ -440,7 +445,19 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     }
 
     private void emulate() {
-        synchronized (CORE_OWNER) { runCore(); }
+        synchronized (CORE_OWNER) {
+            while (!stopped) {
+                runCore(); // Returns when stopped or after a fatal error.
+                if (stopped) break;
+                runOnUiThread(this::showHome);
+                try {
+                    synchronized (wake) { while (!stopped && pendingGame == null) wake.wait(); }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
+            }
+        }
     }
     private boolean held() { return paused || uiHold || !surfaceReady || !focusGranted || !gameLoaded; }
     private void runCore() {
@@ -461,7 +478,8 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
                     .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC).build())
                 .setAudioFormat(new AudioFormat.Builder().setSampleRate(44100)
                     .setChannelMask(AudioFormat.CHANNEL_OUT_STEREO).setEncoding(AudioFormat.ENCODING_PCM_16BIT).build())
-                .setBufferSizeInBytes(Math.max(minimum, 2205 * 4))
+                // 80 ms floor: enough margin for one late frame without audible lag.
+                .setBufferSizeInBytes(Math.max(minimum, 3528 * 4))
                 .setTransferMode(AudioTrack.MODE_STREAM).build();
             if (track.getState() != AudioTrack.STATE_INITIALIZED) throw new IllegalStateException("Audio output initialization failed.");
             while (!stopped) {
@@ -484,7 +502,13 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
                     if (error != null) { toast(error); runOnUiThread(this::showHome); }
                     deadline = 0;
                 }
-                if (gameLoaded && resetRequested) { resetRequested = false; NativeCore.reset(); }
+                if (gameLoaded && resetRequested) {
+                    // Drop sound queued before the reset so it is not heard afterwards.
+                    resetRequested = false;
+                    track.pause(); track.flush(); suspended = true;
+                    NativeCore.reset();
+                    deadline = 0;
+                }
                 if (held()) {
                     if (!suspended) {
                         track.pause(); track.flush();
@@ -526,30 +550,34 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         }
     }
     private void drawFrame(Bitmap image, Paint paint, Rect dest) {
-        if (!surfaceReady) return;
-        Canvas canvas = null;
-        try {
-            canvas = screen.getHolder().lockCanvas();
-            if (canvas == null) return;
-            canvas.drawColor(Color.BLACK);
-            int width = canvas.getWidth(), height = canvas.getHeight();
-            int top = 0, bottom = height;
-            if (height > width) {
-                top = dp(60); // Menu button row in portrait.
-                if (touchEnabled) bottom = Math.max(top + 1, (int)touchPad.controlsTop() - dp(8));
-            }
-            int areaW = width, areaH = Math.max(1, bottom - top);
-            int w, h;
-            if (integerScale && Math.min(areaW / 320, areaH / 240) >= 1) {
-                int scale = Math.min(areaW / 320, areaH / 240);
-                w = 320 * scale; h = 240 * scale;
-            } else {
-                w = Math.min(areaW, areaH * 4 / 3); h = w * 3 / 4;
-            }
-            int x = (width - w) / 2, y = top + (areaH - h) / 2;
-            dest.set(x, y, x + w, y + h);
-            canvas.drawBitmap(image, null, dest, paint);
-        } finally { if (canvas != null) screen.getHolder().unlockCanvasAndPost(canvas); }
+        synchronized (surfaceLock) {
+            if (!surfaceReady) return;
+            Canvas canvas = null;
+            try {
+                canvas = screen.getHolder().lockCanvas();
+                if (canvas == null) return;
+                canvas.drawColor(Color.BLACK);
+                int width = canvas.getWidth(), height = canvas.getHeight();
+                int top = 0, bottom = height;
+                if (height > width) {
+                    top = dp(60); // Menu button row in portrait.
+                    // Before the touch pad's first layout its edge is still unknown.
+                    if (touchEnabled) bottom = Math.max(top + 1,
+                            (int)Math.min(height, touchPad.controlsTop()) - dp(8));
+                }
+                int areaW = width, areaH = Math.max(1, bottom - top);
+                int w, h;
+                if (integerScale && Math.min(areaW / 320, areaH / 240) >= 1) {
+                    int scale = Math.min(areaW / 320, areaH / 240);
+                    w = 320 * scale; h = 240 * scale;
+                } else {
+                    w = Math.min(areaW, areaH * 4 / 3); h = w * 3 / 4;
+                }
+                int x = (width - w) / 2, y = top + (areaH - h) / 2;
+                dest.set(x, y, x + w, y + h);
+                canvas.drawBitmap(image, null, dest, paint);
+            } finally { if (canvas != null) screen.getHolder().unlockCanvasAndPost(canvas); }
+        }
     }
     private void showInfo() {
         clearInput();
@@ -628,7 +656,10 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     }
     @Override public void surfaceCreated(SurfaceHolder holder) { surfaceReady = true; signal(); }
     @Override public void surfaceChanged(SurfaceHolder holder, int format, int width, int height) { clearInput(); signal(); }
-    @Override public void surfaceDestroyed(SurfaceHolder holder) { surfaceReady = false; clearInput(); signal(); }
+    @Override public void surfaceDestroyed(SurfaceHolder holder) {
+        synchronized (surfaceLock) { surfaceReady = false; }
+        clearInput(); signal();
+    }
     @Override public void onBackPressed() {
         if (home.getVisibility() != View.VISIBLE) showMenu();
         else if (gameLoaded) showGame();
