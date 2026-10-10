@@ -78,10 +78,20 @@ int main(void) {
               "native short-budget entry executed guest instructions");
         compare_state();
     }
+#if ARM920T_NATIVE_BACKEND == 2u
+    /* AArch64 wraps a full arena and evicts one chunk at a time instead of
+     * flushing the generation; every block above still kept native code. */
+    CHECK(cpu_jit->jit_generation == initial_generation && cpu_jit->jit_arena_wrapped &&
+          cpu_jit->prof.jit_code_full_events > 0u, "arena never wrapped");
+    /* A full flush still wraps the generation. */
+    cpu_jit->jit_generation = UINT32_MAX;
+    arm920t_flush_jit(cpu_jit);
+#else
     CHECK(cpu_jit->jit_generation != initial_generation, "arena never recycled");
     /* Exercise the same churn-triggered reset across the generation wrap. */
     cpu_jit->jit_generation = UINT32_MAX;
     cpu_jit->jit_code_used = cpu_jit->jit_code_size - 16u;
+#endif
     set_reg_both(15u, addresses[0]);
     set_reg_both(1u, addresses[0] + 31u * 4u);
     CHECK(arm920t_run(cpu_jit, 32u) == arm920t_run(cpu_ref, 32u), "wrap budget");

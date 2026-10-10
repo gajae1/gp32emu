@@ -35,6 +35,13 @@
  * Angelo's largest superblocks fall out of the native cache and run on the
  * portable block interpreter instead (443 instead of 53 failed emits). */
 #define ARM_JIT_NATIVE_MAX_BYTES 65536u
+/* The x64 arena flushes the whole cache when it fills. The AArch64 arena
+ * wraps instead and evicts one chunk at a time (arm920t_jit_a64.inc). */
+#if defined(ARM_JIT_NATIVE_A64)
+#define ARM_JIT_ARENA_RECYCLES 0
+#else
+#define ARM_JIT_ARENA_RECYCLES 1
+#endif
 #if ARM920T_PROFILING
 #define ARM_PROF_INC(c, field) do { (c)->prof.field++; } while (0)
 #else
@@ -215,7 +222,8 @@ typedef struct arm_jit_block {
     uint32_t generation;
     uint32_t tag_cache_epoch;
     uint8_t count;
-    uint8_t native_ok; /* 0: unattempted; 1: compiled; 2: failed lazy attempt. */
+    uint8_t native_ok; /* 0: unattempted; 1: compiled; 2: failed lazy attempt;
+                        * 3: host accelerator (dispatcher general path only). */
     uint8_t poll_prefix;
     uint8_t poll_backedge; /* bit 0: backedge; bits 1..4: counted register + 1. */
     uint32_t deferred_inline_pc;
@@ -352,6 +360,10 @@ struct arm920t {
 #endif
     /* A64 arena: lowest cold byte of the current chunk (0 = chunk end). */
     size_t jit_cold_floor;
+    /* A64 arena: set once the arena has wrapped. Every chunk ahead of the
+     * write position then still holds live blocks, which are evicted when
+     * the writer reaches that chunk. Cleared with the whole arena. */
+    int jit_arena_wrapped;
 #if ARM920T_PROFILING && defined(ARM_JIT_NATIVE_A64)
     /* Compilation metadata, not reset with sampling counters. */
     uint8_t profile_native_loop[ARM_JIT_BLOCK_COUNT];
@@ -1471,6 +1483,7 @@ static void arm920t_jit_invalidate_all(arm920t_t *c, unsigned cause) {
 #endif
     c->jit_code_used = 0;
     c->jit_cold_floor = 0;
+    c->jit_arena_wrapped = 0;
 }
 
 static int arm_jit_is_local_cp15_op(uint32_t insn);
@@ -1944,7 +1957,7 @@ static ARM_NOINLINE arm_jit_block_t *arm_jit_translate(arm920t_t *c, uint32_t pc
     /* No native block is executing here. Invalidate before binding the slot:
      * generation wrap clears the table, and old code pointers must be stale
      * before reusing the arena. Reserve the emitter's bound plus alignment. */
-    if (c->jit_enabled && c->jit_code && c->jit_code_used &&
+    if (ARM_JIT_ARENA_RECYCLES && c->jit_enabled && c->jit_code && c->jit_code_used &&
         c->jit_code_size > ARM_JIT_NATIVE_MAX_BYTES + 15u &&
         (c->jit_code_used > c->jit_code_size ||
          c->jit_code_size - c->jit_code_used < ARM_JIT_NATIVE_MAX_BYTES + 15u))
@@ -4306,8 +4319,10 @@ static uint32_t arm_jit_accelerated(arm920t_t *c, uint32_t budget) {
 }
 static void arm_jit_compile_native(arm920t_t *c, arm_jit_block_t *b) {
     if (arm_accel_entry(c, b->tag_pc)) {
+        /* A C function, not emitted code: neither the dispatcher fast path
+         * nor a linked native exit may treat it as a block body. */
         b->native = arm_jit_accelerated;
-        b->native_ok = 1u;
+        b->native_ok = 3u;
     } else {
         arm_jit_compile_host(c, b);
     }
@@ -4366,7 +4381,7 @@ static int arm_poll_read_stable(arm920t_t *c, const arm_jit_op_t *op) {
 static ARM_NOINLINE int arm_jit_lazy_compile(arm920t_t *c, arm_jit_block_t *b) {
 #if ARM920T_NATIVE_BACKEND
     if (!c->jit_enabled || b->native_ok) return 0;
-    if (c->jit_code && c->jit_code_used &&
+    if (ARM_JIT_ARENA_RECYCLES && c->jit_code && c->jit_code_used &&
         c->jit_code_size > ARM_JIT_NATIVE_MAX_BYTES + 15u &&
         (c->jit_code_used > c->jit_code_size ||
          c->jit_code_size - c->jit_code_used < ARM_JIT_NATIVE_MAX_BYTES + 15u)) {
