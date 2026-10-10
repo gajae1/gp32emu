@@ -4951,7 +4951,7 @@ static uint32_t direct_frame_budget(const gp32_t *g, uint64_t deadline) {
 static void direct_ecc_accelerator_update(gp32_t *g) {
     arm_bus_t bus = s3c2400_get_bus(g->soc);
     const uint8_t *code = bus.fastmem ? bus.fastmem(bus.user, GP32_ECC_LOOP_PC, GP32_ECC_LOOP_BYTES, 0) : NULL;
-    int match = code && gp32_ecc_loop_hash(code) == UINT64_C(0xeddcac638c51a003);
+    int match = code && gp32_ecc_code_hash(code, GP32_ECC_LOOP_BYTES) == UINT64_C(0xeddcac638c51a003);
     (void)arm920t_set_accelerators(g->cpu, match ? gp32_ecc_entries : NULL,
                                  match ? GP32_ARRAY_COUNT(gp32_ecc_entries) : 0u, NULL);
 }
