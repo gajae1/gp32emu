@@ -46,7 +46,7 @@ public final class TouchPadView extends View {
         for (int i = 0; i < bounds.length; i++) bounds[i] = new RectF();
         setFocusable(false);
         setClickable(true);
-        setContentDescription("GP32 방향 패드, A, B, L, R, Start, Select");
+        setContentDescription(context.getString(R.string.touchpad_description));
     }
 
     /** Releases this overlay only; physical keys and sticks remain held. */

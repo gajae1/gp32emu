@@ -14,6 +14,8 @@
     <string name="game_details">%1$s · %2$s</string>
     <string name="menu">Menu</string>
     <string name="menu_resume">Resume</string>
+    <string name="menu_save_state">Save state</string>
+    <string name="menu_load_state">Load state</string>
     <string name="menu_reset">Restart game</string>
     <string name="menu_touch_on">Show touch controls</string>
     <string name="menu_touch_off">Hide touch controls</string>
@@ -43,6 +45,13 @@
     <string name="bios_imported">BIOS imported.</string>
     <string name="loading">Loading %1$s…</string>
     <string name="save_failed">Could not save progress. Check free storage.</string>
+    <string name="slot">Slot %1$d</string>
+    <string name="slot_empty">Empty</string>
+    <string name="state_saved">State saved to slot %1$d.</string>
+    <string name="state_loaded">State loaded from slot %1$d.</string>
+    <string name="state_save_failed">Could not save the state: %1$s</string>
+    <string name="state_load_failed">Could not load the state: %1$s</string>
+    <string name="touchpad_description">GP32 D-pad, A, B, L, R, Start, Select</string>
     <string name="stopped">Emulation stopped: %1$s</string>
-    <string name="about_text">GP32emu 1.0.0\n\nIn game, press Back or the menu button to pause. Use a keyboard (arrows, Z/X = A/B, A/S = L/R, Enter = Start, Shift = Select) or a gamepad with touch controls hidden.\n\nGames are copied into app storage and saves are automatic. Uninstalling the app deletes copies and saves.\n\nBased on gameblabla/gp32emu.\ngithub.com/gajae1/gp32emu</string>
+    <string name="about_text">GP32emu 1.0.0\n\nIn game, press Back or the menu button to pause. On a gamepad, press its Mode button or hold Start and Select together. Use a keyboard (arrows, Z/X = A/B, A/S = L/R, Enter = Start, Shift = Select) or a gamepad with touch controls hidden.\n\nGames are copied into app storage and saves are automatic. Save states have 3 slots per game in the pause menu. Uninstalling the app deletes copies, saves and states.\n\nBased on gameblabla/gp32emu.\ngithub.com/gajae1/gp32emu</string>
 </resources>

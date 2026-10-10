@@ -4,6 +4,17 @@
 #include <stdio.h>
 #include <string.h>
 
+/* Gamepad thumbsticks span roughly -32768..32767; a stick that no longer
+   returns to center must not drift the d-pad, so require about half travel. */
+#define GP32_PAD_STICK_DEADZONE 16384
+/* Triggers span 0..32767, so half travel counts as a press. */
+#define GP32_PAD_TRIGGER_THRESHOLD 16384
+
+static void set_device_name(gp32_sdl3_input_state_t *s, const char *name) {
+    if (!s) return;
+    snprintf(s->device_name, sizeof(s->device_name), "%s", (name && name[0]) ? name : "");
+}
+
 static void set_error(gp32_sdl3_input_state_t *s, const char *msg) {
     if (!s) return;
     if (!msg) msg = "SDL3 input error";
@@ -17,45 +28,85 @@ void gp32_sdl3_input_state_init(gp32_sdl3_input_state_t *s, int enable_joystick,
     s->enable_joystick_axis = enable_joystick_axis != 0;
 }
 
+static void release_raw_joystick(gp32_sdl3_input_state_t *s) {
+    if (s->joy) { SDL_CloseJoystick(s->joy); s->joy = NULL; }
+    s->num_axes = s->num_buttons = s->num_hats = 0;
+    memset(s->axis_centered, 0, sizeof(s->axis_centered));
+    memset(s->axis_state, 0, sizeof(s->axis_state));
+    memset(s->axis_pending, 0, sizeof(s->axis_pending));
+    memset(s->axis_pending_count, 0, sizeof(s->axis_pending_count));
+}
+
+static void close_device(gp32_sdl3_input_state_t *s) {
+    if (s->pad) { SDL_CloseGamepad(s->pad); s->pad = NULL; }
+    release_raw_joystick(s);
+    s->device_id = 0;
+    s->device_name[0] = 0;
+}
+
 void gp32_sdl3_input_state_shutdown(gp32_sdl3_input_state_t *s) {
     if (!s) return;
-    if (s->joy) SDL_CloseJoystick(s->joy);
-    s->joy = NULL;
+    close_device(s);
+}
+
+/* A recognised controller replaces an open raw joystick, so a gamepad plugged
+   in after start works even when the raw fallback already holds a device. */
+static int open_gamepad_replacing_raw(gp32_sdl3_input_state_t *s, SDL_JoystickID id) {
+    SDL_Gamepad *pad = SDL_OpenGamepad(id);
+    if (!pad) return 0;
+    release_raw_joystick(s);
+    s->pad = pad;
+    SDL_UpdateGamepads();
+    set_device_name(s, SDL_GetGamepadName(pad));
+    s->device_id = id;
+    s->error[0] = 0;
+    return 1;
+}
+
+/* Open a gamepad when SDL has a mapping for the device (DualShock/DualSense,
+   Switch Pro, generic pads, ...), otherwise keep the old raw joystick path. */
+static int open_device(gp32_sdl3_input_state_t *s, SDL_JoystickID id) {
+    s->pad = SDL_OpenGamepad(id);
+    if (s->pad) {
+        SDL_UpdateGamepads();
+        set_device_name(s, SDL_GetGamepadName(s->pad));
+    } else {
+        s->joy = SDL_OpenJoystick(id);
+        if (!s->joy) return 0;
+        SDL_UpdateJoysticks();
+        s->num_axes = SDL_GetNumJoystickAxes(s->joy);
+        s->num_buttons = SDL_GetNumJoystickButtons(s->joy);
+        s->num_hats = SDL_GetNumJoystickHats(s->joy);
+        for (int i = 0; i < 2; ++i) {
+            if (i < s->num_axes) {
+                int raw = (int)SDL_GetJoystickAxis(s->joy, i);
+                if (raw > -8000 && raw < 8000) s->axis_centered[i] = 1;
+            }
+        }
+        set_device_name(s, SDL_GetJoystickName(s->joy));
+    }
+    s->device_id = id;
+    s->error[0] = 0;
+    return 1;
 }
 
 void gp32_sdl3_input_open_first_joystick(gp32_sdl3_input_state_t *s) {
-    if (!s || !s->enable_joystick || s->joy) return;
+    if (!s || !s->enable_joystick || s->pad || s->joy) return;
     int count = 0;
-    SDL_JoystickID *ids = SDL_GetJoysticks(&count);
-    if (ids && count > 0) {
-        s->joy = SDL_OpenJoystick(ids[0]);
-        if (s->joy) {
-            SDL_UpdateJoysticks();
-            s->num_axes = SDL_GetNumJoystickAxes(s->joy);
-            s->num_buttons = SDL_GetNumJoystickButtons(s->joy);
-            s->num_hats = SDL_GetNumJoystickHats(s->joy);
-            for (int i = 0; i < 2; ++i) {
-                if (i < s->num_axes) {
-                    int raw = (int)SDL_GetJoystickAxis(s->joy, i);
-                    if (raw > -8000 && raw < 8000) s->axis_centered[i] = 1;
-                }
-            }
-            s->error[0] = 0;
-        } else set_error(s, SDL_GetError());
-    } else set_error(s, "no SDL joystick available");
-    if (ids) SDL_free(ids);
-}
-
-static void close_joystick_id(gp32_sdl3_input_state_t *s, SDL_JoystickID id) {
-    if (!s || !s->joy) return;
-    if (SDL_GetJoystickID(s->joy) == id) {
-        SDL_CloseJoystick(s->joy);
-        s->joy = NULL;
-        s->num_axes = s->num_buttons = s->num_hats = 0;
-        memset(s->axis_centered, 0, sizeof(s->axis_centered));
-        memset(s->axis_state, 0, sizeof(s->axis_state));
-        memset(s->axis_pending, 0, sizeof(s->axis_pending));
-        memset(s->axis_pending_count, 0, sizeof(s->axis_pending_count));
+    SDL_JoystickID *ids = SDL_GetGamepads(&count);
+    if (ids) {
+        if (count > 0) open_device(s, ids[0]);
+        SDL_free(ids);
+    }
+    if (s->pad) return;
+    ids = SDL_GetJoysticks(&count);
+    if (ids) {
+        if (count > 0) open_device(s, ids[0]);
+        SDL_free(ids);
+    }
+    if (!s->pad && !s->joy) {
+        const char *err = SDL_GetError();
+        if (err && err[0]) set_error(s, err);
     }
 }
 
@@ -72,19 +123,28 @@ void gp32_sdl3_input_handle_event(gp32_sdl3_input_state_t *s, const SDL_Event *e
             else if (ev->key.key == SDLK_F8 && s) s->pending_actions |= GP32_FRONTEND_ACTION_LOAD_STATE;
         }
         break;
-    case SDL_EVENT_JOYSTICK_ADDED:
-        if (s && s->enable_joystick && !s->joy) {
-            s->joy = SDL_OpenJoystick(ev->jdevice.which);
-            if (s->joy) {
-                s->num_axes = SDL_GetNumJoystickAxes(s->joy);
-                s->num_buttons = SDL_GetNumJoystickButtons(s->joy);
-                s->num_hats = SDL_GetNumJoystickHats(s->joy);
-                s->error[0] = 0;
-            } else set_error(s, SDL_GetError());
+    case SDL_EVENT_GAMEPAD_ADDED:
+        if (s && s->enable_joystick && !s->pad && !open_gamepad_replacing_raw(s, ev->gdevice.which))
+            set_error(s, SDL_GetError());
+        break;
+    case SDL_EVENT_GAMEPAD_REMOVED:
+        if (s && s->device_id && s->device_id == ev->gdevice.which) {
+            close_device(s);
+            gp32_sdl3_input_open_first_joystick(s); /* fall over to another connected pad */
         }
         break;
+    case SDL_EVENT_JOYSTICK_ADDED:
+        /* A mapped controller is announced as both joystick and gamepad, so
+           open_device() picks the gamepad form here and the later gamepad
+           event finds the device already open. */
+        if (s && s->enable_joystick && !s->pad && !s->joy && !open_device(s, ev->jdevice.which))
+            set_error(s, SDL_GetError());
+        break;
     case SDL_EVENT_JOYSTICK_REMOVED:
-        close_joystick_id(s, ev->jdevice.which);
+        if (s && s->device_id && s->device_id == ev->jdevice.which) {
+            close_device(s);
+            gp32_sdl3_input_open_first_joystick(s);
+        }
         break;
     default:
         break;
@@ -110,6 +170,38 @@ uint32_t gp32_sdl3_input_keyboard_buttons(void) {
 
 static int joy_button(const gp32_sdl3_input_state_t *s, int index) {
     return s && s->joy && index >= 0 && index < s->num_buttons && SDL_GetJoystickButton(s->joy, index);
+}
+
+static int pad_button(const gp32_sdl3_input_state_t *s, SDL_GamepadButton button) {
+    return s && s->pad && SDL_GetGamepadButton(s->pad, button);
+}
+
+/* Standard gamepad layout: d-pad and left stick drive the GP32 directions,
+   SOUTH/EAST are A/B, the shoulders are L/R, and the analog triggers read as
+   L/R too once they pass half travel. The stick ignores enable_joystick_axis
+   because gamepad axes are already deadzone-filtered here. */
+static uint32_t gamepad_buttons(const gp32_sdl3_input_state_t *s) {
+    uint32_t mask = 0;
+    if (!s->pad) return 0;
+    if (pad_button(s, SDL_GAMEPAD_BUTTON_DPAD_LEFT))  mask |= GP32_BUTTON_LEFT;
+    if (pad_button(s, SDL_GAMEPAD_BUTTON_DPAD_RIGHT)) mask |= GP32_BUTTON_RIGHT;
+    if (pad_button(s, SDL_GAMEPAD_BUTTON_DPAD_UP))    mask |= GP32_BUTTON_UP;
+    if (pad_button(s, SDL_GAMEPAD_BUTTON_DPAD_DOWN))  mask |= GP32_BUTTON_DOWN;
+    if (pad_button(s, SDL_GAMEPAD_BUTTON_SOUTH)) mask |= GP32_BUTTON_A;
+    if (pad_button(s, SDL_GAMEPAD_BUTTON_EAST))  mask |= GP32_BUTTON_B;
+    if (pad_button(s, SDL_GAMEPAD_BUTTON_LEFT_SHOULDER))  mask |= GP32_BUTTON_L;
+    if (pad_button(s, SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER)) mask |= GP32_BUTTON_R;
+    if (pad_button(s, SDL_GAMEPAD_BUTTON_START)) mask |= GP32_BUTTON_START;
+    if (pad_button(s, SDL_GAMEPAD_BUTTON_BACK))  mask |= GP32_BUTTON_SELECT;
+    Sint16 x = SDL_GetGamepadAxis(s->pad, SDL_GAMEPAD_AXIS_LEFTX);
+    Sint16 y = SDL_GetGamepadAxis(s->pad, SDL_GAMEPAD_AXIS_LEFTY);
+    if (x <= -GP32_PAD_STICK_DEADZONE) mask |= GP32_BUTTON_LEFT;
+    else if (x >= GP32_PAD_STICK_DEADZONE) mask |= GP32_BUTTON_RIGHT;
+    if (y <= -GP32_PAD_STICK_DEADZONE) mask |= GP32_BUTTON_UP;
+    else if (y >= GP32_PAD_STICK_DEADZONE) mask |= GP32_BUTTON_DOWN;
+    if (SDL_GetGamepadAxis(s->pad, SDL_GAMEPAD_AXIS_LEFT_TRIGGER) >= GP32_PAD_TRIGGER_THRESHOLD) mask |= GP32_BUTTON_L;
+    if (SDL_GetGamepadAxis(s->pad, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) >= GP32_PAD_TRIGGER_THRESHOLD) mask |= GP32_BUTTON_R;
+    return mask;
 }
 
 static int filtered_axis_dir(gp32_sdl3_input_state_t *s, int axis) {
@@ -138,7 +230,9 @@ static int filtered_axis_dir(gp32_sdl3_input_state_t *s, int axis) {
 
 uint32_t gp32_sdl3_input_joystick_buttons(gp32_sdl3_input_state_t *s) {
     uint32_t mask = 0;
-    if (!s || !s->joy) return 0;
+    if (!s) return 0;
+    if (s->pad) return gamepad_buttons(s);
+    if (!s->joy) return 0;
     if (s->num_hats > 0) {
         Uint8 hat = SDL_GetJoystickHat(s->joy, 0);
         if (hat & SDL_HAT_LEFT)  mask |= GP32_BUTTON_LEFT;
@@ -176,7 +270,8 @@ gp32_status_t gp32_sdl3_input_poll(gp32_sdl3_input_state_t *s, int include_keybo
     SDL_Event ev;
     while (SDL_PollEvent(&ev)) gp32_sdl3_input_handle_event(s, &ev, &quit);
     SDL_PumpEvents();
-    if (s->joy) SDL_UpdateJoysticks();
+    if (s->pad) SDL_UpdateGamepads();
+    else if (s->joy) SDL_UpdateJoysticks();
     uint32_t mask = extra_buttons;
     if (include_keyboard) mask |= gp32_sdl3_input_keyboard_buttons();
     mask |= gp32_sdl3_input_joystick_buttons(s);
@@ -187,4 +282,8 @@ gp32_status_t gp32_sdl3_input_poll(gp32_sdl3_input_state_t *s, int include_keybo
 
 const char *gp32_sdl3_input_error(const gp32_sdl3_input_state_t *s) {
     return (s && s->error[0]) ? s->error : "";
+}
+
+const char *gp32_sdl3_input_device_name(const gp32_sdl3_input_state_t *s) {
+    return (s && s->device_name[0]) ? s->device_name : "";
 }

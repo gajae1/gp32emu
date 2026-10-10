@@ -12,6 +12,8 @@
     <string name="library_hint">눌러서 실행하고, 길게 눌러 삭제합니다.</string>
     <string name="menu">메뉴</string>
     <string name="menu_resume">계속하기</string>
+    <string name="menu_save_state">상태 저장</string>
+    <string name="menu_load_state">상태 불러오기</string>
     <string name="menu_reset">처음부터 다시 시작</string>
     <string name="menu_touch_on">터치 조작 표시</string>
     <string name="menu_touch_off">터치 조작 숨기기</string>
@@ -41,6 +43,13 @@
     <string name="bios_imported">BIOS를 가져왔습니다.</string>
     <string name="loading">%1$s 불러오는 중…</string>
     <string name="save_failed">진행 상황을 저장하지 못했습니다. 저장 공간을 확인하세요.</string>
+    <string name="slot">슬롯 %1$d</string>
+    <string name="slot_empty">비어 있음</string>
+    <string name="state_saved">슬롯 %1$d에 상태를 저장했습니다.</string>
+    <string name="state_loaded">슬롯 %1$d의 상태를 불러왔습니다.</string>
+    <string name="state_save_failed">상태를 저장하지 못했습니다: %1$s</string>
+    <string name="state_load_failed">상태를 불러오지 못했습니다: %1$s</string>
+    <string name="touchpad_description">GP32 방향 패드, A, B, L, R, Start, Select</string>
     <string name="stopped">에뮬레이션 중지: %1$s</string>
-    <string name="about_text">GP32emu 1.0.0\n\n게임 중 뒤로가기나 메뉴 버튼을 누르면 일시정지 메뉴가 열립니다. 터치 조작을 숨기면 키보드(방향키, Z/X = A/B, A/S = L/R, Enter = Start, Shift = Select)나 게임패드로 조작할 수 있습니다.\n\n게임은 앱 저장소로 복사되고 세이브는 자동으로 저장됩니다. 앱을 삭제하면 복사본과 세이브도 함께 삭제됩니다.\n\ngameblabla/gp32emu 기반\ngithub.com/gajae1/gp32emu</string>
+    <string name="about_text">GP32emu 1.0.0\n\n게임 중 뒤로가기나 메뉴 버튼을 누르면 일시정지 메뉴가 열립니다. 게임패드에서는 Mode 버튼을 누르거나 Start와 Select를 동시에 누르세요. 터치 조작을 숨기면 키보드(방향키, Z/X = A/B, A/S = L/R, Enter = Start, Shift = Select)나 게임패드로 조작할 수 있습니다.\n\n게임은 앱 저장소로 복사되고 세이브는 자동으로 저장됩니다. 상태 저장은 일시정지 메뉴에서 게임당 3개 슬롯을 쓸 수 있습니다. 앱을 삭제하면 복사본, 세이브, 상태도 함께 삭제됩니다.\n\ngameblabla/gp32emu 기반\ngithub.com/gajae1/gp32emu</string>
 </resources>

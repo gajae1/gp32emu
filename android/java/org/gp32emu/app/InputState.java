@@ -39,6 +39,13 @@ public final class InputState {
         touch = mask & BUTTONS;
     }
 
+    /** True while Start and Select are both held on physical keys. */
+    public synchronized boolean menuChord() {
+        int held = 0;
+        for (int mask : keys.values()) held |= mask;
+        return (held & (START | SELECT)) == (START | SELECT);
+    }
+
     /** Releases every source, for example when the Activity loses focus. */
     public synchronized void clear() {
         touch = 0;
@@ -103,9 +110,11 @@ public final class InputState {
             case KeyEvent.KEYCODE_X:
             case KeyEvent.KEYCODE_BUTTON_B: return B;
             case KeyEvent.KEYCODE_A:
-            case KeyEvent.KEYCODE_BUTTON_L1: return L;
+            case KeyEvent.KEYCODE_BUTTON_L1:
+            case KeyEvent.KEYCODE_BUTTON_L2: return L;
             case KeyEvent.KEYCODE_S:
-            case KeyEvent.KEYCODE_BUTTON_R1: return R;
+            case KeyEvent.KEYCODE_BUTTON_R1:
+            case KeyEvent.KEYCODE_BUTTON_R2: return R;
             case KeyEvent.KEYCODE_ENTER:
             case KeyEvent.KEYCODE_BUTTON_START: return START;
             case KeyEvent.KEYCODE_SHIFT_LEFT:

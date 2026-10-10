@@ -11,8 +11,13 @@ RetroArch cores for emulating the Game Park GP32.
   SmartMedia saves when a writable card is mounted, with periodic background
   saving in Windows and RetroArch and a final flush on close.
 - Offers LCD persistence and frame interpolation, plus guest CPU speed options
-  in RetroArch. Windows includes keyboard and gamepad input, fullscreen,
-  BMP screenshots and MKV recording.
+  in RetroArch.
+- The Windows application has a Korean and English interface, a game library
+  and recent-games list, drag and drop, nine quick state slots, pause, fast
+  forward, remappable keys, hot-plugged gamepads, fullscreen, BMP screenshots
+  and MKV recording.
+- The Android application imports games and a BIOS into app storage and offers
+  touch, keyboard and gamepad controls with three state slots per game.
 - Removes the click noise in Astonishia Story R's music and shortens silent
   card-loading pauses such as Blue Angelo's dialogue opening. Both are on by
   default; the RetroArch core offers `Fix game code bugs` and `Fast loading`
@@ -28,14 +33,18 @@ RetroArch cores for emulating the Game Park GP32.
 | `gp32emu-1.0.0-android-arm64.zip` | `gp32emu_libretro_android.so`, `gp32emu_libretro.info` |
 | `gp32emu-1.0.0-android-armv7.zip` | `gp32emu_libretro_android.so`, `gp32emu_libretro.info` |
 
+`gp32emu-1.0.0-android.apk` is the standalone Android application for ARM64 and
+ARMv7 devices. `SHA256SUMS.txt` lists the checksum of every file.
+
 Linux requires AArch64 and glibc 2.17 or newer. Android cores target API 21 or
 newer. Every ZIP also contains the README, these notes, `docs/MANUAL.ko.md`,
 `licenses/` and `manifest.json`. BIOS images, games and saves are not included.
 
 ## Installation
 
-For Windows, extract the package, keep `SDL3.dll` beside the executable, select
-your BIOS through `Config > Set BIOS path...`, and open a game from `File`.
+For Windows, extract the package, keep `SDL3.dll` beside the executable, choose
+your BIOS when the first start asks for it (or later in `Settings > Set BIOS...`),
+and open a game from `File` or by dropping it on the window.
 For RetroArch, install the core matching the app's architecture and place its
 `.info` file in the configured core information directory. Put your GP32 BIOS
 in the system directory, preferably as `gp32166m.bin`; any GP32 BIOS dump of
