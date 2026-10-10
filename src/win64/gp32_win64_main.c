@@ -18,10 +18,15 @@
 #include <stdlib.h>
 #include <string.h>
 
+static_assert(sizeof(void *) == 8, "The Windows frontend supports 64-bit targets only.");
+
 #define GP32_LCD_W 320u
 #define GP32_LCD_H 240u
 #define GP32_DEFAULT_CLOCK_HZ 66000000u
 #define IDI_GP32EMU 101
+#define GP32_STATUS_MS 3000u
+#define GP32_CURSOR_IDLE_FRAMES 90u
+#define GP32_BASE_TITLE "GP32emu"
 
 #define IDM_FILE_OPEN_BIOS       1001
 #define IDM_FILE_OPEN_SMC        1002
@@ -95,6 +100,11 @@ typedef struct app_state {
     int fullscreen;
     int quit;
     int no_audio;
+    int status_active;
+    char status_msg[256];
+    DWORD status_tick_ms;
+    unsigned cursor_idle_frames;
+    int display_awake;
     LARGE_INTEGER qpf;
     LARGE_INTEGER last_qpc;
     uint64_t accum_units;
@@ -102,9 +112,22 @@ typedef struct app_state {
 
 static app_state_t *g_app;
 
+static void app_update_title(app_state_t *a);
+
+/* Status messages surface as a short-lived suffix on the window title, so the
+   frontend needs no extra UI surface. */
 static void app_set_status(app_state_t *a, const char *msg) {
-    (void)a;
-    (void)msg;
+    if (!a) return;
+    if (!msg || !msg[0]) {
+        a->status_msg[0] = 0;
+        a->status_active = 0;
+        app_update_title(a);
+        return;
+    }
+    snprintf(a->status_msg, sizeof(a->status_msg), "%s", msg);
+    a->status_tick_ms = GetTickCount();
+    a->status_active = 1;
+    app_update_title(a);
 }
 
 static void app_show_status_error(app_state_t *a, const char *msg) {
@@ -150,6 +173,10 @@ static void app_load_config(app_state_t *a) {
     else if (!strcmp(audio, "wasapi_shared")) a->audio_mode = GP32_WIN64_AUDIO_WASAPI_SHARED;
     else if (!strcmp(audio, "wasapi_exclusive")) a->audio_mode = GP32_WIN64_AUDIO_WASAPI_EXCLUSIVE;
     else a->audio_mode = GP32_WIN64_AUDIO_WAVEOUT;
+    a->preferences.audio_mode = a->audio_mode == GP32_WIN64_AUDIO_WAVEOUT ? GP32_WIN64_AUDIO_WAVEOUT_ID
+        : a->audio_mode == GP32_WIN64_AUDIO_WASAPI_EXCLUSIVE ? GP32_WIN64_AUDIO_WASAPI_EXCLUSIVE_ID
+        : GP32_WIN64_AUDIO_WASAPI_SHARED_ID;
+    snprintf(a->preferences.video_backend, sizeof(a->preferences.video_backend), "%s", a->video_backend);
 }
 
 static void app_save_config(app_state_t *a) {
@@ -178,8 +205,37 @@ static void app_update_title(app_state_t *a) {
     if (!a || !a->hwnd) return;
     char title[512];
     const char *game = a->fpk[0] ? base_name(a->fpk) : (a->fxe[0] ? base_name(a->fxe) : (a->smc[0] ? base_name(a->smc) : "no game"));
-    snprintf(title, sizeof(title), "GP32emu - %s", game);
+    if (a->status_active && a->status_msg[0]) snprintf(title, sizeof(title), GP32_BASE_TITLE " - %s - %s", game, a->status_msg);
+    else snprintf(title, sizeof(title), GP32_BASE_TITLE " - %s", game);
     SetWindowTextA(a->hwnd, title);
+}
+
+static void app_status_tick(app_state_t *a) {
+    if (!a || !a->status_active) return;
+    if (GetTickCount() - a->status_tick_ms < GP32_STATUS_MS) return;
+    a->status_active = 0;
+    a->status_msg[0] = 0;
+    app_update_title(a);
+}
+
+/* Keep the display awake while a running machine is visible; the flag guard
+   keeps the power request off the per-frame path. */
+static void app_update_execution_state(app_state_t *a) {
+    if (!a) return;
+    int active = a->running && !IsIconic(a->hwnd);
+    if (active == a->display_awake) return;
+    a->display_awake = active;
+    if (active) SetThreadExecutionState(ES_CONTINUOUS | ES_DISPLAY_REQUIRED);
+    else SetThreadExecutionState(ES_CONTINUOUS);
+}
+
+static void app_set_cursor_hidden(app_state_t *a, int hidden) {
+    if (!a) return;
+    static int cursor_hidden;
+    if (hidden == cursor_hidden) return;
+    ShowCursor(hidden ? FALSE : TRUE);
+    cursor_hidden = hidden;
+    a->cursor_idle_frames = 0;
 }
 
 static void app_destroy_machine(app_state_t *a) {
@@ -219,6 +275,7 @@ static void app_stop_recording(app_state_t *a) {
 
 static void app_toggle_fullscreen(app_state_t *a) {
     if (!a || !a->hwnd) return;
+    app_set_cursor_hidden(a, 0);
     if (!a->fullscreen) {
         a->windowed_style = GetWindowLongPtrA(a->hwnd, GWL_STYLE);
         a->windowed_exstyle = GetWindowLongPtrA(a->hwnd, GWL_EXSTYLE);
@@ -254,6 +311,7 @@ static void app_toggle_fullscreen(app_state_t *a) {
         a->fullscreen = 0;
         if (a->video) gp32_win64_video_set_fullscreen(a->video, 0);
     }
+    app_set_cursor_hidden(a, 0);
     if (a->video) {
         RECT rc;
         GetClientRect(a->hwnd, &rc);
@@ -266,7 +324,9 @@ static void app_create_audio(app_state_t *a) {
     if (!a || a->no_audio) return;
     app_destroy_audio(a);
     a->audio = gp32_win64_audio_create(a->audio_mode, 44100u);
-    if (!a->audio) app_set_status(a, "Audio unavailable");
+    if (!a->audio) return;
+    const char *error = gp32_win64_audio_error(a->audio);
+    if (error[0]) app_set_status(a, error);
 }
 
 static int app_create_machine(app_state_t *a) {
@@ -482,8 +542,20 @@ static void update_menu_checks(app_state_t *a) {
     CheckMenuItem(a->menu, IDM_VIDEO_INTEGER, MF_BYCOMMAND | (a->integer_scaling ? MF_CHECKED : MF_UNCHECKED));
     CheckMenuItem(a->menu, IDM_VIDEO_LCD_PERSISTENCE, MF_BYCOMMAND | (a->lcd_persistence ? MF_CHECKED : MF_UNCHECKED));
     CheckMenuItem(a->menu, IDM_VIDEO_FRAME_INTERP, MF_BYCOMMAND | (a->frame_interpolation ? MF_CHECKED : MF_UNCHECKED));
-    CheckMenuRadioItem(a->menu, IDM_VIDEO_D3D11, IDM_VIDEO_GDI, !strcmp(a->video_backend, "gdi") ? IDM_VIDEO_GDI : IDM_VIDEO_D3D11, MF_BYCOMMAND);
-    CheckMenuRadioItem(a->menu, IDM_AUDIO_WAVEOUT, IDM_AUDIO_WASAPI_EXCL, a->audio_mode == GP32_WIN64_AUDIO_WAVEOUT ? IDM_AUDIO_WAVEOUT : (a->audio_mode == GP32_WIN64_AUDIO_WASAPI_EXCLUSIVE ? IDM_AUDIO_WASAPI_EXCL : IDM_AUDIO_WASAPI_SHARED), MF_BYCOMMAND);
+    /* Show the backend that actually opened, not the requested one, so a
+       silent D3D11 or WASAPI fallback is visible in the menu. */
+    int gdi = !strcmp(a->video_backend, "gdi");
+    if (a->video) gdi = strcmp(gp32_win64_video_active_backend(a->video), "d3d11") != 0;
+    CheckMenuRadioItem(a->menu, IDM_VIDEO_D3D11, IDM_VIDEO_GDI, gdi ? IDM_VIDEO_GDI : IDM_VIDEO_D3D11, MF_BYCOMMAND);
+    UINT audio_ui = a->audio_mode == GP32_WIN64_AUDIO_WAVEOUT ? IDM_AUDIO_WAVEOUT
+        : (a->audio_mode == GP32_WIN64_AUDIO_WASAPI_EXCLUSIVE ? IDM_AUDIO_WASAPI_EXCL : IDM_AUDIO_WASAPI_SHARED);
+    if (a->audio) {
+        const char *backend = gp32_win64_audio_backend(a->audio);
+        if (strncmp(backend, "waveOut", 7) == 0) audio_ui = IDM_AUDIO_WAVEOUT;
+        else if (strncmp(backend, "WASAPI exclusive", 16) == 0) audio_ui = IDM_AUDIO_WASAPI_EXCL;
+        else if (strncmp(backend, "WASAPI shared", 13) == 0) audio_ui = IDM_AUDIO_WASAPI_SHARED;
+    }
+    CheckMenuRadioItem(a->menu, IDM_AUDIO_WAVEOUT, IDM_AUDIO_WASAPI_EXCL, audio_ui, MF_BYCOMMAND);
 }
 
 static HMENU create_menu(void) {
@@ -557,8 +629,11 @@ static void app_command(app_state_t *a, UINT id) {
         app_save_config(a);
         QueryPerformanceCounter(&a->last_qpc);
         if (selected) {
+            /* The library lists game files only, but the caller must not
+               dereference a missing extension if that ever changes. */
             const char *ext = strrchr(path, '.');
-            app_open_game(a, path, !_stricmp(ext, ".fxe") ? 1 : !_stricmp(ext, ".fpk") ? 2 : 0);
+            if (!gp32_win64_is_game(path)) app_show_status_error(a, "Unsupported file type. Choose an SMC, FXE or FPK game.");
+            else app_open_game(a, path, (ext && !_stricmp(ext, ".fxe")) ? 1 : (ext && !_stricmp(ext, ".fpk")) ? 2 : 0);
         }
         break;
     }
@@ -694,16 +769,22 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpara
     case WM_SIZE:
         if (a) {
             unsigned w = LOWORD(lparam), h = HIWORD(lparam);
+            a->cursor_idle_frames = 0;
             if (a->video) gp32_win64_video_resize(a->video, w ? w : 1u, h ? h : 1u);
         }
+        return 0;
+    case WM_MOUSEMOVE:
+        if (a) a->cursor_idle_frames = 0;
         return 0;
     case WM_KEYDOWN:
         if (a) {
             if (wparam == VK_ESCAPE) { if (a->fullscreen) app_toggle_fullscreen(a); return 0; }
             if (wparam == VK_F11) { if (!(lparam & (1L << 30))) app_toggle_fullscreen(a); return 0; }
-            if (wparam == VK_F5) { app_save_state_dialog(a); return 0; }
-            if (wparam == VK_F8) { app_load_state_dialog(a); return 0; }
-            if (wparam == VK_F12) { app_screenshot_dialog(a); return 0; }
+            /* Auto-repeat (bit 30) must not stack modal dialogs. */
+            if (wparam == VK_F5 && !(lparam & (1L << 30))) { app_save_state_dialog(a); return 0; }
+            if (wparam == VK_F8 && !(lparam & (1L << 30))) { app_load_state_dialog(a); return 0; }
+            if (wparam == VK_F12 && !(lparam & (1L << 30))) { app_screenshot_dialog(a); return 0; }
+            if (wparam == VK_F5 || wparam == VK_F8 || wparam == VK_F12) return 0;
             a->keyboard_buttons |= gp32_win64_key_button(&a->preferences, wparam);
         }
         return 0;
@@ -780,25 +861,47 @@ static void run_one_frame(app_state_t *a) {
 
 static void app_pump(app_state_t *a) {
     int quit = 0;
+    static int was_running;
     uint32_t actions = 0;
     if (a->sdl_input) gp32_win64_sdl_input_poll(a->sdl_input, a->keyboard_buttons, &a->buttons, &actions, &quit);
     else a->buttons = a->keyboard_buttons;
     if (quit) PostMessageA(a->hwnd, WM_CLOSE, 0, 0);
-    if ((actions & GP32_FRONTEND_ACTION_SAVE_STATE) && a->emu) gp32_save_state(a->emu, a->state_path[0] ? a->state_path : "gp32_state.gp32st");
-    if ((actions & GP32_FRONTEND_ACTION_LOAD_STATE) && a->emu) {
-        if (gp32_load_state(a->emu, a->state_path[0] ? a->state_path : "gp32_state.gp32st") == GP32_OK) {
-            gp32_clear_audio(a->emu);
-            app_create_audio(a);
-            a->accum_units = 1000000ull;
+    /* Frontend actions (F5/F8) belong to the message loop here; this frontend
+       opens its own save/load dialogs, so the SDL action bits are unused. */
+    (void)actions;
+
+    int minimized = IsIconic(a->hwnd);
+    if (a->running && !was_running) {
+        a->accum_units = 1000000ull;
+        // Refresh presentation and audio after a pause so a resume never plays
+        // stale PCM or a stale frame.
+        if (a->video && a->emu) {
+            gp32_framebuffer_desc_t fb;
+            if (gp32_get_framebuffer(a->emu, &fb) == GP32_OK) gp32_win64_video_present(a->video, &fb);
         }
+        if (a->emu && a->audio) { gp32_clear_audio(a->emu); app_create_audio(a); }
     }
+    if (!a->running && was_running) {
+        // A pause drains the device with its own gap fade instead of a pop.
+        gp32_clear_audio(a->emu);
+        if (a->audio) gp32_win64_audio_reset(a->audio);
+    }
+    was_running = a->running;
+    app_update_execution_state(a);
 
     LARGE_INTEGER now; QueryPerformanceCounter(&now);
     uint64_t elapsed_us = qpc_elapsed_us(a, now);
     a->last_qpc = now;
-    if (elapsed_us > 250000u) elapsed_us = 250000u;
+    if (minimized) {
+        /* Keep the backlog empty while minimized so a restore resumes in
+           real time instead of bursting a minute of frames. */
+        a->accum_units = 1000000ull;
+        elapsed_us = 0;
+    } else if (elapsed_us > 250000u) {
+        elapsed_us = 250000u;
+    }
     int ran = 0;
-    if (a->running && a->emu) {
+    if (a->running && a->emu && !minimized) {
         a->accum_units += elapsed_us * 60ull;
         unsigned steps = 0;
         while (a->accum_units >= 1000000ull && steps < 5u) {
@@ -816,6 +919,14 @@ static void app_pump(app_state_t *a) {
     if (a->audio) gp32_win64_audio_pump(a->audio);
 
     DWORD now_ms = GetTickCount();
+    app_status_tick(a);
+    if (a->fullscreen) {
+        /* Hide the pointer once the mouse has been idle for a moment. */
+        if (a->cursor_idle_frames < GP32_CURSOR_IDLE_FRAMES) {
+            a->cursor_idle_frames++;
+            if (a->cursor_idle_frames == GP32_CURSOR_IDLE_FRAMES) app_set_cursor_hidden(a, 1);
+        }
+    }
     if (!a->fps_tick_ms) a->fps_tick_ms = now_ms;
     if (now_ms - a->fps_tick_ms >= 1000u) {
         char st[512];
@@ -859,7 +970,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show) {
     update_menu_checks(&app);
     RECT wr = {0, 0, (LONG)(GP32_LCD_W * 2u), (LONG)(GP32_LCD_H * 2u)};
     AdjustWindowRect(&wr, WS_OVERLAPPEDWINDOW, TRUE);
-    HWND hwnd = CreateWindowExA(0, wc.lpszClassName, "GP32emu", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, wr.right - wr.left, wr.bottom - wr.top, NULL, app.menu, inst, &app);
+    HWND hwnd = CreateWindowExA(0, wc.lpszClassName, GP32_BASE_TITLE, WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, wr.right - wr.left, wr.bottom - wr.top, NULL, app.menu, inst, &app);
     if (!hwnd) return 1;
     app.hwnd = hwnd;
     app.sdl_input = gp32_win64_sdl_input_create(0);
@@ -917,6 +1028,8 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show) {
         if (app.quit) break;
         app_pump(&app);
     }
+    if (app.fullscreen) { app.fullscreen = 0; app_toggle_fullscreen(&app); }
+    SetThreadExecutionState(ES_CONTINUOUS);
     app_stop_recording(&app);
     app_destroy_audio(&app);
     if (app.sdl_input) gp32_win64_sdl_input_destroy(app.sdl_input);

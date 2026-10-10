@@ -31,6 +31,8 @@ static int valid_key(UINT key) {
 void gp32_win64_preferences_load(gp32_win64_preferences_t *p, const char *ini) {
     memcpy(p->keys, default_keys, sizeof(p->keys));
     p->game_folder[0] = 0;
+    p->audio_mode = GP32_WIN64_AUDIO_WAVEOUT_ID;
+    strcpy(p->video_backend, "d3d11");
     if (!ini || !ini[0]) return;
     int valid = 1;
     for (int i = 0; i < GP32_KEY_COUNT; ++i) {
@@ -41,10 +43,20 @@ void gp32_win64_preferences_load(gp32_win64_preferences_t *p, const char *ini) {
     /* A malformed partial map must not leave any button unreachable. */
     if (!valid) memcpy(p->keys, default_keys, sizeof(p->keys));
     GetPrivateProfileStringA("Paths", "GameFolder", "", p->game_folder, MAX_PATH, ini);
+    char audio[32];
+    GetPrivateProfileStringA("Audio", "Backend", "waveout", audio, (DWORD)sizeof(audio), ini);
+    p->audio_mode = !strcmp(audio, "wasapi_shared") ? GP32_WIN64_AUDIO_WASAPI_SHARED_ID
+        : !strcmp(audio, "wasapi_exclusive") ? GP32_WIN64_AUDIO_WASAPI_EXCLUSIVE_ID
+        : GP32_WIN64_AUDIO_WAVEOUT_ID;
+    GetPrivateProfileStringA("Video", "Backend", "d3d11", p->video_backend, (DWORD)sizeof(p->video_backend), ini);
 }
 
 void gp32_win64_preferences_save(const gp32_win64_preferences_t *p, const char *ini) {
     WritePrivateProfileStringA("Paths", "GameFolder", p->game_folder, ini);
+    const char *audio = p->audio_mode == GP32_WIN64_AUDIO_WASAPI_SHARED_ID ? "wasapi_shared"
+        : p->audio_mode == GP32_WIN64_AUDIO_WASAPI_EXCLUSIVE_ID ? "wasapi_exclusive" : "waveout";
+    WritePrivateProfileStringA("Audio", "Backend", audio, ini);
+    WritePrivateProfileStringA("Video", "Backend", p->video_backend[0] ? p->video_backend : "d3d11", ini);
     for (int i = 0; i < GP32_KEY_COUNT; ++i) {
         char value[16];
         snprintf(value, sizeof(value), "%u", p->keys[i]);
