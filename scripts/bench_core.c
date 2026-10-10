@@ -379,10 +379,12 @@ static void print_cpu_profile_json(const gp32_cpu_profile_t *p) {
            ",\"native_exit_prediction_ready_hits\":%" PRIu64
            ",\"native_exit_prediction_cold\":%" PRIu64
            ",\"native_exit_prediction_second_hits\":%" PRIu64
-           ",\"native_exit_prediction_second_ready_hits\":%" PRIu64 "}",
+           ",\"native_exit_prediction_second_ready_hits\":%" PRIu64
+           ",\"native_chain_hops\":%" PRIu64 "}",
            p->native_exit_predictions, p->native_exit_prediction_hits,
            p->native_exit_prediction_ready_hits, p->native_exit_prediction_cold,
-           p->native_exit_prediction_second_hits, p->native_exit_prediction_second_ready_hits);
+           p->native_exit_prediction_second_hits, p->native_exit_prediction_second_ready_hits,
+           p->native_chain_hops);
 }
 
 int main(int argc, char **argv) {
