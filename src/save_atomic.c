@@ -15,6 +15,7 @@
 #include <sys/stat.h>
 #include <windows.h>
 #elif !defined(GP32EMU_WASM)
+#include <fcntl.h>
 #include <unistd.h>
 #endif
 
@@ -24,6 +25,25 @@ static void save_atomic_reset(save_atomic_t *st) {
     st->active = 0;
     st->direct = 0;
 }
+
+#if !defined(_WIN32) && !defined(GP32EMU_WASM)
+/* Persist the rename itself. FAT on a removable card can otherwise keep the
+ * old directory entry after a power cut. A failure only weakens durability. */
+static void save_atomic_sync_parent(const char *path) {
+    char dir[SAVE_ATOMIC_MAX_PATH];
+    const char *slash = strrchr(path, '/');
+    size_t n = slash ? (size_t)(slash - path) : 0;
+    if (!slash) dir[n++] = '.';
+    else if (n == 0) dir[n++] = '/';
+    else if (n < sizeof(dir)) memcpy(dir, path, n);
+    else return;
+    dir[n] = '\0';
+    int fd = open(dir, O_RDONLY);
+    if (fd < 0) return;
+    (void)fsync(fd);
+    close(fd);
+}
+#endif
 
 #if defined(_WIN32)
 /* Exclusively create "<path>.tmp.<serial>" next to path. The token only needs
@@ -164,7 +184,7 @@ int save_atomic_commit(save_atomic_t *st, const char *path, char *err, size_t er
     st->file = NULL;
 
 #if defined(_WIN32)
-    if (!MoveFileExA(tmp, path, MOVEFILE_REPLACE_EXISTING)) {
+    if (!MoveFileExA(tmp, path, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
         unsigned long code = (unsigned long)GetLastError();
         remove(tmp);
         save_atomic_reset(st);
@@ -179,6 +199,7 @@ int save_atomic_commit(save_atomic_t *st, const char *path, char *err, size_t er
         if (err && err_len) snprintf(err, err_len, "replace %s: %s", path, strerror(e));
         return 0;
     }
+    save_atomic_sync_parent(path);
 #endif
 
     save_atomic_reset(st);
