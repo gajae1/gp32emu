@@ -196,6 +196,17 @@ typedef struct arm_jit_op {
 
 typedef uint32_t (*arm_jit_native_fn)(arm920t_t *cpu, uint32_t cycles);
 
+/* Revalidation proof of one block slot, parallel to jit_ops: the fetched
+ * words in op order and the runs of consecutive fetch addresses, so proving a
+ * block reads four bytes per instruction instead of a whole decoded op. */
+#define ARM_JIT_PROOF_SPANS 8u
+typedef struct arm_jit_proof {
+    uint8_t spans; /* 0: prove through the decoded ops */
+    uint8_t len[ARM_JIT_PROOF_SPANS];
+    uint32_t pc[ARM_JIT_PROOF_SPANS];
+    uint32_t words[ARM_JIT_MAX_INSNS];
+} arm_jit_proof_t;
+
 typedef struct arm_jit_block {
     uint32_t tag_pc;
     uint32_t valid;
@@ -317,6 +328,7 @@ struct arm920t {
     void *accelerator_user;
     arm_jit_block_t *jit_blocks;
     arm_jit_op_t (*jit_ops)[ARM_JIT_MAX_INSNS];
+    arm_jit_proof_t *jit_proof; /* parallel to jit_blocks */
     uint8_t *jit_code;
     uint8_t *jit_ram_base;
     uint8_t *jit_bios_base;
@@ -740,6 +752,7 @@ void arm920t_destroy(arm920t_t *c) {
     free(c->jit_blocks);
     free(c->jit_ops);
     free(c->jit_poll);
+    free(c->jit_proof);
     free(c);
 }
 void arm920t_set_trace(arm920t_t *c, int en, arm_log_fn log, void *user) { if (c) { c->trace = en; c->log = log; c->log_user = user; } }
@@ -1338,16 +1351,79 @@ ARM_FORCE_INLINE int arm_jit_peek_fetch(arm920t_t *c, uint32_t pc, uint32_t *ins
     return 1;
 }
 
-/* Prove every recorded fetch, including stitched branches and inlined leaves.
- * A missing mapping is unprovable, even if identity memory happens to match. */
-static int arm_jit_fetch_unchanged(arm920t_t *c, const arm_jit_block_t *b) {
-    if (!b->count || b->count > ARM_JIT_MAX_INSNS) return 0;
-    for (unsigned i = 0; i < b->count; ++i) {
-        const arm_jit_op_t *op = &arm_jit_ops(c, b)[i];
-        uint32_t insn;
-        if (!arm_jit_peek_fetch(c, op->pc, &insn) || insn != op->insn) return 0;
+/* Prove len consecutive fetches from pc against want (or the decoded ops when
+ * want is NULL), exactly as one arm_jit_peek_fetch per word would. A chunk
+ * stays inside one 4 KiB TLB slot and one mapping, where every word passes the
+ * same entry checks as the first and maps to consecutive physical addresses;
+ * a fastmem span succeeds only when each word in it would. */
+static int arm_jit_prove_run(arm920t_t *c, uint32_t pc, unsigned len,
+                             const uint32_t *want, const arm_jit_op_t *ops) {
+    while (len) {
+        uint32_t pa = pc, lim = 0xfffu;
+        if (pc & 3u) return 0;
+        if (c->cp15[1] & 1u) {
+            const arm_tlb_entry_t *e = &c->tlb_entry[(pc >> 12) & 0xfffu];
+            if (!e->valid || (pc & ~e->mask) != e->va_base || e->mask < 3u ||
+                (pc & e->mask) > e->mask - 3u) return 0;
+            pa = e->pa_base | (pc & e->mask);
+            lim &= e->mask;
+            if (lim & (lim + 1u)) lim = 3u; /* not 2^k-1: prove word by word */
+        }
+        unsigned room = ((lim - (pc & lim)) >> 2) + 1u;
+        unsigned n = len < room ? len : room;
+        const uint8_t *p = fastmem(c, pa, 4u * n, 0);
+        for (unsigned k = 0; k < n; ++k) {
+            uint32_t insn;
+            if (p) insn = gp32_ld32le(p + 4u * k);
+            else if (!arm_jit_peek_fetch(c, pc + 4u * k, &insn)) return 0;
+            if (insn != (want ? want[k] : ops[k].insn)) return 0;
+        }
+        pc += 4u * n;
+        len -= n;
+        if (want) want += n;
+        else ops += n;
     }
     return 1;
+}
+
+/* Prove every recorded fetch, including stitched branches and inlined leaves.
+ * A missing mapping is unprovable, even if identity memory happens to match.
+ * Games that invalidate the I-cache every frame revalidate every block they
+ * run once per frame, so the slot's compact proof is read when it exists. */
+static int arm_jit_fetch_unchanged(arm920t_t *c, const arm_jit_block_t *b) {
+    if (!b->count || b->count > ARM_JIT_MAX_INSNS) return 0;
+    const arm_jit_proof_t *pf = &c->jit_proof[b - c->jit_blocks];
+    if (pf->spans) {
+        const uint32_t *w = pf->words;
+        for (unsigned s = 0; s < pf->spans; w += pf->len[s], ++s)
+            if (!arm_jit_prove_run(c, pf->pc[s], pf->len[s], w, NULL)) return 0;
+        return 1;
+    }
+    const arm_jit_op_t *ops = arm_jit_ops(c, b);
+    for (unsigned i = 0, n; i < b->count; i += n) {
+        uint32_t pc = ops[i].pc;
+        for (n = 1; i + n < b->count && ops[i + n].pc == pc + 4u * n && pc + 4u * n > pc; ++n) {}
+        if (!arm_jit_prove_run(c, pc, n, NULL, ops + i)) return 0;
+    }
+    return 1;
+}
+
+/* Record a translated block's fetch proof: its words in op order and the runs
+ * of consecutive fetch addresses. Too many runs leave spans at 0, which keeps
+ * the decoded-op proof. */
+static void arm_jit_proof_build(arm_jit_proof_t *pf, const arm_jit_op_t *ops, unsigned count) {
+    unsigned s = 0;
+    for (unsigned i = 0; i < count; ++i) {
+        pf->words[i] = ops[i].insn;
+        if (s && ops[i].pc == ops[i - 1u].pc + 4u && ops[i].pc > ops[i - 1u].pc) {
+            pf->len[s - 1u]++;
+            continue;
+        }
+        if (s == ARM_JIT_PROOF_SPANS) { pf->spans = 0; return; }
+        pf->pc[s] = ops[i].pc;
+        pf->len[s++] = 1u;
+    }
+    pf->spans = (uint8_t)s;
 }
 
 static void arm920t_jit_invalidate_all(arm920t_t *c, unsigned cause) {
@@ -1649,13 +1725,16 @@ static int arm_jit_alloc(arm920t_t *c) {
     if (!c->jit_blocks) return 0;
     c->jit_ops = calloc(ARM_JIT_BLOCK_COUNT, sizeof(c->jit_ops[0]));
     c->jit_poll = (arm_jit_poll_state_t *)calloc(ARM_JIT_BLOCK_COUNT, sizeof(c->jit_poll[0]));
-    if (!c->jit_ops || !c->jit_poll) {
+    c->jit_proof = (arm_jit_proof_t *)calloc(ARM_JIT_BLOCK_COUNT, sizeof(c->jit_proof[0]));
+    if (!c->jit_ops || !c->jit_poll || !c->jit_proof) {
         free(c->jit_blocks);
         free(c->jit_ops);
         free(c->jit_poll);
+        free(c->jit_proof);
         c->jit_blocks = NULL;
         c->jit_ops = NULL;
         c->jit_poll = NULL;
+        c->jit_proof = NULL;
         return 0;
     }
     return 1;
@@ -2134,6 +2213,7 @@ static ARM_NOINLINE arm_jit_block_t *arm_jit_translate(arm920t_t *c, uint32_t pc
      * recorded for whatever block previously occupied this slot. */
     c->jit_poll[b - c->jit_blocks].flags = 0;
     c->jit_poll[b - c->jit_blocks].idle = 0;
+    arm_jit_proof_build(&c->jit_proof[b - c->jit_blocks], arm_jit_ops(c, b), b->count);
     b->valid = 1;
     ARM_PROF_INC(c, jit_blocks_compiled);
     /* Counted candidates first observe real portable reads. Do not allocate
