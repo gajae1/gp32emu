@@ -585,14 +585,8 @@ static void case_peek_identity_ram(void) {
 }
 
 int main(void) {
-    setup_pair();
-    gp32_cpu_profile_t profile;
-    arm920t_get_cpu_profile(cpu_jit, &profile);
-    teardown_pair();
-    if (!profile.native_backend) {
-        puts("SKIP: arm920t native backend unavailable");
-        return 0;
-    }
+    /* Registered C callbacks also run through portable translated blocks on
+     * hosts without an instruction emitter, including ARMv7. */
     case_accelerators();
     case_peek_identity_ram();
     current_case = "summary";
