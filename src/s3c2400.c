@@ -937,7 +937,30 @@ static uint32_t dma_iis_fast_trigger_count(s3c2400_t *s, uint32_t *r, uint32_t r
         last_right = (uint16_t)(right);                                \
     } while (0)
     const uint16_t native_one = 1u;
-    if (direct && fp && inc_src && !idx && dsz == 1u && units >= 2u &&
+    int muted_ram = direct && fp && !s->codec_gain_q16;
+    if (muted_ram) {
+        /* RAM reads have no bus side effects. Only the final FIFO samples
+         * survive a muted batch; retain them so unmuting a partial pair is
+         * identical to individual IIS writes, with the same DMA progress. */
+        if (dsz == 1u) {
+            uint16_t last = gp32_ld16le(fp + (size_t)(units - 1u) * fstep);
+            idx ^= units & 1u;
+            if (idx) pending = last;
+            else last_right = last;
+            if (units > 1u) {
+                uint16_t prev = gp32_ld16le(fp + (size_t)(units - 2u) * fstep);
+                if (idx) last_right = prev;
+                else pending = prev;
+            }
+        } else {
+            uint32_t last = gp32_ld32le(fp + (size_t)(units - 1u) * fstep);
+            pending = idx ? (uint16_t)last : (uint16_t)(last >> 16);
+            last_right = idx ? (uint16_t)(last >> 16) : (uint16_t)last;
+        }
+        frames = expected_frames;
+        if (frames) memset(out, 0, (size_t)frames * 2u * sizeof(*out));
+        if (inc_src) src += units * step;
+    } else if (direct && fp && inc_src && !idx && dsz == 1u && units >= 2u &&
         *(const uint8_t *)&native_one == 1u) {
         /* Contiguous little-endian halfwords already have the host PCM
          * layout. Copy complete pairs and retain an odd final halfword in
@@ -983,7 +1006,7 @@ static uint32_t dma_iis_fast_trigger_count(s3c2400_t *s, uint32_t *r, uint32_t r
         s->audio_frames = base_frames + frames;
         /* Unity gain keeps the existing bulk copy path. Apply non-unity gain
            only to this newly queued span, never to previously queued audio. */
-        if (s->codec_gain_q16 != 65536u) {
+        if (!muted_ram && s->codec_gain_q16 != 65536u) {
             for (uint64_t i = base_frames * 2u; i < s->audio_frames * 2u; ++i)
                 s->audio[i] = codec_scale(s->audio[i], s->codec_gain_q16);
         }
