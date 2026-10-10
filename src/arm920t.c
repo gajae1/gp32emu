@@ -2631,6 +2631,20 @@ ARM_FORCE_INLINE void arm_jit_exec_classified(arm920t_t *c, const arm_jit_op_t *
     arm_jit_exec_classified_bc(c, op);
 }
 
+#if defined(ARM_JIT_NATIVE_A64)
+/* Native emitters have already tested the predicate and stop at this SWI.
+ * Keep callback/exception handling shared, without dispatching an operation
+ * kind or testing the same predicate again. A declined callback may change
+ * the live mode before exception entry; never cache that state here. */
+static void arm_jit_exec_swi_native(arm920t_t *c, const arm_jit_op_t *op) {
+    arm_profile_helper_op(c, op);
+    const uint32_t pc = op->pc, imm = op->insn & 0x00ffffffu;
+    c->r[15] = pc + 4u;
+    if (c->swi && c->swi(c->swi_user, c, imm, pc, 0)) return;
+    exception_enter(c, MODE_SVC, 0x08, pc + 4u, 0);
+}
+#endif
+
 
 
 static void arm_jit_write_pc_x_helper(arm920t_t *c, uint32_t v) { ARM_PROF_INC(c, helper_write_pc); write_pc_x(c, v); }

@@ -534,7 +534,13 @@ static void a64_slow(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
     if (e->leaf) { e->fail = 1; return; }
     a64_rr(e, 0xaa000000u, 0, 31, 19);
     a64_ptr(e, 1, (uintptr_t)op);
-    if (op->stop || op->kind == ARM_JIT_OP_SWI || op->kind == ARM_JIT_OP_UNDEFINED ||
+    if (op->kind == ARM_JIT_OP_SWI) {
+        a64_ptr(e, 16, (uintptr_t)arm_jit_exec_swi_native);
+        a64_u32(e, 0xd63f0200u);
+        a64_return(e, done);
+        return;
+    }
+    if (op->stop || op->kind == ARM_JIT_OP_UNDEFINED ||
         (op->kind == ARM_JIT_OP_COPROC && op->reserved != 6u)) {
         /* This path always returns to dispatch. The classified operation
          * commits callback/exception state; continuation snapshots and checks
