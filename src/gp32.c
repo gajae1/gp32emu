@@ -1324,15 +1324,6 @@ static void direct_trace_file_io(gp32_t *g, const char *op, uint32_t h, uint32_t
 }
 
 
-static int direct_ascii_equal_nocase(const char *a, const char *b) {
-    if (!a || !b) return 0;
-    while (*a && *b) {
-        if (tolower((unsigned char)*a) != tolower((unsigned char)*b)) return 0;
-        ++a; ++b;
-    }
-    return *a == '\0' && *b == '\0';
-}
-
 static void direct_asset_basename_lower(const fpk_asset_t *a, char *out, size_t out_len) {
     if (!out || !out_len) return;
     out[0] = '\0';
@@ -1385,20 +1376,80 @@ static int direct_buffer_looks_unloaded(gp32_t *g, uint32_t buf, uint32_t len) {
     return zero > (sample * 3u) / 4u || ff > (sample * 3u) / 4u;
 }
 
-static int direct_try_autoload_gpg_asset(gp32_t *g, const fpk_asset_t *a) {
+/* Pending .gpg assets are matched against the loaded image as a walk over its
+ * literals: a literal is a run of at most 63 printable bytes and the walk
+ * resumes one byte past it, so a literal starts after every non-printable
+ * byte and every 64 bytes inside a longer run.  The match runs every CPU
+ * slice while an asset waits, so each slice lists the '.' of every ".gpg" in
+ * the image once and every pending asset checks only those positions, in the
+ * walk's order. */
+typedef struct {
+    const uint8_t *ram;
+    size_t ram_size;
+    uint32_t end;      /* end of the scanned image */
+    size_t limit;      /* literal starts lie below limit - 8 */
+    uint32_t *dots;    /* ascending offsets of ".gpg" suffixes */
+    size_t count;
+    uint32_t local[512];
+} direct_gpg_scan_t;
+
+static int direct_gpg_scan_collect(direct_gpg_scan_t *s) {
+    /* A name of up to 63 bytes starting below limit - 8 has its '.' at most
+     * at limit + 50, and the whole suffix must lie inside RAM. */
+    size_t span = s->limit - 8u + 59u;
+    if (span > s->ram_size - 3u) span = s->ram_size - 3u;
+    size_t cap = GP32_ARRAY_COUNT(s->local);
+    s->dots = s->local;
+    for (;;) {
+        size_t n = 0;
+        int overflow = 0;
+        const uint8_t *from = s->ram, *stop = s->ram + span, *hit;
+        for (; from < stop && (hit = memchr(from, '.', (size_t)(stop - from))) != NULL; from = hit + 1) {
+            if (tolower(hit[1]) != 'g' || tolower(hit[2]) != 'p' || tolower(hit[3]) != 'g') continue;
+            if (n == cap) { overflow = 1; break; }
+            s->dots[n++] = (uint32_t)(hit - s->ram);
+        }
+        if (!overflow) { s->count = n; return 1; }
+        if (s->dots != s->local) free(s->dots);
+        cap = span / 4u + 1u; /* suffixes cannot overlap */
+        s->dots = (uint32_t *)malloc(cap * sizeof(uint32_t));
+        if (!s->dots) { s->dots = s->local; s->count = 0; return 0; }
+    }
+}
+
+static void direct_gpg_scan_release(direct_gpg_scan_t *s) {
+    if (s->dots && s->dots != s->local) free(s->dots);
+    s->dots = NULL;
+    s->count = 0;
+}
+
+static int direct_try_autoload_gpg_asset(gp32_t *g, const fpk_asset_t *a, const direct_gpg_scan_t *s) {
     if (!g || !direct_asset_is_gpg(a)) return 0;
     char basename[64];
     direct_asset_basename_lower(a, basename, sizeof(basename));
     if (!basename[0]) return 0;
+    const uint8_t *ram = s->ram;
+    size_t ram_size = s->ram_size;
+    size_t name_len = strlen(basename);
     uint32_t start = GP32_RAM_BASE;
-    uint32_t end = g->direct_fxe_image_end;
-    uint32_t ram_end = GP32_RAM_BASE + (uint32_t)s3c2400_ram_size(g->soc);
-    if (end <= start || end > ram_end) end = ram_end;
+    uint32_t end = s->end;
     uint32_t payload_len = (uint32_t)(a->size - 8u);
-    for (uint32_t saddr = start; saddr + 8u < end; ++saddr) {
-        char lit[64];
-        if (!direct_read_cstr(g, saddr, lit, sizeof(lit))) continue;
-        if (!direct_ascii_equal_nocase(lit, basename)) continue;
+    size_t dot = name_len - 4u;
+    for (size_t i = 0; i < s->count; ++i) {
+        if (s->dots[i] < dot) continue;
+        size_t off = s->dots[i] - dot;
+        if (off + 8u >= s->limit) break;
+        size_t k = 0;
+        while (k < name_len && ram[off + k] >= 0x20u && ram[off + k] <= 0x7eu &&
+               tolower(ram[off + k]) == (unsigned char)basename[k]) ++k;
+        if (k != name_len) continue;
+        size_t tail = off + name_len;
+        if (name_len < sizeof(basename) - 1u && tail < ram_size &&
+            ram[tail] >= 0x20u && ram[tail] <= 0x7eu) continue;
+        size_t run = off;
+        while (run && ram[run - 1u] >= 0x20u && ram[run - 1u] <= 0x7eu) --run;
+        if ((off - run) % (sizeof(basename))) continue;
+        uint32_t saddr = start + (uint32_t)off;
         uint32_t back = (saddr > 0x28u) ? (saddr - 0x28u) : start;
         if (back < start) back = start;
         for (uint32_t p = saddr; p >= back + 4u; p -= 4u) {
@@ -1415,23 +1466,35 @@ static int direct_try_autoload_gpg_asset(gp32_t *g, const fpk_asset_t *a) {
             }
             return 1;
         }
-        saddr += (uint32_t)strlen(lit);
     }
     return 0;
 }
 
 static void direct_process_asset_autoload(gp32_t *g) {
     if (!g || !g->direct_fxe_mode || !g->direct_fpk_asset_count) return;
+    direct_gpg_scan_t scan;
+    scan.ram = s3c2400_ram_data(g->soc);
+    scan.ram_size = s3c2400_ram_size(g->soc);
+    scan.end = g->direct_fxe_image_end;
+    scan.dots = NULL;
+    scan.count = 0;
+    uint32_t ram_end = GP32_RAM_BASE + (uint32_t)scan.ram_size;
+    if (scan.end <= GP32_RAM_BASE || scan.end > ram_end) scan.end = ram_end;
+    scan.limit = (size_t)(scan.end - GP32_RAM_BASE);
+    int usable = scan.ram && scan.ram_size > 64u && scan.limit > 8u;
     for (size_t i = 0; i < GP32_ARRAY_COUNT(g->direct_hle_asset_autoload); ++i) {
         if (!g->direct_hle_asset_autoload[i].asset || g->direct_hle_asset_autoload[i].copied) continue;
-        if (direct_try_autoload_gpg_asset(g, g->direct_hle_asset_autoload[i].asset)) {
+        if (usable && !scan.dots) usable = direct_gpg_scan_collect(&scan);
+        if (usable && direct_try_autoload_gpg_asset(g, g->direct_hle_asset_autoload[i].asset, &scan)) {
             g->direct_hle_asset_autoload[i].copied = 1u;
+            direct_gpg_scan_release(&scan); /* the copy changed RAM */
         } else if (++g->direct_hle_asset_autoload[i].tries > 4096u) {
             g->direct_hle_asset_autoload[i].asset = NULL;
             g->direct_hle_asset_autoload[i].copied = 0u;
             g->direct_hle_asset_autoload[i].tries = 0u;
         }
     }
+    direct_gpg_scan_release(&scan);
 }
 
 static const fpk_asset_t *direct_fpk_asset_from_cpu_path(gp32_t *g, uint32_t path_addr) {
@@ -2672,9 +2735,29 @@ static uint32_t direct_alloc_fpk_handle(gp32_t *g, const fpk_asset_t *asset) {
 
 static const fpk_asset_t *direct_handle_asset(gp32_t *g, uint32_t h, size_t **posp) {
     uint32_t idx = h & 31u;
-    if (!g || idx == 0u || idx >= 32u || !g->direct_fpk_handles[idx].used || (h >> 24u) != 0u) return NULL;
+    if (!g || idx == 0u || !g->direct_fpk_handles[idx].used || (h >> 24u) != 0u) return NULL;
     if (posp) *posp = &g->direct_fpk_handles[idx].pos;
     return g->direct_fpk_handles[idx].asset;
+}
+
+/* Close accepts the same handle encoding as direct_handle_asset; any other
+   value is a no-op instead of closing an unrelated open stream. */
+static void direct_close_fpk_handle(gp32_t *g, uint32_t h) {
+    if (direct_handle_asset(g, h, NULL))
+        memset(&g->direct_fpk_handles[h & 31u], 0, sizeof(g->direct_fpk_handles[0]));
+}
+
+/* Copy a stream read into guest RAM. A buffer that leaves RAM receives only
+   the part inside RAM, and the guest is told exactly how much arrived. */
+static size_t direct_read_fpk_to_ram(gp32_t *g, const fpk_asset_t *a, size_t *posp, uint32_t dst, uint32_t want) {
+    size_t avail = (*posp < a->size) ? (a->size - *posp) : 0u;
+    size_t n = want < avail ? (size_t)want : avail;
+    uint32_t ram_end = GP32_RAM_BASE + (uint32_t)s3c2400_ram_size(g->soc);
+    size_t room = (dst >= GP32_RAM_BASE && dst < ram_end) ? (size_t)(ram_end - dst) : 0u;
+    if (n > room) n = room;
+    for (size_t i = 0; i < n; ++i) s3c2400_write8(g->soc, dst + (uint32_t)i, a->data[*posp + i]);
+    *posp += n;
+    return n;
 }
 
 
@@ -3241,9 +3324,12 @@ static int direct_retail_smc_init_hle(gp32_t *g, uint32_t init_pc) {
         0x000u, 0x040u, 0x078u, 0x0b0u, 0x0dcu, 0x114u, 0x138u,
         0x15cu, 0x180u, 0x1a4u, 0x1c8u, 0x1ecu, 0x210u
     };
+    const uint32_t state = 0x0c12b0acu;
+    uint32_t decoded_state = 0u;
     if (init_pc && direct_ram_range(g, init_pc, 0x140u)) {
         uint32_t state_from_lit = direct_arm_ldr_pc_literal_value(g, init_pc + 4u);
         if (direct_ram_range(g, state_from_lit, 0x44u)) {
+            decoded_state = state_from_lit;
             direct_write32_if_ram(g, state_from_lit + 0x40u, 1u);
         }
         uint32_t src_table = direct_arm_ldr_pc_literal_value(g, init_pc + 0x24u);
@@ -3289,7 +3375,10 @@ static int direct_retail_smc_init_hle(gp32_t *g, uint32_t init_pc) {
         }
     }
 
-    const uint32_t state = 0x0c12b0acu;
+    /* The fixed seed below is Princess Maker 2's work area. A build whose own
+       init literals name a different work area has already been seeded above;
+       writing PM2 addresses there would only overwrite that title's memory. */
+    if (decoded_state && decoded_state != state) return 1;
     const uint32_t geom = 0x0c12b0f4u;
     const uint32_t dir_meta = 0x0c131ed0u;
     const uint32_t dir_list = 0x0c131f20u;
@@ -3395,18 +3484,14 @@ static int direct_file_hle_swi(gp32_t *g, arm920t_t *cpu, uint32_t id, uint32_t 
         size_t avail = (*posp < a->size) ? (a->size - *posp) : 0u;
         size_t n = want < avail ? (size_t)want : avail;
         direct_trace_file_io(g, "read/swi", arm920t_get_reg(cpu, 0), dst, want, *posp, n, a, 0u);
-        if (n && direct_ram_range(g, dst, (uint32_t)n)) {
-            for (size_t i = 0; i < n; ++i) s3c2400_write8(g->soc, dst + (uint32_t)i, a->data[*posp + i]);
-        }
-        *posp += n;
+        n = direct_read_fpk_to_ram(g, a, posp, dst, want);
         direct_write32_if_ram(g, out_count, (uint32_t)n);
         arm920t_set_reg(cpu, 0, 0u);
         arm920t_set_reg(cpu, 15, lr);
         return 1;
     }
     if (id == 3u) {
-        uint32_t h = arm920t_get_reg(cpu, 0) & 31u;
-        if (h < 32u) memset(&g->direct_fpk_handles[h], 0, sizeof(g->direct_fpk_handles[h]));
+        direct_close_fpk_handle(g, arm920t_get_reg(cpu, 0));
         arm920t_set_reg(cpu, 0, 0u);
         arm920t_set_reg(cpu, 15, lr);
         return 1;
@@ -3585,18 +3670,14 @@ static int direct_try_file_hle(gp32_t *g) {
         size_t avail = (*posp < a->size) ? (a->size - *posp) : 0u;
         size_t n = want < avail ? (size_t)want : avail;
         direct_trace_file_io(g, "read/pc", arm920t_get_reg(g->cpu, 0), dst, want, *posp, n, a, 0u);
-        if (n && direct_ram_range(g, dst, (uint32_t)n)) {
-            for (size_t i = 0; i < n; ++i) s3c2400_write8(g->soc, dst + (uint32_t)i, a->data[*posp + i]);
-        }
-        *posp += n;
+        n = direct_read_fpk_to_ram(g, a, posp, dst, want);
         direct_write32_if_ram(g, out_count, (uint32_t)n);
         arm920t_set_reg(g->cpu, 0, 0u);
         arm920t_set_reg(g->cpu, 15, lr);
         return 1;
     }
     if (pc == g->direct_hle_file_close_addr) {
-        uint32_t h = arm920t_get_reg(g->cpu, 0) & 31u;
-        if (h < 32u) memset(&g->direct_fpk_handles[h], 0, sizeof(g->direct_fpk_handles[h]));
+        direct_close_fpk_handle(g, arm920t_get_reg(g->cpu, 0));
         arm920t_set_reg(g->cpu, 0, 0u);
         arm920t_set_reg(g->cpu, 15, lr);
         return 1;
@@ -5938,6 +6019,11 @@ gp32_status_t gp32_save_state(gp32_t *g, const char *path) {
     if (!ok) {
         save_atomic_abort(&stage);
         seterr(g, "write savestate %s failed", path);
+        return GP32_ERR_IO;
+    }
+    if (!save_atomic_sync(&stage, err, sizeof(err))) {
+        save_atomic_abort(&stage);
+        seterr(g, "%s", err);
         return GP32_ERR_IO;
     }
     if (!save_atomic_commit(&stage, path, err, sizeof(err))) {
