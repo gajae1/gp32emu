@@ -4742,6 +4742,68 @@ static void case_native_const_data(void) {
     }
 }
 
+/* The real GP32 GPIO leaf builds r1=0x15600000 with MOV/LSL/ORR/LSL.  A long
+ * constant run folds into one native step, so every prefix budget boundary
+ * must still retire the raw guest ops, the folded prefix must stop at the
+ * carry (RRX), flags (S) and foreign-operand boundaries that follow it, and
+ * the store callback must observe the folded constant at its own guest PC. */
+static void case_native_const_chain(void) {
+    const uint32_t chain[] = {
+        0xe3a01015u, /* MOV r1,#0x15 */
+        0xe1a01401u, /* MOV r1,r1,LSL #8  -> 0x1500 */
+        0xe3811060u, /* ORR r1,r1,#0x60  -> 0x1560 */
+        0xe1a01801u, /* MOV r1,r1,LSL #16 -> 0x15600000 */
+        0xe5891000u, /* STR r1,[r9]: callback sees the folded run */
+        0xe3a02015u, /* MOV r2,#0x15 */
+        0xe1a02402u, /* MOV r2,r2,LSL #8  -> 0x1500 */
+        0xe3822060u, /* ORR r2,r2,#0x60  -> 0x1560 (a 3-op fold) */
+        0xe1a02062u, /* MOV r2,r2,RRX: carry boundary stops the fold */
+        0xe0922003u, /* ADDS r2,r2,r3: flags and foreign operand boundary */
+        0xe58c2080u, /* STR r2,[r12,#0x80] */
+        0xeafffffeu
+    };
+    const uint32_t prefix[] = {0x15u, 0x1500u, 0x1560u, 0x15600000u, 0x15600000u};
+    for (unsigned carry = 0; carry < 2u; ++carry)
+    for (unsigned split = 0; split < 2u; ++split) {
+        current_case = split ? "const-chain-boundaries" : "const-chain-native";
+        setup_pair();
+        load_both(chain, GP32_ARRAY_COUNT(chain));
+        set_cpsr_both(0x13u | (carry ? 0x20000000u : 0u));
+        uint32_t rrx = (carry ? 0x80000000u : 0u) | 0xab0u;
+        set_reg_both(3u, 0x10u); set_reg_both(9u, IO_ADDR); set_reg_both(12u, DATA_ADDR);
+        bus_jit.observe_cpu = cpu_jit; bus_ref.observe_cpu = cpu_ref;
+        bus_jit.mem_probe = bus_ref.mem_probe = 1u;
+        bus_jit.mem_effect = bus_ref.mem_effect = 10u;
+        if (split) {
+            for (unsigned j = 0; j < GP32_ARRAY_COUNT(chain); ++j) {
+                CHECK(arm920t_run(cpu_jit, 1u) == 1u, "chain prefix budget");
+                CHECK(arm920t_run(cpu_ref, 1u) == 1u, "chain prefix reference budget");
+                compare_state();
+                if (j < 5u) CHECK(ref_reg(1u) == prefix[j], "chain prefix value");
+                else if (j < 8u) CHECK(ref_reg(2u) == prefix[j - 5u], "chain prefix value");
+                else if (j == 8u) CHECK(ref_reg(2u) == rrx, "RRX boundary uses live carry");
+                else if (j == 9u) CHECK(ref_reg(2u) == rrx + 0x10u &&
+                                       (arm920t_get_cpsr(cpu_ref) & 0xf0000000u) == (carry ? 0x80000000u : 0u),
+                                       "flags boundary stays live");
+            }
+        } else {
+            run_cache_pair(CODE_ADDR, 64u);
+        }
+        CHECK(ref_reg(1u) == 0x15600000u && ref_reg(2u) == rrx + 0x10u &&
+              gp32_ld32le(bus_ref.ram + DATA_ADDR - RAM_BASE + 0x80u) == rrx + 0x10u,
+              "chain final values");
+        CHECK(bus_jit.mem_calls == 1u && bus_ref.mem_calls == 1u &&
+              bus_jit.mem_pc == CODE_ADDR + 20u && bus_ref.mem_pc == CODE_ADDR + 20u &&
+              bus_jit.mem_value == 0x15600000u && bus_ref.mem_value == 0x15600000u,
+              "callback sees the folded run at the original PC");
+        gp32_cpu_profile_t profile;
+        arm920t_get_cpu_profile(cpu_jit, &profile);
+        if (!split && profile.supported && profile.native_backend)
+            CHECK(profile.native_block_calls != 0u, "constant-chain native coverage");
+        teardown_pair();
+    }
+}
+
 int main(int argc, char **argv) {
     /* Native gate triage can isolate this mapped physical-boundary case
      * without rerunning unrelated differential workloads. */
@@ -4767,6 +4829,7 @@ int main(int argc, char **argv) {
         case_native_sflag_logic();
     } else if (argc == 2 && !strcmp(argv[1], "--const-data")) {
         case_native_const_data();
+        case_native_const_chain();
     } else if (argc == 2 && !strcmp(argv[1], "--word-probes")) {
         case_native_read_windows();
         case_live_read32();
@@ -4885,6 +4948,7 @@ int main(int argc, char **argv) {
     case_cache_modified(1);
     case_native_alu_region();
     case_native_const_data();
+    case_native_const_chain();
     case_native_forwarding();
     case_native_self_move_noop();
     case_native_immediates();
