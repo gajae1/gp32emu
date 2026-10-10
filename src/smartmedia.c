@@ -534,8 +534,19 @@ int smc_load_buffer_over_base(smc_t *s, const uint8_t *src, size_t len, char *er
     if (!s || !src || len == 0) return 0;
     smc_mount_image_t img;
     if (!smc_parse_image(src, len, &img, err, err_len)) return 0;
+    /* A save for this card has the card's own shape.  Anything else, such as
+     * a compact save whose header was damaged, must not replace the card. */
+    if (s->base && (img.data_size != s->base_size || img.page_total_size != s->base_page_total_size ||
+                    img.num_pages != s->base_num_pages)) {
+        smc_mount_image_free(&img);
+        if (err && err_len) snprintf(err, err_len, "card save does not match the original card");
+        return 0;
+    }
     smc_install_image(s, &img, 1);
     smc_mount_image_free(&img);
+    /* This image is not in the compact save yet (an old full-card save or a
+     * frontend import): its differences must reach the next flush. */
+    s->persist_dirty = !s->base || s->diff_pages != 0;
     return 1;
 }
 
@@ -557,7 +568,12 @@ static int smc_read_file_image(const char *path, uint8_t **out, size_t *out_len,
         }
         if (fseek(f, 0, SEEK_END) != 0) { fclose(f); return 0; }
         long n = ftell(f);
-        if (n <= 0) { fclose(f); return 0; }
+        /* No SmartMedia image exceeds 128 MiB plus its spare area. */
+        if (n <= 0 || (unsigned long)n > 136ul * 1024ul * 1024ul) {
+            if (err && err_len && n > 0) snprintf(err, err_len, "%s is too large for a GP32 card", path);
+            fclose(f);
+            return 0;
+        }
         rewind(f);
         buf = (uint8_t *)malloc((size_t)n);
         if (!buf) { fclose(f); return 0; }
@@ -670,10 +686,11 @@ int smc_save_file(smc_t *s, const char *path, char *err, size_t err_len) {
         if (err && err_len) snprintf(err, err_len, "write %s payload failed", path);
         return 0;
     }
+    if (!save_atomic_sync(&stage, err, err_len)) { save_atomic_abort(&stage); return 0; }
     if (!save_atomic_commit(&stage, path, err, err_len)) return 0;
+    /* A full-card export is not the persistent .sav: changes since the last
+     * sidecar save stay pending for the next flush. */
     s->dirty = 0;
-    s->persist_dirty = 0;
-    s->autosave_error = 0;
     return 1;
 }
 
@@ -802,6 +819,15 @@ int smc_save_changes(smc_t *s, const char *path, char *err, size_t err_len) {
     return ok;
 }
 
+int smc_flush_changes(smc_t *s, const char *path, char *err, size_t err_len) {
+    if (!s || !path || !s->data) return 0;
+    /* A finished autosave may already hold every change; a failed one keeps
+     * the card dirty and is retried here. */
+    smc_autosave_wait(s, NULL, 0);
+    if (!s->persist_dirty) return 1;
+    return smc_save_changes(s, path, err, err_len);
+}
+
 uint64_t smc_host_time_ms(void) {
 #if defined(_WIN32)
     return GetTickCount64();
@@ -906,6 +932,7 @@ int smc_load_changes(smc_t *s, const char *path, char *err, size_t err_len) {
     /* Parse/stage first: truncated, foreign or corrupt input leaves the live
      * card unchanged. Mounting rebuilds the same difference map as guest writes. */
     ok = smc_load_buffer_over_base(s, image, (size_t)header_bytes + base_bytes, err, err_len);
+    if (ok) s->persist_dirty = 0; /* The live card now equals this save file. */
 done:
     fclose(f);
     free(body);

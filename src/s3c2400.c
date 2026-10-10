@@ -583,7 +583,7 @@ int s3c2400_set_smartmedia_state_base_file(s3c2400_t *s, const char *path, char 
     return s && smc_set_state_base_file(s->smc, path, err, err_len);
 }
 int s3c2400_save_smartmedia(s3c2400_t *s, const char *path, char *err, size_t err_len) { return s && smc_save_file(s->smc, path, err, err_len); }
-int s3c2400_save_card_progress(s3c2400_t *s, const char *path, char *err, size_t err_len) { return s && smc_save_changes(s->smc, path, err, err_len); }
+int s3c2400_save_card_progress(s3c2400_t *s, const char *path, char *err, size_t err_len) { return s && smc_flush_changes(s->smc, path, err, err_len); }
 int s3c2400_poll_card_progress(s3c2400_t *s, const char *path, char *err, size_t err_len) {
     return s && smc_autosave_poll(s->smc, path, smc_host_time_ms(), err, err_len);
 }
@@ -850,7 +850,7 @@ static int audio_prepare_rate(s3c2400_t *s, uint32_t rate) {
                 s->audio_boundary_head = 0;
             } else {
                 uint32_t cap = s->audio_boundary_cap ? s->audio_boundary_cap * 2u : 8u;
-                if (cap <= s->audio_boundary_cap || cap > SIZE_MAX / sizeof(*s->audio_boundaries)) return 0;
+                if (cap <= s->audio_boundary_cap || (uint64_t)cap > SIZE_MAX / sizeof(*s->audio_boundaries)) return 0;
                 audio_boundary_t *next = realloc(s->audio_boundaries, (size_t)cap * sizeof(*next));
                 if (!next) return 0;
                 s->audio_boundaries = next;
@@ -2758,7 +2758,7 @@ int s3c2400_state_load_io_checked(s3c2400_t *s, state_io_t *io, int has_audio_sp
     audio_boundary_t *new_spans = NULL;
     if (has_audio_spans) {
         if (!state_io_read(io, &span_count, sizeof(span_count)) ||
-            span_count > st->audio_frames || span_count > SIZE_MAX / sizeof(*new_spans)) goto bad_audio;
+            span_count > st->audio_frames || (uint64_t)span_count > SIZE_MAX / sizeof(*new_spans)) goto bad_audio;
         if (span_count) {
             new_spans = malloc((size_t)span_count * sizeof(*new_spans));
             if (!new_spans || !state_io_read(io, new_spans, (size_t)span_count * sizeof(*new_spans))) goto bad_audio;

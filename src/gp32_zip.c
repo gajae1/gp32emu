@@ -144,6 +144,15 @@ int gp32_zip_read_first_matching(const char *zip_path,
 
     void *buf = NULL;
     size_t buf_size = 0;
+    /* The largest SmartMedia card is 128 MiB; refuse an entry that claims
+     * more before extracting it into memory. */
+    unsigned long long declared = zip_entry_uncomp_size(zip);
+    if (declared > 136ull * 1024ull * 1024ull) {
+        zerr(err, err_len, "ZIP entry %s is too large", match_name[0] ? match_name : "<unknown>");
+        zip_entry_close(zip);
+        zip_close(zip);
+        return 0;
+    }
     ssize_t got = zip_entry_read(zip, &buf, &buf_size);
     if (got < 0) {
         const char *msg = zip_strerror((int)got);

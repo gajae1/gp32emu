@@ -206,7 +206,7 @@ static void check_smc_atomic(const char *base) {
     free(original);
 
     CHECK(smc_save_file(s, path, err, sizeof(err)), "smc save replaces existing file");
-    CHECK(!smc_is_dirty(s), "card clean after successful re-save");
+    CHECK(smc_is_dirty(s), "card export leaves the persistent save pending");
     size_t saved_size = 0;
     uint8_t *saved = read_all(path, &saved_size);
     CHECK(saved && saved_size == sizeof(image) && saved[0] == 0x00,

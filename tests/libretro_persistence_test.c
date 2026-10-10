@@ -225,6 +225,8 @@ int main(int argc, char **argv) {
     CHECK(read_file(saved, readback, sizeof(readback), &readback_size) && readback_size < 1024, "legacy conversion is compact");
     retro_unload_game();
     CHECK(retro_load_game(&game), "reload migrated save");
+    /* Only a changed card is written; make the flush attempt the bad path. */
+    CHECK(gp32_load_smartmedia_over_base(emu, modified) == GP32_OK, "pending change before blocked flush");
     join_path(smartmedia_save_path, sizeof(smartmedia_save_path), saved, "blocked.sav");
     unsigned logs = error_logs, messages = user_messages;
     retro_unload_game();

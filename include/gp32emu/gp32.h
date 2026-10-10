@@ -111,6 +111,7 @@ gp32_status_t gp32_load_fxe(gp32_t *gp32, const char *path);
 gp32_status_t gp32_load_fxe_data(gp32_t *gp32, const void *data, size_t size, const char *label);
 gp32_status_t gp32_load_fpk(gp32_t *gp32, const char *path);
 gp32_status_t gp32_load_fpk_data(gp32_t *gp32, const void *data, size_t size, const char *label);
+/* Export the mounted card as a full image. Pending .sav changes stay pending. */
 gp32_status_t gp32_save_smartmedia(gp32_t *gp32, const char *path);
 /* Persistent page changes over the mounted original card. Legacy full card
  * saves are accepted on load. A delta must match the exact mounted base. */
