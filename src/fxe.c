@@ -630,14 +630,14 @@ int fxe_load_buffer(const uint8_t *data, size_t size, const char *label, fxe_ima
     if (size) memcpy(file, data, size);
 
     if (size >= FXE_FIXED_PREFIX_SIZE + 8u && fxe_container_magic(file)) {
-        uint32_t legacy_file_size = gp32_ld32le(&file[4]);
         uint32_t info_size = gp32_ld32le(&file[8]);
         uint32_t payload_size = gp32_ld32le(&file[FXE_FIXED_PREFIX_SIZE]);
         uint32_t key_size = gp32_ld32le(&file[FXE_FIXED_PREFIX_SIZE + 4u]);
         size_t key_off = FXE_FIXED_PREFIX_SIZE + 8u;
         size_t data_off = key_off + (size_t)key_size;
         if (info_size != FXE_INFO_SIZE) { ferr(err, err_len, "unsupported FXE info size 0x%08" PRIx32, info_size); free(file); return 0; }
-        if (legacy_file_size != payload_size && legacy_file_size + 8u != size) { GP32_UNUSED(legacy_file_size); }
+        /* The legacy size field at +4 is not trusted: real tools write it
+           inconsistently, so only the key and payload sizes are checked. */
         if (key_size == 0u || data_off > size || (size_t)payload_size > size - data_off) {
             ferr(err, err_len, "invalid FXE key/payload sizes");
             free(file);
