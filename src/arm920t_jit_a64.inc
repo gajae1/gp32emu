@@ -2036,7 +2036,8 @@ static int a64_local_p15(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
     if (!GP32_BIT(insn, 20)) {
         a64_guest(e, 1, rd, op->pc);
         a64_store(e, 1, offsetof(arm920t_t, cp15) + crn * 4u);
-    } else if (crn == 0u) a64_store_imm(e, offsetof(arm920t_t, r) + rd * 4u, 0x41129200u);
+    } else if (crn == 0u) a64_store_imm(e, offsetof(arm920t_t, r) + rd * 4u,
+                                        ((insn >> 5) & 7u) == 1u ? 0x0d172172u : 0x41129200u);
     else {
         a64_load(e, 1, offsetof(arm920t_t, cp15) + crn * 4u);
         a64_put_guest(e, rd, 1);

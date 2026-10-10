@@ -131,12 +131,16 @@ enum arm_jit_inv_cause {
 #if defined(_MSC_VER)
 #define ARM_FORCE_INLINE static __forceinline
 #define ARM_NOINLINE __declspec(noinline)
+#define ARM_JIT_NATIVE_ONLY
 #elif defined(__GNUC__) || defined(__clang__)
 #define ARM_FORCE_INLINE static inline __attribute__((always_inline))
 #define ARM_NOINLINE __attribute__((noinline))
+/* Used only by a native code emitter; hosts without one leave it unused. */
+#define ARM_JIT_NATIVE_ONLY __attribute__((unused))
 #else
 #define ARM_FORCE_INLINE static inline
 #define ARM_NOINLINE
+#define ARM_JIT_NATIVE_ONLY
 #endif
 
 /* Preserve locality within a code page while distinguishing equal offsets
@@ -791,7 +795,9 @@ void arm920t_set_jit(arm920t_t *c, int enabled) {
     if (c) {
         c->jit_enabled = enabled != 0;
         if (c->jit_enabled) {
-            c->jit_ram_base = fastmem(c, 0x0c000000u, 1u, 0);
+            /* Block helpers index the whole RAM window from this base, so the
+             * probe must cover all of it; a smaller RAM keeps the interpreter. */
+            c->jit_ram_base = fastmem(c, ARM_JIT_RAM_BASE_ADDR, ARM_JIT_RAM_SIZE_BYTES, 0);
             c->jit_bios_base = fastmem(c, 0x00000000u, 1u, 0);
             if (!c->jit_ram_base || !c->jit_bios_base) c->jit_enabled = 0;
         } else arm920t_jit_invalidate_all(c, ARM_JIT_INV_JIT_DISABLE);
@@ -1095,9 +1101,11 @@ static void op_block_dt(arm920t_t *c, uint32_t insn) {
 }
 
 static uint32_t cp15_read(arm920t_t *c, unsigned crn, unsigned crm, unsigned op1, unsigned op2) {
-    GP32_UNUSED(crm); GP32_UNUSED(op1); GP32_UNUSED(op2);
+    GP32_UNUSED(crm); GP32_UNUSED(op1);
     switch (crn) {
-    case 0: return 0x41129200u; /* Main ID */
+    /* c0: opcode_2 1 is the cache type (16 KiB I and D, 64-way, 8-word
+     * lines); other encodings return the main ID. */
+    case 0: return op2 == 1u ? 0x0d172172u : 0x41129200u;
     case 1: return c->cp15[1];
     case 2: return c->cp15[2];
     case 3: return c->cp15[3];
@@ -1109,6 +1117,7 @@ static uint32_t cp15_read(arm920t_t *c, unsigned crn, unsigned crm, unsigned op1
 }
 static void cp15_write(arm920t_t *c, unsigned crn, unsigned crm, unsigned op1, unsigned op2, uint32_t v) {
     GP32_UNUSED(op1);
+    if (crn == 0) return; /* ID and cache type are read-only */
     c->cp15[crn & 15u] = v;
     if (crn == 1 || crn == 2 || crn == 8 || crm == 8) {
         tlb_flush_all(c);
@@ -1364,7 +1373,7 @@ static void arm920t_jit_invalidate_all(arm920t_t *c, unsigned cause) {
     if (cause == ARM_JIT_INV_CP15_CACHE) {
         /* Native memory helpers also depend on the cached physical windows.
          * A changed bus window needs the ordinary full flush and fresh bases. */
-        uint8_t *ram = fastmem(c, 0x0c000000u, 1u, 0);
+        uint8_t *ram = fastmem(c, ARM_JIT_RAM_BASE_ADDR, ARM_JIT_RAM_SIZE_BYTES, 0);
         uint8_t *bios = fastmem(c, 0x00000000u, 1u, 0);
         if (ram == c->jit_ram_base && bios == c->jit_bios_base) {
             /* MCR ends the active trace. Defer byte checks until a block is
@@ -1479,7 +1488,7 @@ static int arm_jit_insn_mentions_sp(uint32_t insn) {
 
 /* Ignore the Rd/Rm fields in the shape mask, then require the same non-PC
  * register. Flag-setting and shifted moves keep their architectural effects. */
-static int arm_jit_is_side_effect_free_nop(uint32_t insn) {
+ARM_JIT_NATIVE_ONLY static int arm_jit_is_side_effect_free_nop(uint32_t insn) {
     if (insn == 0x00000000u) return 1;
     if ((insn & 0x0fff0ff0u) == 0x01a00000u) {
         unsigned rd = (insn >> 12) & 0xfu;
@@ -2626,7 +2635,7 @@ static inline void arm_profile_helper_op(arm920t_t *c, const arm_jit_op_t *op) {
     GP32_UNUSED(op);
 #endif
 }
-ARM_FORCE_INLINE void arm_jit_exec_classified(arm920t_t *c, const arm_jit_op_t *op) {
+ARM_JIT_NATIVE_ONLY ARM_FORCE_INLINE void arm_jit_exec_classified(arm920t_t *c, const arm_jit_op_t *op) {
     arm_profile_helper_op(c, op);
     arm_jit_exec_classified_bc(c, op);
 }
@@ -2647,12 +2656,14 @@ static void arm_jit_exec_swi_native(arm920t_t *c, const arm_jit_op_t *op) {
 
 
 
+#if defined(__x86_64__) || defined(_M_X64)
 static void arm_jit_write_pc_x_helper(arm920t_t *c, uint32_t v) { ARM_PROF_INC(c, helper_write_pc); write_pc_x(c, v); }
+#endif
 
 /* Native ALU and flags are already committed. USER/SYS have no SPSR, so
  * their ALU flags survive; exception modes restore the shared banked state.
  * Align only after restoring CPSR, using its ARM/Thumb state. */
-static void arm_jit_exception_return_helper(arm920t_t *c, uint32_t result) {
+ARM_JIT_NATIVE_ONLY static void arm_jit_exception_return_helper(arm920t_t *c, uint32_t result) {
     ARM_PROF_INC(c, helper_write_pc);
     restore_cpsr_from_spsr(c);
     write_r(c, 15u, result);
@@ -3898,7 +3909,7 @@ static int x64_emit_coproc_local(x64_emit_t *e, const arm_jit_op_t *op, uint32_t
         x64_emit_load_arm_reg(e, X64_EAX, rd, op->pc);
         x64_mov_mem_cpu_r32(e, (uint32_t)offsetof(arm920t_t, cp15) + crn * 4u, X64_EAX);
     } else {
-        if (crn == 0u) x64_mov_r32_imm(e, X64_EAX, 0x41129200u);
+        if (crn == 0u) x64_mov_r32_imm(e, X64_EAX, ((insn >> 5) & 7u) == 1u ? 0x0d172172u : 0x41129200u);
         else x64_mov_r32_mem_cpu(e, X64_EAX, (uint32_t)offsetof(arm920t_t, cp15) + crn * 4u);
         x64_emit_store_arm_reg(e, rd, X64_EAX);
     }
@@ -4451,7 +4462,7 @@ static void arm_profile_native_exit(arm920t_t *c, const arm_jit_block_t *b,
 
 static uint32_t arm_jit_run(arm920t_t *c, uint32_t run_done) {
     if (!c || run_done >= c->run_limit || thumb(c) || c->trace) return 0;
-    if (!c->jit_ram_base) c->jit_ram_base = fastmem(c, ARM_JIT_RAM_BASE_ADDR, 1u, 0);
+    if (!c->jit_ram_base) c->jit_ram_base = fastmem(c, ARM_JIT_RAM_BASE_ADDR, ARM_JIT_RAM_SIZE_BYTES, 0);
     if (!c->jit_bios_base) c->jit_bios_base = fastmem(c, 0x00000000u, 1u, 0);
     uint32_t total = run_done;
     /* Block hits accumulate in a register and are published once per run. */
