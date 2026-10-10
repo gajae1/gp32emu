@@ -1715,10 +1715,10 @@ static void direct_pinball_fix_update(gp32_t *g, int flush) {
  * Astonishia Story R's IMA-ADPCM decoder (0x0c0112a4) chooses the low or high
  * nibble from the parity of the stream-wide sample counter (r7) instead of the
  * position inside the 505-sample block. Every odd block therefore decodes with
- * swapped nibbles, which is the ~12 clicks/s heard on the title screen; real
- * hardware runs the same code. When this exact routine is resident, its
- * "tst r7, #1" is replaced by a host trap that tests the in-block parity. The
- * card image is never touched.
+ * swapped nibbles, causing periodic clicks in the captured title PCM.
+ * Physical GP32 audio has not been recorded. When this exact routine is
+ * resident, its "tst r7, #1" is replaced by a host trap that tests the in-block
+ * parity. The card image is never touched.
  *
  * Both parities read one byte per two samples, but they read at different
  * samples inside an odd block. Switching in the middle of a block is safe only
