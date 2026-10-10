@@ -13,9 +13,10 @@ RetroArch cores for emulating the Game Park GP32.
 - Offers LCD persistence and frame interpolation, plus guest CPU speed options
   in RetroArch. Windows includes keyboard and gamepad input, fullscreen,
   BMP screenshots and MKV recording.
-- Removes the click noise in Astonishia Story R's music, caused by a bug in the
-  game's own decoder, and shortens silent card-loading pauses such as Blue
-  Angelo's dialogue opening. Both are on by default and can be turned off.
+- Removes the click noise in Astonishia Story R's music and shortens silent
+  card-loading pauses such as Blue Angelo's dialogue opening. Both are on by
+  default; the RetroArch core offers `Fix game code bugs` and `Fast loading`
+  options to disable them, while the Windows application always applies them.
 
 ## Files
 
@@ -36,8 +37,9 @@ newer. Every ZIP also contains the README, these notes, `docs/MANUAL.ko.md`,
 For Windows, extract the package, keep `SDL3.dll` beside the executable, select
 your BIOS through `Config > Set BIOS path...`, and open a game from `File`.
 For RetroArch, install the core matching the app's architecture and place its
-`.info` file in the configured core information directory. Put your BIOS 1.6.6
-dump in the system directory as `gp32166m.bin`, then load the core and content.
+`.info` file in the configured core information directory. Put your GP32 BIOS
+in the system directory, preferably as `gp32166m.bin`; any GP32 BIOS dump of
+512 KiB or less works. Then load the core and content.
 
 A BIOS is recommended. See the README and Korean manual for controls, save-file
 locations and the limits of direct boot. Original `.smc` files are never modified;
@@ -46,8 +48,9 @@ the exact original card.
 
 ## Known limitations
 
-Some cards need a BIOS. Keep game compatibility fixes enabled for Astonishia Story R's
-audio clicks and Pinball Dreams' startup mute; the original ROM files remain unchanged.
+Some cards need a BIOS. The Astonishia Story R audio-click fix and the Pinball
+Dreams startup-mute fix are on by default and leave the original ROM files
+unchanged; in RetroArch, keep `Fix game code bugs` enabled.
 Compatibility checks cover selected scenes, not complete playthroughs; audio fidelity and input
 latency have not been measured against a physical GP32. RetroArch rewind and
 run-ahead are unverified. Android cores have been compiled but runtime use is
