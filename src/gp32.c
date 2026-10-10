@@ -4946,11 +4946,22 @@ static uint32_t direct_frame_budget(const gp32_t *g, uint64_t deadline) {
     return cycles > 32768u ? 32768u : (uint32_t)cycles;
 }
 
+#include "gp32_ecc_accel.inc"
+
+static void direct_ecc_accelerator_update(gp32_t *g) {
+    arm_bus_t bus = s3c2400_get_bus(g->soc);
+    const uint8_t *code = bus.fastmem ? bus.fastmem(bus.user, GP32_ECC_LOOP_PC, GP32_ECC_LOOP_BYTES, 0) : NULL;
+    int match = code && gp32_ecc_loop_hash(code) == UINT64_C(0xeddcac638c51a003);
+    (void)arm920t_set_accelerators(g->cpu, match ? gp32_ecc_entries : NULL,
+                                 match ? GP32_ARRAY_COUNT(gp32_ecc_entries) : 0u, NULL);
+}
+
 static int direct_fast_load_audio_running(gp32_t *g) {
     return s3c2400_iis_running(g->soc) || g->direct_hle_pcm_active || g->direct_hle_audio_asset;
 }
 
 static gp32_status_t gp32_run(gp32_t *g, uint32_t cycles, int timed, uint32_t restore_speed) {
+    direct_ecc_accelerator_update(g);
     if (!g->direct_callback.owner) direct_fix_gp32_additive_blend_shadow_endpoint(g);
     direct_adpcm_fix_update(g, 1);
     direct_pinball_fix_update(g, 1);

@@ -20,6 +20,26 @@ typedef void (*arm_log_fn)(void *user, const char *line);
  * instruction trace so it can be enabled without tracing every instruction. */
 typedef void (*arm_diag_fn)(void *user, const char *line);
 typedef int (*arm_swi_fn)(void *user, arm920t_t *cpu, uint32_t imm, uint32_t pc, int thumb);
+typedef uint32_t (*arm_accel_fn)(void *user, arm920t_t *cpu, uint32_t budget);
+typedef struct arm_accel_entry {
+    uint32_t pc;
+    arm_accel_fn run;
+} arm_accel_entry_t;
+
+/* Optional equivalent ARM block implementations, called only with JIT enabled
+ * and tracing off. Retire no more than budget original instructions; returning
+ * zero must leave machine state unchanged so the original code can run.
+ * Callbacks must preserve IRQ/run deadlines and validate live code and data.
+ * Entries are immutable and caller-owned until replaced. PCs must be unique
+ * and word-aligned. Register only outside a run; NULL+zero disables. Changing
+ * registration flushes translations; reset/state load preserve registration.
+ * No callback pointer or registration is part of the guest wire image. */
+int arm920t_set_accelerators(arm920t_t *cpu, const arm_accel_entry_t *entries,
+                           size_t count, void *user);
+/* RAM pointer only for MMU-off or already cached identity mappings across the
+ * entire span. Never walks page tables, accesses MMIO or creates fault state.
+ * Reacquire after guest callbacks, state loads or any CPU run boundary. */
+uint8_t *arm920t_peek_identity_ram(arm920t_t *cpu, uint32_t addr, size_t bytes, int write);
 
 typedef struct arm_bus {
     arm_read8_fn read8;

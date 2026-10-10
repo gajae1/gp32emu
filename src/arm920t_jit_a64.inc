@@ -1597,7 +1597,7 @@ static int a64_place(uint32_t *hot_dst, uint32_t *cold_dst, const uint32_t *src,
     return 1;
 }
 
-static void arm_jit_compile_native(arm920t_t *c, arm_jit_block_t *b) {
+static void arm_jit_compile_host(arm920t_t *c, arm_jit_block_t *b) {
     if (!c || !b || !b->count) return;
     uint32_t tmp[ARM_JIT_NATIVE_MAX_BYTES / sizeof(uint32_t)];
     a64_cold_op_t cold[ARM_JIT_MAX_INSNS];

@@ -308,6 +308,9 @@ struct arm920t {
     void *diag_user;
     arm_swi_fn swi;
     void *swi_user;
+    const arm_accel_entry_t *accelerators;
+    size_t accelerator_count;
+    void *accelerator_user;
     arm_jit_block_t *jit_blocks;
     arm_jit_op_t (*jit_ops)[ARM_JIT_MAX_INSNS];
     uint8_t *jit_code;
@@ -360,6 +363,17 @@ ARM_FORCE_INLINE arm_jit_op_t *arm_jit_ops(const arm920t_t *c, const arm_jit_blo
 static uint32_t mode(const arm920t_t *c) { return c->cpsr & MODE_MASK; }
 static int thumb(const arm920t_t *c) { return (c->cpsr & T_FLAG) != 0; }
 static void arm920t_jit_invalidate_all(arm920t_t *c, unsigned cause);
+static const arm_accel_entry_t *arm_accel_entry(const arm920t_t *c, uint32_t pc) {
+    for (size_t i = 0; i < c->accelerator_count; ++i)
+        if (c->accelerators[i].pc == pc) return &c->accelerators[i];
+    return NULL;
+}
+static int arm_accel_in_span(const arm920t_t *c, const arm_jit_op_t *ops, unsigned n) {
+    if (!c->accelerator_count) return 0;
+    for (unsigned i = 0; i < n; ++i)
+        if (arm_accel_entry(c, ops[i].pc)) return 1;
+    return 0;
+}
 
 static uint32_t *spsr_ptr(arm920t_t *c, uint32_t m) {
     switch (m) {
@@ -540,6 +554,26 @@ ARM_FORCE_INLINE uint32_t mmu_translate(arm920t_t *c, uint32_t va) {
     return va;
 }
 
+uint8_t *arm920t_peek_identity_ram(arm920t_t *c, uint32_t a, size_t bytes, int write) {
+    if (!c || !bytes || a - ARM_JIT_RAM_BASE_ADDR >= ARM_JIT_RAM_SIZE_BYTES ||
+        bytes > ARM_JIT_RAM_SIZE_BYTES - (a - ARM_JIT_RAM_BASE_ADDR)) return NULL;
+    if (c->cp15[1] & 1u) {
+        uint32_t cur = a, end = a + (uint32_t)bytes - 1u;
+        for (;;) {
+            const arm_tlb_entry_t *e = &c->tlb_entry[(cur >> 12) & 0xfffu];
+            uint32_t stop = cur | 0x3ffu;
+            if (stop > end) stop = end;
+            if (!e->valid || (cur & ~e->mask) != e->va_base ||
+                (stop & ~e->mask) != e->va_base ||
+                (e->pa_base | (cur & e->mask)) != cur ||
+                (e->pa_base | (stop & e->mask)) != stop) return NULL;
+            if (stop == end) break;
+            cur = stop + 1u;
+        }
+    }
+    return fastmem(c, a, bytes, write != 0);
+}
+
 ARM_FORCE_INLINE uint8_t rb8(arm920t_t *c, uint32_t a) { uint32_t paddr = mmu_translate(c, a); uint8_t *p = fastmem(c, paddr, 1u, 0); return p ? p[0] : c->bus.read8(c->bus.user, paddr); }
 ARM_FORCE_INLINE uint16_t rb16(arm920t_t *c, uint32_t a) { uint32_t paddr = mmu_translate(c, a); uint8_t *p = fastmem(c, paddr, 2u, 0); return p ? gp32_ld16le(p) : c->bus.read16(c->bus.user, paddr); }
 ARM_FORCE_INLINE uint32_t rb32(arm920t_t *c, uint32_t a) { uint32_t paddr = mmu_translate(c, a); uint8_t *p = fastmem(c, paddr, 4u, 0); return p ? gp32_ld32le(p) : c->bus.read32(c->bus.user, paddr); }
@@ -707,6 +741,22 @@ void arm920t_destroy(arm920t_t *c) {
 void arm920t_set_trace(arm920t_t *c, int en, arm_log_fn log, void *user) { if (c) { c->trace = en; c->log = log; c->log_user = user; } }
 void arm920t_set_diag(arm920t_t *c, arm_diag_fn fn, void *user) { if (c) { c->diag = fn; c->diag_user = user; } }
 void arm920t_set_swi_handler(arm920t_t *c, arm_swi_fn fn, void *user) { if (c) { c->swi = fn; c->swi_user = user; } }
+int arm920t_set_accelerators(arm920t_t *c, const arm_accel_entry_t *entries,
+                           size_t count, void *user) {
+    if (!c || c->running || (!entries && count)) return 0;
+    for (size_t i = 0; i < count; ++i) {
+        if ((entries[i].pc & 3u) || !entries[i].run) return 0;
+        for (size_t j = 0; j < i; ++j) if (entries[j].pc == entries[i].pc) return 0;
+    }
+    if (!count) { entries = NULL; user = NULL; }
+    if (c->accelerators == entries && c->accelerator_count == count && c->accelerator_user == user)
+        return 1;
+    c->accelerators = entries;
+    c->accelerator_count = count;
+    c->accelerator_user = user;
+    arm920t_jit_invalidate_all(c, ARM_JIT_INV_API_FLUSH);
+    return 1;
+}
 void arm920t_set_reg(arm920t_t *c, unsigned reg, uint32_t value) {
     if (c && reg < 16u) {
         /* PC alignment follows the current instruction set, including when
@@ -1848,6 +1898,7 @@ static ARM_NOINLINE arm_jit_block_t *arm_jit_translate(arm920t_t *c, uint32_t pc
     uint8_t trace_extended = 0;
     uint32_t page_anchor = cur;
     for (uint8_t i = 0; i < ARM_JIT_MAX_INSNS; ++i) {
+        if (i && arm_accel_entry(c, cur)) break;
         uint32_t insn;
         if (i && ((cur ^ page_anchor) & ~ARM_JIT_PAGE_MASK)) {
             /* Straight-line code continues into the next (tiny) page only
@@ -1871,6 +1922,11 @@ static ARM_NOINLINE arm_jit_block_t *arm_jit_translate(arm920t_t *c, uint32_t pc
         op->reserved = (op->kind == ARM_JIT_OP_COPROC && arm_jit_is_local_cp15_op(insn)) ? 6u : 0u;
         arm_bc_decode_op(op);
         b->count = (uint8_t)(i + 1u);
+        /* A registered entry keeps one original instruction as its fallback.
+         * Its callback can then handle a short budget without inheriting the
+         * longer trace's native-entry threshold. A rejection retires only
+         * this instruction and resumes the ordinary path at its real PC. */
+        if (arm_accel_entry(c, pc)) break;
 
         if (arm_jit_is_uncond_bl(insn) && i + 8u < ARM_JIT_MAX_INSNS) {
             uint32_t tpc = arm_jit_branch_target(cur, insn);
@@ -1884,6 +1940,7 @@ static ARM_NOINLINE arm_jit_block_t *arm_jit_translate(arm920t_t *c, uint32_t pc
                 arm_jit_op_t leaf[32];
                 unsigned nleaf = arm_jit_collect_framed(c, tpc, leaf,
                     GP32_ARRAY_COUNT(leaf), 0u);
+                if (arm_accel_in_span(c, leaf, nleaf)) nleaf = 0;
                 if (nleaf && i + nleaf < ARM_JIT_MAX_INSNS) {
                     op->stop = 0;
                     op->reserved = 2u;
@@ -1900,6 +1957,7 @@ static ARM_NOINLINE arm_jit_block_t *arm_jit_translate(arm920t_t *c, uint32_t pc
                 int ok = 0;
                 for (; nleaf < GP32_ARRAY_COUNT(leaf); ++nleaf) {
                     uint32_t cpc = tpc + (uint32_t)nleaf * 4u;
+                    if (arm_accel_entry(c, cpc)) break;
                     if (((cpc ^ tpc) & ~ARM_JIT_PAGE_MASK) ||
                         !arm_jit_peek_fetch(c, cpc, &leaf[nleaf])) break;
                     if (leaf[nleaf] == 0xe1a0f00eu || leaf[nleaf] == 0xe12fff1eu) {
@@ -1945,7 +2003,8 @@ static ARM_NOINLINE arm_jit_block_t *arm_jit_translate(arm920t_t *c, uint32_t pc
             i + 1u < ARM_JIT_MAX_INSNS) {
             uint32_t tpc = arm_jit_branch_target(cur, insn);
             uint32_t first;
-            if (i + 1u < ARM_JIT_TRACE_MAX_INSNS && tpc && arm_jit_peek_fetch(c, tpc, &first)) {
+            if (i + 1u < ARM_JIT_TRACE_MAX_INSNS && tpc && !arm_accel_entry(c, tpc) &&
+                arm_jit_peek_fetch(c, tpc, &first)) {
                 op->stop = 0;
                 op->reserved = 2u; /* real BL link, then the callee body */
                 trace_extended = 1u;
@@ -1995,7 +2054,8 @@ static ARM_NOINLINE arm_jit_block_t *arm_jit_translate(arm920t_t *c, uint32_t pc
             for (uint8_t k = 0; k < trace_depth; ++k) trace_lr[k] = 0u;
         }
 
-        if (i + 1u < ARM_JIT_MAX_INSNS && arm_jit_forward_loop(c, pc, cur, insn)) {
+        if (i + 1u < ARM_JIT_MAX_INSNS && arm_jit_forward_loop(c, pc, cur, insn) &&
+            !arm_accel_entry(c, arm_jit_branch_target(cur, insn))) {
             uint32_t target = arm_jit_branch_target(cur, insn);
             int seen = 0;
             for (uint8_t j = 0; j < i; ++j)
@@ -2011,7 +2071,7 @@ static ARM_NOINLINE arm_jit_block_t *arm_jit_translate(arm920t_t *c, uint32_t pc
             uint32_t target = arm_jit_branch_target(cur, insn);
             int seen = 0;
             for (uint8_t j = 0; j < i; ++j) if ((arm_jit_ops(c, b)[j].pc & ~3u) == target) { seen = 1; break; }
-            if (!seen && ((target ^ pc) & ~ARM_JIT_PAGE_MASK) == 0u) {
+            if (!seen && !arm_accel_entry(c, target) && ((target ^ pc) & ~ARM_JIT_PAGE_MASK) == 0u) {
                 op->stop = 0;
                 cur = target;
                 continue;
@@ -4012,7 +4072,7 @@ static void x64_cold_flush(x64_emit_t *e) {
     }
 }
 
-static void arm_jit_compile_native(arm920t_t *c, arm_jit_block_t *b) {
+static void arm_jit_compile_host(arm920t_t *c, arm_jit_block_t *b) {
     if (!c || !b || !b->count) return;
     uint8_t tmp[ARM_JIT_NATIVE_MAX_BYTES];
     x64_cold_op_t cold[ARM_JIT_MAX_INSNS];
@@ -4132,8 +4192,21 @@ static void arm_jit_compile_native(arm920t_t *c, arm_jit_block_t *b) {
 #elif defined(ARM_JIT_NATIVE_A64)
 #include "arm920t_jit_a64.inc"
 #else
-static void arm_jit_compile_native(arm920t_t *c, arm_jit_block_t *b) { GP32_UNUSED(c); GP32_UNUSED(b); }
+static void arm_jit_compile_host(arm920t_t *c, arm_jit_block_t *b) { GP32_UNUSED(c); GP32_UNUSED(b); }
 #endif
+
+static uint32_t arm_jit_accelerated(arm920t_t *c, uint32_t budget) {
+    const arm_accel_entry_t *entry = arm_accel_entry(c, c->r[15] & ~3u);
+    return entry ? entry->run(c->accelerator_user, c, budget) : 0u;
+}
+static void arm_jit_compile_native(arm920t_t *c, arm_jit_block_t *b) {
+    if (arm_accel_entry(c, b->tag_pc)) {
+        b->native = arm_jit_accelerated;
+        b->native_ok = 1u;
+    } else {
+        arm_jit_compile_host(c, b);
+    }
+}
 
 /* A poll proof must not create extra page-table reads while checking a load,
  * including a partial counted iteration decoded at a different entry PC. */
