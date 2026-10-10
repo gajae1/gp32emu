@@ -4679,6 +4679,11 @@ int main(int argc, char **argv) {
     int selfmove_only = argc == 2 && !strcmp(argv[1], "--self-move-nop");
     if (argc == 2 && !strcmp(argv[1], "--sflag-logic")) {
         case_native_sflag_logic();
+    } else if (argc == 2 && !strcmp(argv[1], "--word-probes")) {
+        case_native_read_windows();
+        case_live_read32();
+        case_io_direct_word();
+        case_checked_access_translation();
     } else if (argc == 2 && !strcmp(argv[1], "--read-windows")) {
         case_native_read_windows();
     } else if (argc == 2 && !strcmp(argv[1], "--live-read32")) {
@@ -4851,6 +4856,7 @@ int main(int argc, char **argv) {
         return 1;
     }
     printf("PASS: arm jit differential (%s), jit events=%" PRIu64 " fallbacks=%" PRIu64 "\n",
+           (argc == 2 && !strcmp(argv[1], "--word-probes")) ? "word-probes" :
            (argc == 2 && !strcmp(argv[1], "--read-windows")) ? "read-windows" :
            (argc == 2 && !strcmp(argv[1], "--ram-page-tags")) ? "ram-page-tags" :
            (argc == 2 && !strcmp(argv[1], "--live-read32")) ? "live-read32" :

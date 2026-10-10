@@ -569,28 +569,19 @@ static void a64_mem_slow(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done,
     a64_patch(e, next, e->pos);
 }
 
-/* Direct word transfer into the identity-mapped device window, emitted after
- * the RAM guard rejected the address.  w12 still holds the unaligned VA, w2 the
- * base +/- offset the shape would write back and w11 the ARM unaligned word
- * rotation amount.  Nothing is committed before the proof: the mapping must be
- * the current full-mask TLB entry (MMU on) or the identity mapping (MMU off),
- * and the aligned physical word must lie inside the device window
- * 0x14000000..0x15ffffff, whose top seven address bits are 0b0001010.  The
- * checked helper still owns
- * every miss, tiny or unusual page, fault-tolerant identity fallback, byte
- * access and any other target.  On success arm_a64_io_word_checked performs the
- * bus callback with this physical address plus the same register commits and
- * continuation check; the proven access resumes the recorded hot continuation
- * (cont), which is behind this cold chain. */
-static void a64_io_word(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done,
-                        int load, int wb, size_t *cold, unsigned *ncold, size_t cont) {
+/* Establish w0 as the aligned physical word using the authoritative TLB.
+ * Failed proofs skip all physical-window probes and reach the checked helper.
+ * The read-only and I/O probes can share this proof: neither a rejected window
+ * test nor a read-only success runs a callback before that decision. Preserve
+ * w12 (original VA), w2 (writeback), and w11 (unaligned load rotation). */
+static void a64_word_pa(a64_emit_t *e, size_t *cold, unsigned *ncold) {
     a64_mask(e, 3, 12, ~3u);  /* the checked path translates the aligned word */
     if (e->mmu) {
         _Static_assert(sizeof(arm_tlb_entry_t) == 16u &&
                        offsetof(arm_tlb_entry_t, pa_base) == 4u &&
                        offsetof(arm_tlb_entry_t, mask) == 8u &&
                        offsetof(arm_tlb_entry_t, valid) == 12u,
-                       "direct I/O packed TLB layout");
+                       "cold word probe packed TLB layout");
         /* Read the authoritative TLB; never fill it or widen a restored mask. */
         a64_ubfx(e, 6, 3, 12, 12);
         a64_cpu_addr(e, 8, offsetof(arm920t_t, tlb_entry));
@@ -605,6 +596,13 @@ static void a64_io_word(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done,
         a64_rr(e, 0x0a000000u, 6, 3, 5); /* and w6, w3, w5 */
         a64_rr(e, 0x2a000000u, 0, 6, 9); /* orr w0, w6, w9: physical word address */
     } else a64_mov(e, 0, 3);
+}
+
+/* Direct transfer after a64_word_pa has proved the aligned physical word.
+ * Every out-of-window address still reaches the original checked helper;
+ * arm_a64_io_word_checked owns the callback, commits and continuation fence. */
+static void a64_io_word_pa(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done,
+                           int load, int wb, size_t *cold, unsigned *ncold, size_t cont) {
     /* 0x14000000..0x15ffffff is exactly bit 31..25 == 0b0001010 == 0xA; the
      * address is already word aligned, so the last word 0x15fffffc is the
      * window's inclusive end and 0x16000000 is already outside. */
@@ -905,11 +903,9 @@ static void a64_live_read32(a64_emit_t *e, unsigned rd, size_t cont) {
     for (unsigned i = 0; i < nreject; ++i) a64_patch(e, reject[i], e->pos);
 }
 
-/* Cold chain probe: aligned word load inside a proven non-RAM read window,
- * entered after the RAM guard rejected the address.  w12 still holds the
- * unaligned VA, w2 the writeback for writeback shapes and w11 the ARM
- * unaligned rotation for a computed address.  Proves the same TLB/mapping
- * the identity-I/O probe proves, then:
+/* Cold chain probe after a64_word_pa has established the aligned physical
+ * word in w0. w12 still holds the unaligned VA, w2 the writeback for writeback
+ * shapes and w11 the unaligned rotation for a computed address:
  *   - a physical word below ARM_JIT_BIOS_SIZE_BYTES reads jit_bios_base[pa];
  *     the window is read-only to guests and fixed before blocks translate,
  *     so no callback runs and no exit check applies;
@@ -918,31 +914,10 @@ static void a64_live_read32(a64_emit_t *e, unsigned rd, size_t cont) {
  * the loaded word keeps the ARM unaligned rotation, Rd commits first and the
  * writeback second (the checked helpers own Rd==Rn ordering), then the
  * recorded hot continuation resumes.  Every rejection falls to the next
- * probe with the registers exactly as it found them. */
-static void a64_ro_word(a64_emit_t *e, const arm_jit_op_t *op, size_t cont) {
-    size_t reject[6];
+ * probe with w0, w12, w2 and w11 unchanged. */
+static void a64_ro_word_pa(a64_emit_t *e, const arm_jit_op_t *op, size_t cont) {
+    size_t reject[3];
     unsigned nreject = 0;
-    a64_mask(e, 3, 12, ~3u); /* w3 = aligned VA, as the checked helpers use */
-    if (e->mmu) {
-        _Static_assert(sizeof(arm_tlb_entry_t) == 16u &&
-                       offsetof(arm_tlb_entry_t, pa_base) == 4u &&
-                       offsetof(arm_tlb_entry_t, mask) == 8u &&
-                       offsetof(arm_tlb_entry_t, valid) == 12u,
-                       "read-only window probe packed TLB layout");
-        /* Read the authoritative TLB; never fill it or widen a mask. */
-        a64_ubfx(e, 6, 3, 12, 12);
-        a64_cpu_addr(e, 8, offsetof(arm920t_t, tlb_entry));
-        a64_rr(e, 0x8b001000u, 8, 8, 6); /* add x8, x8, x6, lsl #4 */
-        a64_u32(e, 0x29400000u | (9u << 10) | (8u << 5) | 7u); /* ldp w7, w9, [x8]: VA, PA */
-        a64_u32(e, 0x29410000u | (6u << 10) | (8u << 5) | 5u); /* ldp w5, w6, [x8, #8]: mask, valid */
-        reject[nreject++] = e->pos;
-        a64_u32(e, 0x34000000u | 6u); /* cbz w6: no live mapping */
-        a64_rr(e, 0x0a200000u, 6, 3, 5); /* bic w6, w3, w5 */
-        a64_cmp(e, 6, 7);
-        reject[nreject++] = a64_jump(e, 1); /* NE: VA outside this page */
-        a64_rr(e, 0x0a000000u, 6, 3, 5); /* and w6, w3, w5 */
-        a64_rr(e, 0x2a000000u, 0, 6, 9); /* orr w0, w6, w9: aligned physical word */
-    } else a64_mov(e, 0, 3);
     if (e->bios_read) {
         /* pa < BIOS_SIZE already implies the aligned word fits: pa is a
          * multiple of four, so pa <= BIOS_SIZE - 4. */
@@ -1543,14 +1518,16 @@ static void a64_cold_flush(a64_emit_t *e) {
              * never walked by the fast path). */
             a64_mov(e, 12, 0);
             if (c->live) a64_live_read32(e, c->op->b, c->cont);
-            /* The read-only window probe claims BIOS-window and, when the
-             * bus declares one, open-bus words; every rejection falls to the
-             * identity-I/O attempt with the registers it found. */
-            if (c->ro) a64_ro_word(e, c->op, c->cont);
             size_t io_cold[4];
             unsigned nio = 0;
-            if (c->access && !c->byte)
-                a64_io_word(e, c->op, c->done, c->load, c->wb, io_cold, &nio, c->cont);
+            if (c->ro || (c->access && !c->byte)) {
+                /* No callback separates these probes. Prove the physical word
+                 * once; a TLB miss bypasses both probes to the checked helper. */
+                a64_word_pa(e, io_cold, &nio);
+                if (c->ro) a64_ro_word_pa(e, c->op, c->cont);
+                if (c->access && !c->byte)
+                    a64_io_word_pa(e, c->op, c->done, c->load, c->wb, io_cold, &nio, c->cont);
+            }
             for (unsigned j = 0; j < nio; ++j) a64_patch(e, io_cold[j], e->pos);
             if (c->access) a64_mem_slow(e, c->op, c->done, c->load, c->wb);
             else a64_slow(e, c->op, c->done);
