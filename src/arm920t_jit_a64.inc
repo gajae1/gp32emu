@@ -200,12 +200,26 @@ static void a64_u32(a64_emit_t *e, uint32_t v) {
     else e->fail = 1;
 }
 
+static int a64_logical_imm32(uint32_t mask, uint32_t *encoding);
+
 static void a64_imm(a64_emit_t *e, unsigned rd, uint32_t v) {
     if (!(v & 0xffffu))
         a64_u32(e, 0x52a00000u | ((v >> 16) << 5) | rd); /* movz W, lsl #16 */
+    else if ((v >> 16) == 0xffffu)
+        a64_u32(e, 0x12800000u | ((~v & 0xffffu) << 5) | rd); /* movn W */
+    else if ((v & 0xffffu) == 0xffffu)
+        a64_u32(e, 0x12a00000u | ((~v >> 16) << 5) | rd); /* movn W, lsl #16 */
     else {
-        a64_u32(e, 0x52800000u | ((v & 0xffffu) << 5) | rd); /* movz W */
-        if (v >> 16) a64_u32(e, 0x72a00000u | ((v >> 16) << 5) | rd);
+        uint32_t encoding;
+        /* Keep one-word MOVZ constants cheap; reuse the existing bitmask
+         * encoder only when it can replace two move-wide instructions. All
+         * W forms clear the upper half and preserve host condition flags. */
+        if ((v >> 16) && a64_logical_imm32(v, &encoding))
+            a64_u32(e, 0x320003e0u | encoding | rd); /* orr W, wzr, #imm */
+        else {
+            a64_u32(e, 0x52800000u | ((v & 0xffffu) << 5) | rd); /* movz W */
+            if (v >> 16) a64_u32(e, 0x72a00000u | ((v >> 16) << 5) | rd);
+        }
     }
 }
 
