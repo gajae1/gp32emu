@@ -19,12 +19,9 @@ Supply your own BIOS and game dumps; neither is included.
 - Supports save states and in-game SmartMedia saves when a writable card is mounted.
 - Offers optional LCD persistence and frame interpolation. RetroArch also offers
   guest CPU speed settings from 100% to 300%.
-- Shortens silent card-loading pauses: while a game stops audio, freezes the
-  screen and reads the card in bulk, its CPU runs at 4x speed. Blue Angelo's
-  dialogue-opening pause drops from about 1.1 s to 0.3 s.
-- Fixes the click noise in Astonishia Story R's music. The game's own ADPCM
-  decoder reads every other block with swapped nibbles; the emulator corrects
-  that instruction in memory without modifying the card image.
+- Shortens silent card-loading pauses such as Blue Angelo's dialogue opening.
+- Fixes the click noise in Astonishia Story R's music. The correction runs in
+  memory while the game plays, and the card image is not changed.
 
 ## Package contents
 
@@ -87,15 +84,19 @@ Keyboard controls match the Windows defaults. Gamepads work with touch controls
 hidden; the D-pad or left stick, A/B, L1/R1, Start and Select map to the GP32.
 A gamepad's Mode/Menu button opens the menu. Imported files and in-game saves are kept in
 private app storage; original files are unchanged. Uninstalling the app removes
-these copies and saves. The APK uses an existing development signing key for
+these copies and saves. If playback stops with an internal error, the app returns
+to the game list. The APK uses an existing development signing key for
 sideloading; it is not a Play Store release.
 
 ## RetroArch
 
 1. Install the core matching your platform and RetroArch architecture. Put its
    `.info` file in RetroArch's configured core information directory.
-2. Put your GP32 BIOS 1.6.6 dump in RetroArch's system directory as `gp32166m.bin`.
-   A BIOS is recommended; booting without one is limited.
+2. Put your GP32 BIOS in RetroArch's system directory, preferably as
+   `gp32166m.bin`. Any GP32 BIOS dump of 512 KiB or less works; other names such
+   as `gp32166.bin`, `gp32.bin`, `GP32.BIN`, `bios.bin` and the usual
+   `[BIOS] GamePark GP32 ...` dumps are recognized too. A BIOS is recommended;
+   booting without one is limited.
 3. Load the GP32emu core, then a `.smc`, `.fxe` or `.fpk` file. Use RetroPad port 1.
 
 Leave boot mode on `auto` for normal use. See the [manual](docs/MANUAL.ko.md)
@@ -104,11 +105,12 @@ for controls, options and installation details.
 ## Saves
 
 For an unpacked `.smc` file, the original card image is never modified. Ordinary
-card accesses during play work as before. Windows and RetroArch save changed
+card accesses during play behave normally. Windows and RetroArch save changed
 card pages automatically, at most once per 10 seconds after card writes have
-been idle for 2 seconds, and flush again when the game is closed or replaced.
-Release builds write in the background to keep storage I/O off the emulation
-thread. Saves are staged and flushed before replacing the previous file;
+been idle for 2 seconds, and flush again when the game is paused, closed or
+replaced. Builds with worker threads enabled (the default) write in the
+background to keep storage I/O off the emulation thread. Saves are staged and
+flushed before replacing the previous file;
 failed attempts retain pending changes and retry. Windows uses
 `<original filename including .smc>.gp32.sav` next
 to the ROM, for example `game.smc.gp32.sav`. RetroArch uses `<stem>.gp32.sav`
@@ -118,11 +120,11 @@ before loading them. If RetroArch supplies no save directory, the system
 directory is used. Games with the same filename stem share a save location;
 keep their saves in separate directories.
 
-Existing full `.gp32.smc` save images are imported automatically. After the new
-page-delta save is written successfully, the consumed old image is removed; if
-deletion fails, the new save wins. Full card images stored as `.gp32.sav` are
-also supported. Invalid saves or deltas for a different original stop loading
-instead of being overwritten. Keep backups of valuable progress.
+A save file that holds a full card image, either as `.gp32.smc` or as
+`.gp32.sav`, is loaded as it is. The first successfully written page-delta save
+takes its place; if the old file cannot be removed it is simply left behind.
+Invalid saves or deltas for a different original stop loading instead of being
+overwritten. Keep backups of valuable progress.
 
 Use a BIOS for in-game saves in commercial SMC games. Where direct boot does not
 preserve card writes, use save states instead.
@@ -137,8 +139,9 @@ also rolls back in-game card progress.
 
 - Some cards need a BIOS. Direct boot is limited for titles including Astonishia
   Story R, Hany and Super Plusha.
-- Keep game compatibility fixes enabled for Astonishia Story R's audio clicks
-  and Pinball Dreams' startup mute. These corrections leave the ROM unchanged.
+- The Astonishia Story R audio-click fix and the Pinball Dreams startup-mute fix
+  are on by default and leave the ROM unchanged. In RetroArch, keep
+  `Fix game code bugs` enabled; the Windows application always applies them.
 - Audio fidelity and input latency have not been measured against a physical
   GP32.
 - Compatibility checks cover selected scenes, not complete playthroughs.
@@ -163,8 +166,9 @@ fork terms.
 
 Parts of the hardware model come from MAME (BSD-3-Clause, Tim Schuerewegen,
 Raphael Nabet and others). The repository also includes the MIT-licensed kuba--
-zip library and parts of BDMEmu's frontend. Their notices are in
-[licenses/](licenses/).
+zip library, the public-domain miniz library (parts of which carry the RAD Game
+Tools, Valve Software and Rich Geldreich notices) and parts of BDMEmu's
+frontend. Their notices are in [licenses/](licenses/).
 
 The Windows package includes SDL3 under the zlib licence, with its notice in
 `SDL3-LICENSE.txt`. In the source tree, SDL3's `LICENSE.txt`

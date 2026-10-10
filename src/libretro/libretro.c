@@ -334,6 +334,8 @@ static int find_bios_path(char *out, size_t outsz, const char *game_path) {
         "GP32.BIN",
         "bios.bin",
         "[BIOS] GamePark GP32 (Europe) (v1.6.6).bin",
+        "[BIOS] GamePark GP32 (Korea) (v1.5.6).bin",
+        "[BIOS] GamePark GP32 (Europe) (v1.5.7).bin",
         NULL
     };
     char game_dir[4096];

@@ -68,7 +68,9 @@ The standalone APK additionally passes framework input checks on that Android
 holds, pointer release/cancel, focus loss, rotation and pause. The system file
 picker imported a BIOS and Astonishia Story R, the BIOS launcher accepted touch
 input, and the game's opening displayed through SurfaceView. AudioTrack was
-active at 44.1 kHz stereo. The AVD was muted; this does not establish audible
+active at 44.1 kHz stereo with a minimum buffer of 80 ms, and the app returned
+to the library screen after a forced internal error. The AVD was muted; this
+does not establish audible
 quality, real-phone latency or sustained native ARM performance.
 
 The released 1.0.0 ARM64 core has been loaded by a private JNI/libretro test frontend
@@ -80,7 +82,7 @@ frames (44.1 kHz, signed 16-bit) matched the Windows reference byte for byte. Th
 core also serialized and restored a fresh state successfully. JIT was requested,
 but the test did not independently measure whether native JIT code executed.
 
-The earlier core-only check covers library loading, the exercised core path,
+The core-only check covers library loading, the exercised core path,
 audio callbacks and state compatibility. Neither check verifies RetroArch import,
 physical audio/controller devices, native ARM performance, ARMv7 runtime, or a
 16 KB-page device. Those still need testing. BIOS and games are not distributed
