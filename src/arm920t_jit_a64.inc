@@ -40,9 +40,9 @@ typedef struct a64_emit {
     int open_bus;    /* bus promises open_bus_word32 outside every window */
     int nzcv_valid; /* host NZCV equals the committed guest flags */
     int fwd_guest;  /* guest register whose committed value is still in w2, -1 = none.
-                     * Only a plain register data op leaves it set; every other
-                     * emitter and any helper/cold path clears it, because w2 is
-                     * caller-saved across helpers and reused as scratch. */
+                     * A plain data op publishes it for the next data op or a
+                     * pre-indexed store without writeback. Other emitters and
+                     * all helper/cold continuations clear it. */
     uint32_t expected_next, generation;
     uint32_t loop_done, block_count;
     size_t loop_head;
@@ -992,6 +992,11 @@ static int a64_single_dt(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
     unsigned d = op->d;
     int load = !!(d & ARM_BC_SD_L), byte = !!(d & ARM_BC_SD_B);
     int wb = !(d & ARM_BC_SD_P) || (d & ARM_BC_SD_W);
+    int fwd_store = !load && !wb && op->b == (unsigned)e->fwd_guest;
+    /* A pre-indexed address without writeback and the RAM guards preserve
+     * w2. Consume the committed data result here; the cold helper rereads the
+     * guest source, and no following op may reuse its caller-saved scratch. */
+    e->fwd_guest = -1;
     if (!(load ? e->ram_read : e->ram_write) || (wb && op->a == 15u)) return 0;
     int access = op->b != 15u; /* PC load/store stays on whole-op fallback */
     size_t slow[4];
@@ -1046,8 +1051,9 @@ static int a64_single_dt(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
         if (op->b == 15u) a64_mask(e, 1, 1, ~3u);
         a64_put_guest(e, op->b, 1);
     } else {
-        a64_guest(e, 1, op->b, op->pc);
-        a64_u32(e, (byte ? 0x38206800u : 0xb8206800u) | (9u << 16) | (21u << 5) | 1u);
+        if (!fwd_store) a64_guest(e, 1, op->b, op->pc);
+        a64_u32(e, (byte ? 0x38206800u : 0xb8206800u) | (9u << 16) | (21u << 5) |
+                   (fwd_store ? 2u : 1u));
     }
     if (wb) a64_put_guest(e, op->a, 2); /* includes the helper's Rn==Rd order */
     if (load && op->b == 15u) {
@@ -1413,6 +1419,8 @@ static int a64_one(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
         }
         return a64_data(e, op, done);
     }
+    /* This emitter consumes a forwarded store value before clearing it. */
+    if (op->kind == ARM_JIT_OP_SINGLE_DT) return a64_single_dt(e, op, done);
     /* Every other emitter writes w2 (address formation, transfer value,
      * writeback) or calls a helper that clobbers it: the forwarded result of
      * the previous op can never survive one of them. */
@@ -1422,7 +1430,6 @@ static int a64_one(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
         return a64_mul(e, op, done);
     }
     if (op->kind == ARM_JIT_OP_HALF) return a64_half(e, op, done);
-    if (op->kind == ARM_JIT_OP_SINGLE_DT) return a64_single_dt(e, op, done);
     if (op->kind == ARM_JIT_OP_BLOCK_DT) return a64_block_dt(e, op, done);
     if (op->kind == ARM_JIT_OP_PSR) return a64_psr_mov(e, op, done);
     if (op->kind == ARM_JIT_OP_COPROC) return a64_local_p15(e, op, done);

@@ -1806,6 +1806,85 @@ static void case_native_forwarding(void) {
         }
 }
 
+/* A committed ALU result may feed a store, but scratch writeback and callback
+ * changes must never become its source. Compare both MMU states and split runs. */
+static void case_native_store_forwarding(void) {
+    const uint32_t program[] = {
+        0xee02af10u, 0xee01bf10u, /* page table and MMU control */
+        0xe1a02000u, 0xe5842000u, /* MOV r2,r0; STR r2,[r4] */
+        0xe2822001u, 0xe5c42004u, /* ADD r2,#1; STRB r2,[r4,#4] */
+        0xe2802002u, 0xe7842105u, /* ADD r2,r0,#2; STR r2,[r4,r5,LSL#2] */
+        0xe2802003u, 0xe7842066u, /* ADD r2,r0,#3; STR r2,[r4,r6,RRX] */
+        0xe2844000u, 0xe5844020u, /* base and store source alias */
+        0xe3500000u, 0xe2802004u, /* CMP r0,#0; ADD r2,r0,#4 */
+        0x05842010u, 0x15842014u, /* taken/skipped stores */
+        0xe3a02007u, 0xe3a03055u, 0x13a02077u, 0xe5842018u, /* conditional producer */
+        0xe2802005u, 0xe5a4201cu, 0xe5947000u, /* pre-index writeback */
+        0xe2802006u, 0xe4842004u, 0xeafffffeu  /* post-index writeback */
+    };
+    const uint32_t seeds[] = {0u, 0x12345678u, 0xffffffffu};
+    for (unsigned mmu = 0; mmu < 2u; ++mmu)
+        for (unsigned seed = 0; seed < GP32_ARRAY_COUNT(seeds); ++seed)
+            for (unsigned split = 0; split < 2u; ++split) {
+                current_case = "native-store-forwarding";
+                setup_pair(); load_both(program, GP32_ARRAY_COUNT(program));
+                arm920t_set_cpsr(cpu_jit, 0xd3u); arm920t_set_cpsr(cpu_ref, 0xd3u);
+                set_reg_both(0u, seeds[seed]); set_reg_both(4u, DATA_ADDR);
+                set_reg_both(5u, 2u); set_reg_both(6u, 24u);
+                set_reg_both(10u, RAM_BASE + 0x8000u); set_reg_both(11u, mmu);
+                set_mem_both(RAM_BASE + 0x8000u, 2u);
+                set_mem_both(RAM_BASE + 0x8000u + (RAM_BASE >> 20) * 4u, RAM_BASE | 2u);
+                if (split) {
+                    CHECK(arm920t_run(cpu_jit, 3u) == arm920t_run(cpu_ref, 3u), "split store producer budget");
+                    compare_state();
+                }
+                run_native_case();
+                gp32_cpu_profile_t profile;
+                arm920t_get_cpu_profile(cpu_jit, &profile);
+                if (profile.supported && profile.native_backend)
+                    CHECK(profile.native_block_calls != 0u && profile.native_arm_insns != 0u,
+                          "store forwarding fixture never entered native code");
+                const uint32_t expected[] = {
+                    seeds[seed], (seeds[seed] + 1u) & 0xffu, seeds[seed] + 2u, seeds[seed] + 3u,
+                    seeds[seed] ? 0u : 4u, seeds[seed] ? seeds[seed] + 4u : 0u,
+                    seeds[seed] ? 0x77u : 7u, seeds[seed] + 6u, DATA_ADDR
+                };
+                for (unsigned i = 0; i < GP32_ARRAY_COUNT(expected); ++i)
+                    CHECK(gp32_ld32le(bus_ref.ram + DATA_ADDR - RAM_BASE + i * 4u) == expected[i],
+                          "store forwarding fixture result");
+                CHECK(ref_reg(7u) == seeds[seed] + 5u && ref_reg(4u) == DATA_ADDR + 32u,
+                      "writeback retains the original store source");
+                teardown_pair();
+            }
+    for (unsigned load = 0; load < 2u; ++load) {
+        const uint32_t callback[2][5] = {
+            {0xe2802008u, 0xe5842000u, 0xe2825001u, 0xe58a5000u, 0xeafffffeu},
+            {0xe3a02044u, 0xe5945000u, 0xe58a2000u, 0xe2856001u, 0xeafffffeu}
+        };
+        current_case = "native-store-forwarding-callback";
+        setup_pair(); load_both(callback[load], GP32_ARRAY_COUNT(callback[load]));
+        arm920t_set_trace(cpu_ref, 1, NULL, NULL);
+        set_reg_both(0u, 0x1234u); set_reg_both(4u, IO_ADDR); set_reg_both(10u, DATA_ADDR);
+        bus_jit.observe_cpu = cpu_jit; bus_ref.observe_cpu = cpu_ref;
+        bus_jit.mem_probe = bus_ref.mem_probe = 1u;
+        run_native_case();
+        gp32_cpu_profile_t profile;
+        arm920t_get_cpu_profile(cpu_jit, &profile);
+        if (profile.supported && profile.native_backend)
+            CHECK(profile.native_block_calls != 0u && profile.native_arm_insns != 0u,
+                  "store forwarding callback fixture never entered native code");
+        CHECK(bus_jit.mem_calls == 1u && bus_ref.mem_calls == 1u &&
+              bus_jit.mem_value == (load ? 0u : 0x123cu) && bus_ref.mem_value == (load ? 0u : 0x123cu) &&
+              bus_jit.mem_pc == CODE_ADDR + 8u && bus_ref.mem_pc == CODE_ADDR + 8u,
+              "cold store observes committed source and PC");
+        CHECK(ref_reg(5u) == (load ? 0x8877ff80u : 0xabcdef02u) &&
+              gp32_ld32le(bus_ref.ram + DATA_ADDR - RAM_BASE) == (load ? 0xabcdef01u : 0xabcdef02u),
+              "following ALU rereads the callback-mutated register");
+        if (load) CHECK(ref_reg(6u) == 0x8877ff81u, "cold load reaches its live continuation");
+        teardown_pair();
+    }
+}
+
 /* Self moves may disappear, but flags, shifted forms and PC writes may not.
  * Record intermediate values before later instructions can hide a mistake. */
 static void case_native_self_move_noop(void) {
@@ -4825,7 +4904,9 @@ int main(int argc, char **argv) {
     int psr_only = argc == 2 && !strcmp(argv[1], "--psr");
     int terminal_coproc_only = argc == 2 && !strcmp(argv[1], "--terminal-coproc");
     int selfmove_only = argc == 2 && !strcmp(argv[1], "--self-move-nop");
-    if (argc == 2 && !strcmp(argv[1], "--sflag-logic")) {
+    if (argc == 2 && !strcmp(argv[1], "--store-forwarding")) {
+        case_native_store_forwarding();
+    } else if (argc == 2 && !strcmp(argv[1], "--sflag-logic")) {
         case_native_sflag_logic();
     } else if (argc == 2 && !strcmp(argv[1], "--const-data")) {
         case_native_const_data();
@@ -4950,6 +5031,7 @@ int main(int argc, char **argv) {
     case_native_const_data();
     case_native_const_chain();
     case_native_forwarding();
+    case_native_store_forwarding();
     case_native_self_move_noop();
     case_native_immediates();
     case_native_immshift();
