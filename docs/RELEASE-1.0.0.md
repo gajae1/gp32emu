@@ -46,7 +46,7 @@ the exact original card.
 
 ## Known limitations
 
-Some cards need a BIOS, and Pinball Dreams can be silent with direct boot.
+Some cards need a BIOS. Pinball Dreams can remain silent during startup, including with a BIOS.
 Compatibility checks cover selected scenes, not complete playthroughs; audio fidelity and input
 latency have not been measured against a physical GP32. RetroArch rewind and
 run-ahead are unverified. Android cores have been compiled but runtime use is

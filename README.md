@@ -136,7 +136,8 @@ also rolls back in-game card progress.
 ## Limitations
 
 - Some cards need a BIOS. Direct boot is limited for titles including Astonishia
-  Story R, Hany and Super Plusha. Pinball Dreams can be silent on the direct-boot path.
+  Story R, Hany and Super Plusha.
+- Pinball Dreams can remain silent during startup, including with a BIOS.
 - Audio fidelity and input latency have not been measured against a physical
   GP32.
 - Compatibility checks cover selected scenes, not complete playthroughs.
