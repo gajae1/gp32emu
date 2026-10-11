@@ -13,6 +13,7 @@ BIOS와 게임 파일은 포함하지 않습니다. 직접 보유한 덤프를 �
 | Android 앱 | `gp32emu-1.0.1-android.apk`: 별도 설치, RetroArch 불필요 |
 | Android ARM64 RetroArch | `gp32emu-1.0.1-android-arm64.zip`: `gp32emu_libretro_android.so` |
 | Android ARMv7 RetroArch | `gp32emu-1.0.1-android-armv7.zip`: `gp32emu_libretro_android.so` |
+| Nintendo Switch RetroArch | `gp32emu-1.0.1-switch-libnx.zip`: 실험적 NRO 코어 |
 
 각 코어 ZIP에는 `gp32emu_libretro.info`도 포함되어 있습니다. 실행용 ZIP에는 README,
 릴리스 노트, 이 설명서, `licenses/`, `manifest.json`이 함께 들어 있습니다.
@@ -20,8 +21,9 @@ Linux 코어는 glibc 2.17 이상, Android 코어는 API 21 이상을 대상으�
 Android 앱은 Android 6.0 이상이 필요합니다. 실제 ARM 휴대전화 검증은 아직 남아 있습니다. ARMv7은 JIT 없이 동작하므로
 ARM64보다 상당히 느립니다.
 
-`gp32emu-1.0.1-source.zip`은 개발용 소스이며 바로 실행하는 프로그램이 아닙니다.
-Switch용 실행 파일은 제공하지 않습니다.
+`gp32emu-1.0.1-source.zip`은 모든 플랫폼을 포함한 전체 프로젝트 소스입니다.
+`gp32emu-1.0.1-switch-libnx-source.zip`은 Switch 코어 소스·정적 라이브러리·빌드 안내입니다.
+설치하려면 소스 압축파일 대신 `gp32emu-1.0.1-switch-libnx.zip`을 받으세요.
 
 게임은 `.smc` 카드 이미지와 `.fxe`, `.fpk` 형식을 엽니다. GP32 BIOS는 압축을 푼
 512 KiB 이하의 덤프를 사용하며, 파일 이름은 `gp32166m.bin`을 권장합니다. BIOS 없이 실행할
@@ -34,6 +36,20 @@ Switch용 실행 파일은 제공하지 않습니다.
 - **Android:** 기존 앱을 지우지 말고 새 APK를 덮어 설치하면 가져온 게임과 세이브가 유지됩니다.
 - **RetroArch:** 게임을 종료하고 같은 플랫폼·아키텍처의 코어와 정보 파일을 교체합니다.
   BIOS·롬·저장 파일과 기존 RetroArch 설정은 그대로 사용하세요.
+
+## Nintendo Switch
+
+[공식 Switch RetroArch](https://docs.libretro.com/guides/install-libnx/)를 먼저 설치하고,
+Switch ZIP의 `retroarch` 폴더를 SD 카드 최상위에 합칩니다. NRO는 `retroarch/cores/`,
+정보 파일은 `retroarch/cores/info/`에 들어갑니다. 정보 폴더를 따로 지정했다면 해당
+경로를 사용하세요. 기존 설정은 그대로 두고, 시스템 폴더에 `gp32166m.bin`을 넣은 뒤
+GP32emu 코어와 게임을 선택합니다. 실행 모드는 공식 안내의 전체 메모리 앱 모드를
+권장합니다.
+
+이 NRO에는 RetroArch 1.22.2가 포함됩니다. **Switch 실기 미검증 실험적 빌드**입니다.
+ARM64 JIT를 사용하며 실행 환경에서 JIT 권한을 제공하지 않으면 인터프리터로
+대체합니다. 문제를 제보할 때는 게임 이름, BIOS 버전, 재현 순서와 소리·화면·저장 중
+어떤 문제가 생기는지 적어 주세요.
 
 ## Windows 독립 실행
 

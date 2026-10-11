@@ -35,11 +35,10 @@ unverified.
 For Linux AArch64 cross-compilation, put Zig 0.13.0 on PATH and use the toolchain
 file `cmake/toolchains/linux-aarch64-zig.cmake`. It retains the Cortex-A53
 code-generation settings and targets glibc 2.17 or newer. The old
-`h700-zig.cmake` name is a compatible alias. This is a Linux ABI target,
-not a chip-specific frontend; other ARM64 Linux devices need compatible CPU
+`h700-zig.cmake` name is a compatible alias. The target requires compatible CPU
 features, glibc, and a 64-bit libretro frontend. A 32-bit RetroArch process
 cannot load this core, even on a 64-bit kernel. Android and Switch need their
-own platform builds. RK3326 hardware compatibility and speed remain untested.
+own platform builds.
 
 `scripts/package_release.ps1` assembles five independent ZIP releases from a
 clean, committed source tree. Pass a new output directory plus four build
@@ -58,7 +57,7 @@ root, then adds the common README, release notes, Korean manual, `licenses/`
 and `manifest.json`. The output directory also receives `SHA256SUMS.txt` for
 the five ZIP files.
 
-## Nintendo Switch (experimental source only)
+## Nintendo Switch (experimental)
 
 `Makefile.libretro` includes a `platform=libnx` target for devkitPro's devkitA64
 and libnx. In a configured devkitPro shell, run:
@@ -76,10 +75,17 @@ The [official RetroArch build guide](https://docs.libretro.com/development/retro
 describes copying this library into RetroArch as `libretro_libnx.a` and linking
 it into an `.nro`. RetroArch does not compile or execute C source on the device.
 
-Native JIT is disabled on Switch; this path uses the decoded-block interpreter.
-An official-toolchain build and device testing remain outstanding, so no Switch
-binary is included in the release. Linux AArch64 packages cannot be used on
-Switch.
+The Switch port uses libnx JIT memory with separate writable and executable
+aliases. The ARM64 recompiler is shared with other AArch64 hosts. If the
+homebrew loader does not provide JIT permissions, the core uses the interpreter.
+The release includes an experimental NRO linked with RetroArch 1.22.2. Device
+testing remains outstanding. Linux AArch64 packages cannot be used on Switch.
+
+The manually dispatched `Switch libnx build` GitHub Actions workflow builds
+the static core and NRO using the official `devkitpro/devkita64` container.
+It records installed toolchain packages and both source revisions alongside
+the artifacts. For a noninteractive shell, add `$DEVKITPRO/devkitA64/bin` to
+`PATH` before running make.
 
 ## Standalone frontends
 
