@@ -27,9 +27,10 @@ steps. `Makefile.libretro` also builds the legacy Linux core.
 
 The Android build script accepts `arm64-v8a` and `armeabi-v7a`. Building `x86_64`
 requires a manual NDK CMake configuration with `-DANDROID_ABI=x86_64` or
-`ndk-build`. The Android target is API 21. A limited Android app-sandbox run is
-documented in [ANDROID_BUILD.md](ANDROID_BUILD.md#runtime-validation); RetroArch
-integration and native ARM device use remain unverified.
+`ndk-build`. The separate Android cores target API 21; the standalone app targets API 23
+as its minimum. See [ANDROID_BUILD.md](ANDROID_BUILD.md) for app packaging and
+validation limits. RetroArch integration and native ARM device use remain
+unverified.
 
 For Linux AArch64 cross-compilation, put Zig 0.13.0 on PATH and use the toolchain
 file `cmake/toolchains/linux-aarch64-zig.cmake`. It retains the Cortex-A53
@@ -56,6 +57,29 @@ Each archive places its binaries and, for cores, `gp32emu_libretro.info` at the
 root, then adds the common README, release notes, Korean manual, `licenses/`
 and `manifest.json`. The output directory also receives `SHA256SUMS.txt` for
 the five ZIP files.
+
+## Nintendo Switch (experimental source only)
+
+`Makefile.libretro` includes a `platform=libnx` target for devkitPro's devkitA64
+and libnx. In a configured devkitPro shell, run:
+
+```sh
+make -f Makefile.libretro platform=libnx
+```
+
+It produces `gp32emu_libretro_libnx.a`, a static core intended for linking with
+RetroArch's libnx frontend. It is not a directly loadable `.so` or a standalone
+`.nro`. Use a clean build directory or checkout when changing platform targets;
+the Makefile shares object paths between platforms.
+
+The [official RetroArch build guide](https://docs.libretro.com/development/retroarch/compilation/switch-libnx/)
+describes copying this library into RetroArch as `libretro_libnx.a` and linking
+it into an `.nro`. RetroArch does not compile or execute C source on the device.
+
+Native JIT is disabled on Switch; this path uses the decoded-block interpreter.
+An official-toolchain build and device testing remain outstanding, so no Switch
+binary is included in the release. Linux AArch64 packages cannot be used on
+Switch.
 
 ## Standalone frontends
 
