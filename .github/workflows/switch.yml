@@ -7,6 +7,20 @@ permissions:
   contents: read
 
 jobs:
+  jit-mapping-tests:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Exercise Switch memory mappings on ARM64 Linux
+        shell: bash
+        run: |
+          set -euo pipefail
+          cc -std=c2x -O2 -D__SWITCH__ -D_XOPEN_SOURCE=700 -Itests/switch_jit -Iinclude -Isrc tests/arm_jit_recycle_test.c tests/switch_jit/mock.c -lm -o /tmp/switch-recycle
+          /tmp/switch-recycle | tee /tmp/recycle.log
+          grep -q '^PASS:' /tmp/recycle.log
+          SWITCH_JIT_PERMISSION_MODE=1 /tmp/switch-recycle | tee /tmp/recycle-permissions.log
+          grep -q '^PASS:' /tmp/recycle-permissions.log
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 30
