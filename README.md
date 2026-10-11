@@ -28,13 +28,14 @@ play directly, or a core package for your existing RetroArch installation.
 
 ## Package contents
 
-| ZIP package | Binaries at the archive root |
+| ZIP package | Contents |
 | --- | --- |
 | `gp32emu-1.0.1-windows-x64.zip` | `gp32emu_win64.exe`, `SDL3.dll`, `SDL3-LICENSE.txt` |
 | `gp32emu-1.0.1-libretro-windows-x64.zip` | `gp32emu_libretro.dll`, `gp32emu_libretro.info` |
 | `gp32emu-1.0.1-linux-aarch64.zip` | `gp32emu_libretro.so`, `gp32emu_libretro.info` |
 | `gp32emu-1.0.1-android-arm64.zip` | `gp32emu_libretro_android.so`, `gp32emu_libretro.info` |
 | `gp32emu-1.0.1-android-armv7.zip` | `gp32emu_libretro_android.so`, `gp32emu_libretro.info` |
+| `gp32emu-1.0.1-switch-libnx.zip` | Experimental RetroArch NRO core and installation guide |
 
 The separate `gp32emu-1.0.1-android.apk` installs the Android application; it is
 not a ZIP archive and does not require RetroArch. It supports Android 6.0 or
@@ -51,6 +52,9 @@ and `manifest.json` with checksums for the packaged files. BIOS images, games an
 save files are not included.
 
 `gp32emu-1.0.1-source.zip` contains source code, not a ready-to-run application.
+The Switch binary is in `gp32emu-1.0.1-switch-libnx.zip`; its matching core
+sources and static library are in `gp32emu-1.0.1-switch-libnx-source.zip`.
+Source archives cannot be installed as RetroArch cores.
 
 ### Upgrading
 
@@ -140,6 +144,20 @@ sideloading; it is not a Play Store release.
 Leave boot mode on `auto` for normal use. See the [manual](docs/MANUAL.ko.md)
 for controls, options and installation details.
 
+## Nintendo Switch
+
+Install the [official Switch RetroArch bundle](https://docs.libretro.com/guides/install-libnx/)
+first. Extract the `retroarch` folder from the Switch ZIP onto the SD card root.
+The NRO belongs in `retroarch/cores/`, and its information file in
+`retroarch/cores/info/` (or your configured core information directory). Keep
+your existing RetroArch configuration. Put `gp32166m.bin` in your system
+directory, then select the GP32emu core and a game. Use full-memory application
+mode as described in the RetroArch guide.
+
+This experimental NRO includes RetroArch 1.22.2 and the GP32emu core. It has
+not been tested on a Switch; performance, audio and save behaviour need device
+testing. Report issues with the game, BIOS version and steps to reproduce.
+
 ## Saves
 
 For an unpacked `.smc` file, the original card image is never modified. Ordinary
@@ -184,8 +202,9 @@ also rolls back in-game card progress.
 - Physical Android device performance and Android RetroArch integration remain
   unverified.
 - Qt and browser frontends are available in source form; their runtime use is
-  unverified. Switch support is experimental source code only, with native JIT
-  disabled and no built or tested Switch binary in this release.
+  unverified. The Switch build is experimental and has not been tested on a
+  console. It uses the ARM64 JIT when the homebrew environment permits executable
+  memory, with an interpreter fallback.
 
 ## Building from source
 

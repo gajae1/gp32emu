@@ -2,6 +2,8 @@
 
 ## Changes
 
+- Adds an experimental Nintendo Switch NRO core with ARM64 JIT support.
+
 - Fixes stale instruction reuse after DMA and file loading replace code in RAM,
   including DMA transfers that begin outside RAM. Data-only transfers avoid
   unnecessary cache checks.
@@ -14,10 +16,17 @@
 
 ## Downloads and upgrading
 
-Download the package for your platform. Windows application, Windows libretro,
-Linux AArch64, Android ARM64 and Android ARMv7 cores have separate ZIP files.
-The standalone Android app is `gp32emu-1.0.1-android.apk`; it does not require
-RetroArch. Source is also available separately.
+| Package | Use |
+| --- | --- |
+| `gp32emu-1.0.1-windows-x64.zip` | Windows application |
+| `gp32emu-1.0.1-libretro-windows-x64.zip` | Windows RetroArch core |
+| `gp32emu-1.0.1-linux-aarch64.zip` | 64-bit ARM Linux RetroArch core |
+| `gp32emu-1.0.1-android.apk` | Android application; RetroArch is not required |
+| `gp32emu-1.0.1-android-arm64.zip` | Android ARM64 RetroArch core |
+| `gp32emu-1.0.1-android-armv7.zip` | Android ARMv7 RetroArch core |
+| `gp32emu-1.0.1-switch-libnx.zip` | Experimental Nintendo Switch RetroArch NRO core |
+| `gp32emu-1.0.1-switch-libnx-source.zip` | Switch core source, compiled static library and build instructions |
+| `gp32emu-1.0.1-source.zip` | Full project source for all platforms |
 
 Android users can install the APK over 1.0.0 to keep imported games and saves.
 Do not uninstall the old app first. On Windows, close the emulator before
@@ -27,12 +36,13 @@ Version 1.0.0 downloads remain available.
 
 The app requires Android 6.0 or newer. Android cores require API 21 or newer;
 ARMv7 runs without a native JIT. The Linux core requires 64-bit AArch64 Linux,
-glibc 2.17 or newer, and a compatible 64-bit libretro frontend. It is not tied
-to H700 hardware. Android, 32-bit Linux and Switch need different binaries.
+glibc 2.17 or newer, and a compatible 64-bit libretro frontend.
 
-## Limits
+The Switch NRO includes RetroArch 1.22.2. Extract its `retroarch` folder onto
+the SD card alongside an existing Switch RetroArch installation. The build
+is experimental and has not been tested on a console. ARM64 JIT is enabled
+when the homebrew environment permits it, with an interpreter fallback.
+See the included Switch guide for installation and reporting test results.
 
-Physical Android and RK3326 runtime validation remains outstanding. The
-experimental Switch source path has no officially built or tested binary in
-this release. BIOS images, games and saves are not included in public downloads.
-See the README and manual for existing game-compatibility and licensing notes.
+Supply your own BIOS and games. See the README and manual for installation,
+controls, saves and compatibility notes.
