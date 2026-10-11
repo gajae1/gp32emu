@@ -1,5 +1,9 @@
 # Android builds
 
+These instructions are for developers building from source. For installing and
+using released packages, see the [README](../README.md) and
+[Korean manual](MANUAL.ko.md#android-앱과-retroarch).
+
 ## Standalone APK
 
 The standalone app hosts the same libretro core with Android SurfaceView,
@@ -32,7 +36,7 @@ The core builds for Android through the standard NDK paths. Both need a C23-capa
 Clang, and the CMake route also needs CMake and Ninja on PATH. The tested toolchain is
 NDK r28b (28.2.13676358) with `APP_PLATFORM` android-21.
 
-## ndk-build
+### ndk-build
 
 Run `ndk-build` from the project root; it picks up `jni/Android.mk` and
 `jni/Application.mk` and writes the standard `libs/<abi>/libretro.so`. Three ABIs are
@@ -45,7 +49,7 @@ declared:
 with `--no-undefined`) and sets the 16 KB page-size flags that Android 15 wants on the
 two 64-bit ABIs.
 
-## CMake
+### CMake
 
 From PowerShell, with the NDK installed:
 
@@ -61,30 +65,14 @@ covers only `arm64-v8a` and `armeabi-v7a`; its `-Abi` parameter accepts those tw
 and the release packages them. For `x86_64`, configure CMake manually with
 `-DANDROID_ABI=x86_64` or use the `ndk-build` route above, which builds all three.
 
-## Runtime validation
+## Validation limits
 
-The standalone APK additionally passes framework input checks on that Android
-11 AVD: touch visibility, all GP32 buttons, simultaneous touch/keyboard/gamepad
-holds, pointer release/cancel, focus loss, rotation and pause. The system file
-picker imported a BIOS and Astonishia Story R, the BIOS launcher accepted touch
-input, and the game's opening displayed through SurfaceView. AudioTrack was
-active at 44.1 kHz stereo with a minimum buffer of 80 ms, and the app returned
-to the library screen after a forced internal error. The AVD was muted; this
-does not establish audible
-quality, real-phone latency or sustained native ARM performance.
+The standalone app requires API 23; the separate libretro cores target API 21.
+Do not package the app's API 23 native libraries as API 21 core downloads.
+ARM64 has a native JIT; ARMv7 uses the interpreter.
 
-The released 1.0.0 ARM64 core has been loaded by a private JNI/libretro test frontend
-inside an Android 11 app sandbox. This used an x86-64 Android Virtual Device with
-`libndk_translation.so` and 4 KB pages, not a native ARM phone.
-
-An Astonishia Story R title save state ran for 180 frames. All 132,299 stereo audio
-frames (44.1 kHz, signed 16-bit) matched the Windows reference byte for byte. The
-core also serialized and restored a fresh state successfully. JIT was requested,
-but the test did not independently measure whether native JIT code executed.
-
-The core-only check covers library loading, the exercised core path,
-audio callbacks and state compatibility. Neither check verifies RetroArch import,
-physical audio/controller devices, native ARM performance, ARMv7 runtime, or a
-16 KB-page device. Those still need testing. BIOS and games are not distributed
-with the core or the test frontend.
-
+Android 11 AVD checks cover input mapping, persistence, rotation and pause.
+Emulator checks do not establish native ARM performance or audible quality.
+Physical Android devices, ARMv7 runtime, Android RetroArch integration and
+16 KB-page devices still need runtime validation. BIOS and games are not
+included in the app, core or instrumentation package.

@@ -9,7 +9,8 @@
   **Controls** from the game list or pause menu, select a control, then press a
   key. Duplicate assignments swap; edits can be saved, cancelled or reset.
 - Asks before restarting an Android game to avoid losing unsaved progress.
-- Keeps the existing Windows game library, keyboard mapping and safe Esc behavior.
+- Updates the installation, controls, save-file and upgrade instructions for each
+  platform.
 
 ## Downloads and upgrading
 

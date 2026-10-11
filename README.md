@@ -10,6 +10,9 @@ Supply your own BIOS and game dumps; neither is included.
 
 [Downloads](https://github.com/gajae1/gp32emu/releases) · [한국어 사용설명서](docs/MANUAL.ko.md)
 
+Current version: **1.0.1**. Choose the Windows application or Android APK to
+play directly, or a core package for your existing RetroArch installation.
+
 ## Features
 
 - Loads `.smc` SmartMedia images and `.fxe` / `.fpk` homebrew.
@@ -42,10 +45,21 @@ cores target API 21 or newer. ARMv7 uses the interpreter and is substantially
 slower than ARM64. Physical Android devices and Android RetroArch integration
 still need runtime testing.
 
-Each ZIP also contains this README, release notes, the
+Each binary ZIP also contains this README, release notes, the
 [Korean manual](docs/MANUAL.ko.md), third-party notices in [licenses/](licenses/),
 and `manifest.json` with checksums for the packaged files. BIOS images, games and
 save files are not included.
+
+`gp32emu-1.0.1-source.zip` contains source code, not a ready-to-run application.
+
+### Upgrading
+
+- Windows: close GP32emu and replace the program files. Keep `GP32emu.ini`,
+  saves and the `states` folder.
+- Android: install the new APK over the existing app to keep imported games
+  and saves. Do not uninstall first.
+- RetroArch: close the game and replace the core and `.info` file for the same
+  platform and architecture. Keep your BIOS, games, saves and frontend settings.
 
 ## Windows application
 
@@ -117,7 +131,7 @@ sideloading; it is not a Play Store release.
 1. Install the core matching your platform and RetroArch architecture. Put its
    `.info` file in RetroArch's configured core information directory.
 2. Put your GP32 BIOS in RetroArch's system directory, preferably as
-   `gp32166m.bin`. Any GP32 BIOS dump of 512 KiB or less works; other names such
+   `gp32166m.bin`. Use an uncompressed GP32 BIOS dump of 512 KiB or less. Names such
    as `gp32166.bin`, `gp32.bin`, `GP32.BIN`, `bios.bin` and the usual
    `[BIOS] GamePark GP32 ...` dumps are recognized too. A BIOS is recommended;
    booting without one is limited.
@@ -129,13 +143,10 @@ for controls, options and installation details.
 ## Saves
 
 For an unpacked `.smc` file, the original card image is never modified. Ordinary
-card accesses during play behave normally. Windows and RetroArch save changed
-card pages automatically, at most once per 10 seconds after card writes have
-been idle for 2 seconds, and flush again when the game is paused, closed or
-replaced. Builds with worker threads enabled (the default) write in the
-background to keep storage I/O off the emulation thread. Saves are staged and
-flushed before replacing the previous file;
-failed attempts retain pending changes and retry. Windows uses
+card accesses during play behave normally. Windows and RetroArch automatically
+save only the changed card pages in a compact file. Exit the game normally
+before powering off or removing storage so the latest changes can be saved.
+Windows uses
 `<original filename including .smc>.gp32.sav` next
 to the ROM, for example `game.smc.gp32.sav`. RetroArch uses `<stem>.gp32.sav`
 in its configured save directory. The save location must be writable, and the
@@ -144,9 +155,9 @@ before loading them. If RetroArch supplies no save directory, the system
 directory is used. Games with the same filename stem share a save location;
 keep their saves in separate directories.
 
-A save file that holds a full card image, either as `.gp32.smc` or as
-`.gp32.sav`, is loaded as it is. The first successfully written page-delta save
-takes its place; if the old file cannot be removed it is simply left behind.
+Older full-card saves (`.gp32.smc` or `.gp32.sav`) are loaded and converted to
+compact saves after the next successful save. Open the original game file;
+you do not need to select the save file as a game.
 Invalid saves or deltas for a different original stop loading instead of being
 overwritten. Keep backups of valuable progress.
 
@@ -170,10 +181,11 @@ also rolls back in-game card progress.
   GP32.
 - Compatibility checks cover selected scenes, not complete playthroughs.
 - Rewind and run-ahead in a real RetroArch session are unverified.
-- Android app and core smoke checks have passed in an Android 11 AVD. Native
-  ARM device performance and Android RetroArch integration remain unverified.
-  Qt runtime and browser playback are also unverified; these frontends are
-  available in source form.
+- Physical Android device performance and Android RetroArch integration remain
+  unverified.
+- Qt and browser frontends are available in source form; their runtime use is
+  unverified. Switch support is experimental source code only, with native JIT
+  disabled and no built or tested Switch binary in this release.
 
 ## Building from source
 
