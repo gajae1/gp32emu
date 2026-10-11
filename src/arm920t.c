@@ -6,10 +6,8 @@
  */
 #include "arm920t.h"
 
-/* Horizon (Nintendo Switch) has no RWX mmap. Its JIT goes through libnx with
- * separate RW and RX views, which the A64 emitter does not support, so the
- * Switch build keeps the portable decoded-block interpreter. */
-#if (defined(__aarch64__) || defined(_M_ARM64)) && !defined(__AARCH64EB__) && !defined(__SWITCH__)
+/* Horizon uses libnx dual mappings; other A64 hosts retain their allocator. */
+#if (defined(__aarch64__) || defined(_M_ARM64)) && !defined(__AARCH64EB__)
 #define ARM_JIT_NATIVE_A64 1
 #endif
 
@@ -63,7 +61,9 @@ enum arm_jit_inv_cause {
 };
 
 #if defined(__x86_64__) || defined(_M_X64) || defined(ARM_JIT_NATIVE_A64)
-#if defined(_WIN32)
+#if defined(__SWITCH__)
+#include <switch.h>
+#elif defined(_WIN32)
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN 1
 #endif
@@ -376,6 +376,10 @@ struct arm920t {
      * non-CPU RAM write then invalidates. Cleared with the generation. */
     uint32_t jit_code_pages[ARM_JIT_CODE_PAGES / 32u];
     int jit_code_pages_untracked;
+#if defined(__SWITCH__)
+    Jit jit_memory; /* Runtime-only libnx allocation, never serialized. */
+    int jit_memory_failed; /* Do not repeatedly request unavailable permissions. */
+#endif
 #if ARM920T_PROFILING && defined(ARM_JIT_NATIVE_A64)
     /* Compilation metadata, not reset with sampling counters. */
     uint8_t profile_native_loop[ARM_JIT_BLOCK_COUNT];
@@ -703,26 +707,43 @@ arm920t_t *arm920t_create(const arm_bus_t *bus) {
     return c;
 }
 #if defined(__x86_64__) || defined(_M_X64) || defined(ARM_JIT_NATIVE_A64)
-static uint8_t *arm_jit_alloc_exec(size_t bytes) {
+static uint8_t *arm_jit_alloc_exec(arm920t_t *c, size_t bytes) {
     if (!bytes) return NULL;
+#if defined(__SWITCH__)
+    if (c->jit_memory_failed) return NULL;
+    if (R_FAILED(jitCreate(&c->jit_memory, bytes))) {
+        c->jit_memory_failed = 1;
+        return NULL;
+    }
+    return (uint8_t *)jitGetRwAddr(&c->jit_memory);
+#else
+    GP32_UNUSED(c);
 #if defined(_WIN32)
     return (uint8_t *)VirtualAlloc(NULL, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE);
 #else
     void *p = mmap(NULL, bytes, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     return (p == MAP_FAILED) ? NULL : (uint8_t *)p;
 #endif
+#endif
 }
 
-static void arm_jit_free_exec(uint8_t *ptr, size_t bytes) {
+static void arm_jit_free_exec(arm920t_t *c, uint8_t *ptr, size_t bytes) {
     if (!ptr) return;
+#if defined(__SWITCH__)
+    GP32_UNUSED(bytes);
+    jitClose(&c->jit_memory);
+#else
+    GP32_UNUSED(c);
 #if defined(_WIN32)
     GP32_UNUSED(bytes);
     VirtualFree(ptr, 0, MEM_RELEASE);
 #else
     munmap(ptr, bytes);
 #endif
+#endif
 }
 
+#if !defined(__SWITCH__)
 static void arm_jit_flush_exec(void *ptr, size_t bytes) {
     if (!ptr || !bytes) return;
 #if defined(_WIN32)
@@ -768,10 +789,12 @@ static void arm_jit_flush_exec(void *ptr, size_t bytes) {
 }
 #endif
 
+#endif /* non-Switch instruction-cache maintenance */
+
 void arm920t_destroy(arm920t_t *c) {
     if (!c) return;
 #if defined(__x86_64__) || defined(_M_X64) || defined(ARM_JIT_NATIVE_A64)
-    arm_jit_free_exec(c->jit_code, c->jit_code_size);
+    arm_jit_free_exec(c, c->jit_code, c->jit_code_size);
 #endif
     free(c->jit_blocks);
     free(c->jit_ops);
@@ -4016,7 +4039,7 @@ static void *arm_jit_code_reserve(arm920t_t *c, size_t bytes) {
     const size_t align = 16u;
     if (!c->jit_code) {
         c->jit_code_size = ARM_JIT_CODE_SIZE;
-        c->jit_code = arm_jit_alloc_exec(c->jit_code_size);
+        c->jit_code = arm_jit_alloc_exec(c, c->jit_code_size);
         if (!c->jit_code) { c->jit_code_size = c->jit_code_used = 0; ARM_PROF_INC(c, jit_code_alloc_failures); return NULL; }
     }
     size_t p = (c->jit_code_used + align - 1u) & ~(align - 1u);

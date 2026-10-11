@@ -21,7 +21,15 @@ jobs:
           grep -q '^PASS:' /tmp/recycle.log
           SWITCH_JIT_PERMISSION_MODE=1 /tmp/switch-recycle | tee /tmp/recycle-permissions.log
           grep -q '^PASS:' /tmp/recycle-permissions.log
+          cc -std=c2x -O2 -D__SWITCH__ -D_XOPEN_SOURCE=700 -DGP32EMU_CPU_PROFILE=1 -Itests/switch_jit -Iinclude -Isrc tests/arm_jit_test.c src/arm920t.c tests/switch_jit/mock.c -lm -o /tmp/switch-differential
+          /tmp/switch-differential
+          SWITCH_JIT_PERMISSION_MODE=1 /tmp/switch-differential
+          cc -std=c2x -O2 -D__SWITCH__ -D_XOPEN_SOURCE=700 -Itests/switch_jit -Iinclude -Isrc tests/switch_jit/failure_test.c tests/switch_jit/mock.c -lm -o /tmp/switch-failures
+          SWITCH_JIT_PERMISSION_MODE=1 /tmp/switch-failures
+          cc -std=c2x -O2 -D_XOPEN_SOURCE=700 -Iinclude -Isrc tests/arm_jit_recycle_test.c -lm -o /tmp/linux-recycle
+          /tmp/linux-recycle
   build:
+    needs: jit-mapping-tests
     runs-on: ubuntu-latest
     timeout-minutes: 30
     container: devkitpro/devkita64:latest
