@@ -32,7 +32,13 @@ documented in [ANDROID_BUILD.md](ANDROID_BUILD.md#runtime-validation); RetroArch
 integration and native ARM device use remain unverified.
 
 For Linux AArch64 cross-compilation, put Zig 0.13.0 on PATH and use the toolchain
-file in `cmake/toolchains/`. It targets Cortex-A53 and glibc 2.17 or newer.
+file `cmake/toolchains/linux-aarch64-zig.cmake`. It retains the Cortex-A53
+code-generation settings and targets glibc 2.17 or newer. The old
+`h700-zig.cmake` name is a compatible alias. This is a Linux ABI target,
+not a chip-specific frontend; other ARM64 Linux devices need compatible CPU
+features, glibc, and a 64-bit libretro frontend. A 32-bit RetroArch process
+cannot load this core, even on a 64-bit kernel. Android and Switch need their
+own platform builds. RK3326 hardware compatibility and speed remain untested.
 
 `scripts/package_release.ps1` assembles five independent ZIP releases from a
 clean, committed source tree. Pass a new output directory plus four build
@@ -43,9 +49,9 @@ in the Android NDK). Debug information is removed only from packaged `.so`
 copies; original build outputs keep their symbols. Tests, build caches and local
 results are not packaged.
 
-The outputs are `gp32emu-1.0.0-windows-x64.zip`,
-`gp32emu-1.0.0-libretro-windows-x64.zip`, `gp32emu-1.0.0-linux-aarch64.zip`,
-`gp32emu-1.0.0-android-arm64.zip` and `gp32emu-1.0.0-android-armv7.zip`.
+The outputs are `gp32emu-1.0.1-windows-x64.zip`,
+`gp32emu-1.0.1-libretro-windows-x64.zip`, `gp32emu-1.0.1-linux-aarch64.zip`,
+`gp32emu-1.0.1-android-arm64.zip` and `gp32emu-1.0.1-android-armv7.zip`.
 Each archive places its binaries and, for cores, `gp32emu_libretro.info` at the
 root, then adds the common README, release notes, Korean manual, `licenses/`
 and `manifest.json`. The output directory also receives `SHA256SUMS.txt` for

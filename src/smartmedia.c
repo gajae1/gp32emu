@@ -3,6 +3,11 @@
  * Original files: src/devices/machine/smartmed.cpp, nandflash.cpp
  * License: BSD-3-Clause, copyright Raphael Nabet.
  */
+/* clock_gettime is POSIX: strict -std=c23 hosts (glibc, musl, newlib) hide it
+ * unless a feature macro is set before the first libc header. */
+#if !defined(_WIN32) && !defined(GP32EMU_WASM) && !defined(_POSIX_C_SOURCE) && !defined(_XOPEN_SOURCE)
+#define _POSIX_C_SOURCE 200809L
+#endif
 #include "smartmedia.h"
 #include "zip.h"
 #include "save_atomic.h"

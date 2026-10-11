@@ -6,7 +6,10 @@
  */
 #include "arm920t.h"
 
-#if (defined(__aarch64__) || defined(_M_ARM64)) && !defined(__AARCH64EB__)
+/* Horizon (Nintendo Switch) has no RWX mmap. Its JIT goes through libnx with
+ * separate RW and RX views, which the A64 emitter does not support, so the
+ * Switch build keeps the portable decoded-block interpreter. */
+#if (defined(__aarch64__) || defined(_M_ARM64)) && !defined(__AARCH64EB__) && !defined(__SWITCH__)
 #define ARM_JIT_NATIVE_A64 1
 #endif
 
@@ -133,6 +136,9 @@ enum arm_jit_inv_cause {
 #define ARM_JIT_PAGE_MASK   0x3ffu
 #define ARM_JIT_RAM_BASE_ADDR 0x0c000000u
 #define ARM_JIT_RAM_SIZE_BYTES 0x00800000u
+/* 4 KiB RAM pages that may hold translated code, one bit each. */
+#define ARM_JIT_CODE_PAGE_SHIFT 12u
+#define ARM_JIT_CODE_PAGES (ARM_JIT_RAM_SIZE_BYTES >> ARM_JIT_CODE_PAGE_SHIFT)
 #define ARM_JIT_BIOS_SIZE_BYTES 0x00080000u
 
 #if defined(_MSC_VER)
@@ -364,6 +370,12 @@ struct arm920t {
      * write position then still holds live blocks, which are evicted when
      * the writer reaches that chunk. Cleared with the whole arena. */
     int jit_arena_wrapped;
+    /* RAM pages holding fetched words of blocks translated since the last
+     * full flush. Blocks translated with the MMU on may fetch from any
+     * physical page, so they set jit_code_pages_untracked instead and every
+     * non-CPU RAM write then invalidates. Cleared with the generation. */
+    uint32_t jit_code_pages[ARM_JIT_CODE_PAGES / 32u];
+    int jit_code_pages_untracked;
 #if ARM920T_PROFILING && defined(ARM_JIT_NATIVE_A64)
     /* Compilation metadata, not reset with sampling counters. */
     uint8_t profile_native_loop[ARM_JIT_BLOCK_COUNT];
@@ -829,6 +841,25 @@ void arm920t_set_jit(arm920t_t *c, int enabled) {
     }
 }
 void arm920t_flush_jit(arm920t_t *c) { arm920t_jit_invalidate_all(c, ARM_JIT_INV_API_FLUSH); }
+void arm920t_invalidate_icache_range(arm920t_t *c, uint32_t addr, uint32_t len) {
+    if (!c || !len) return;
+    if (!c->jit_code_pages_untracked) {
+        /* DMA may start on an unmapped bus address and then enter RAM. */
+        if (addr < ARM_JIT_RAM_BASE_ADDR) {
+            uint32_t skip = ARM_JIT_RAM_BASE_ADDR - addr;
+            if (len <= skip) return;
+            addr = ARM_JIT_RAM_BASE_ADDR;
+            len -= skip;
+        }
+        uint32_t off = addr - ARM_JIT_RAM_BASE_ADDR;
+        if (off >= ARM_JIT_RAM_SIZE_BYTES) return; /* only RAM code is tracked and writable */
+        uint32_t end = len > ARM_JIT_RAM_SIZE_BYTES - off ? ARM_JIT_RAM_SIZE_BYTES : off + len;
+        uint32_t page = off >> ARM_JIT_CODE_PAGE_SHIFT, last = (end - 1u) >> ARM_JIT_CODE_PAGE_SHIFT;
+        while (page <= last && !((c->jit_code_pages[page >> 5] >> (page & 31u)) & 1u)) ++page;
+        if (page > last) return; /* no translated block fetched from these pages */
+    }
+    arm920t_jit_invalidate_all(c, ARM_JIT_INV_CP15_CACHE);
+}
 int arm920t_set_live_read32(arm920t_t *c, const arm_live_read32_t *reads, size_t count) {
     if (!c || c->running || (!reads && count)) return 0;
     for (size_t i = 0; i < count; ++i)
@@ -1474,6 +1505,8 @@ static void arm920t_jit_invalidate_all(arm920t_t *c, unsigned cause) {
     }
     c->jit_cache_epoch = 1;
     c->jit_generation++;
+    memset(c->jit_code_pages, 0, sizeof(c->jit_code_pages));
+    c->jit_code_pages_untracked = 0;
     if (!c->jit_generation) {
         c->jit_generation = 1;
         if (c->jit_blocks) memset(c->jit_blocks, 0, ARM_JIT_BLOCK_COUNT * sizeof(c->jit_blocks[0]));
@@ -2227,6 +2260,19 @@ static ARM_NOINLINE arm_jit_block_t *arm_jit_translate(arm920t_t *c, uint32_t pc
     c->jit_poll[b - c->jit_blocks].flags = 0;
     c->jit_poll[b - c->jit_blocks].idle = 0;
     arm_jit_proof_build(&c->jit_proof[b - c->jit_blocks], arm_jit_ops(c, b), b->count);
+    /* With the MMU off every fetch address is physical, so record its page.
+     * Code above the RAM window (an alias) cannot be matched to a RAM page. */
+    if (c->cp15[1] & 1u) c->jit_code_pages_untracked = 1;
+    else {
+        const arm_jit_op_t *code = arm_jit_ops(c, b);
+        for (unsigned i = 0; i < b->count; ++i) {
+            uint32_t off = code[i].pc - ARM_JIT_RAM_BASE_ADDR;
+            if (off < ARM_JIT_RAM_SIZE_BYTES) {
+                uint32_t page = off >> ARM_JIT_CODE_PAGE_SHIFT;
+                c->jit_code_pages[page >> 5] |= 1u << (page & 31u);
+            } else if (code[i].pc >= ARM_JIT_RAM_BASE_ADDR) c->jit_code_pages_untracked = 1;
+        }
+    }
     b->valid = 1;
     ARM_PROF_INC(c, jit_blocks_compiled);
     /* Counted candidates first observe real portable reads. Do not allocate
@@ -2762,7 +2808,7 @@ ARM_JIT_NATIVE_ONLY static void arm_jit_exception_return_helper(arm920t_t *c, ui
     write_r(c, 15u, result);
 }
 
-#if defined(__x86_64__) || defined(_M_X64) || defined(__aarch64__)
+#if defined(__x86_64__) || defined(_M_X64) || defined(ARM_JIT_NATIVE_A64)
 /* Apply an adjacent pure DATA op to the accumulated constant. Live flags,
  * predicates, PC writes, carry and foreign operands keep their normal path. */
 static int arm_jit_fold_const_step(const arm_jit_op_t *prev, const arm_jit_op_t *next,

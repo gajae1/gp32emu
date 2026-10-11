@@ -107,6 +107,12 @@ int arm920t_is_running(const arm920t_t *cpu);
 void arm920t_add_idle_cycles(arm920t_t *cpu, uint32_t cycles);
 void arm920t_set_jit(arm920t_t *cpu, int enabled);
 void arm920t_flush_jit(arm920t_t *cpu);
+/* Call after a non-CPU writer (DMA, HLE file or asset copy) stores len bytes
+ * at physical addr. When translated code may have been fetched from that
+ * range this is the lazy invalidation of MCR p15 c7 c5: blocks are kept and
+ * re-prove their fetched words on next dispatch. Writes to pages without
+ * translated code cost nothing. Safe inside a run. */
+void arm920t_invalidate_icache_range(arm920t_t *cpu, uint32_t addr, uint32_t len);
 void arm920t_set_irq(arm920t_t *cpu, int state);
 void arm920t_set_fiq(arm920t_t *cpu, int state);
 void arm920t_set_trace(arm920t_t *cpu, int enabled, arm_log_fn log, void *user);

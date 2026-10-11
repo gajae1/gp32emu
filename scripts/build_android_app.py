@@ -35,7 +35,7 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGE = "org.gp32emu.app"
-VERSION = "1.0.0"
+VERSION = "1.0.1"
 MIN_API, TARGET_API = 23, 35
 ANDROID_NS = "http://schemas.android.com/apk/res/android"
 ABIS = {
@@ -171,7 +171,7 @@ def stage_manifest(source: Path, destination: Path, *, debug: bool, test: bool) 
         if (package == PACKAGE or instrumentation is None
                 or instrumentation.get(f"{{{ANDROID_NS}}}targetPackage") != PACKAGE):
             raise BuildError(f"Test manifest needs a distinct package and targetPackage={PACKAGE}.")
-    manifest.set(f"{{{ANDROID_NS}}}versionCode", "1")
+    manifest.set(f"{{{ANDROID_NS}}}versionCode", "2")
     manifest.set(f"{{{ANDROID_NS}}}versionName", VERSION)
     sdk = manifest.find("uses-sdk")
     if sdk is None:

@@ -1,6 +1,7 @@
 package org.gp32emu.app;
 
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.app.Instrumentation;
 import android.content.Intent;
 import android.content.pm.ActivityInfo;
@@ -46,6 +47,47 @@ public final class InputTest extends Instrumentation {
             launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
             activity = (MainActivity)startActivitySync(launch);
             waitForIdleSync();
+            KeyBindings original = activity.input.bindings();
+            ui(() -> {
+                KeyBindings edited = new KeyBindings();
+                check(edited.assign(0, 4, KeyEvent.KEYCODE_X), "keyboard rebind accepted");
+                check(edited.key(0, 5) == KeyEvent.KEYCODE_Z, "duplicate keyboard keys swap");
+                check(!edited.assign(0, 4, KeyEvent.KEYCODE_BACK), "Back remains available");
+                check(!edited.assign(1, 4, KeyEvent.KEYCODE_BUTTON_MODE), "gamepad menu remains available");
+                check(edited.assign(1, 4, KeyEvent.KEYCODE_BUTTON_B), "gamepad rebind accepted");
+                activity.input.setBindings(edited);
+                activity.input.key(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_X));
+                activity.input.key(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_BUTTON_B));
+                activity.input.key(new KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_X));
+                check(activity.input.mask() == InputState.A, "rebound gamepad hold survives keyboard release");
+                activity.input.setBindings(original);
+                check(activity.input.mask() == 0, "binding changes clear held physical keys");
+                android.content.SharedPreferences testPrefs = getTargetContext().getSharedPreferences("binding-test", 0);
+                edited.save(testPrefs);
+                KeyBindings restored = new KeyBindings(); restored.load(testPrefs);
+                check(restored.key(0, 4) == KeyEvent.KEYCODE_X && restored.key(1, 4) == KeyEvent.KEYCODE_BUTTON_B,
+                        "keyboard and gamepad settings persist separately");
+                testPrefs.edit().clear().commit();
+                activity.input.setBindings(edited);
+                AlertDialog dialog = activity.showBindings(0);
+                dialog.getButton(AlertDialog.BUTTON_NEUTRAL).performClick();
+                dialog.getButton(AlertDialog.BUTTON_NEGATIVE).performClick();
+            });
+            waitForIdleSync(); // Dialog button callbacks are posted to the UI queue.
+            ui(() -> {
+                check(activity.input.bindings().key(0, 4) == KeyEvent.KEYCODE_X, "cancel discards pending defaults");
+                AlertDialog dialog = activity.showBindings(0);
+                dialog.getButton(AlertDialog.BUTTON_NEUTRAL).performClick();
+                dialog.getButton(AlertDialog.BUTTON_POSITIVE).performClick();
+            });
+            waitForIdleSync();
+            ui(() -> {
+                check(activity.input.bindings().key(0, 4) == KeyEvent.KEYCODE_Z
+                        && activity.input.bindings().key(1, 4) == KeyEvent.KEYCODE_BUTTON_B,
+                        "defaults affect only selected input type");
+                activity.input.setBindings(new KeyBindings());
+                original.save(activity.getPreferences(0));
+            });
             java.lang.reflect.Field list = MainActivity.class.getDeclaredField("games");
             list.setAccessible(true);
             final java.util.List<?> games = (java.util.List<?>)list.get(activity);

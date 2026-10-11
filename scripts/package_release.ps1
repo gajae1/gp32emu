@@ -11,7 +11,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
-$version = '1.0.0'
+$version = '1.0.1'
 $revision = (git -C $repo rev-parse HEAD).Trim()
 if ($LASTEXITCODE -ne 0) { throw 'Cannot identify source revision.' }
 $dirty = git -C $repo status --porcelain

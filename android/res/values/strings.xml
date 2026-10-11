@@ -1,5 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="controls">Controls</string>
+    <string name="keyboard">Keyboard</string>
+    <string name="gamepad">Gamepad buttons</string>
+    <string name="defaults">Defaults</string>
+    <string name="press_key">Press a key or gamepad button. Assigned keys swap places. Back cancels. Analog sticks keep their default directions.</string>
+    <string name="key_reserved">This key is reserved or belongs to the other input type. Choose another key, or press Back to cancel.</string>
+    <string name="reset_confirm">Restart this game? Progress since the last in-game save or save state will be lost.</string>
+    <string-array name="control_names"><item>Up</item><item>Down</item><item>Left</item><item>Right</item><item>A</item><item>B</item><item>L</item><item>R</item><item>Start</item><item>Select</item></string-array>
     <string name="app_name">GP32emu</string>
     <string name="tagline">Game Park GP32 emulator</string>
     <string name="bios_ready">BIOS ready</string>
@@ -53,5 +61,5 @@
     <string name="state_load_failed">Could not load the state: %1$s</string>
     <string name="touchpad_description">GP32 D-pad, A, B, L, R, Start, Select</string>
     <string name="stopped">Emulation stopped: %1$s</string>
-    <string name="about_text">GP32emu 1.0.0\n\nIn game, press Back or the menu button to pause. On a gamepad, press its Mode button or hold Start and Select together. Use a keyboard (arrows, Z/X = A/B, A/S = L/R, Enter = Start, Shift = Select) or a gamepad with touch controls hidden.\n\nGames are copied into app storage and saves are automatic. Save states have 3 slots per game in the pause menu. Uninstalling the app deletes copies, saves and states.\n\nBased on gameblabla/gp32emu.\ngithub.com/gajae1/gp32emu</string>
+    <string name="about_text">GP32emu 1.0.1\n\nIn game, press Back or the menu button to pause. On a gamepad, press its Mode button or hold Start and Select together. Use a keyboard (arrows, Z/X = A/B, A/S = L/R, Enter = Start, Shift = Select) or a gamepad with touch controls hidden.\n\nGames are copied into app storage and saves are automatic. Save states have 3 slots per game in the pause menu. Uninstalling the app deletes copies, saves and states.\n\nBased on gameblabla/gp32emu.\ngithub.com/gajae1/gp32emu</string>
 </resources>
