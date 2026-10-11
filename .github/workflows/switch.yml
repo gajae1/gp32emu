@@ -1,0 +1,45 @@
+name: Switch libnx build
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container: devkitpro/devkita64:latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build GP32emu static core
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p switch-output
+          dkp-pacman -Q > switch-output/toolchain-packages.txt
+          make -f Makefile.libretro platform=libnx GP32EMU_REQUIRE_C23=1 -j2
+          cp gp32emu_libretro_libnx.a switch-output/
+          /opt/devkitpro/devkitA64/bin/aarch64-none-elf-nm -g --defined-only gp32emu_libretro_libnx.a > switch-output/core-symbols.txt
+          grep -q ' T retro_run$' switch-output/core-symbols.txt
+      - name: Link RetroArch NRO
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --branch v1.22.2 https://github.com/libretro/RetroArch.git /tmp/retroarch
+          test "$(git -C /tmp/retroarch rev-parse HEAD)" = 69a4f0ea1e8aaf442ae4858f2e7f2b31a1776576
+          cp gp32emu_libretro_libnx.a /tmp/retroarch/libretro_libnx.a
+          make -C /tmp/retroarch -f Makefile.libnx -j2
+          cp /tmp/retroarch/retroarch_switch.nro switch-output/gp32emu_libretro_libnx.nro
+          cp /tmp/retroarch/COPYING switch-output/RetroArch-COPYING.txt
+          printf '%s\n' "$GITHUB_SHA" > switch-output/gp32emu-revision.txt
+          git -C /tmp/retroarch rev-parse HEAD > switch-output/retroarch-revision.txt
+          cd switch-output
+          sha256sum *.a *.nro > SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gp32emu-switch-libnx
+          path: switch-output/
+          if-no-files-found: error
