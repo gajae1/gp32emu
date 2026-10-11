@@ -1,9 +1,29 @@
+# platform=libnx builds the Nintendo Switch static core that RetroArch's
+# Makefile.libnx links into one .nro (devkitA64 and libnx from devkitPro).
+platform ?=
+ifeq ($(platform),libnx)
+ifeq ($(strip $(DEVKITPRO)),)
+$(error platform=libnx needs DEVKITPRO set to a devkitPro installation)
+endif
+include $(DEVKITPRO)/devkitA64/base_tools
+LIBNX ?= $(DEVKITPRO)/libnx
+STATIC_LINKING := 1
+THREAD_CFLAGS :=
+THREAD_LIBS :=
+endif
+
 CC ?= cc
 AR ?= ar
 
 include cmake/c_standard.mk
 
+ifeq ($(platform),libnx)
+CFLAGS ?= $(GP32EMU_C_STD_FLAG) -O3 -Wall -Wextra -Wpedantic
+CFLAGS += -march=armv8-a+crc+crypto -mtune=cortex-a57 -mtp=soft -fPIE -ffunction-sections -fdata-sections
+CPPFLAGS += -D__SWITCH__ -DHAVE_LIBNX -I$(LIBNX)/include
+else
 CFLAGS ?= $(GP32EMU_C_STD_FLAG) -O3 -fPIC -Wall -Wextra -Wpedantic
+endif
 CPPFLAGS += -Iinclude -Isrc -Isrc/libretro
 GP32EMU_ENABLE_THREADS ?= 1
 CPPFLAGS += -DGP32EMU_ENABLE_THREADS=$(GP32EMU_ENABLE_THREADS)
@@ -23,7 +43,11 @@ LIBRETRO_EXT ?= so
 SHARED_FLAGS ?= -shared -Wl,--no-undefined
 endif
 TARGET_NAME ?= gp32emu_libretro
+ifeq ($(STATIC_LINKING),1)
+TARGET_FILE := $(TARGET_NAME)_$(platform).a
+else
 TARGET_FILE := $(TARGET_NAME).$(LIBRETRO_EXT)
+endif
 CORE_OBJS = \
  src/save_atomic.o \
  src/gp32.o \
@@ -44,8 +68,13 @@ LIBRETRO_OBJS = src/libretro/libretro.o
 ZIPLIB_CFLAGS ?= $(filter-out -Werror,$(CFLAGS)) -D_XOPEN_SOURCE=700 -D_FILE_OFFSET_BITS=64 -DZIP_ENABLE_DEFLATE=0 -DZIP_HAVE_SYMLINK=0 -w
 .PHONY: all clean
 all: $(TARGET_FILE)
+ifeq ($(STATIC_LINKING),1)
+$(TARGET_FILE): $(CORE_OBJS) $(LIBRETRO_OBJS)
+	$(AR) rcs $@ $^
+else
 $(TARGET_FILE): $(CORE_OBJS) $(LIBRETRO_OBJS)
 	$(CC) $(SHARED_FLAGS) -o $@ $^ $(THREAD_LIBS) -lm
+endif
 src/third_party/zip/zip.o: src/third_party/zip/zip.c src/third_party/zip/zip.h src/third_party/zip/miniz.h
 	$(CC) $(ZIPLIB_CFLAGS) $(THREAD_CFLAGS) $(CPPFLAGS) -c -o $@ $<
 %.o: %.c

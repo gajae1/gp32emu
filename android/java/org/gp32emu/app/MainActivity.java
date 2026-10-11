@@ -113,6 +113,9 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
                 WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
         audioManager = (AudioManager)getSystemService(AUDIO_SERVICE);
         prefs = getPreferences(0);
+        KeyBindings bindings = new KeyBindings();
+        bindings.load(prefs);
+        input.setBindings(bindings);
         touchEnabled = prefs.getBoolean("touch", true);
         integerScale = prefs.getBoolean("integer", false);
 
@@ -209,13 +212,22 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         addParams.topMargin = dp(10);
         page.addView(add, addParams);
 
+        LinearLayout libraryBar = new LinearLayout(this);
+        libraryBar.setGravity(Gravity.CENTER_VERTICAL);
         TextView header = new TextView(this);
         header.setText(R.string.library);
         header.setTextColor(Color.WHITE);
         header.setTextSize(16);
         header.setTypeface(Typeface.DEFAULT_BOLD);
-        header.setPadding(0, dp(22), 0, dp(2));
-        page.addView(header);
+        libraryBar.addView(header, new LinearLayout.LayoutParams(0, -2, 1));
+        Button controls = new Button(this, null, android.R.attr.borderlessButtonStyle);
+        controls.setText(R.string.controls);
+        controls.setAllCaps(false);
+        controls.setTextColor(ACCENT);
+        controls.setMinHeight(dp(48));
+        controls.setOnClickListener(v -> showControls());
+        libraryBar.addView(controls);
+        page.addView(libraryBar);
         TextView hint = new TextView(this);
         hint.setText(R.string.library_hint);
         hint.setTextColor(Color.rgb(140, 150, 165));
@@ -356,7 +368,11 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         labels.add(getString(R.string.menu_resume)); actions.add(() -> {});
         labels.add(getString(R.string.menu_save_state)); actions.add(() -> showStateSlots(true));
         labels.add(getString(R.string.menu_load_state)); actions.add(() -> showStateSlots(false));
-        labels.add(getString(R.string.menu_reset)); actions.add(() -> { resetRequested = true; });
+        labels.add(getString(R.string.menu_reset)); actions.add(() -> present(new AlertDialog.Builder(this)
+                .setTitle(R.string.menu_reset).setMessage(R.string.reset_confirm)
+                .setPositiveButton(R.string.ok, (d, which) -> { resetRequested = true; })
+                .setNegativeButton(R.string.cancel, null).create()));
+        labels.add(getString(R.string.controls)); actions.add(this::showControls);
         labels.add(getString(touchEnabled ? R.string.menu_touch_off : R.string.menu_touch_on));
         actions.add(() -> setTouchEnabled(!touchEnabled));
         labels.add(getString(touchPad.haptics() ? R.string.menu_haptics_off : R.string.menu_haptics_on));
@@ -394,6 +410,58 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
 
     private File stateFile(String game, int slot) {
         return new File(new File(getFilesDir(), "saves/" + new File(game).getParentFile().getName()), "state" + slot + ".gp32st");
+    }
+    private void showControls() {
+        present(new AlertDialog.Builder(this).setTitle(R.string.controls)
+                .setItems(new String[]{getString(R.string.keyboard), getString(R.string.gamepad)},
+                        (d, group) -> showBindings(group)).setNegativeButton(R.string.cancel, null).create());
+    }
+    AlertDialog showBindings(int group) {
+        KeyBindings pending = input.bindings();
+        String[] buttons = getResources().getStringArray(R.array.control_names);
+        ArrayAdapter<String> adapter = new ArrayAdapter<>(this, android.R.layout.simple_list_item_1);
+        Runnable refresh = () -> {
+            adapter.clear();
+            for (int i = 0; i < buttons.length; ++i)
+                adapter.add(buttons[i] + "  ·  " + KeyBindings.label(pending.key(group, i)));
+        };
+        refresh.run();
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle(group == 0 ? R.string.keyboard : R.string.gamepad)
+                .setAdapter(adapter, null)
+                .setPositiveButton(R.string.ok, (d, which) -> {
+                    clearInput(); input.setBindings(pending); pending.save(prefs);
+                })
+                .setNegativeButton(R.string.cancel, null)
+                .setNeutralButton(R.string.defaults, null).create();
+        present(dialog);
+        dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener(v -> { pending.reset(group); refresh.run(); });
+        // A nested capture dialog leaves the pending changes open until OK/Cancel.
+        dialog.getListView().setOnItemClickListener((parent, view, position, id) -> {
+            AlertDialog capture = new AlertDialog.Builder(this).setTitle(buttons[position])
+                    .setMessage(R.string.press_key).setNegativeButton(R.string.cancel, null).create();
+            present(capture);
+            final int[] accepted = {-1};
+            capture.setOnKeyListener((d, code, event) -> {
+                if (code == KeyEvent.KEYCODE_BACK || code == KeyEvent.KEYCODE_ESCAPE
+                        || code == KeyEvent.KEYCODE_MENU || code == KeyEvent.KEYCODE_BUTTON_MODE) {
+                    if (event.getAction() == KeyEvent.ACTION_UP) d.dismiss();
+                    return true;
+                }
+                if (code == KeyEvent.KEYCODE_VOLUME_UP || code == KeyEvent.KEYCODE_VOLUME_DOWN
+                        || code == KeyEvent.KEYCODE_VOLUME_MUTE || code == KeyEvent.KEYCODE_POWER) return false;
+                if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) {
+                    if (pending.assign(group, position, code)) accepted[0] = code;
+                    else capture.setMessage(getString(R.string.key_reserved));
+                }
+                // Consume the matching key-up before closing so it cannot activate a parent row.
+                if (event.getAction() == KeyEvent.ACTION_UP && code == accepted[0]) {
+                    refresh.run(); d.dismiss();
+                }
+                return true;
+            });
+        });
+        return dialog;
     }
     private void showStateSlots(boolean save) {
         String game = runningGame;

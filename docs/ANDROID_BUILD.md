@@ -14,7 +14,7 @@ python scripts/build_android_app.py --sdk /path/to/Android/Sdk --keystore /path/
 ```
 
 This builds ARM64 and ARMv7 from source and produces
-`gp32emu-1.0.0-android.apk` (min API 23, target API 35). The app is not debuggable.
+`gp32emu-1.0.1-android.apk` (min API 23, target API 35). The app is not debuggable.
 The script verifies ELF/ZIP 16 KB alignment and APK signatures. A missing
 keystore is an error; it never creates a signing key. Defaults use an existing
 `~/.android/debug.keystore` and Android's development alias/password. Other keys

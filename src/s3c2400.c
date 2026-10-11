@@ -1055,8 +1055,10 @@ static void dma_trigger(s3c2400_t *s, int ch) {
     int inc_src = GP32_BIT(r[0],29) == 0;
     int inc_dst = GP32_BIT(r[1],29) == 0;
     int service = GP32_BIT(r[2],26);
+    uint32_t dst0 = dst, moved = 0;
     while (tc) {
         tc--;
+        moved++;
         if (dsz == 0) { uint8_t v = s3c2400_read8(s, src); s3c2400_write8(s, dst, v); }
         else if (dsz == 1) { uint16_t v = s3c2400_read16(s, src); s3c2400_write16(s, dst, v); }
         else { uint32_t v = s3c2400_read32(s, src); s3c2400_write32(s, dst, v); }
@@ -1064,6 +1066,12 @@ static void dma_trigger(s3c2400_t *s, int ch) {
         if (inc_dst) dst += 1u << dsz;
         if (!service) break;
     }
+    /* A RAM destination may hold code: the CPU must not keep running blocks
+     * translated from the old bytes. Report what this trigger wrote, so a
+     * single-service or stopped transfer is covered too. I/O destinations such
+     * as the IIS FIFO lie outside RAM and cost nothing. */
+    if (moved && s->cpu_irq_sink)
+        arm920t_invalidate_icache_range(s->cpu_irq_sink, dst0, inc_dst ? moved << dsz : (dsz >= 2u ? 4u : 1u << dsz));
     r[4] = (r[4] & ~0x1fffffffu) | src;
     r[5] = (r[5] & ~0x1fffffffu) | dst;
     r[3] = (r[3] & ~0x000fffffu) | tc;

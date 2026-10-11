@@ -7,12 +7,12 @@ BIOS와 게임 파일은 포함하지 않습니다. 직접 보유한 덤프를 �
 
 | 대상 | ZIP 패키지와 루트의 실행 파일 |
 | --- | --- |
-| Windows x64 독립 실행 | `gp32emu-1.0.0-windows-x64.zip`: `gp32emu_win64.exe`, `SDL3.dll` |
-| Windows x64 RetroArch | `gp32emu-1.0.0-libretro-windows-x64.zip`: `gp32emu_libretro.dll` |
-| Linux AArch64 RetroArch | `gp32emu-1.0.0-linux-aarch64.zip`: `gp32emu_libretro.so` |
-| Android 앱 | `gp32emu-1.0.0-android.apk`: 별도 설치, RetroArch 불필요 |
-| Android ARM64 RetroArch | `gp32emu-1.0.0-android-arm64.zip`: `gp32emu_libretro_android.so` |
-| Android ARMv7 RetroArch | `gp32emu-1.0.0-android-armv7.zip`: `gp32emu_libretro_android.so` |
+| Windows x64 독립 실행 | `gp32emu-1.0.1-windows-x64.zip`: `gp32emu_win64.exe`, `SDL3.dll` |
+| Windows x64 RetroArch | `gp32emu-1.0.1-libretro-windows-x64.zip`: `gp32emu_libretro.dll` |
+| Linux AArch64 RetroArch | `gp32emu-1.0.1-linux-aarch64.zip`: `gp32emu_libretro.so` |
+| Android 앱 | `gp32emu-1.0.1-android.apk`: 별도 설치, RetroArch 불필요 |
+| Android ARM64 RetroArch | `gp32emu-1.0.1-android-arm64.zip`: `gp32emu_libretro_android.so` |
+| Android ARMv7 RetroArch | `gp32emu-1.0.1-android-armv7.zip`: `gp32emu_libretro_android.so` |
 
 각 코어 ZIP에는 `gp32emu_libretro.info`도 포함되어 있습니다. 모든 ZIP에는 README,
 릴리스 노트, 이 설명서, `licenses/`, `manifest.json`이 함께 들어 있습니다.
@@ -133,6 +133,10 @@ retroarch -L ./gp32emu_libretro.so "game.smc"
 터치를 꺼도 키보드와 게임패드는 사용할 수 있습니다. 키보드는 Windows 기본 배치와
 같고, 게임패드는 방향키/왼쪽 스틱, A/B, L1/R1 또는 L2/R2, Start/Select를 사용합니다.
 게임패드의 Mode/Menu 버튼이나 Start+Select 동시 누르기로 메뉴를 엽니다.
+게임 목록이나 일시정지 메뉴의 **키 설정**에서 키보드와 게임패드 버튼을 따로 바꿉니다.
+바꿀 버튼을 고른 뒤 원하는 키를 누르세요. 이미 쓰는 키는 서로 바뀌며, **확인**을 눌러야
+저장됩니다. **취소**는 편집을 버리고 **기본값**은 선택한 입력 장치만 초기화합니다.
+아날로그 스틱 방향과 터치 버튼은 그대로입니다. 게임을 다시 시작할 때는 확인창이 표시됩니다.
 파일은 앱 내부로 복사되며 원본은 바뀌지 않습니다.
 앱 삭제 시 가져온 파일, 세이브, 상태도 삭제됩니다. APK는 기존 개발용 키로 서명한 직접 설치용입니다.
 

@@ -25,6 +25,7 @@ public final class InputState {
     private static final float DEAD_ZONE = 0.20f;
 
     private int touch;
+    private KeyBindings bindings = new KeyBindings();
     private final Map<Long, Integer> keys = new HashMap<>();
     private final Map<Integer, Integer> axes = new HashMap<>();
 
@@ -54,7 +55,7 @@ public final class InputState {
     }
 
     public synchronized boolean key(KeyEvent e) {
-        int button = buttonForKey(e.getKeyCode());
+        int button = bindings.button(e);
         if (button == 0) return false;
         long identity = ((long) e.getDeviceId() << 32) | (e.getKeyCode() & 0xffffffffL);
         switch (e.getAction()) {
@@ -67,6 +68,12 @@ public final class InputState {
             default:
                 return false;
         }
+    }
+
+    synchronized KeyBindings bindings() { return new KeyBindings(bindings); }
+    synchronized void setBindings(KeyBindings next) {
+        keys.clear();
+        bindings = new KeyBindings(next);
     }
 
     public synchronized boolean motion(MotionEvent e) {
@@ -103,32 +110,4 @@ public final class InputState {
         return 0;
     }
 
-    private static int buttonForKey(int code) {
-        switch (code) {
-            case KeyEvent.KEYCODE_Z:
-            case KeyEvent.KEYCODE_BUTTON_A: return A;
-            case KeyEvent.KEYCODE_X:
-            case KeyEvent.KEYCODE_BUTTON_B: return B;
-            case KeyEvent.KEYCODE_A:
-            case KeyEvent.KEYCODE_BUTTON_L1:
-            case KeyEvent.KEYCODE_BUTTON_L2: return L;
-            case KeyEvent.KEYCODE_S:
-            case KeyEvent.KEYCODE_BUTTON_R1:
-            case KeyEvent.KEYCODE_BUTTON_R2: return R;
-            case KeyEvent.KEYCODE_ENTER:
-            case KeyEvent.KEYCODE_BUTTON_START: return START;
-            case KeyEvent.KEYCODE_SHIFT_LEFT:
-            case KeyEvent.KEYCODE_SHIFT_RIGHT:
-            case KeyEvent.KEYCODE_BUTTON_SELECT: return SELECT;
-            case KeyEvent.KEYCODE_DPAD_UP: return UP;
-            case KeyEvent.KEYCODE_DPAD_DOWN: return DOWN;
-            case KeyEvent.KEYCODE_DPAD_LEFT: return LEFT;
-            case KeyEvent.KEYCODE_DPAD_RIGHT: return RIGHT;
-            case KeyEvent.KEYCODE_DPAD_UP_LEFT: return UP | LEFT;
-            case KeyEvent.KEYCODE_DPAD_UP_RIGHT: return UP | RIGHT;
-            case KeyEvent.KEYCODE_DPAD_DOWN_LEFT: return DOWN | LEFT;
-            case KeyEvent.KEYCODE_DPAD_DOWN_RIGHT: return DOWN | RIGHT;
-            default: return 0;
-        }
-    }
 }

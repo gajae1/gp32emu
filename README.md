@@ -27,13 +27,13 @@ Supply your own BIOS and game dumps; neither is included.
 
 | ZIP package | Binaries at the archive root |
 | --- | --- |
-| `gp32emu-1.0.0-windows-x64.zip` | `gp32emu_win64.exe`, `SDL3.dll`, `SDL3-LICENSE.txt` |
-| `gp32emu-1.0.0-libretro-windows-x64.zip` | `gp32emu_libretro.dll`, `gp32emu_libretro.info` |
-| `gp32emu-1.0.0-linux-aarch64.zip` | `gp32emu_libretro.so`, `gp32emu_libretro.info` |
-| `gp32emu-1.0.0-android-arm64.zip` | `gp32emu_libretro_android.so`, `gp32emu_libretro.info` |
-| `gp32emu-1.0.0-android-armv7.zip` | `gp32emu_libretro_android.so`, `gp32emu_libretro.info` |
+| `gp32emu-1.0.1-windows-x64.zip` | `gp32emu_win64.exe`, `SDL3.dll`, `SDL3-LICENSE.txt` |
+| `gp32emu-1.0.1-libretro-windows-x64.zip` | `gp32emu_libretro.dll`, `gp32emu_libretro.info` |
+| `gp32emu-1.0.1-linux-aarch64.zip` | `gp32emu_libretro.so`, `gp32emu_libretro.info` |
+| `gp32emu-1.0.1-android-arm64.zip` | `gp32emu_libretro_android.so`, `gp32emu_libretro.info` |
+| `gp32emu-1.0.1-android-armv7.zip` | `gp32emu_libretro_android.so`, `gp32emu_libretro.info` |
 
-The separate `gp32emu-1.0.0-android.apk` installs the Android application; it is
+The separate `gp32emu-1.0.1-android.apk` installs the Android application; it is
 not a ZIP archive and does not require RetroArch. It supports Android 6.0 or
 newer and includes ARM64 and ARMv7. ARM64 is recommended.
 
@@ -101,7 +101,11 @@ Rotation, focus loss and backgrounding release held input.
 
 Keyboard controls match the Windows defaults. Gamepads work with touch controls
 hidden; the D-pad or left stick, A/B, L1/R1 or L2/R2, Start and Select map to the
-GP32. A gamepad's Mode/Menu button, or Start and Select pressed together, opens
+GP32. **Controls**, on the library screen or pause menu, lets you remap keyboard
+and gamepad buttons separately. Select a control and press a new key; duplicate
+assignments swap places. **OK** saves, **Cancel** discards edits, and **Defaults**
+resets the selected input type. Analog stick directions are unchanged.
+A gamepad's Mode/Menu button, or Start and Select pressed together, opens
 the menu. Imported files, in-game saves and states are kept in
 private app storage; original files are unchanged. Uninstalling the app removes
 these copies and saves. If playback stops with an internal error, the app returns

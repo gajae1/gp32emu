@@ -671,6 +671,7 @@ static void direct_sync_fwinfo(gp32_t *g) {
 static void direct_copy_bytes_if_ram(gp32_t *g, uint32_t dst, const uint8_t *src, uint32_t len) {
     if (!g || !src || !direct_ram_range(g, dst, len)) return;
     for (uint32_t i = 0; i < len; ++i) s3c2400_write8(g->soc, dst + i, src[i]);
+    arm920t_invalidate_icache_range(g->cpu, dst, len); /* the copy may replace translated code */
 }
 
 static void direct_zero_if_ram(gp32_t *g, uint32_t dst, uint32_t len) {
@@ -2756,6 +2757,7 @@ static size_t direct_read_fpk_to_ram(gp32_t *g, const fpk_asset_t *a, size_t *po
     size_t room = (dst >= GP32_RAM_BASE && dst < ram_end) ? (size_t)(ram_end - dst) : 0u;
     if (n > room) n = room;
     for (size_t i = 0; i < n; ++i) s3c2400_write8(g->soc, dst + (uint32_t)i, a->data[*posp + i]);
+    arm920t_invalidate_icache_range(g->cpu, dst, (uint32_t)n); /* a file read may load code over translated blocks */
     *posp += n;
     return n;
 }

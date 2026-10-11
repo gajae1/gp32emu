@@ -192,7 +192,23 @@ int save_atomic_commit(save_atomic_t *st, const char *path, char *err, size_t er
         return 0;
     }
 #else
-    if (rename(tmp, path) != 0) {
+    int renamed = rename(tmp, path) == 0;
+#if defined(__SWITCH__)
+    /* Horizon's RenameFile refuses an existing destination (EEXIST) and libnx
+     * passes the call through, so replace in two steps. A power cut between
+     * them leaves the complete new file at the staged path, so a failed
+     * second step keeps it. */
+    if (!renamed && errno == EEXIST) {
+        if (remove(path) != 0 || rename(tmp, path) != 0) {
+            int e = errno;
+            save_atomic_reset(st);
+            if (err && err_len) snprintf(err, err_len, "replace %s: %s (new data kept in %s)", path, strerror(e), tmp);
+            return 0;
+        }
+        renamed = 1;
+    }
+#endif
+    if (!renamed) {
         int e = errno;
         remove(tmp);
         save_atomic_reset(st);
