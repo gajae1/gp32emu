@@ -19,6 +19,8 @@ jobs:
           set -euo pipefail
           mkdir -p switch-output
           dkp-pacman -Q > switch-output/toolchain-packages.txt
+          export PATH="$DEVKITPRO/devkitA64/bin:$PATH"
+          aarch64-none-elf-gcc --version
           make -f Makefile.libretro platform=libnx GP32EMU_REQUIRE_C23=1 -j2
           cp gp32emu_libretro_libnx.a switch-output/
           /opt/devkitpro/devkitA64/bin/aarch64-none-elf-nm -g --defined-only gp32emu_libretro_libnx.a > switch-output/core-symbols.txt
@@ -27,6 +29,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          export PATH="$DEVKITPRO/devkitA64/bin:$PATH"
           git clone --depth 1 --branch v1.22.2 https://github.com/libretro/RetroArch.git /tmp/retroarch
           test "$(git -C /tmp/retroarch rev-parse HEAD)" = 69a4f0ea1e8aaf442ae4858f2e7f2b31a1776576
           cp gp32emu_libretro_libnx.a /tmp/retroarch/libretro_libnx.a
