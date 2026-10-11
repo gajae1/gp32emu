@@ -1695,6 +1695,67 @@ static int a64_place(uint32_t *hot_dst, uint32_t *cold_dst, const uint32_t *src,
  * committed next PC. Returns x17 = successor body after accounting for the
  * current block, or x17 = rt_exit with w0 and w23 unchanged. */
 _Static_assert(ARM_JIT_CODE_SIZE <= (1u << 27), "B/BL from every block reach the runtime stubs");
+/* Relative branches retain the same offsets in RW and RX views. Only callable
+ * entries and eviction address comparisons use RX; all emission uses RW. */
+static uint8_t *a64_exec_addr(arm920t_t *c, size_t offset) {
+#if defined(__SWITCH__)
+    return (uint8_t *)jitGetRxAddr(&c->jit_memory) + offset;
+#else
+    return c->jit_code + offset;
+#endif
+}
+
+#if defined(__SWITCH__)
+static void a64_disable_exec(arm920t_t *c) {
+    c->jit_memory_failed = 1;
+    /* A failed permission transition may leave the entire RX view unmapped.
+     * No previously compiled entry may remain callable in that case. Keep
+     * decoded blocks and host accelerators available to the interpreter. */
+    for (size_t i = 0; i < ARM_JIT_BLOCK_COUNT; ++i) {
+        arm_jit_block_t *b = &c->jit_blocks[i];
+        if (b->native_ok == 1u) {
+            b->native = NULL;
+            b->native_ok = 2u;
+        }
+    }
+}
+#endif
+
+static int a64_prepare_write(arm920t_t *c) {
+#if defined(__SWITCH__)
+    if (R_FAILED(jitTransitionToWritable(&c->jit_memory))) {
+        a64_disable_exec(c);
+        return 0;
+    }
+#else
+    GP32_UNUSED(c);
+#endif
+    return 1;
+}
+
+static int a64_publish(arm920t_t *c, size_t hot, size_t hot_bytes,
+                       size_t cold, size_t cold_bytes) {
+#if defined(__SWITCH__)
+    Jit *j = &c->jit_memory;
+    if (j->type == JitType_CodeMemory) {
+        /* libnx's transition flushes the entire allocation. CodeMemory keeps
+         * both mappings live, so only publish the newly written ranges. */
+        if (hot_bytes) armDCacheFlush(c->jit_code + hot, hot_bytes);
+        if (cold_bytes) armDCacheFlush(c->jit_code + cold, cold_bytes);
+        if (hot_bytes) armICacheInvalidate(a64_exec_addr(c, hot), hot_bytes);
+        if (cold_bytes) armICacheInvalidate(a64_exec_addr(c, cold), cold_bytes);
+        j->is_executable = true;
+    } else if (R_FAILED(jitTransitionToExecutable(j))) {
+        a64_disable_exec(c);
+        return 0;
+    }
+#else
+    arm_jit_flush_exec(c->jit_code + hot, hot_bytes);
+    if (cold_bytes) arm_jit_flush_exec(c->jit_code + cold, cold_bytes);
+#endif
+    return 1;
+}
+
 /* Retire every block whose code lives in [cs, ce) of the arena before that
  * range is overwritten. Runs only while compiling from the dispatcher, when
  * no native code is active. An evicted slot is invalid, so its next lookup
@@ -1702,7 +1763,7 @@ _Static_assert(ARM_JIT_CODE_SIZE <= (1u << 27), "B/BL from every block reach the
  * was never cached; linked exits already reject invalid slots. Accelerator
  * entries are host functions outside the arena and stay. */
 static void a64_evict_chunk(arm920t_t *c, size_t cs, size_t ce) {
-    uintptr_t lo = (uintptr_t)(c->jit_code + cs), hi = (uintptr_t)(c->jit_code + ce);
+    uintptr_t lo = (uintptr_t)a64_exec_addr(c, cs), hi = (uintptr_t)a64_exec_addr(c, ce);
     for (size_t i = 0; i < ARM_JIT_BLOCK_COUNT; ++i) {
         arm_jit_block_t *b = &c->jit_blocks[i];
         union { arm_jit_native_fn f; uintptr_t p; } cvt;
@@ -1848,12 +1909,14 @@ static int a64_emit_runtime(arm920t_t *c) {
                 ((((uint32_t)rel >> 2) & 0x7ffffu) << 5) | 17u); /* adr x17, rt_exit */
     a64_u32(&e, 0xd65f03c0u); /* ret */
     if (e.fail) return 0;
-    arm_jit_flush_exec(c->jit_code, A64_RT_BYTES);
-    return 1;
+    return a64_publish(c, 0, A64_RT_BYTES, 0, 0);
 }
 
 static void arm_jit_compile_host(arm920t_t *c, arm_jit_block_t *b) {
     if (!c || !b || !b->count) return;
+#if defined(__SWITCH__)
+    if (c->jit_memory_failed) return;
+#endif
     uint32_t tmp[ARM_JIT_NATIVE_MAX_BYTES / sizeof(uint32_t)];
     a64_cold_op_t cold[ARM_JIT_MAX_INSNS];
     a64_emit_t e = {0};
@@ -2001,11 +2064,11 @@ static void arm_jit_compile_host(arm920t_t *c, arm_jit_block_t *b) {
     size_t cold_bytes = (e.pos - e.hot_end) * sizeof(tmp[0]);
     if (!c->jit_code) {
         c->jit_code_size = ARM_JIT_CODE_SIZE;
-        c->jit_code = arm_jit_alloc_exec(c->jit_code_size);
+        c->jit_code = arm_jit_alloc_exec(c, c->jit_code_size);
         if (!c->jit_code) { c->jit_code_size = c->jit_code_used = 0; ARM_PROF_INC(c, jit_code_alloc_failures); return; }
         c->jit_cold_floor = 0;
         if (!a64_emit_runtime(c)) {
-            arm_jit_free_exec(c->jit_code, c->jit_code_size);
+            arm_jit_free_exec(c, c->jit_code, c->jit_code_size);
             c->jit_code = NULL;
             c->jit_code_size = c->jit_code_used = 0;
             ARM_PROF_INC(c, jit_code_alloc_failures);
@@ -2043,10 +2106,14 @@ static void arm_jit_compile_host(arm920t_t *c, arm_jit_block_t *b) {
             a64_evict_chunk(c, ns, c->jit_code_size - ns > ARM_JIT_A64_CHUNK ? ns + ARM_JIT_A64_CHUNK : c->jit_code_size);
         }
     }
+    if (!a64_prepare_write(c)) return;
     uint32_t *hot_dst = (uint32_t *)(void *)(c->jit_code + start);
     uint32_t *cold_dst = (uint32_t *)(void *)(c->jit_code + cold_at);
     if (!a64_place(hot_dst, cold_dst, tmp, e.hot_end, e.pos)) {
         c->jit_cold_floor = cold_at + cold_bytes;
+        /* Restore old entries on permission-based libnx after a placement
+         * failure. No new entry is published. */
+        a64_publish(c, 0, 0, 0, 0);
         return;
     }
     /* Link the runtime-stub branches at their final addresses. The arena is
@@ -2058,10 +2125,9 @@ static void arm_jit_compile_host(arm920t_t *c, arm_jit_block_t *b) {
         intptr_t d = ((intptr_t)(c->jit_code + stub[e.ext_to[k]]) - (intptr_t)at) / 4;
         *at = (*at & 0xfc000000u) | ((uint32_t)d & 0x03ffffffu);
     }
-    arm_jit_flush_exec(hot_dst, hot_bytes);
-    if (cold_bytes) arm_jit_flush_exec(cold_dst, cold_bytes);
+    if (!a64_publish(c, start, hot_bytes, cold_at, cold_bytes)) return;
     c->jit_code_used = start + hot_bytes;
-    void *dst = hot_dst;
+    void *dst = a64_exec_addr(c, start);
     union { void *p; arm_jit_native_fn f; } cvt;
     cvt.p = dst;
     b->native = cvt.f;
