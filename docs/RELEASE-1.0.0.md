@@ -14,7 +14,7 @@ RetroArch cores for emulating the Game Park GP32.
   in RetroArch.
 - The Windows application has a Korean and English interface, a game library
   and recent-games list, drag and drop, nine quick state slots, pause, fast
-  forward, remappable keys, hot-plugged gamepads, fullscreen, BMP screenshots
+  forward, remappable keys, hot-plugged gamepads, fullscreen, PNG screenshots
   and MKV recording.
 - The Android application imports games and a BIOS into app storage and offers
   touch, keyboard and gamepad controls with three state slots per game.

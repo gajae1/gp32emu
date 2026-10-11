@@ -14,7 +14,8 @@ extern "C" {
 #define GP32_MEDIA_LCD_H 240u
 
 int gp32_media_frame_to_bgra_320x240(const gp32_framebuffer_desc_t *fb, uint32_t *out_bgra);
-int gp32_media_write_bmp_320x240(const char *path, const gp32_framebuffer_desc_t *fb, char *err, size_t err_len);
+/* Saves the frame as a 320x240 8-bit RGB PNG (rotated like the screen). */
+int gp32_media_write_png_320x240(const char *path, const gp32_framebuffer_desc_t *fb, char *err, size_t err_len);
 
 typedef struct gp32_media_recorder gp32_media_recorder_t;
 
