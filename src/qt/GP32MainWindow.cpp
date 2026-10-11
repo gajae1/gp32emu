@@ -72,7 +72,15 @@ static QString gp32StateDir() {
 
 static QString gp32SettingsPath() { return gp32ConfigDir() + QStringLiteral("/gp32emu.conf"); }
 static QString gp32DefaultStatePath() { return gp32StateDir() + QStringLiteral("/gp32_state.gp32st"); }
-static QString gp32DefaultScreenshotPath() { return gp32ConfigDir() + QStringLiteral("/gp32_screenshot.bmp"); }
+static QString gp32DefaultScreenshotPath() { return gp32ConfigDir() + QStringLiteral("/gp32_screenshot.png"); }
+// Screenshots are PNG files: a remembered .bmp name or a typed name without
+// the extension is turned into a .png name so the file type and name agree.
+static QString gp32PngPath(const QString &path) {
+    const QString suffix = QFileInfo(path).suffix();
+    if (path.isEmpty() || suffix.compare(QStringLiteral("png"), Qt::CaseInsensitive) == 0) return path;
+    if (suffix.compare(QStringLiteral("bmp"), Qt::CaseInsensitive) == 0) return path.left(path.size() - 3) + QStringLiteral("png");
+    return path + QStringLiteral(".png");
+}
 static QString gp32DefaultRecordPath() { return gp32ConfigDir() + QStringLiteral("/gp32_recording.mkv"); }
 
 static QString keyName(int key) {
@@ -282,7 +290,7 @@ void GP32MainWindow::loadSettings() {
     QString bios = s.value(QStringLiteral("paths/bios")).toString();
     if (!bios.isEmpty()) m_engine.setBiosPath(bios);
     m_lastStatePath = s.value(QStringLiteral("paths/lastState"), gp32DefaultStatePath()).toString();
-    m_lastScreenshotPath = s.value(QStringLiteral("paths/lastScreenshot"), gp32DefaultScreenshotPath()).toString();
+    m_lastScreenshotPath = gp32PngPath(s.value(QStringLiteral("paths/lastScreenshot"), gp32DefaultScreenshotPath()).toString());
     m_lastRecordPath = s.value(QStringLiteral("paths/lastRecord"), gp32DefaultRecordPath()).toString();
     bool jit = s.value(QStringLiteral("emulation/jit"), true).toBool();
     m_jitAction->setChecked(jit);
@@ -464,8 +472,8 @@ void GP32MainWindow::loadState() {
 }
 
 void GP32MainWindow::takeScreenshot() {
-    QString path = QFileDialog::getSaveFileName(this, "Save GP32 screenshot", m_lastScreenshotPath, "Windows bitmap (*.bmp);;All files (*)");
-    if (!path.isEmpty()) { m_lastScreenshotPath = path; m_engine.takeScreenshot(path); saveSettings(); }
+    QString path = QFileDialog::getSaveFileName(this, "Save GP32 screenshot", m_lastScreenshotPath, "PNG image (*.png);;All files (*)");
+    if (!path.isEmpty()) { path = gp32PngPath(path); m_lastScreenshotPath = path; m_engine.takeScreenshot(path); saveSettings(); }
 }
 
 void GP32MainWindow::startRecording() {

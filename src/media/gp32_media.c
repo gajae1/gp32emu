@@ -3,7 +3,16 @@
 
 typedef unsigned long mz_ulong;
 int mz_compress2(unsigned char *pDest, mz_ulong *pDest_len, const unsigned char *pSource, mz_ulong source_len, int level);
+/* PNG encoder of the same miniz copy (src/third_party/zip/miniz.h);
+   mz_uint is unsigned int and mz_bool is int there. */
+void *tdefl_write_image_to_png_file_in_memory_ex(const void *pImage, int w, int h, int num_chans, size_t *pLen_out,
+                                                 unsigned int level, int flip);
+void mz_free(void *p);
 #define MZ_OK 0
+/* MZ_BEST_SPEED. F12 encodes on the emulation thread: on a busy 320x240
+   frame level 1 took about 2 ms against about 15 ms for the default level 6,
+   for a file only about a quarter larger. */
+#define GP32_PNG_LEVEL 1u
 
 #include <errno.h>
 #include <math.h>
@@ -45,8 +54,6 @@ static void seterr(char *err, size_t err_len, const char *msg) {
     }
 }
 
-static void put_u16le(FILE *f, uint16_t v) { fputc((int)(v & 255u), f); fputc((int)((v >> 8) & 255u), f); }
-static void put_u32le(FILE *f, uint32_t v) { put_u16le(f, (uint16_t)v); put_u16le(f, (uint16_t)(v >> 16)); }
 static void put_u16be(FILE *f, uint16_t v) { fputc((int)((v >> 8) & 255u), f); fputc((int)(v & 255u), f); }
 static void put_u32be(FILE *f, uint32_t v) { put_u16be(f, (uint16_t)(v >> 16)); put_u16be(f, (uint16_t)v); }
 static void put_u64be(FILE *f, uint64_t v) { put_u32be(f, (uint32_t)(v >> 32)); put_u32be(f, (uint32_t)v); }
@@ -87,42 +94,30 @@ int gp32_media_frame_to_bgra_320x240(const gp32_framebuffer_desc_t *fb, uint32_t
     return 1;
 }
 
-int gp32_media_write_bmp_320x240(const char *path, const gp32_framebuffer_desc_t *fb, char *err, size_t err_len) {
+int gp32_media_write_png_320x240(const char *path, const gp32_framebuffer_desc_t *fb, char *err, size_t err_len) {
     if (!path || !path[0] || !fb) { seterr(err, err_len, "invalid screenshot request"); return 0; }
-    uint32_t *buf = (uint32_t *)malloc((size_t)GP32_MEDIA_LCD_W * GP32_MEDIA_LCD_H * sizeof(uint32_t));
-    if (!buf) { seterr(err, err_len, "out of memory writing screenshot"); return 0; }
-    if (!gp32_media_frame_to_bgra_320x240(fb, buf)) { free(buf); seterr(err, err_len, "invalid framebuffer for screenshot"); return 0; }
-    FILE *f = fopen(path, "wb");
-    if (!f) { char tmp[256]; snprintf(tmp, sizeof(tmp), "screenshot open failed: %s", strerror(errno)); free(buf); seterr(err, err_len, tmp); return 0; }
-    const uint32_t data_bytes = GP32_MEDIA_LCD_W * GP32_MEDIA_LCD_H * 4u;
-    const uint32_t header_bytes = 14u + 40u;
-    fputc('B', f); fputc('M', f);
-    put_u32le(f, header_bytes + data_bytes);
-    put_u16le(f, 0); put_u16le(f, 0);
-    put_u32le(f, header_bytes);
-    put_u32le(f, 40u);
-    put_u32le(f, GP32_MEDIA_LCD_W);
-    put_u32le(f, (uint32_t)(-(int32_t)GP32_MEDIA_LCD_H));
-    put_u16le(f, 1u);
-    put_u16le(f, 32u);
-    put_u32le(f, 0u);
-    put_u32le(f, data_bytes);
-    put_u32le(f, 2835u); put_u32le(f, 2835u);
-    put_u32le(f, 0u); put_u32le(f, 0u);
-    for (uint32_t y = 0; y < GP32_MEDIA_LCD_H; ++y) {
-        const uint32_t *row = buf + (size_t)y * GP32_MEDIA_LCD_W;
-        for (uint32_t x = 0; x < GP32_MEDIA_LCD_W; ++x) {
-            uint32_t p = row[x];
-            fputc((int)(p & 255u), f);
-            fputc((int)((p >> 8) & 255u), f);
-            fputc((int)((p >> 16) & 255u), f);
-            fputc(0xff, f);
-        }
+    const size_t pixels = (size_t)GP32_MEDIA_LCD_W * GP32_MEDIA_LCD_H;
+    uint32_t *buf = (uint32_t *)malloc(pixels * sizeof(uint32_t));
+    uint8_t *rgb = (uint8_t *)malloc(pixels * 3u);
+    if (!buf || !rgb) { free(buf); free(rgb); seterr(err, err_len, "out of memory writing screenshot"); return 0; }
+    if (!gp32_media_frame_to_bgra_320x240(fb, buf)) { free(buf); free(rgb); seterr(err, err_len, "invalid framebuffer for screenshot"); return 0; }
+    for (size_t i = 0; i < pixels; ++i) { /* 0x00RRGGBB -> R, G, B bytes */
+        rgb[i * 3u + 0u] = (uint8_t)(buf[i] >> 16);
+        rgb[i * 3u + 1u] = (uint8_t)(buf[i] >> 8);
+        rgb[i * 3u + 2u] = (uint8_t)buf[i];
     }
-    int ok = ferror(f) == 0;
-    fclose(f);
     free(buf);
-    if (!ok) seterr(err, err_len, "screenshot write failed");
+    /* Encode first so a failed encode never leaves an empty file behind. */
+    size_t png_len = 0;
+    void *png = tdefl_write_image_to_png_file_in_memory_ex(rgb, (int)GP32_MEDIA_LCD_W, (int)GP32_MEDIA_LCD_H, 3, &png_len, GP32_PNG_LEVEL, 0);
+    free(rgb);
+    if (!png) { seterr(err, err_len, "out of memory encoding screenshot"); return 0; }
+    FILE *f = fopen(path, "wb");
+    if (!f) { char tmp[256]; snprintf(tmp, sizeof(tmp), "screenshot open failed: %s", strerror(errno)); mz_free(png); seterr(err, err_len, tmp); return 0; }
+    int ok = fwrite(png, 1, png_len, f) == png_len;
+    ok = fclose(f) == 0 && ok;
+    mz_free(png);
+    if (!ok) { remove(path); seterr(err, err_len, "screenshot write failed"); }
     return ok;
 }
 

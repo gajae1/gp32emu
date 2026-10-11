@@ -692,13 +692,13 @@ static int app_media_path(app_state_t *a, const char *folder, const char *ext, c
 static void app_screenshot_dialog(app_state_t *a) {
     if (!a || !a->emu) return;
     char path[MAX_PATH];
-    if (!app_media_path(a, "screenshots", "bmp", path)) {
+    if (!app_media_path(a, "screenshots", "png", path)) {
         app_show_status_error(a, GP32_TR("Cannot create the screenshots folder.", "screenshots 폴더를 만들 수 없습니다."));
         return;
     }
     gp32_framebuffer_desc_t fb;
     char err[256] = {0};
-    if (gp32_get_framebuffer(a->emu, &fb) == GP32_OK && gp32_media_write_bmp_320x240(path, &fb, err, sizeof(err))) {
+    if (gp32_get_framebuffer(a->emu, &fb) == GP32_OK && gp32_media_write_png_320x240(path, &fb, err, sizeof(err))) {
         char msg[MAX_PATH + 64];
         snprintf(a->screenshot_path, sizeof(a->screenshot_path), "%s", path);
         snprintf(msg, sizeof(msg), GP32_TR("Screenshot saved: screenshots\\%s", "스크린샷 저장: screenshots\\%s"), base_name(path));
@@ -1371,7 +1371,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show) {
     app.audio_mode = GP32_WIN64_AUDIO_WAVEOUT;
     strcpy(app.video_backend, "d3d11");
     strcpy(app.state_path, "gp32_state.gp32st");
-    strcpy(app.screenshot_path, "gp32_screenshot.bmp");
+    strcpy(app.screenshot_path, "gp32_screenshot.png");
     strcpy(app.record_path, "gp32_recording.mkv");
     app_load_config(&app);
     gp32_win64_ui_init_language(app.config_path);

@@ -212,7 +212,7 @@ bool GP32Engine::takeScreenshot(const QString &path) {
     gp32_framebuffer_desc_t fb;
     char err[256] = {0};
     QByteArray p = toLocal(path);
-    bool ok = gp32_get_framebuffer(m_gp32, &fb) == GP32_OK && gp32_media_write_bmp_320x240(p.constData(), &fb, err, sizeof(err));
+    bool ok = gp32_get_framebuffer(m_gp32, &fb) == GP32_OK && gp32_media_write_png_320x240(p.constData(), &fb, err, sizeof(err));
     emit statusChanged(ok ? QStringLiteral("Screenshot saved") : QStringLiteral("Screenshot failed: %1").arg(QString::fromUtf8(err[0] ? err : "unknown error")));
     return ok;
 }
