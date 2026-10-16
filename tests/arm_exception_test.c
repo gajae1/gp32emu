@@ -426,15 +426,20 @@ static void case_mrc_pc_flags(int jit) {
 
 static void case_arm_undefined_transfer(void) {
     /* ARM920T TRM 2.2.2: bits[27:25]=011 and bit[4]=1 are undefined,
-     * not register-shifted LDR/STR. Failed conditions still suppress traps. */
+     * not register-shifted LDR/STR. Unallocated S=H=0 encodings are also
+     * undefined, not byte transfers. Failed conditions still suppress traps. */
+    static const uint32_t instructions[] = {
+        0xe7810012u, 0xe7910012u, /* undefined register-offset STR/LDR */
+        0xe1c10090u, 0xe1d10090u, /* unallocated transfer, offset zero */
+    };
     for (unsigned engine = 0; engine < 3u; ++engine) {
-        for (unsigned load = 0; load < 2u; ++load) {
+        for (unsigned k = 0; k < GP32_ARRAY_COUNT(instructions); ++k) {
             for (unsigned failed = 0; failed < 2u; ++failed) {
                 current_case = "ARM-undefined-transfer";
                 arm920t_t *c = make_cpu(engine == 2u);
                 data_callbacks = 1; /* enable callbacks after JIT RAM discovery */
                 if (engine == 0u) arm920t_set_trace(c, 1, NULL, NULL);
-                uint32_t insn = load ? 0xe7910012u : 0xe7810012u;
+                uint32_t insn = instructions[k];
                 if (failed) insn &= 0x0fffffffu; /* EQ with Z=0 */
                 bios_w32(CODE_ADDR, insn);
                 bios_w32(CODE_ADDR + 4u, 0xe3a03042u); /* mov r3,#0x42 */

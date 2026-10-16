@@ -79,6 +79,8 @@ than filename-dependent game workarounds.
 
 Thumb word loads/stores and ARM SWP now handle unaligned addresses consistently
 with ARMv4 word transfers, avoiding incorrect reads and writes into the next word.
+Unallocated ARM transfer encodings now raise an undefined-instruction exception
+instead of accidentally changing a register or writing a byte to memory.
 
 JIT changes reduce compilation and dispatch work, avoid compiling one-use paths,
 and reduce decoded-instruction storage. ARM64 memory access, conditional branches
