@@ -1668,6 +1668,14 @@ static void op_coproc(arm920t_t *c, uint32_t insn) {
 }
 
 static int arm920t_armv4t_invalid_arm_insn(uint32_t insn) {
+    /* DDI0151C 2.2.2: unallocated extension encodings trap on ARM920T.
+     * S=H=0 belongs to MUL/long MUL/SWP, never a halfword transfer. Match
+     * their decode bits only: reserved operand bits are a separate concern. */
+    if ((insn & 0x0e0000f0u) == 0x00000090u &&
+        (insn & 0x0fc00000u) != 0x00000000u &&
+        (insn & 0x0f800000u) != 0x00800000u &&
+        (insn & 0x0fb00000u) != 0x01000000u)
+        return 1;
     /* ARM920T is ARMv4T.  Firebird targets ARM926/ARMv5TE and may translate
        BLX, CLZ, BKPT and DSP/saturating opcodes; those must be undefined on
        the GP32 CPU instead of being translated or treated as ARM926 CP15/cache
