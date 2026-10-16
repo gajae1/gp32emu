@@ -33,17 +33,17 @@ static uint8_t *bus_ptr(test_bus_t *b, uint32_t a, size_t bytes) {
     if (a >= RAM_BASE && (uint64_t)(a - RAM_BASE) + bytes <= RAM_SIZE) return b->ram + (a - RAM_BASE);
     return NULL;
 }
-static uint8_t rd8(void *u, uint32_t a)  { uint8_t *p = bus_ptr(u, a, 1); return p ? p[0] : 0xffu; }
-static uint16_t rd16(void *u, uint32_t a){ uint8_t *p = bus_ptr(u, a, 2); return p ? gp32_ld16le(p) : 0xffffu; }
 static void record_data_access(uint32_t a) {
     if (data_callbacks && a >= TADDR && a < TADDR + 16u) {
         if (data_accesses < 2u) data_addresses[data_accesses] = a;
         ++data_accesses;
     }
 }
+static uint8_t rd8(void *u, uint32_t a)  { record_data_access(a); uint8_t *p = bus_ptr(u, a, 1); return p ? p[0] : 0xffu; }
+static uint16_t rd16(void *u, uint32_t a){ record_data_access(a); uint8_t *p = bus_ptr(u, a, 2); return p ? gp32_ld16le(p) : 0xffffu; }
 static uint32_t rd32(void *u, uint32_t a){ record_data_access(a); uint8_t *p = bus_ptr(u, a, 4); return p ? gp32_ld32le(p) : 0xffffffffu; }
-static void wr8(void *u, uint32_t a, uint8_t v)  { uint8_t *p = bus_ptr(u, a, 1); if (p) p[0] = v; }
-static void wr16(void *u, uint32_t a, uint16_t v){ uint8_t *p = bus_ptr(u, a, 2); if (p) gp32_st16le(p, v); }
+static void wr8(void *u, uint32_t a, uint8_t v)  { record_data_access(a); uint8_t *p = bus_ptr(u, a, 1); if (p) p[0] = v; }
+static void wr16(void *u, uint32_t a, uint16_t v){ record_data_access(a); uint8_t *p = bus_ptr(u, a, 2); if (p) gp32_st16le(p, v); }
 #define IRQ_ACK_ADDR 0x0d000000u
 static void wr32(void *u, uint32_t a, uint32_t v){
     record_data_access(a);
@@ -427,10 +427,13 @@ static void case_mrc_pc_flags(int jit) {
 static void case_arm_undefined_transfer(void) {
     /* ARM920T TRM 2.2.2: bits[27:25]=011 and bit[4]=1 are undefined,
      * not register-shifted LDR/STR. Unallocated S=H=0 encodings are also
-     * undefined, not byte transfers. Failed conditions still suppress traps. */
+     * undefined, not byte transfers. LDRD/STRD occupy an ARMv5TE extension
+     * (DDI0100I A3.16.4), undefined on ARMv4T. Failed conditions suppress traps. */
     static const uint32_t instructions[] = {
         0xe7810012u, 0xe7910012u, /* undefined register-offset STR/LDR */
         0xe1c10090u, 0xe1d10090u, /* unallocated transfer, offset zero */
+        0xe1c100d0u, 0xe1c100f0u, /* ARMv5TE LDRD/STRD, immediate offset zero */
+        0xe08100d2u, 0xe08100f2u, /* ARMv5TE LDRD/STRD, post-indexed r2 */
     };
     for (unsigned engine = 0; engine < 3u; ++engine) {
         for (unsigned k = 0; k < GP32_ARRAY_COUNT(instructions); ++k) {
@@ -446,12 +449,14 @@ static void case_arm_undefined_transfer(void) {
                 ram_w32(TADDR, 0x88776655u);
                 arm920t_set_reg(c, 0u, 0x11223344u);
                 arm920t_set_reg(c, 1u, TADDR);
+                arm920t_set_reg(c, 2u, 4u);
                 arm920t_set_cpsr(c, 0xa0000053u); /* SVC, Z=0, I=0, F=1 */
                 arm920t_run(c, 64u); /* enough budget for native dispatch */
                 CHECK(arm920t_get_pc(c), failed ? CODE_ADDR + 8u : 4u, "predicate selects fallthrough or UND vector");
                 CHECK(arm920t_get_cpsr(c), failed ? 0xa0000053u : 0xa00000dbu, "undefined transfer exception state");
                 if (!failed) CHECK(arm920t_get_reg(c, 14u), CODE_ADDR + 4u, "ARM undefined LR");
                 CHECK(arm920t_get_reg(c, 0u), 0x11223344u, "undefined load preserves destination");
+                CHECK(arm920t_get_reg(c, 1u), TADDR, "undefined transfer suppresses base writeback");
                 CHECK(arm920t_get_reg(c, 3u), failed ? 0x42u : 0u, "only failed predicate reaches marker");
                 CHECK(gp32_ld32le(tb.ram + (TADDR - RAM_BASE)), 0x88776655u, "undefined store preserves memory");
                 CHECK(data_accesses, 0u, "undefined transfers never access data bus");

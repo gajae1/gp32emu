@@ -1681,6 +1681,7 @@ static int arm920t_armv4t_invalid_arm_insn(uint32_t insn) {
        the GP32 CPU instead of being translated or treated as ARM926 CP15/cache
        behaviour. */
     return (insn & 0x0e000010u) == 0x06000010u ||        /* ARM undefined instruction space (DDI0151C 2.2.2) */
+           (insn & 0x0e1000d0u) == 0x000000d0u ||        /* LDRD/STRD: ARMv5TE load/store extension */
            (insn & 0xfe000000u) == 0xfa000000u ||        /* BLX immediate */
            (insn & 0x0ffffff0u) == 0x012fff30u ||        /* BLX register */
            (insn & 0x0fff0ff0u) == 0x016f0f10u ||        /* CLZ */
