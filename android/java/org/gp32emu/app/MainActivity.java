@@ -744,13 +744,9 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
                 if (canvas == null) return;
                 canvas.drawColor(Color.BLACK);
                 int width = canvas.getWidth(), height = canvas.getHeight();
-                int top = 0, bottom = height;
-                if (height > width) {
-                    // Before the touch pad's first layout its edge is still unknown.
-                    if (touchEnabled) bottom = Math.max(top + 1,
-                            (int)Math.min(height, touchPad.controlsTop()) - dp(8));
-                }
-                int areaW = width, areaH = Math.max(1, bottom - top);
+                touchPad.videoBounds(dest, width, height, touchEnabled);
+                int left = dest.left, top = dest.top;
+                int areaW = Math.max(1, dest.width()), areaH = Math.max(1, dest.height());
                 int w, h;
                 if (integerScale && Math.min(areaW / 320, areaH / 240) >= 1) {
                     int scale = Math.min(areaW / 320, areaH / 240);
@@ -758,7 +754,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
                 } else {
                     w = Math.min(areaW, areaH * 4 / 3); h = w * 3 / 4;
                 }
-                int x = (width - w) / 2, y = top + (areaH - h) / 2;
+                int x = left + (areaW - w) / 2, y = top + (areaH - h) / 2;
                 dest.set(x, y, x + w, y + h);
                 canvas.drawBitmap(image, null, dest, paint);
             } finally { if (canvas != null) screen.getHolder().unlockCanvasAndPost(canvas); }

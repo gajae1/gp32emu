@@ -4,6 +4,7 @@ import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
+import android.graphics.Rect;
 import android.graphics.RectF;
 import android.util.TypedValue;
 import android.view.MotionEvent;
@@ -32,7 +33,8 @@ public final class TouchPadView extends View {
     private int touchMask;
     private boolean tracking;
     private boolean haptics = true;
-    private volatile float controlsTop = Float.MAX_VALUE;
+    // Published once per layout; never mutate a published rectangle.
+    private volatile Rect videoArea = new Rect();
 
     public TouchPadView(Context context, InputState input) {
         super(context);
@@ -75,9 +77,12 @@ public final class TouchPadView extends View {
     boolean haptics() { return haptics; }
     boolean isTracking() { return tracking; }
 
-    /** Highest control edge, so portrait video can sit above the controls.
-     *  Safe to read from the emulation thread. */
-    float controlsTop() { return controlsTop; }
+    /** Copies the published layout without allocating on the emulation thread. */
+    void videoBounds(Rect out, int width, int height, boolean controlsVisible) {
+        Rect area = videoArea;
+        out.set(0, 0, width, height);
+        if (controlsVisible && !area.isEmpty()) out.intersect(area);
+    }
 
     @Override protected void onSizeChanged(int w, int h, int oldw, int oldh) {
         super.onSizeChanged(w, h, oldw, oldh);
@@ -85,7 +90,7 @@ public final class TouchPadView extends View {
         layoutControls(w, h);
         float top = h;
         for (RectF rect : bounds) if (!rect.isEmpty()) top = Math.min(top, rect.top);
-        controlsTop = top;
+        if (w <= h) videoArea = new Rect(0, 0, w, Math.max(1, (int)(top - 8 * density)));
     }
 
     private void layoutControls(int width, int height) {
@@ -99,17 +104,11 @@ public final class TouchPadView extends View {
         float preferred = Math.min(56 * density, Math.max(44 * density, availableWidth / 8));
         float unit = Math.min(preferred,
                 Math.min((availableWidth - gap) / 6, (availableHeight - gap) / 4));
-        if (unit <= 0) return;
-        boolean landscape = width > height, column = false;
+        if (unit <= 0) { videoArea = new Rect(); return; }
+        boolean landscape = width > height;
         if (landscape) {
-            /* Each side column stacks a shoulder, Select/Start and a 3-unit
-             * pad. Shrink to fit (never below 40dp) and keep the columns beside
-             * the 4:3 picture when the screen is wide enough. */
-            float fullHeight = height - getPaddingTop() - getPaddingBottom() - 2 * margin;
-            float vertical = (fullHeight - 2 * gap) / 4.8f;
-            if (vertical >= 40 * density) { unit = Math.min(unit, vertical); column = true; }
-            float beside = ((width - height * 4f / 3f) / 2f - margin) / 3f;
-            if (beside >= 40 * density) unit = Math.min(unit, beside);
+            // Reserve two compact side columns instead of covering the video.
+            unit = Math.min(unit, Math.min(48 * density, (availableWidth - 2 * gap) / 9));
         }
 
         float left = getPaddingLeft() + margin;
@@ -133,15 +132,14 @@ public final class TouchPadView extends View {
             float shoulderTop = getPaddingTop() + margin;
             bounds[6].set(left, shoulderTop, left + 1.5f * unit, shoulderTop + unit);
             bounds[7].set(right - 1.5f * unit, shoulderTop, right, shoulderTop + unit);
-            float small = 0.8f * unit;
-            if (column) {
-                float middle = (shoulderTop + unit + dpad.top - small) / 2f;
-                bounds[9].set(left, middle, left + 1.5f * unit, middle + small);
-                bounds[8].set(right - 1.5f * unit, middle, right, middle + small);
-            } else {
-                bounds[8].set(center + gap / 2, bottom - small, center + gap / 2 + 1.5f * unit, bottom);
-                bounds[9].set(center - gap / 2 - 1.5f * unit, bottom - small, center - gap / 2, bottom);
-            }
+            float pictureLeft = left + 3 * unit + gap;
+            float pictureRight = right - 3 * unit - gap;
+            float small = Math.min(44 * density, unit);
+            float smallWidth = Math.min(72 * density, (pictureRight - pictureLeft - gap) / 2);
+            bounds[8].set(center + gap / 2, bottom - small, center + gap / 2 + smallWidth, bottom);
+            bounds[9].set(center - gap / 2 - smallWidth, bottom - small, center - gap / 2, bottom);
+            videoArea = new Rect((int)Math.ceil(pictureLeft), (int)Math.ceil(shoulderTop),
+                    (int)Math.floor(pictureRight), (int)Math.floor(bottom - small - gap));
             return;
         }
         bounds[6].set(left, rowTop, left + 1.2f * unit, rowBottom);
