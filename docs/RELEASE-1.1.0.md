@@ -44,8 +44,9 @@ Audio and lifecycle changes include:
 
 ## Android
 
-- Moves the menu button outside the game picture and touch controls.
-- Enlarges the landscape menu's touch target without enlarging its icon.
+- Places the landscape menu at the upper center without a reserved left strip.
+  Its icon disappears after three seconds; the larger touch target stays active.
+  Rotation and closing the menu briefly reveal it again.
 - Keeps the landscape picture clear of touch controls, with Start/Select below
   it. Hiding controls restores the full available 4:3 display area.
 - Prevents extra fingers or gestures begun on the controls from opening the menu.

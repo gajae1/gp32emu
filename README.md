@@ -124,6 +124,9 @@ move beside the picture in landscape, with Start/Select below it. Controls do
 not cover the picture; hiding them expands the available 4:3 display area.
 Multiple buttons can be held together.
 Rotation, focus loss and backgrounding release held input.
+In landscape, the menu icon appears at the upper center and disappears after
+three seconds. Tap that same area to reopen the menu. Rotation and closing the
+menu briefly reveal the icon again; there is no reserved menu strip at the left.
 
 Keyboard controls match the Windows defaults. Gamepads work with touch controls
 hidden; the D-pad or left stick, A/B, L1/R1 or L2/R2, Start and Select map to the
