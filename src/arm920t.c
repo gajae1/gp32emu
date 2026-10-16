@@ -972,6 +972,21 @@ ARM_FORCE_INLINE void wb8(arm920t_t *c, uint32_t a, uint8_t v) { uint32_t paddr 
 ARM_FORCE_INLINE void wb16(arm920t_t *c, uint32_t a, uint16_t v) { uint32_t paddr = mmu_translate(c, a); uint8_t *p = fastmem(c, paddr, 2u, 1); if (p) gp32_st16le(p, v); else c->bus.write16(c->bus.user, paddr, v); }
 ARM_FORCE_INLINE void wb32(arm920t_t *c, uint32_t a, uint32_t v) { uint32_t paddr = mmu_translate(c, a); uint8_t *p = fastmem(c, paddr, 4u, 1); if (p) gp32_st32le(p, v); else c->bus.write32(c->bus.user, paddr, v); }
 
+/* ARMv4 single-word transfers align the bus access; only loads rotate. */
+ARM_FORCE_INLINE uint32_t load_word_rotated(arm920t_t *c, uint32_t addr) {
+    return gp32_ror32(rb32(c, addr & ~3u), (addr & 3u) * 8u);
+}
+
+static void op_swap(arm920t_t *c, uint32_t insn) {
+    unsigned rn = (insn >> 16) & 0xfu, rd = (insn >> 12) & 0xfu, rm = insn & 0xfu;
+    uint32_t addr = c->r[rn];
+    int byte = GP32_BIT(insn, 22);
+    uint32_t old = byte ? rb8(c, addr) : load_word_rotated(c, addr);
+    if (byte) wb8(c, addr, (uint8_t)c->r[rm]);
+    else wb32(c, addr & ~3u, c->r[rm]);
+    c->r[rd] = old;
+}
+
 ARM_FORCE_INLINE void set_nz(arm920t_t *c, uint32_t v) {
     c->cpsr = (c->cpsr & ~(N_FLAG | Z_FLAG)) | (v & N_FLAG) | (v == 0 ? Z_FLAG : 0);
 }
@@ -1695,7 +1710,7 @@ static int exec_arm_at(arm920t_t *c, uint32_t pc, uint32_t insn) {
         return 1;
     }
     if ((insn & 0x0fc000f0u) == 0x00000090u || (insn & 0x0f8000f0u) == 0x00800090u) { op_mul(c, insn); return 1; }
-    if ((insn & 0x0fb00ff0u) == 0x01000090u) { unsigned rn=(insn>>16)&0xfu, rd=(insn>>12)&0xfu, rm=insn&0xfu; uint32_t a=c->r[rn]; uint32_t old=GP32_BIT(insn,22)?rb8(c,a):rb32(c,a); if(GP32_BIT(insn,22))wb8(c,a,(uint8_t)c->r[rm]);else wb32(c,a,c->r[rm]); c->r[rd]=old; return 1; }
+    if ((insn & 0x0fb00ff0u) == 0x01000090u) { op_swap(c, insn); return 1; }
     if ((insn & 0x0e000090u) == 0x00000090u) { op_halfword(c, insn); return 1; }
     if ((insn & 0x0c000000u) == 0x00000000u) {
         if ((insn & 0x01900000u) == 0x01000000u) { op_psr(c, insn); return 1; }
@@ -1810,12 +1825,12 @@ static void exec_thumb(arm920t_t *c) {
     if ((op & 0xf800u) == 0x4800u) { unsigned rd=(op>>8)&7u; uint32_t addr=((pc+4)&~2u)+((op&0xffu)<<2); c->r[rd]=rb32(c,addr); return; }
     if ((op & 0xf000u) == 0x5000u) { /* reg offset load/store */
         unsigned rd=op&7u, rb=(op>>3)&7u, ro=(op>>6)&7u; uint32_t addr=c->r[rb]+c->r[ro]; unsigned kind=(op>>9)&7u;
-        switch(kind){case 0: wb32(c,addr,c->r[rd]);break;case 1: wb16(c,addr,(uint16_t)c->r[rd]);break;case 2: wb8(c,addr,(uint8_t)c->r[rd]);break;case 3: c->r[rd]=(uint32_t)(int8_t)rb8(c,addr);break;case 4: c->r[rd]=rb32(c,addr);break;case 5: c->r[rd]=rb16(c,addr);break;case 6: c->r[rd]=rb8(c,addr);break;case 7: c->r[rd]=(uint32_t)(int16_t)rb16(c,addr);break;} return;
+        switch(kind){case 0: wb32(c,addr & ~3u,c->r[rd]);break;case 1: wb16(c,addr,(uint16_t)c->r[rd]);break;case 2: wb8(c,addr,(uint8_t)c->r[rd]);break;case 3: c->r[rd]=(uint32_t)(int8_t)rb8(c,addr);break;case 4: c->r[rd]=load_word_rotated(c,addr);break;case 5: c->r[rd]=rb16(c,addr);break;case 6: c->r[rd]=rb8(c,addr);break;case 7: c->r[rd]=(uint32_t)(int16_t)rb16(c,addr);break;} return;
     }
-    if ((op & 0xf000u) == 0x6000u) { unsigned rd=op&7u, rb=(op>>3)&7u, imm=(op>>6)&0x1fu; uint32_t addr=c->r[rb]+(imm<<2); if(op&0x0800)c->r[rd]=rb32(c,addr); else wb32(c,addr,c->r[rd]); return; }
+    if ((op & 0xf000u) == 0x6000u) { unsigned rd=op&7u, rb=(op>>3)&7u, imm=(op>>6)&0x1fu; uint32_t addr=c->r[rb]+(imm<<2); if(op&0x0800)c->r[rd]=load_word_rotated(c,addr); else wb32(c,addr & ~3u,c->r[rd]); return; }
     if ((op & 0xf000u) == 0x7000u) { unsigned rd=op&7u, rb=(op>>3)&7u, imm=(op>>6)&0x1fu; uint32_t addr=c->r[rb]+imm; if(op&0x0800)c->r[rd]=rb8(c,addr); else wb8(c,addr,(uint8_t)c->r[rd]); return; }
     if ((op & 0xf000u) == 0x8000u) { unsigned rd=op&7u, rb=(op>>3)&7u, imm=(op>>6)&0x1fu; uint32_t addr=c->r[rb]+(imm<<1); if(op&0x0800)c->r[rd]=rb16(c,addr); else wb16(c,addr,(uint16_t)c->r[rd]); return; }
-    if ((op & 0xf000u) == 0x9000u) { unsigned rd=(op>>8)&7u; uint32_t addr=c->r[13]+((op&0xffu)<<2); if(op&0x0800)c->r[rd]=rb32(c,addr); else wb32(c,addr,c->r[rd]); return; }
+    if ((op & 0xf000u) == 0x9000u) { unsigned rd=(op>>8)&7u; uint32_t addr=c->r[13]+((op&0xffu)<<2); if(op&0x0800)c->r[rd]=load_word_rotated(c,addr); else wb32(c,addr & ~3u,c->r[rd]); return; }
     if ((op & 0xf000u) == 0xa000u) { unsigned rd=(op>>8)&7u; uint32_t imm=(op&0xffu)<<2; c->r[rd]=((op&0x0800)?c->r[13]:((pc+4)&~2u))+imm; return; }
     if ((op & 0xff00u) == 0xb000u) { uint32_t imm=(op&0x7fu)<<2; if(op&0x80)c->r[13]-=imm; else c->r[13]+=imm; return; }
     if ((op & 0xf600u) == 0xb400u) { /* push/pop */
@@ -3183,13 +3198,7 @@ ARM_FORCE_INLINE void arm_jit_exec_classified_bc(arm920t_t *c, const arm_jit_op_
     case ARM_JIT_OP_DATA: op_data_proc_bc(c, op); return;
     case ARM_JIT_OP_PSR: op_psr(c, insn); return;
     case ARM_JIT_OP_MUL: op_mul(c, insn); return;
-    case ARM_JIT_OP_SWP: {
-        unsigned rn=(insn>>16)&0xfu, rd=(insn>>12)&0xfu, rm=insn&0xfu;
-        uint32_t a=c->r[rn]; uint32_t old=GP32_BIT(insn,22)?rb8(c,a):rb32(c,a);
-        if(GP32_BIT(insn,22)) wb8(c,a,(uint8_t)c->r[rm]); else wb32(c,a,c->r[rm]);
-        c->r[rd]=old;
-        return;
-    }
+    case ARM_JIT_OP_SWP: op_swap(c, insn); return;
     case ARM_JIT_OP_HALF: op_halfword_bc(c, op); return;
     case ARM_JIT_OP_SINGLE_DT: op_single_dt_bc(c, op); return;
     case ARM_JIT_OP_BLOCK_DT: op_block_dt_bc(c, op); return;

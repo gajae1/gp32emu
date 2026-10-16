@@ -547,6 +547,60 @@ static void case_coproc_invalid_operation(void) {
     }
 }
 
+/* ARM DUI 0204J, address alignment and SWP: with alignment checking off,
+ * word loads rotate the aligned word; stores write the aligned word. Test
+ * absolute results, since JIT/interpreter parity misses a shared defect. */
+static void case_single_word_alignment(void) {
+    static const uint16_t thumb_load[] = {0x5888u, 0x6848u, 0x9801u};
+    static const uint16_t thumb_store[] = {0x5088u, 0x6048u, 0x9001u};
+    static const uint32_t loaded[] = {0x11223344u, 0x44112233u, 0x33441122u, 0x22334411u};
+    for (unsigned engine = 0; engine < 3u; ++engine) {
+        for (unsigned slow = 0; slow < 2u; ++slow) {
+            for (unsigned edge = 0; edge < 2u; ++edge) {
+                uint32_t base = edge ? STACK_TOP - 4u : TADDR;
+                for (unsigned offset = 0; offset < 4u; ++offset) {
+                    for (unsigned kind = 0; kind < 7u; ++kind) {
+                        current_case = kind == 6u ? "SWP-word-alignment" : "Thumb-single-word-alignment";
+                        arm920t_t *c = make_cpu(engine == 2u);
+                        data_callbacks = slow;
+                        if (engine == 0u) arm920t_set_trace(c, 1, NULL, NULL);
+                        int swap = kind == 6u, store = kind >= 3u;
+                        uint32_t cpsr = swap ? 0xa0000053u : 0xa0000073u;
+                        ram_w32(base, 0x11223344u);
+                        if (!edge) ram_w32(base + 4u, 0x55667788u);
+                        if (swap) {
+                            bios_w32(CODE_ADDR, 0xe1010092u); /* swp r0,r2,[r1] */
+                            arm920t_set_reg(c, 1u, base + offset);
+                            arm920t_set_reg(c, 2u, 0xa1b2c3d4u);
+                        } else {
+                            unsigned form = kind % 3u;
+                            gp32_st16le(tb.bios + CODE_ADDR, store ? thumb_store[form] : thumb_load[form]);
+                            gp32_st16le(tb.bios + CODE_ADDR + 2u, 0xe7feu); /* b . */
+                            arm920t_set_reg(c, 1u, base + offset - 4u);
+                            arm920t_set_reg(c, 2u, 4u);
+                        }
+                        arm920t_set_cpsr(c, cpsr);
+                        arm920t_set_reg(c, 13u, base + offset - 4u);
+                        arm920t_set_reg(c, 0u, 0xa1b2c3d4u);
+                        arm920t_run(c, 32u);
+                        CHECK(arm920t_get_reg(c, 0u), (!store || swap) ? loaded[offset] : 0xa1b2c3d4u, "load uses aligned word and rotates");
+                        CHECK(gp32_ld32le(tb.ram + base - RAM_BASE), store ? 0xa1b2c3d4u : 0x11223344u, "store aligns without rotating source");
+                        if (!edge) CHECK(gp32_ld32le(tb.ram + base + 4u - RAM_BASE), 0x55667788u, "adjacent word remains intact");
+                        CHECK(arm920t_get_cpsr(c), cpsr, "memory transfer preserves flags and mode");
+                        if (slow && !edge) {
+                            CHECK(data_accesses, swap ? 2u : 1u, "one bus access per transfer");
+                            CHECK(data_addresses[0], base, "bus receives aligned address");
+                            if (swap) CHECK(data_addresses[1], base, "swap writes same aligned address");
+                        }
+                        arm920t_destroy(c);
+                        data_callbacks = 0;
+                    }
+                }
+            }
+        }
+    }
+}
+
 static void case_thumb_undefined(int jit) {
     /* Conditional-branch condition 1110 is undefined on ARMv4T; 1111 is SWI.
      * Check exception entry and return, independently of the shared decoder. */
@@ -572,6 +626,7 @@ static void case_thumb_undefined(int jit) {
 }
 
 int main(void) {
+    case_single_word_alignment();
     case_coproc_invalid_operation();
     case_cp15_access();
     case_arm_undefined_transfer();

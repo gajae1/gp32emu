@@ -50,6 +50,8 @@ Audio and lifecycle changes include:
 - Queues the first audio samples before starting playback, avoiding an empty
   audio track while the first emulated frame is being prepared. The same path
   is used after pause, reset and state load.
+- Redraws touch controls only when their pressed state changes, while continuing
+  to process held-button and sliding input.
 
 Layout and input checks have run on emulators and a physical Android phone.
 Short Blue Angelo and Astonishia Story R title-scene measurements sustained
@@ -67,6 +69,9 @@ The interpreter and native JIT backends include corrections to ARM/Thumb
 instruction behavior, exception handling, privileged register access and
 instruction/data address translation. These are shared emulation fixes rather
 than filename-dependent game workarounds.
+
+Thumb word loads/stores and ARM SWP now handle unaligned addresses consistently
+with ARMv4 word transfers, avoiding incorrect reads and writes into the next word.
 
 JIT changes reduce compilation and dispatch work, avoid compiling one-use paths,
 and reduce decoded-instruction storage. ARM64 memory access, conditional branches
@@ -101,6 +106,5 @@ when upgrading. In-game card saves are unchanged.
 - Nintendo Switch runtime behavior and Android RetroArch integration.
 
 See [Building](BUILDING.md), [Android builds](ANDROID_BUILD.md) and
-[iOS builds](IOS_BUILD.md) for source builds. Rebuild each target from the reviewed
-source before publishing 1.1.0; a local mobile candidate is not evidence that every
-platform package has been rebuilt or tested.
+[iOS builds](IOS_BUILD.md) for source builds. Each binary ZIP includes a manifest
+identifying its source revision and file checksums.

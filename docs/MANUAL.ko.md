@@ -48,6 +48,12 @@ ARMv7은 JIT 없이 동작하므로 ARM64보다 상당히 느립니다.
 iOS/iPadOS 15 이상의 ARM64 기기용 `gp32emu-1.1.0-ios-unsigned.ipa`를 테스트 중입니다.
 아직 공개 릴리스가 아니며, SideStore를 통한 전체 설치 과정은 확인이 남아 있습니다.
 
+서명 없는 IPA는 다운로드만으로 설치·실행되지 않습니다. SideStore 최초 설정에는
+Windows·Mac·Linux 컴퓨터가 필요하며, 이후에는 필요한 Wi-Fi·VPN 설정을 갖춘 기기에서
+설치·갱신할 수 있습니다. iOS 16 이상에서 개발 서명 앱을 실행하려면 개발자 모드도
+켜야 합니다. 인터프리터로 실행하더라도 이 설치 조건은 동일합니다. 서명 도구의 Apple
+로그인이 실패하면 해당 도구의 문제를 해결한 뒤 설치해야 합니다.
+
 1. [SideStore 공식 안내](https://docs.sidestore.io/docs/installation/prerequisites)에 따라
    SideStore를 준비하고, IPA를 가져와 본인 계정으로 서명·설치합니다.
 2. GP32emu 메뉴에서 BIOS와 압축을 푼 SMC·FXE·FPK 게임을 가져옵니다.
@@ -307,7 +313,13 @@ RetroArch에서는 프런트엔드의 스테이트 저장·불러오기 기능�
 - **RetroArch가 종료됨:** `retroarch --verbose`로 로그를 확인하세요.
 
 호환성 확인은 일부 장면에 한정되며 전체 게임 완주를 보장하지 않습니다. 실제 GP32와의 소리·입력
-지연 비교, 장시간 플레이는 미확인입니다. 실제 ARM Android 기기, Qt 실행, 브라우저 재생도 미검증입니다.
+지연 비교, 장시간 플레이는 미확인입니다. 1.1.0 개발 앱은 실제 ARM64 Android 기기에서 일부
+게임·오디오·입력을 확인했습니다. Android RetroArch 연동, Qt 실행, 브라우저 재생은 미검증입니다.
+
+실기의 모든 클럭과 주변장치를 정밀 재현하는 에뮬레이터는 아닙니다. CPU 파이프라인과 메모리
+대기시간은 근사하며, 일부 MMU 오류는 예외를 발생시키는 대신 호환성을 위한 처리를 합니다.
+USB 등 일부 주변장치는 레지스터 처리만 제공하므로 실기와 동일한 기능을 기대할 수 없습니다.
+JIT과 인터프리터 결과가 일치하더라도, 그것만으로 실제 GP32와의 일치가 입증되지는 않습니다.
 
 프로젝트 출처와 라이선스 고지는 [README](../README.md#credits-and-licensing)와
 [licenses/](../licenses/)에 있습니다. Windows ZIP에는 `SDL3-LICENSE.txt`도 들어 있습니다.

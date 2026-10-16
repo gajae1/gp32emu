@@ -23,8 +23,8 @@ checkout as `libretro_libnx.a`, then run `make -f Makefile.libnx`. The result is
 `retroarch_switch.nro`. See `manifest.json` for the exact RetroArch commit and
 the [official build guide](https://docs.libretro.com/development/retroarch/compilation/switch-libnx/)
 for dependencies. `retroarch-source.tar.gz` contains that frontend's source.
-The full project source archive includes the manually dispatched GitHub Actions
-workflow used for this build.
+The full project source archive also includes a manually dispatched GitHub
+Actions workflow for rebuilding this target.
 
 This port uses the ARM64 JIT through libnx, with an interpreter fallback when
 JIT permissions are unavailable. It has not been tested on a Switch console.
