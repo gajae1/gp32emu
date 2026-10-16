@@ -1,7 +1,230 @@
 /* SDK existing-file open must reach the asset-backed file service after
  * relocation. The fixture is a short SDK prefix, not a commercial ROM. */
 #include "../src/gp32.c"
+#include "../src/fxe.c"
 #include "zip.h"
+
+/* Both packer variants share this commit step. A rejected expanded header
+ * must keep the original executable usable by the guest decruncher. */
+static int check_decrunch_commit(void) {
+    uint8_t *mem = calloc(1, 8u * 1024u * 1024u);
+    fxe_image_t img = {0};
+    img.payload = malloc(64u);
+    if (!mem || !img.payload) { free(mem); fxe_image_free(&img); return 0; }
+    memset(img.payload, 0xa5, 64u);
+    img.payload_size = 64u;
+    img.load_addr = GP32_RAM_BASE;
+    img.entry_addr = GP32_RAM_BASE + 0x20u;
+    img.was_fxe = img.was_b2fxec = 1;
+    uint8_t *original = img.payload;
+    uint8_t before[64];
+    memcpy(before, original, sizeof(before));
+    uint32_t source = GP32_RAM_BASE + 0x100u;
+    uint8_t *header = mem + 0x100u;
+    gp32_st32le(header, 0xea000006u);
+    gp32_st32le(header + 4u, GP32_RAM_BASE);
+    gp32_st32le(header + 8u, GP32_RAM_BASE + 64u);
+    gp32_st32le(header + 12u, 4u); /* invalid RW base in an expanded image */
+    char err[128] = {0};
+    int ok = !b2fxec_finish_decrunch(&img, mem, source, source + 64u, err, sizeof(err)) &&
+             img.payload == original && img.payload_size == sizeof(before) &&
+             img.load_addr == GP32_RAM_BASE && img.entry_addr == GP32_RAM_BASE + 0x20u &&
+             !img.was_host_decrunched && img.was_fxe && img.was_b2fxec &&
+             memcmp(img.payload, before, sizeof(before)) == 0;
+    /* The valid result must still commit its bytes and parsed entry address. */
+    gp32_st32le(header + 12u, GP32_RAM_BASE + 64u);
+    gp32_st32le(header + 16u, 4u); /* firmware ignores this duplicate word */
+    ok &= b2fxec_finish_decrunch(&img, mem, source, source + 64u, err, sizeof(err)) &&
+          img.payload_size == 64u && memcmp(img.payload, header, 64u) == 0 &&
+          img.load_addr == GP32_RAM_BASE && img.entry_addr == GP32_RAM_BASE + 0x20u &&
+          img.was_host_decrunched;
+    free(mem);
+    fxe_image_free(&img);
+    if (!ok) fputs("FAIL: failed host decrunch replaces the guest loader\n", stderr);
+    return ok;
+}
+
+/* Synthetic FXP2 stream: two one-bit tree-length symbols (0 and 9), then
+ * nine-bit literal codes 0..256. No game bytes or packer executable are used. */
+static void fixture_bits(uint8_t *data, size_t *bits, uint32_t value, unsigned width) {
+    while (width--) {
+        size_t bit = (*bits)++;
+        size_t byte = (bit / 16u) * 2u + ((bit % 16u) < 8u);
+        data[byte] |= (uint8_t)(((value >> width) & 1u) << (7u - bit % 8u));
+    }
+}
+
+static int check_decrunch_scratch(void) {
+    uint8_t expected[4096], packed[8192] = {0};
+    for (unsigned i = 0; i < sizeof(expected); ++i)
+        expected[i] = (uint8_t)((i * 73u) ^ (i >> 3u));
+    const uint32_t header[] = {0xea000006u, GP32_RAM_BASE,
+        GP32_RAM_BASE + sizeof(expected), GP32_RAM_BASE + sizeof(expected),
+        GP32_RAM_BASE + sizeof(expected) + 0x80u,
+        GP32_RAM_BASE + sizeof(expected), GP32_RAM_BASE + sizeof(expected) + 0x80u, 0u};
+    for (unsigned i = 0; i < GP32_ARRAY_COUNT(header); ++i)
+        gp32_st32le(expected + i * 4u, header[i]);
+    memcpy(packed + 64u, "FXP2", 4u);
+    gp32_st32le(packed + 68u, sizeof(expected));
+    uint8_t *stream = packed + 74u;
+    size_t bits = 0;
+    for (unsigned i = 0; i < 16u; ++i)
+        fixture_bits(stream, &bits, i == 0u || i == 9u, 3u);
+    for (unsigned i = 0; i < 0x179u; ++i)
+        fixture_bits(stream, &bits, i <= 0x100u, 1u);
+    for (unsigned i = 0; i < sizeof(expected); ++i)
+        fixture_bits(stream, &bits, expected[i], 9u);
+    fixture_bits(stream, &bits, 0x100u, 9u); /* end of block */
+    size_t bytes = ((bits + 15u) / 16u) * 2u;
+    gp32_st16le(packed + 72u, (uint16_t)bytes);
+    gp32_st16le(stream + bytes, 0xffffu); /* end of stream */
+    size_t size = (74u + bytes + 4u + 3u) & ~(size_t)3u;
+    gp32_st32le(packed, 0xea000006u);
+    gp32_st32le(packed + 4u, GP32_RAM_BASE);
+    gp32_st32le(packed + 8u, GP32_RAM_BASE + 64u);
+    gp32_st32le(packed + 12u, GP32_RAM_BASE + 64u);
+    for (unsigned i = 16u; i <= 24u; i += 4u)
+        gp32_st32le(packed + i, GP32_RAM_BASE + (uint32_t)size);
+    fxe_image_t img = {0};
+    char err[128] = {0};
+    int ok = fxe_load_buffer(packed, size, "synthetic FXP2", &img, err, sizeof(err)) &&
+        img.was_host_decrunched && img.payload_size == sizeof(expected) &&
+        memcmp(img.payload, expected, sizeof(expected)) == 0;
+    fxe_image_free(&img);
+    if (!ok) fprintf(stderr, "FAIL: FXP2 scratch overwrites compressed input: %s\n", err);
+    return ok;
+}
+
+/* FXP3 fixture with a uniform four-bit pre-tree, nine-bit literals, and
+ * unused offset trees. The larger case has a compressed block > 0x7fff;
+ * the bit reader may prefetch past the last coded word. */
+static size_t make_fxp3_fixture(uint8_t *packed, uint8_t *expected, size_t count) {
+    const uint32_t stub = 0x348u;
+    for (size_t i = 0; i < count; ++i) expected[i] = (uint8_t)((i * 73u) ^ (i >> 3u));
+    const uint32_t header[] = {0xea000006u, GP32_RAM_BASE,
+        GP32_RAM_BASE + (uint32_t)count, GP32_RAM_BASE + (uint32_t)count,
+        GP32_RAM_BASE + (uint32_t)count, GP32_RAM_BASE + (uint32_t)count,
+        GP32_RAM_BASE + (uint32_t)count, 0u};
+    for (unsigned i = 0; i < GP32_ARRAY_COUNT(header); ++i)
+        gp32_st32le(expected + i * 4u, header[i]);
+    memcpy(packed + stub, "FXP3", 4u);
+    gp32_st32le(packed + stub + 4u, (uint32_t)count);
+    uint8_t *stream = packed + stub + 10u;
+    size_t bits = 0;
+    for (unsigned i = 0; i < 16u; ++i) fixture_bits(stream, &bits, 4u, 3u);
+    uint8_t mtf[16];
+    for (unsigned i = 0; i < 16u; ++i) mtf[i] = (uint8_t)i;
+    for (unsigned i = 0; i < 0x400u; ++i) {
+        uint8_t value = i <= 0x100u ? 9u : 0u;
+        unsigned index = 0;
+        while (mtf[index] != value) ++index;
+        fixture_bits(stream, &bits, index, 4u);
+        while (index) { mtf[index] = mtf[index - 1u]; --index; }
+        mtf[0] = value;
+    }
+    for (size_t i = 0; i < count; ++i) fixture_bits(stream, &bits, expected[i], 9u);
+    fixture_bits(stream, &bits, 0x100u, 9u);
+    size_t bytes = ((bits + 15u) / 16u) * 2u;
+    gp32_st16le(packed + stub + 8u, (uint16_t)bytes);
+    gp32_st16le(stream + bytes, 0u); /* explicit final block marker */
+    size_t size = (stub + 10u + bytes + 2u + 3u) & ~(size_t)3u;
+    gp32_st32le(packed, 0xea000006u);
+    gp32_st32le(packed + 4u, GP32_RAM_BASE);
+    gp32_st32le(packed + 8u, GP32_RAM_BASE + stub);
+    gp32_st32le(packed + 12u, GP32_RAM_BASE + stub);
+    for (unsigned i = 16u; i <= 24u; i += 4u)
+        gp32_st32le(packed + i, GP32_RAM_BASE + (uint32_t)size);
+    return size;
+}
+
+static int check_fxp3_fallback(const uint8_t *packed, size_t size) {
+    fxe_image_t img = {0};
+    img.payload = malloc(size);
+    if (!img.payload) return 0;
+    memcpy(img.payload, packed, size);
+    img.payload_size = size;
+    img.load_addr = GP32_RAM_BASE;
+    img.entry_addr = GP32_RAM_BASE + 32u;
+    img.was_fxe = img.was_b2fxec = 1;
+    fxe_image_t before = img;
+    char err[128] = {0};
+    int ok = !b2fxec_host_decrunch_fxp3(&img, err, sizeof(err)) &&
+        memcmp(&img, &before, sizeof(img)) == 0 && memcmp(img.payload, packed, size) == 0;
+    fxe_image_free(&img);
+    ok &= fxe_load_buffer(packed, size, "FXP3 fallback", &img, err, sizeof(err)) &&
+        !img.was_host_decrunched && img.payload_size == size &&
+        memcmp(img.payload, packed, size) == 0;
+    fxe_image_free(&img);
+    if (!ok) fprintf(stderr, "FAIL: rejected FXP3 changed its guest loader: %s\n", err);
+    return ok;
+}
+
+static int check_fxp3_bounds(void) {
+    uint8_t *packed = calloc(1, 65536u), *copy = malloc(65536u), *expected = malloc(32767u);
+    if (!packed || !copy || !expected) { free(packed); free(copy); free(expected); return 0; }
+    const size_t counts[] = {64u, 32767u};
+    char err[128] = {0};
+    int ok = 1;
+    size_t size = 0;
+    for (unsigned i = 0; i < GP32_ARRAY_COUNT(counts); ++i) {
+        memset(packed, 0, 65536u);
+        size = make_fxp3_fixture(packed, expected, counts[i]);
+        fxe_image_t img = {0};
+        ok = fxe_load_buffer(packed, size, "synthetic FXP3", &img, err, sizeof(err)) &&
+            img.was_host_decrunched && img.payload_size == counts[i] &&
+            memcmp(img.payload, expected, counts[i]) == 0;
+        fxe_image_free(&img);
+        if (!ok) { fprintf(stderr, "FAIL: FXP3 tail/block decoding, count=%zu: %s\n", counts[i], err); break; }
+    }
+    if (ok) {
+        ok &= check_fxp3_fallback(packed, size - 1u);
+        for (unsigned mutation = 0; mutation < 11u && ok; ++mutation) {
+            memcpy(copy, packed, size);
+            size_t cut = size;
+            switch (mutation) {
+            case 0: cut -= 4u; gp32_st32le(copy + 20u, GP32_RAM_BASE + (uint32_t)cut); break;
+            case 1: gp32_st32le(copy + 20u, GP32_RAM_BASE + (uint32_t)size - 2u); break;
+            case 2: gp32_st16le(copy + 0x350u, 0xfffeu); break;
+            case 3: gp32_st16le(copy + 0x350u, gp32_ld16le(copy + 0x350u) + 2u); break;
+            case 4: gp32_st16le(copy + 0x350u, gp32_ld16le(copy + 0x350u) - 2u); break;
+            case 5: gp32_st32le(copy + 0x34cu, 32768u); break;
+            case 6: gp32_st32le(copy + 0x34cu, 32766u); break;
+            case 7: gp32_st32le(copy + 0x34cu, UINT32_MAX); break;
+            case 8: memset(copy + 0x352u, 0, 6u); break;
+            case 9: gp32_st32le(copy + 12u, GP32_RAM_BASE + 0x2d4u); break;
+            case 10: memcpy(copy + 0x348u, "BAD!", 4u); break;
+            }
+            ok &= check_fxp3_fallback(copy, cut);
+        }
+    }
+    free(packed); free(copy); free(expected);
+    return ok;
+}
+
+static int check_gxb_zi_header(int has_zi) {
+    gp32_t *g = gp32_create(NULL);
+    if (!g) return 0;
+    const uint32_t rw = GP32_RAM_BASE + 0x2000u;
+    uint8_t payload[80] = {0};
+    const uint32_t header[] = {0xea000006u, GP32_RAM_BASE, GP32_RAM_BASE + 64u,
+        rw, has_zi ? rw + 16u : 4u, rw + 16u, has_zi ? rw + 48u : 4u, 0u};
+    for (unsigned i = 0; i < GP32_ARRAY_COUNT(header); ++i)
+        gp32_st32le(payload + i * 4u, header[i]);
+    for (unsigned i = 0; i < 16u; ++i) payload[64u + i] = (uint8_t)(i + 1u);
+    for (unsigned i = 0; i < 52u; ++i) s3c2400_write8(g->soc, rw + i, 0xa5u);
+    fxe_image_t img = {0};
+    char err[128] = {0};
+    int ok = fxe_load_buffer(payload, sizeof(payload), "synthetic GXB", &img, err, sizeof(err));
+    if (ok) direct_apply_gxb_scatterload(g, &img);
+    for (unsigned i = 0; i < 52u; ++i) {
+        uint8_t expected = i < 16u ? (uint8_t)(i + 1u) : (has_zi && i < 48u ? 0u : 0xa5u);
+        ok &= s3c2400_read8(g->soc, rw + i) == expected;
+    }
+    fxe_image_free(&img);
+    gp32_destroy(g);
+    if (!ok) fprintf(stderr, "FAIL: GXB RW/ZI placement uses duplicate word, zi=%d: %s\n", has_zi, err);
+    return ok;
+}
 
 static int check_open(uint32_t code) {
     gp32_t *g = gp32_create(NULL);
@@ -204,6 +427,10 @@ static int check_zip_entry_name(const char *path) {
 }
 
 int main(int argc, char **argv) {
+    if (!check_decrunch_commit()) return 1;
+    if (!check_decrunch_scratch()) return 1;
+    if (!check_fxp3_bounds()) return 1;
+    if (!check_gxb_zi_header(0) || !check_gxb_zi_header(1)) return 1;
     if (!check_raw_image_labels()) return 1;
     /* Overlapping copy in both directions: destination below and above source. */
     if (!check_swi5_place_image(GP32_RAM_BASE + 0x100u, GP32_RAM_BASE + 0x80u)) return 1;

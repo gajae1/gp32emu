@@ -1,5 +1,5 @@
-/* ARMv4T exception returns take state from SPSR and align the return PC
- * after restoring CPSR. Assert architectural results in both execution modes;
+/* ARMv4T instruction boundaries, flags and exception returns.
+ * Assert architectural results in both execution modes;
  * a differential comparison alone would miss defects shared by both paths. */
 #include "arm920t.h"
 
@@ -23,6 +23,8 @@ typedef struct {
 
 static test_bus_t tb;
 static arm920t_t *tb_cpu;
+static int data_callbacks;
+static uint32_t data_addresses[2], data_accesses;
 static const char *current_case = "init";
 static int failures;
 
@@ -33,16 +35,27 @@ static uint8_t *bus_ptr(test_bus_t *b, uint32_t a, size_t bytes) {
 }
 static uint8_t rd8(void *u, uint32_t a)  { uint8_t *p = bus_ptr(u, a, 1); return p ? p[0] : 0xffu; }
 static uint16_t rd16(void *u, uint32_t a){ uint8_t *p = bus_ptr(u, a, 2); return p ? gp32_ld16le(p) : 0xffffu; }
-static uint32_t rd32(void *u, uint32_t a){ uint8_t *p = bus_ptr(u, a, 4); return p ? gp32_ld32le(p) : 0xffffffffu; }
+static void record_data_access(uint32_t a) {
+    if (data_callbacks && a >= TADDR && a < TADDR + 16u) {
+        if (data_accesses < 2u) data_addresses[data_accesses] = a;
+        ++data_accesses;
+    }
+}
+static uint32_t rd32(void *u, uint32_t a){ record_data_access(a); uint8_t *p = bus_ptr(u, a, 4); return p ? gp32_ld32le(p) : 0xffffffffu; }
 static void wr8(void *u, uint32_t a, uint8_t v)  { uint8_t *p = bus_ptr(u, a, 1); if (p) p[0] = v; }
 static void wr16(void *u, uint32_t a, uint16_t v){ uint8_t *p = bus_ptr(u, a, 2); if (p) gp32_st16le(p, v); }
 #define IRQ_ACK_ADDR 0x0d000000u
 static void wr32(void *u, uint32_t a, uint32_t v){
+    record_data_access(a);
     uint8_t *p = bus_ptr(u, a, 4);
     if (p) gp32_st32le(p, v);
     else if (a == IRQ_ACK_ADDR && tb_cpu) arm920t_set_irq(tb_cpu, 0); /* guest ack */
 }
-static uint8_t *fm(void *u, uint32_t a, size_t bytes, int w) { (void)w; return bus_ptr(u, a, bytes); }
+static uint8_t *fm(void *u, uint32_t a, size_t bytes, int w) {
+    (void)w;
+    if (data_callbacks && a >= RAM_BASE) return NULL;
+    return bus_ptr(u, a, bytes);
+}
 
 static void bios_w32(uint32_t a, uint32_t v) { gp32_st32le(tb.bios + a, v); }
 static void ram_w32(uint32_t a, uint32_t v)  { gp32_st32le(tb.ram + (a - RAM_BASE), v); }
@@ -56,6 +69,7 @@ static void fail(const char *what, uint32_t got, uint32_t want) {
 
 static arm920t_t *make_cpu(int jit) {
     memset(&tb, 0, sizeof(tb));
+    data_accesses = 0;
     for (uint32_t a = 0; a < BIOS_SIZE; a += 4u) bios_w32(a, 0xEAFFFFFEu); /* B . */
     tb.bus.read8 = rd8; tb.bus.read16 = rd16; tb.bus.read32 = rd32;
     tb.bus.write8 = wr8; tb.bus.write16 = wr16; tb.bus.write32 = wr32;
@@ -237,8 +251,337 @@ static void case_user_msr(int jit) {
     }
 }
 
+/* Thumb shift encodings use zero for immediate LSR/ASR #32. Register ROR
+ * takes its amount from Rs[7:0], with distinct carry behavior for 0 and 32.
+ * Literal results keep this independent of the ARM interpreter/JIT oracle. */
+static void case_thumb_alu_boundaries(int jit) {
+    static const struct {
+        const char *name;
+        uint16_t insn;
+        uint32_t r0, r1, carry, result, flags;
+    } cases[] = {
+        { "LSR-32-negative", 0x0808u, 0, 0x80000001u, 0, 0, 0x70000000u },
+        { "LSR-32-positive", 0x0808u, 0, 0x7fffffffu, 1, 0, 0x50000000u },
+        { "ASR-32-negative", 0x1008u, 0, 0x80000001u, 0, 0xffffffffu, 0xb0000000u },
+        { "ASR-32-positive", 0x1008u, 0, 0x7fffffffu, 1, 0, 0x50000000u },
+        { "LSR-31", 0x0fc8u, 0, 0x80000000u, 1, 1, 0x10000000u },
+        { "ASR-31", 0x17c8u, 0, 0x80000000u, 1, 0xffffffffu, 0x90000000u },
+        { "ROR-32-set-C", 0x41c8u, 0x80000001u, 32, 0, 0x80000001u, 0xb0000000u },
+        { "ROR-64-clear-C", 0x41c8u, 0x40000001u, 64, 1, 0x40000001u, 0x10000000u },
+        { "ROR-0-preserve-C", 0x41c8u, 0x80000001u, 0, 0, 0x80000001u, 0x90000000u },
+        { "ROR-256-preserve-C", 0x41c8u, 0x40000001u, 256, 1, 0x40000001u, 0x30000000u },
+        { "ROR-33", 0x41c8u, 0x80000001u, 33, 0, 0xc0000000u, 0xb0000000u },
+        { "ROR-alias", 0x41c0u, 0x80000020u, 0, 0, 0x80000020u, 0xb0000000u },
+        { "NEG-min", 0x4248u, 0, 0x80000000u, 1, 0x80000000u, 0x90000000u },
+        { "NEG-zero", 0x4248u, 0, 0, 0, 0, 0x60000000u },
+        { "NEG-one", 0x4248u, 0, 1, 1, 0xffffffffu, 0x80000000u },
+    };
+    for (unsigned i = 0; i < GP32_ARRAY_COUNT(cases); ++i) {
+        current_case = cases[i].name;
+        arm920t_t *c = make_cpu(jit);
+        gp32_st16le(tb.bios + CODE_ADDR, cases[i].insn);
+        arm920t_set_cpsr(c, 0x100000f3u | (cases[i].carry << 29));
+        arm920t_set_reg(c, 0, cases[i].r0);
+        arm920t_set_reg(c, 1, cases[i].r1);
+        CHECK(arm920t_run(c, 1u), 1u, "one instruction");
+        CHECK(arm920t_get_reg(c, 0), cases[i].result, "Thumb ALU result");
+        CHECK(arm920t_get_cpsr(c), cases[i].flags | 0xf3u, "Thumb ALU flags/state");
+        CHECK(arm920t_get_pc(c), CODE_ADDR + 2u, "Thumb ALU next PC");
+        arm920t_destroy(c);
+    }
+}
+
+/* With alignment checking disabled, LDM/STM round addresses down without
+ * rotating the loaded words. Writeback retains the original base low bits.
+ * Trace mode supplies a raw interpreter oracle independent of decoded blocks. */
+static void case_block_alignment(void) {
+    for (unsigned engine = 0; engine < 3u; ++engine) {
+        for (unsigned callbacks = 0; callbacks < 2u; ++callbacks) {
+            for (unsigned load = 0; load < 2u; ++load) {
+                current_case = load ? "LDM-unaligned" : "STM-unaligned";
+                data_callbacks = (int)callbacks;
+                arm920t_t *c = make_cpu(engine == 2u);
+                if (engine == 0u) arm920t_set_trace(c, 1, NULL, NULL);
+                bios_w32(CODE_ADDR, load ? 0xe8b00006u : 0xe8a00006u); /* LDM/STMIA r0!,{r1,r2} */
+                ram_w32(TADDR, 0x33221100u);
+                ram_w32(TADDR + 4u, 0x77665544u);
+                ram_w32(TADDR + 8u, 0xbbaa9988u);
+                arm920t_set_reg(c, 0, TADDR + 2u);
+                arm920t_set_reg(c, 1, 0x12345678u);
+                arm920t_set_reg(c, 2, 0x90abcdefu);
+                arm920t_run(c, 64u); /* transfer, then B . */
+                CHECK(arm920t_get_reg(c, 0), TADDR + 10u, "unaligned base writeback");
+                if (load) {
+                    CHECK(arm920t_get_reg(c, 1), 0x33221100u, "LDM first word must not rotate");
+                    CHECK(arm920t_get_reg(c, 2), 0x77665544u, "LDM second word must not rotate");
+                } else {
+                    CHECK(gp32_ld32le(tb.ram + (TADDR - RAM_BASE)), 0x12345678u, "STM first aligned word");
+                    CHECK(gp32_ld32le(tb.ram + (TADDR - RAM_BASE) + 4u), 0x90abcdefu, "STM second aligned word");
+                    CHECK(gp32_ld32le(tb.ram + (TADDR - RAM_BASE) + 8u), 0xbbaa9988u, "STM preserves next word");
+                }
+                if (callbacks) {
+                    CHECK(data_accesses, 2u, "one bus access per word");
+                    CHECK(data_addresses[0], TADDR, "first callback address");
+                    CHECK(data_addresses[1], TADDR + 4u, "second callback address");
+                }
+                arm920t_destroy(c);
+                data_callbacks = 0;
+            }
+        }
+    }
+}
+
+static void case_thumb_ldm_base(int jit) {
+    /* T1 LDM suppresses writeback when its base is also a destination. */
+    for (unsigned base = 0; base < 3u; ++base) {
+        current_case = "Thumb-LDM-base-list";
+        arm920t_t *c = make_cpu(jit);
+        gp32_st16le(tb.bios + CODE_ADDR, (uint16_t)(0xc803u | (base << 8)));
+        ram_w32(TADDR, 0x12345678u);
+        ram_w32(TADDR + 4u, 0x90abcdefu);
+        arm920t_set_cpsr(c, 0xf3u);
+        arm920t_set_reg(c, base, TADDR);
+        arm920t_run(c, 1u);
+        CHECK(arm920t_get_reg(c, 0), 0x12345678u, "LDM loaded r0 survives writeback");
+        CHECK(arm920t_get_reg(c, 1), 0x90abcdefu, "LDM loaded r1 survives writeback");
+        if (base == 2u) CHECK(arm920t_get_reg(c, 2), TADDR + 8u, "LDM absent base writeback");
+        arm920t_destroy(c);
+    }
+}
+
+static void case_thumb_multiple_alignment(int jit) {
+    /* ARMv4T multiple transfers align the bus access, while base/SP
+     * writeback retains its low bits. Include LR/PC in stack transfers. */
+    static const uint16_t ops[] = {0xc306u, 0xcb06u, 0xb506u, 0xbd06u};
+    for (unsigned callbacks = 0; callbacks < 2u; ++callbacks) {
+        for (unsigned kind = 0; kind < GP32_ARRAY_COUNT(ops); ++kind) {
+            current_case = "Thumb-multiple-alignment";
+            data_callbacks = (int)callbacks;
+            arm920t_t *c = make_cpu(jit);
+            /* LDM/STM use r3 so the base does not alias r1/r2. */
+            gp32_st16le(tb.bios + CODE_ADDR, ops[kind]);
+            ram_w32(TADDR, 0x12345678u);
+            ram_w32(TADDR + 4u, 0x90abcdefu);
+            ram_w32(TADDR + 8u, CODE_ADDR + 0x22u);
+            ram_w32(TADDR + 12u, 0xaabbccddu);
+            arm920t_set_cpsr(c, 0xf3u);
+            arm920t_set_reg(c, 3, TADDR + 1u);
+            arm920t_set_reg(c, 13, TADDR + (kind == 2u ? 14u : 2u));
+            arm920t_set_reg(c, 1, 0x11223344u);
+            arm920t_set_reg(c, 2, 0x55667788u);
+            arm920t_set_reg(c, 14, 0x99aabbccu);
+            arm920t_run(c, 1u);
+            if (kind & 1u) {
+                CHECK(arm920t_get_reg(c, 1), 0x12345678u, "aligned first Thumb load");
+                CHECK(arm920t_get_reg(c, 2), 0x90abcdefu, "aligned second Thumb load");
+            } else {
+                CHECK(gp32_ld32le(tb.ram + (TADDR - RAM_BASE)), 0x11223344u, "aligned first Thumb store");
+                CHECK(gp32_ld32le(tb.ram + (TADDR - RAM_BASE) + 4u), 0x55667788u, "aligned second Thumb store");
+                CHECK(gp32_ld32le(tb.ram + (TADDR - RAM_BASE) + (kind == 2u ? 12u : 8u)),
+                      kind == 2u ? 0xaabbccddu : CODE_ADDR + 0x22u, "preserve following word");
+            }
+            if (kind < 2u) CHECK(arm920t_get_reg(c, 3), TADDR + 9u, "Thumb base low bits survive writeback");
+            else CHECK(arm920t_get_reg(c, 13), TADDR + (kind == 2u ? 2u : 14u), "Thumb SP low bits survive writeback");
+            if (kind == 2u) CHECK(gp32_ld32le(tb.ram + (TADDR - RAM_BASE) + 8u), 0x99aabbccu, "aligned LR store");
+            if (kind == 3u) {
+                CHECK(arm920t_get_pc(c), CODE_ADDR + 0x22u, "aligned POP PC load");
+                CHECK(arm920t_get_cpsr(c) & 0x20u, 0x20u, "POP preserves Thumb state");
+            }
+            if (callbacks) {
+                CHECK(data_accesses, kind < 2u ? 2u : 3u, "one callback per transferred word");
+                CHECK(data_addresses[0], kind == 2u ? TADDR + 8u : TADDR, "aligned first bus access");
+                CHECK(data_addresses[1], TADDR + 4u, "aligned second bus access");
+            }
+            arm920t_destroy(c);
+            data_callbacks = 0;
+        }
+    }
+}
+
+static void case_mrc_pc_flags(int jit) {
+    /* MRC with Rd=15 transfers NZCV, not a branch target (DDI0100I A4-71).
+     * Opposite flag patterns cover setting and clearing every flag while
+     * preserving the processor mode and interrupt masks. */
+    static const uint32_t values[] = {0xa5a55a5au, 0x5a5aa5a5u};
+    for (unsigned i = 0; i < GP32_ARRAY_COUNT(values); ++i) {
+        current_case = jit ? "MRC-PC-flags-JIT" : "MRC-PC-flags-interpreter";
+        arm920t_t *c = make_cpu(jit);
+        bios_w32(CODE_ADDR,       0xee030f10u); /* mcr p15,0,r0,c3,c0,0 */
+        bios_w32(CODE_ADDR + 4u,  0xee132f10u); /* mrc p15,0,r2,c3,c0,0 */
+        bios_w32(CODE_ADDR + 8u,  0xee13ff10u); /* mrc p15,0,pc,c3,c0,0 */
+        bios_w32(CODE_ADDR + 12u, 0x13a01011u); /* movne r1,#0x11 */
+        bios_w32(CODE_ADDR + 16u, 0x03a01022u); /* moveq r1,#0x22 */
+        bios_w32(CODE_ADDR + 20u, 0xea000000u); /* b +28 */
+        bios_w32(CODE_ADDR + 28u, 0xeafffff9u); /* b +8: reuse MRC block */
+        arm920t_set_reg(c, 0u, values[i]);
+        arm920t_set_cpsr(c, ((~values[i]) & 0xf0000000u) | 0xd3u);
+        arm920t_run(c, 503u); /* setup + 100 complete five-instruction loops + MRC */
+        CHECK(arm920t_get_pc(c), CODE_ADDR + 12u, "MRC PC falls through");
+        CHECK(arm920t_get_cpsr(c), (values[i] & 0xf0000000u) | 0xd3u, "only NZCV changes");
+        CHECK(arm920t_get_reg(c, 1u), i ? 0x22u : 0x11u, "following predicates use new flags");
+        CHECK(arm920t_get_reg(c, 2u), values[i], "ordinary MRC retains all bits");
+        arm920t_destroy(c);
+    }
+}
+
+static void case_arm_undefined_transfer(void) {
+    /* ARM920T TRM 2.2.2: bits[27:25]=011 and bit[4]=1 are undefined,
+     * not register-shifted LDR/STR. Failed conditions still suppress traps. */
+    for (unsigned engine = 0; engine < 3u; ++engine) {
+        for (unsigned load = 0; load < 2u; ++load) {
+            for (unsigned failed = 0; failed < 2u; ++failed) {
+                current_case = "ARM-undefined-transfer";
+                arm920t_t *c = make_cpu(engine == 2u);
+                data_callbacks = 1; /* enable callbacks after JIT RAM discovery */
+                if (engine == 0u) arm920t_set_trace(c, 1, NULL, NULL);
+                uint32_t insn = load ? 0xe7910012u : 0xe7810012u;
+                if (failed) insn &= 0x0fffffffu; /* EQ with Z=0 */
+                bios_w32(CODE_ADDR, insn);
+                bios_w32(CODE_ADDR + 4u, 0xe3a03042u); /* mov r3,#0x42 */
+                ram_w32(TADDR, 0x88776655u);
+                arm920t_set_reg(c, 0u, 0x11223344u);
+                arm920t_set_reg(c, 1u, TADDR);
+                arm920t_set_cpsr(c, 0xa0000053u); /* SVC, Z=0, I=0, F=1 */
+                arm920t_run(c, 64u); /* enough budget for native dispatch */
+                CHECK(arm920t_get_pc(c), failed ? CODE_ADDR + 8u : 4u, "predicate selects fallthrough or UND vector");
+                CHECK(arm920t_get_cpsr(c), failed ? 0xa0000053u : 0xa00000dbu, "undefined transfer exception state");
+                if (!failed) CHECK(arm920t_get_reg(c, 14u), CODE_ADDR + 4u, "ARM undefined LR");
+                CHECK(arm920t_get_reg(c, 0u), 0x11223344u, "undefined load preserves destination");
+                CHECK(arm920t_get_reg(c, 3u), failed ? 0x42u : 0u, "only failed predicate reaches marker");
+                CHECK(gp32_ld32le(tb.ram + (TADDR - RAM_BASE)), 0x88776655u, "undefined store preserves memory");
+                CHECK(data_accesses, 0u, "undefined transfers never access data bus");
+                arm920t_destroy(c);
+                data_callbacks = 0;
+            }
+        }
+    }
+}
+
+static void case_cp15_access(void) {
+    /* CP15 is privileged (DDI0151C 2.4). Reuse the same translated code as
+     * execution moves SVC -> USER -> SYS -> USER; test live, not cached mode. */
+    static const struct { uint32_t insn; unsigned crn; int write, flags; } cases[] = {
+        {0xee100f10u, 0u, 0, 0}, /* MRC p15,0,r0,c0,c0,0: native read */
+        {0xee070f16u, 7u, 1, 0}, /* MCR p15,0,r0,c7,c6,0: native data maintenance */
+        {0xee10ff10u, 0u, 0, 1}, /* MRC p15,0,pc,c0,c0,0: helper flags read */
+        {0xee030f10u, 3u, 1, 0}, /* MCR p15,0,r0,c3,c0,0: helper write */
+    };
+    static const uint32_t modes[] = {0x13u, 0x10u, 0x1fu, 0x10u};
+    for (unsigned engine = 0; engine < 3u; ++engine) {
+        for (unsigned k = 0; k < GP32_ARRAY_COUNT(cases); ++k) {
+            for (unsigned failed = 0; failed < 2u; ++failed) {
+                current_case = "CP15-live-privilege";
+                arm920t_t *c = make_cpu(engine == 2u);
+                if (engine == 0u) arm920t_set_trace(c, 1, NULL, NULL);
+                bios_w32(CODE_ADDR, 0xe3a04024u); /* mov r4,#0x24 */
+                bios_w32(CODE_ADDR + 4u, failed ? cases[k].insn & 0x0fffffffu : cases[k].insn);
+                bios_w32(CODE_ADDR + 8u, 0x13a03042u); /* movne r3,#0x42 */
+                bios_w32(CODE_ADDR + 12u, 0x03a05077u); /* moveq r5,#0x77 */
+                for (unsigned phase = 0; phase < GP32_ARRAY_COUNT(modes); ++phase) {
+                    int traps = modes[phase] == 0x10u && !failed;
+                    uint32_t old_cp = arm920t_get_cp15(c, cases[k].crn);
+                    uint32_t value = 0x11223344u + phase;
+                    uint32_t cpsr = 0xa0000040u | modes[phase]; /* Z=0, I=0, F=1 */
+                    arm920t_set_cpsr(c, cpsr);
+                    arm920t_set_reg(c, 15u, CODE_ADDR);
+                    arm920t_set_reg(c, 0u, value);
+                    arm920t_set_reg(c, 3u, 0u);
+                    arm920t_set_reg(c, 4u, 0u);
+                    arm920t_set_reg(c, 5u, 0u);
+                    arm920t_run(c, 64u);
+                    uint32_t expected_cpsr = traps ? 0xa00000dbu :
+                        (cases[k].flags && !failed ? 0x40000040u | modes[phase] : cpsr);
+                    CHECK(arm920t_get_pc(c), traps ? 4u : CODE_ADDR + 16u, "CP15 trap or continuation");
+                    CHECK(arm920t_get_cpsr(c), expected_cpsr, "CP15 privilege and flags");
+                    CHECK(arm920t_get_reg(c, 4u), 0x24u, "prefix before CP15 retires");
+                    CHECK(arm920t_get_reg(c, 0u), !traps && !failed && !cases[k].write && !cases[k].flags ? 0x41129200u : value, "CP15 destination");
+                    CHECK(arm920t_get_cp15(c, cases[k].crn), !traps && !failed && cases[k].write ? value : old_cp, "rejected CP15 write preserves register");
+                    CHECK(arm920t_get_reg(c, 3u), !traps && !(expected_cpsr & 0x40000000u) ? 0x42u : 0u, "following NE predicate");
+                    CHECK(arm920t_get_reg(c, 5u), !traps && (expected_cpsr & 0x40000000u) ? 0x77u : 0u, "following EQ predicate");
+                    if (traps) CHECK(arm920t_get_reg(c, 14u), CODE_ADDR + 8u, "CP15 exception LR after prefix");
+                }
+                gp32_cpu_profile_t profile;
+                arm920t_get_cpu_profile(c, &profile);
+                if (engine == 2u && profile.supported && profile.native_backend)
+                    CHECK(profile.native_block_calls != 0u, 1u, "CP15 exercised native blocks");
+                arm920t_destroy(c);
+            }
+        }
+    }
+}
+
+static void case_coproc_invalid_operation(void) {
+    static const uint32_t insns[] = {
+        0xee000f00u, /* CDP p15,0,c0,c0,c0,0 */
+        0xedb10f01u, /* LDC p15,c0,[r1,#4]! */
+        0xeda10f01u, /* STC p15,c0,[r1,#4]! */
+        0xee100110u, /* MRC p1,0,r0,c0,c0,0: absent FPA register interface */
+        0xee000a10u, /* MCR p10,0,r0,c0,c0,0: absent VFP */
+        0xee000000u, /* CDP p0,0,c0,c0,c0,0 */
+        0xedb10801u, /* LDC p8,c0,[r1,#4]! */
+        0xeda10d01u, /* STC p13,c0,[r1,#4]! */
+    };
+    for (unsigned engine = 0; engine < 3u; ++engine) {
+        for (unsigned k = 0; k < GP32_ARRAY_COUNT(insns); ++k) {
+            for (unsigned failed = 0; failed < 2u; ++failed) {
+                current_case = "coprocessor-unsupported-operation";
+                arm920t_t *c = make_cpu(engine == 2u);
+                data_callbacks = 1;
+                if (engine == 0u) arm920t_set_trace(c, 1, NULL, NULL);
+                bios_w32(CODE_ADDR, failed ? insns[k] & 0x0fffffffu : insns[k]);
+                arm920t_set_cpsr(c, 0xa0000053u); /* SVC, Z=0 */
+                arm920t_set_reg(c, 0u, 0x55667788u);
+                arm920t_set_reg(c, 1u, TADDR);
+                ram_w32(TADDR + 4u, 0x11223344u);
+                arm920t_run(c, 64u);
+                CHECK(arm920t_get_pc(c), failed ? CODE_ADDR + 4u : 4u, "unsupported coprocessor operation traps when condition passes");
+                CHECK(arm920t_get_cpsr(c), failed ? 0xa0000053u : 0xa00000dbu, "unsupported coprocessor operation state");
+                CHECK(arm920t_get_reg(c, 0u), 0x55667788u, "absent coprocessor preserves destination");
+                CHECK(arm920t_get_reg(c, 1u), TADDR, "rejected LDC/STC never writes back");
+                CHECK(gp32_ld32le(tb.ram + (TADDR - RAM_BASE) + 4u), 0x11223344u, "rejected STC preserves memory");
+                CHECK(data_accesses, 0u, "rejected LDC/STC has no data access");
+                arm920t_destroy(c);
+                data_callbacks = 0;
+            }
+        }
+    }
+}
+
+static void case_thumb_undefined(int jit) {
+    /* Conditional-branch condition 1110 is undefined on ARMv4T; 1111 is SWI.
+     * Check exception entry and return, independently of the shared decoder. */
+    static const uint16_t insns[] = {0xde00u, 0xdeffu};
+    for (unsigned i = 0; i < GP32_ARRAY_COUNT(insns); ++i) {
+        current_case = jit ? "Thumb-undefined-JIT" : "Thumb-undefined-interpreter";
+        arm920t_t *c = make_cpu(jit);
+        gp32_st16le(tb.bios + CODE_ADDR, insns[i]);
+        gp32_st16le(tb.bios + CODE_ADDR + 2u, 0x2042u); /* movs r0,#0x42 */
+        bios_w32(0x04u, 0xe1b0f00eu); /* movs pc,lr */
+        arm920t_set_cpsr(c, 0xa0000073u); /* SVC, Thumb, F=1, I=0 */
+        CHECK(arm920t_run(c, 1u), 1u, "one undefined instruction");
+        CHECK(arm920t_get_pc(c), 0x04u, "undefined vector");
+        CHECK(arm920t_get_cpsr(c), 0xa00000dbu, "UND ARM state with IRQ masked");
+        CHECK(arm920t_get_reg(c, 14u), CODE_ADDR + 2u, "Thumb exception LR");
+        arm920t_run(c, 1u);
+        CHECK(arm920t_get_pc(c), CODE_ADDR + 2u, "return skips undefined halfword");
+        CHECK(arm920t_get_cpsr(c), 0xa0000073u, "return restores SPSR");
+        arm920t_run(c, 1u);
+        CHECK(arm920t_get_reg(c, 0u), 0x42u, "resumed Thumb instruction");
+        arm920t_destroy(c);
+    }
+}
+
 int main(void) {
+    case_coproc_invalid_operation();
+    case_cp15_access();
+    case_arm_undefined_transfer();
+    case_block_alignment();
     for (int jit = 0; jit <= 1; ++jit) {
+        case_thumb_undefined(jit);
+        case_mrc_pc_flags(jit);
+        case_thumb_multiple_alignment(jit);
+        case_thumb_ldm_base(jit);
+        case_thumb_alu_boundaries(jit);
         case_user_msr(jit);
         case_thumb_pop(jit);
         case_ldr_pc(jit);

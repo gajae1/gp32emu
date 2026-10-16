@@ -10,8 +10,12 @@ Supply your own BIOS and game dumps; neither is included.
 
 [Downloads](https://github.com/gajae1/gp32emu/releases) · [한국어 사용설명서](docs/MANUAL.ko.md)
 
-Current version: **1.0.1**. Choose the Windows application or Android APK to
-play directly, or a core package for your existing RetroArch installation.
+Current public release: **1.0.1**. Choose the Windows application or Android APK
+to play directly, or a core package for your existing RetroArch installation.
+
+Development version: **1.1.0**, not yet publicly released. Android APK and iOS
+IPA candidates have been built for testing. See the [development notes](docs/RELEASE-1.1.0.md)
+and [iPhone/iPad guide](ios/README.md); public downloads above remain 1.0.1.
 
 ## Features
 
@@ -28,32 +32,34 @@ play directly, or a core package for your existing RetroArch installation.
 
 ## Package contents
 
+Replace `VERSION` below with the version of the download you selected.
+
 | ZIP package | Contents |
 | --- | --- |
-| `gp32emu-1.0.1-windows-x64.zip` | `gp32emu_win64.exe`, `SDL3.dll`, `SDL3-LICENSE.txt` |
-| `gp32emu-1.0.1-libretro-windows-x64.zip` | `gp32emu_libretro.dll`, `gp32emu_libretro.info` |
-| `gp32emu-1.0.1-linux-aarch64.zip` | `gp32emu_libretro.so`, `gp32emu_libretro.info` |
-| `gp32emu-1.0.1-android-arm64.zip` | `gp32emu_libretro_android.so`, `gp32emu_libretro.info` |
-| `gp32emu-1.0.1-android-armv7.zip` | `gp32emu_libretro_android.so`, `gp32emu_libretro.info` |
-| `gp32emu-1.0.1-switch-libnx.zip` | Experimental RetroArch NRO core and installation guide |
+| `gp32emu-VERSION-windows-x64.zip` | `gp32emu_win64.exe`, `SDL3.dll`, `SDL3-LICENSE.txt` |
+| `gp32emu-VERSION-libretro-windows-x64.zip` | `gp32emu_libretro.dll`, `gp32emu_libretro.info` |
+| `gp32emu-VERSION-linux-aarch64.zip` | `gp32emu_libretro.so`, `gp32emu_libretro.info` |
+| `gp32emu-VERSION-android-arm64.zip` | `gp32emu_libretro_android.so`, `gp32emu_libretro.info` |
+| `gp32emu-VERSION-android-armv7.zip` | `gp32emu_libretro_android.so`, `gp32emu_libretro.info` |
+| `gp32emu-VERSION-switch-libnx.zip` | Experimental RetroArch NRO core and installation guide |
 
-The separate `gp32emu-1.0.1-android.apk` installs the Android application; it is
+The separate `gp32emu-VERSION-android.apk` installs the Android application; it is
 not a ZIP archive and does not require RetroArch. It supports Android 6.0 or
 newer and includes ARM64 and ARMv7. ARM64 is recommended.
 
 The Linux core targets AArch64 with glibc 2.17 or newer. The Android RetroArch
 cores target API 21 or newer. ARMv7 uses the interpreter and is substantially
-slower than ARM64. Physical Android devices and Android RetroArch integration
-still need runtime testing.
+slower than ARM64. The 1.1.0 development app has had bounded gameplay, audio and
+input checks on an ARM64 phone. Android RetroArch integration remains unverified.
 
 Each binary ZIP also contains this README, release notes, the
 [Korean manual](docs/MANUAL.ko.md), third-party notices in [licenses/](licenses/),
 and `manifest.json` with checksums for the packaged files. BIOS images, games and
 save files are not included.
 
-`gp32emu-1.0.1-source.zip` contains source code, not a ready-to-run application.
-The Switch binary is in `gp32emu-1.0.1-switch-libnx.zip`; its matching core
-sources and static library are in `gp32emu-1.0.1-switch-libnx-source.zip`.
+`gp32emu-VERSION-source.zip` contains source code, not a ready-to-run application.
+The Switch binary is in `gp32emu-VERSION-switch-libnx.zip`; its matching core
+sources and static library are in `gp32emu-VERSION-switch-libnx-source.zip`.
 Source archives cannot be installed as RetroArch cores.
 
 ### Upgrading
@@ -199,8 +205,9 @@ also rolls back in-game card progress.
   GP32.
 - Compatibility checks cover selected scenes, not complete playthroughs.
 - Rewind and run-ahead in a real RetroArch session are unverified.
-- Physical Android device performance and Android RetroArch integration remain
-  unverified.
+- Android device checks cover selected startup scenes and input/rotation on an
+  LG V50 with the development app. Broader performance and Android RetroArch
+  integration remain unverified.
 - Qt and browser frontends are available in source form; their runtime use is
   unverified. The Switch build is experimental and has not been tested on a
   console. It uses the ARM64 JIT when the homebrew environment permits executable
@@ -210,6 +217,12 @@ also rolls back in-game card progress.
 
 See [BUILDING.md](https://github.com/gajae1/gp32emu/blob/main/docs/BUILDING.md) for
 build commands, source-only frontends and the source layout.
+
+The [iPhone/iPad frontend](ios/README.md) is available as development source and
+an unsigned IPA candidate. Device builds include an experimental ARM64 JIT;
+games start with the interpreter until external activation succeeds. Local
+Xcode/LLDB activation has been tested on an iPhone. The complete
+SideStore/StikDebug installation and activation workflow remains unverified.
 
 ## Credits and licensing
 

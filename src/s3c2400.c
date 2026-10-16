@@ -2644,15 +2644,7 @@ typedef struct s3c2400_state_image {
     gp32_smc_lines_t smc_lines;
 } s3c2400_state_image_t;
 
-int s3c2400_state_save_io(const s3c2400_t *s, state_io_t *io) {
-    if (!s || !io || s->audio_frames > SIZE_MAX / (2u * sizeof(int16_t))) return 0;
-#ifdef GP32EMU_WASM
-    static s3c2400_state_image_t st_storage;
-    s3c2400_state_image_t *st = &st_storage;
-#else
-    s3c2400_state_image_t st_storage;
-    s3c2400_state_image_t *st = &st_storage;
-#endif
+static int s3c2400_state_save_image(const s3c2400_t *s, state_io_t *io, s3c2400_state_image_t *st) {
     memset(st, 0, sizeof(*st));
     memcpy(st->bios, s->bios, sizeof(st->bios));
     st->ram_size = s->ram_size;
@@ -2724,17 +2716,21 @@ int s3c2400_state_save_io(const s3c2400_t *s, state_io_t *io) {
            state_io_write(io, codec, sizeof(codec));
 }
 
-int s3c2400_state_load_io_checked(s3c2400_t *s, state_io_t *io, int has_audio_spans, int has_iis_phase, int has_lcd_phase, int has_idle_phase, int has_codec,
+int s3c2400_state_save_io(const s3c2400_t *s, state_io_t *io) {
+    if (!s || !io || s->audio_frames > SIZE_MAX / (2u * sizeof(int16_t))) return 0;
+    /* The wire image includes BIOS and pixels (~840 KB), exceeding small
+     * frontend worker stacks. Per-call storage also keeps instances separate. */
+    s3c2400_state_image_t *st = malloc(sizeof(*st));
+    if (!st) return 0;
+    int ok = s3c2400_state_save_image(s, io, st);
+    free(st);
+    return ok;
+}
+
+static int s3c2400_state_load_image(s3c2400_t *s, state_io_t *io, s3c2400_state_image_t *st,
+                                int has_audio_spans, int has_iis_phase, int has_lcd_phase, int has_idle_phase, int has_codec,
                                 uint32_t expected_ram_size, uint32_t expected_run_clock, uint32_t required_ram_size,
                                 smc_state_format_t card_format) {
-    if (!s || !io) return 0;
-#ifdef GP32EMU_WASM
-    static s3c2400_state_image_t st_storage;
-    s3c2400_state_image_t *st = &st_storage;
-#else
-    s3c2400_state_image_t st_storage;
-    s3c2400_state_image_t *st = &st_storage;
-#endif
     if (!state_io_read(io, st, sizeof(*st))) return 0;
     if (st->ram_size == 0u || st->ram_size > (size_t)64u * 1024u * 1024u || st->audio_frames > (uint64_t)10u * 60u * 44100u) return 0;
     if ((expected_ram_size && st->ram_size != expected_ram_size) || st->ram_size < required_ram_size) return 0;
@@ -2879,6 +2875,19 @@ bad_audio:
     smc_state_stage_destroy(card);
     free(new_ram);
     return 0;
+}
+
+int s3c2400_state_load_io_checked(s3c2400_t *s, state_io_t *io, int has_audio_spans, int has_iis_phase, int has_lcd_phase, int has_idle_phase, int has_codec,
+                                uint32_t expected_ram_size, uint32_t expected_run_clock, uint32_t required_ram_size,
+                                smc_state_format_t card_format) {
+    if (!s || !io) return 0;
+    s3c2400_state_image_t *st = malloc(sizeof(*st));
+    if (!st) return 0;
+    int ok = s3c2400_state_load_image(s, io, st, has_audio_spans, has_iis_phase, has_lcd_phase,
+                                    has_idle_phase, has_codec, expected_ram_size, expected_run_clock,
+                                    required_ram_size, card_format);
+    free(st);
+    return ok;
 }
 
 int s3c2400_state_load_io(s3c2400_t *s, state_io_t *io, int has_audio_spans, int has_iis_phase, int has_lcd_phase, int has_idle_phase, int has_codec) {

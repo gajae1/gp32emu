@@ -7,6 +7,7 @@
 
 static int failures;
 #define CHECK(c, msg) do { if (!(c)) { fprintf(stderr, "FAIL: %s (%d)\n", msg, __LINE__); ++failures; } } while (0)
+#include "translation_fixture.h"
 
 /* Existing consumer arithmetic fixtures supply foreground intervals with
  * deliberately arbitrary/nonexecutable register values. Real guest display
@@ -261,15 +262,15 @@ static void check_callback_register_banks(int jit, uint32_t caller_mode) {
     arm920t_set_cpsr(g->cpu, 0x1fu | ARM_I_FLAG | ARM_F_FLAG);
     arm920t_set_cpsr(g->cpu, caller_mode | ARM_I_FLAG | ARM_F_FLAG);
     arm920t_state_image_t before, after;
-    state_io_t out = state_io_writer(&before, sizeof(before));
-    CHECK(arm920t_state_save_io(g->cpu, &out), "capture complete caller register state");
+
+    CHECK(fixture_cpu_prefix(g->cpu, &before), "capture complete caller register state");
     CHECK(test_call_guest_function3(g, callback, counter, 0xa0000030u, 0u),
           "mode-changing callback returns");
     uint32_t returned_cpsr = arm920t_get_cpsr(g->cpu);
     arm920t_set_cpsr(g->cpu, (returned_cpsr & ~0x1fu) | 0x1fu);
     arm920t_set_cpsr(g->cpu, returned_cpsr);
-    out = state_io_writer(&after, sizeof(after));
-    CHECK(arm920t_state_save_io(g->cpu, &out), "capture callback result state");
+
+    CHECK(fixture_cpu_prefix(g->cpu, &after), "capture callback result state");
     CHECK(!memcmp(before.bank_svc, after.bank_svc, sizeof(before.bank_svc)),
           "private callback stack does not leak into inactive SVC bank");
     CHECK(!memcmp(&before, &after, offsetof(arm920t_state_image_t, cp15)),

@@ -1,4 +1,7 @@
-# GP32emu 1.0.1 for Nintendo Switch
+# GP32emu 1.1.0 for Nintendo Switch
+
+This guide is the packaging template for unreleased 1.1.0 builds.
+The current public downloads remain 1.0.1.
 
 Experimental RetroArch core, built with devkitPro devkitA64/libnx and linked
 with RetroArch 1.22.2. This build has not been tested on a Switch console.
@@ -37,6 +40,6 @@ steps to reproduce it. Note whether it affects graphics, sound, input or saves.
 ## Source and notices
 
 Matching GP32emu core sources, the static library and rebuild instructions are
-in `gp32emu-1.0.1-switch-libnx-source.zip`. Full GP32emu project sources are in
-`gp32emu-1.0.1-source.zip`. See `manifest.json` for exact revisions and hashes.
+in `gp32emu-1.1.0-switch-libnx-source.zip`. Full GP32emu project sources are in
+`gp32emu-1.1.0-source.zip`. See `manifest.json` for exact revisions and hashes.
 RetroArch and dependency notices are retained in `licenses/`.

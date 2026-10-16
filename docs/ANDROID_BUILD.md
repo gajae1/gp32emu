@@ -18,7 +18,8 @@ python scripts/build_android_app.py --sdk /path/to/Android/Sdk --keystore /path/
 ```
 
 This builds ARM64 and ARMv7 from source and produces
-`gp32emu-1.0.1-android.apk` (min API 23, target API 35). The app is not debuggable.
+`gp32emu-1.1.0-android.apk` (min API 23, target API 35). The app is not debuggable.
+This is the development build default; the current public APK remains 1.0.1.
 The script verifies ELF/ZIP 16 KB alignment and APK signatures. A missing
 keystore is an error; it never creates a signing key. Defaults use an existing
 `~/.android/debug.keystore` and Android's development alias/password. Other keys
@@ -73,6 +74,9 @@ ARM64 has a native JIT; ARMv7 uses the interpreter.
 
 Android 11 AVD checks cover input mapping, persistence, rotation and pause.
 Emulator checks do not establish native ARM performance or audible quality.
-Physical Android devices, ARMv7 runtime, Android RetroArch integration and
-16 KB-page devices still need runtime validation. BIOS and games are not
+LG V50 (Android 12, ARM64) checks cover installation, input/rotation/menu
+regressions and BIOS/Blue Angelo startup. The API 26+ hardware-canvas path
+avoids a measured software-scaling bottleneck on its high-resolution display.
+Broader gameplay, audible quality, ARMv7 runtime, Android RetroArch integration
+and 16 KB-page devices still need runtime validation. BIOS and games are not
 included in the app, core or instrumentation package.

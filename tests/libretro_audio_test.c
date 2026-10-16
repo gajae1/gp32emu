@@ -931,6 +931,37 @@ static void test_frontend_audio_clock(void) {
     }
 }
 
+static void test_resampler_chunk_identity(void) {
+    /* Splitting the same stream exercises every FIR/history boundary. This
+     * must not change PCM, including opposite full-scale stereo samples. */
+    static const unsigned chunks[] = {1u, 3u, 4u, 5u, 31u, 63u, 64u, 65u, 127u};
+    static const uint32_t rates[][2] = {{23144u, 44100u}, {48000u, 44100u}};
+    int16_t input[513u * 2u], whole[2048u * 2u], split[2048u * 2u];
+    uint32_t seed = 0x12345678u;
+    for (unsigned i = 0; i < 513u * 2u; ++i) {
+        seed = seed * 1664525u + 1013904223u;
+        input[i] = i % 7u ? (int16_t)(seed >> 16) : (i & 1u ? INT16_MIN : INT16_MAX);
+    }
+    for (unsigned rate = 0; rate < GP32_ARRAY_COUNT(rates); ++rate) {
+        gp32_audio_resampler_t r;
+        gp32_audio_resampler_init(&r);
+        size_t want = gp32_audio_resampler_process(&r, input, 513u,
+            rates[rate][0], rates[rate][1], 0, whole, 2048u);
+        for (unsigned k = 0; k < GP32_ARRAY_COUNT(chunks); ++k) {
+            gp32_audio_resampler_init(&r);
+            size_t got = 0;
+            for (size_t at = 0; at < 513u;) {
+                size_t count = chunks[k] < 513u - at ? chunks[k] : 513u - at;
+                got += gp32_audio_resampler_process(&r, input + at * 2u, count,
+                    rates[rate][0], rates[rate][1], 0, split + got * 2u, 2048u - got);
+                at += count;
+            }
+            CHECK(got == want && !memcmp(whole, split, want * 2u * sizeof(int16_t)),
+                  "FIR output must not depend on input chunk boundaries");
+        }
+    }
+}
+
 /* A valid full-scale signal can exceed a 32-bit FIR accumulator before the
  * final s16 clip. Exercise both contiguous taps and carried history. */
 static void test_resampler_peak_clipping(void) {
@@ -1002,6 +1033,32 @@ static void test_resampler_gap_replay(void) {
     }
 }
 
+/* A live rate transition may reuse coefficients, but must retain the same
+ * PCM and stream state as rebuilding at every transition. Include downsample
+ * changes so an overly broad upsample-cache rule cannot hide aliasing. */
+static void test_resampler_rate_cache(void) {
+    const uint32_t rates[][2] = {{11025,44100}, {22050,44100}, {23144,44100},
+        {44100,48000}, {48000,44100}, {96000,88200}, {96000,44100},
+        {8000,44100}, {22051,44100}, {22050,44100}};
+    gp32_audio_resampler_t cached, rebuilt;
+    int16_t input[256], actual[2048], expected_pcm[2048];
+    gp32_audio_resampler_init(&cached);
+    for (unsigned k = 0; k < GP32_ARRAY_COUNT(rates); ++k) {
+        for (unsigned i = 0; i < GP32_ARRAY_COUNT(input); ++i)
+            input[i] = (int16_t)((int32_t)((i * 997u + k * 7919u) % 60001u) - 30000);
+        rebuilt = cached;
+        rebuilt.poly_src_rate = rebuilt.poly_dst_rate = 0;
+        size_t got = gp32_audio_resampler_process(&cached, input, 128,
+            rates[k][0], rates[k][1], 0, actual, 1024);
+        size_t want = gp32_audio_resampler_process(&rebuilt, input, 128,
+            rates[k][0], rates[k][1], 0, expected_pcm, 1024);
+        CHECK(got == want && !memcmp(actual, expected_pcm, got * 2u * sizeof(int16_t)),
+              "rate-transition cache matches freshly rebuilt filter PCM");
+        CHECK(!memcmp(&cached, &rebuilt, sizeof(cached)),
+              "rate-transition cache preserves coefficients, phase and history");
+    }
+}
+
 static void test_clean_tone_delivery(void) {
     /* A legal high-level tone has large sample-to-sample slopes. Those are
      * content, not evidence of a dropped buffer or a transport discontinuity.
@@ -1029,6 +1086,8 @@ static void test_clean_tone_delivery(void) {
 int main(int argc, char **argv) {
     test_clean_tone_delivery();
     test_resampler_gap_replay();
+    test_resampler_rate_cache();
+    test_resampler_chunk_identity();
     test_resampler_peak_clipping();
     test_frontend_audio_clock();
     test_midframe_delivery_batches();

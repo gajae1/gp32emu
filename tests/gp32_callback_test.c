@@ -4,6 +4,7 @@
 
 static int failures;
 #define CHECK(c, m) do { if (!(c)) { fprintf(stderr, "FAIL: %s (%d)\n", m, __LINE__); ++failures; } } while (0)
+#include "translation_fixture.h"
 static const uint32_t fn = GP32_RAM_BASE + 0x2000u;
 static const uint32_t marker = GP32_RAM_BASE + 0x4000u;
 static const uint32_t caller = GP32_RAM_BASE + 0x20000u;
@@ -98,7 +99,7 @@ static void check_refill(int jit, int final_probe, const char *path) {
     CHECK(gp32_run_cycles(g, 5u) == GP32_OK && g->direct_hle_callback_running, "suspend within real filler");
     size_t size = 0;
     uint8_t *image = save(g, &size);
-    CHECK(image && !memcmp(image, "GP32STATEv0014", 14u), "v14 writer");
+    CHECK(image && !memcmp(image, "GP32STATEv0015", 14u), "v15 writer");
     if (image) {
         CHECK(gp32_load_state_data(clone, image, size) == GP32_OK, "load active refill");
         CHECK(gp32_save_state(g, path) == GP32_OK && gp32_load_state(clone, path) == GP32_OK, "file continuation roundtrip");
@@ -144,10 +145,11 @@ static void check_state_validation(int jit) {
         rejected_state(g, image, size, image, size - 1u);
         /* v9 can retain a stale returned flag, but has no active foreground
          * snapshot. An active legacy image must be rejected before SoC commit. */
-        memcpy(bad, image, off);
+        memcpy(bad, image, size);
+        size_t legacy_size = fixture_v14(bad, size);
         memcpy(bad, gp32_state_magic_v9, 16u);
-        memcpy(bad + off, image + off + GP32_CONTINUATION_BYTES, size - off - GP32_CONTINUATION_BYTES);
-        rejected_state(g, image, size, bad, size - GP32_CONTINUATION_BYTES);
+        memmove(bad + off, bad + off + GP32_CONTINUATION_BYTES, legacy_size - off - GP32_CONTINUATION_BYTES);
+        rejected_state(g, image, size, bad, legacy_size - GP32_CONTINUATION_BYTES);
     }
     printf("state-validation jit=%d\n", jit);
     CHECK(gp32_reset(g) == GP32_OK && !g->direct_hle_callback_running &&
@@ -332,8 +334,8 @@ static void check_faults(int jit) {
             arm920t_state_image_t *cpu = malloc(sizeof(*cpu));
             CHECK(cpu != NULL, "allocate halted CPU image");
             if (cpu) {
-                state_io_t io = state_io_writer(cpu, sizeof(*cpu));
-                CHECK(arm920t_state_save_io(g->cpu, &io), "capture running callback CPU");
+
+                CHECK(fixture_cpu_prefix(g->cpu, cpu), "capture running callback CPU");
                 cpu->halted = 1;
                 arm920t_state_apply(g->cpu, cpu);
                 free(cpu);
@@ -395,6 +397,7 @@ static void check_exception_bank_state(int jit) {
         CHECK(gp32_load_state_data(clone, image, size) == GP32_OK, "load suspended callback with unused exception stack bank");
         /* v11 has the same prefix without the two SDK task words. Its active
          * callbacks default to an unbound, unsuspended continuation. */
+        size = fixture_v14(image, size);
         const size_t cut = 16u + sizeof(gp32_state_image_t) + 32u + GP32_CONTINUATION_V11_WORDS * 4u;
         memmove(image + cut, image + cut + 8u, size - cut - 8u);
         memcpy(image, gp32_state_magic_v11, 16u);

@@ -100,14 +100,24 @@ typedef struct b2ctx {
     uint32_t ip;
     int32_t bit_count;
     uint32_t bitbuf;
+    /* FXP3 prefetch may look ahead, but may not consume bits outside a
+     * declared block. Zero retains the existing FXP2 reader contract. */
+    uint32_t data_end;
 } b2ctx_t;
 
 static int b2_read_bits(b2ctx_t *ctx, unsigned n, uint32_t *out) {
+    if (ctx->data_end && ctx->ip > ctx->data_end) {
+        int64_t remaining = 16 + (int64_t)ctx->bit_count -
+                            8 * (int64_t)(ctx->ip - ctx->data_end);
+        if (remaining < (int64_t)n) return 0;
+    }
     uint32_t r = n >= 32u ? 0u : (ctx->bitbuf >> (32u - n));
     ctx->bit_count -= (int32_t)n;
     ctx->bitbuf = n >= 32u ? 0u : (ctx->bitbuf << n);
     if (ctx->bit_count > 0) { *out = r; return 1; }
-    if (!b2_in_ram(ctx->ip, 2u)) return 0;
+    if (!b2_in_ram(ctx->ip, 2u) ||
+        (ctx->data_end && (ctx->ip > ctx->data_end + 16u ||
+                          ctx->data_end + 16u - ctx->ip < 2u))) return 0;
     uint32_t h = b2_rd16(ctx->mem, ctx->ip);
     ctx->ip += 2u;
     int32_t neg = -ctx->bit_count;
@@ -243,8 +253,9 @@ static int b2fxp3_sort_table(uint8_t *mem, uint32_t table, unsigned count) {
         uint16_t len = b2_rd16(mem, p + 2u);
         uint16_t next_len = b2_rd16(mem, p + 6u);
         int32_t diff = (int32_t)next_len - (int32_t)len;
+        if (!len || len > 15u || next_len > 16u || code >= (1u << len)) return 0;
         if (diff > 0) {
-            if (len > 31u || !b2_in_ram(out, 8u)) return 0;
+            if (!b2_in_ram(out, 8u)) return 0;
             uint32_t threshold = (all >> len) | b2_ror32(code, len);
             b2_wr32(mem, out, threshold); out += 4u;
             b2_wr16(mem, out, (uint16_t)(code - sym)); out += 2u;
@@ -258,24 +269,24 @@ static int b2fxp3_sort_table(uint8_t *mem, uint32_t table, unsigned count) {
     return 1;
 }
 
-static int b2fxp3_decode_symbol(b2ctx_t *ctx, uint32_t table, uint32_t *sym_out) {
+static int b2fxp3_decode_symbol(b2ctx_t *ctx, uint32_t table, unsigned count, uint32_t *sym_out) {
     if (!b2_in_ram(table, 8u) || !b2_in_ram(table + 0x84u, 4u)) return 0;
     uint32_t symbols = table + 0x84u;
     uint32_t p = table;
     uint32_t threshold = b2_rd32(ctx->mem, p);
     p += 8u;
-    unsigned guard = 0;
     while (ctx->bitbuf > threshold) {
-        if (!b2_in_ram(p, 8u) || ++guard > 128u) return 0;
+        /* The prefix table ends before its symbol array at +0x84. */
+        if (p > table + 0x80u - 8u || !b2_in_ram(p, 8u)) return 0;
         threshold = b2_rd32(ctx->mem, p);
         p += 8u;
     }
     uint16_t base = b2_rd16(ctx->mem, p - 4u);
     uint16_t len = b2_rd16(ctx->mem, p - 2u);
-    if (len > 31u) return 0;
+    if (!len || len > 15u) return 0;
     uint32_t top = len ? (ctx->bitbuf >> (32u - len)) : 0u;
     uint32_t idx = (top - (uint32_t)base) & 0xffffu;
-    if (!b2_in_ram(symbols + idx * 4u, 4u)) return 0;
+    if (idx >= count || !b2_in_ram(symbols + idx * 4u, 4u)) return 0;
     *sym_out = b2_rd32(ctx->mem, symbols + idx * 4u) & 0xffffu;
     uint32_t dummy = 0;
     return b2_read_bits(ctx, len, &dummy);
@@ -286,7 +297,7 @@ static int b2fxp3_fill_table(b2ctx_t *ctx, uint32_t pre_table, uint32_t table, u
     if (!b2_in_ram(symbols, (size_t)count * 4u)) return 0;
     for (unsigned i = 0; i < count; ++i) {
         uint32_t mtf_index = 0;
-        if (!b2fxp3_decode_symbol(ctx, pre_table, &mtf_index) || mtf_index >= 16u) return 0;
+        if (!b2fxp3_decode_symbol(ctx, pre_table, 16u, &mtf_index) || mtf_index >= 16u) return 0;
         uint8_t value = mtf[mtf_index];
         while (mtf_index > 0u) {
             mtf[mtf_index] = mtf[mtf_index - 1u];
@@ -315,11 +326,18 @@ static int b2fxec_finish_decrunch(fxe_image_t *img, uint8_t *mem, uint32_t sourc
     uint8_t *new_payload = (uint8_t *)calloc(1, (size_t)image_size);
     if (!new_payload) { ferr(err, err_len, "out of memory storing decrunched image"); return 0; }
     memcpy(new_payload, mem + (source - GP32_RAM_BASE), (size_t)image_size);
+    /* A failed host decrunch must leave the valid guest loader available.
+     * Commit bytes and metadata together only after validating the result. */
+    fxe_image_t candidate = *img;
+    candidate.payload = new_payload;
+    candidate.payload_size = (size_t)image_size;
+    candidate.was_host_decrunched = 1;
+    if (!parse_gxb_header(&candidate, err, err_len)) {
+        free(new_payload);
+        return 0;
+    }
     free(img->payload);
-    img->payload = new_payload;
-    img->payload_size = (size_t)image_size;
-    img->was_host_decrunched = 1;
-    if (!parse_gxb_header(img, err, err_len)) return 0;
+    *img = candidate;
     return 1;
 }
 
@@ -329,17 +347,43 @@ static int b2fxec_host_decrunch_fxp3(fxe_image_t *img, char *err, size_t err_len
     uint32_t rom_start = gp32_ld32le(img->payload + 4u);
     uint32_t rom_end = gp32_ld32le(img->payload + 12u);
     uint32_t comp_end = gp32_ld32le(img->payload + 20u);
-    if (rom_end <= rom_start || rom_end - rom_start != 0x348u) { ferr(err, err_len, "not an FXP3 b2fxec stub"); return 0; }
-    if (!b2_in_ram(rom_end, 4u) || !b2_in_ram(comp_end, 0u) || comp_end <= rom_end || (size_t)(comp_end - GP32_RAM_BASE) > img->payload_size) {
+    if (rom_start != GP32_RAM_BASE || rom_end <= rom_start || rom_end - rom_start != 0x348u) { ferr(err, err_len, "not an FXP3 b2fxec stub"); return 0; }
+    if (!b2_in_ram(rom_end, 8u) || !b2_in_ram(comp_end, 0u) || comp_end <= rom_end ||
+        comp_end - rom_end < 12u || (comp_end & 3u) ||
+        (size_t)(comp_end - GP32_RAM_BASE) > img->payload_size) {
         ferr(err, err_len, "unsupported FXP3 b2fxec layout");
         return 0;
     }
+    if (gp32_ld32le(img->payload + (rom_end - GP32_RAM_BASE)) != 0x33505846u) {
+        ferr(err, err_len, "not an FXP3 b2fxec stream");
+        return 0;
+    }
+
+    /* The stub's halfword reader prefetches beyond its final coded word.
+     * Leave a zero-filled tail inside allocated RAM; that tail is never
+     * counted as block data or accepted as a missing end marker. */
+    const uint32_t packed_end = GP32_RAM_BASE + (uint32_t)ram_size - 16u;
+    uint32_t packed_size = comp_end - rom_end - 4u;
+    uint32_t packed_begin = packed_end - packed_size;
+    if (packed_begin < GP32_RAM_BASE + 0x1314u ||
+        packed_begin - 0x1314u <= rom_end + 4u) {
+        ferr(err, err_len, "FXP3 b2fxec stream leaves no output/table room");
+        return 0;
+    }
+    uint32_t sp = packed_begin - 0x1314u;
+    uint32_t decoded_size = gp32_ld32le(img->payload + (rom_end - GP32_RAM_BASE) + 4u);
+    if (decoded_size < 32u || decoded_size > sp - rom_end - 4u) {
+        ferr(err, err_len, "FXP3 b2fxec invalid decoded size");
+        return 0;
+    }
+    const uint32_t output_begin = rom_end + 4u;
+    const uint32_t output_end = output_begin + decoded_size;
 
     uint8_t *mem = (uint8_t *)calloc(1, ram_size);
     if (!mem) { ferr(err, err_len, "out of memory decrunching FXP3 b2fxec image"); return 0; }
-    memcpy(mem, img->payload, img->payload_size < ram_size ? img->payload_size : ram_size);
+    memcpy(mem, img->payload, (size_t)(comp_end - GP32_RAM_BASE));
 
-    uint32_t high = GP32_RAM_BASE + (uint32_t)ram_size;
+    uint32_t high = packed_end;
     uint32_t src = comp_end;
     for (;;) {
         if (src < GP32_RAM_BASE + 4u) { free(mem); ferr(err, err_len, "FXP3 b2fxec copy underflow"); return 0; }
@@ -363,7 +407,6 @@ static int b2fxec_host_decrunch_fxp3(fxe_image_t *img, char *err, size_t err_len
     uint32_t bitbuf = 0u;
 
     if (high < GP32_RAM_BASE + 16u + 12u + 0x1300u) { free(mem); ferr(err, err_len, "FXP3 b2fxec stream leaves no stack room"); return 0; }
-    uint32_t sp = high - 16u - 12u - 0x1300u;
     if (!b2_in_ram(sp, 0x1300u)) { free(mem); ferr(err, err_len, "FXP3 b2fxec stack outside RAM"); return 0; }
 
     const uint32_t pre_table = sp;
@@ -373,10 +416,12 @@ static int b2fxec_host_decrunch_fxp3(fxe_image_t *img, char *err, size_t err_len
     unsigned blocks = 0;
     for (;;) {
         if (bit_count == 16) ip -= 4u; else ip -= 2u;
-        if (!b2_in_ram(ip, 2u)) { free(mem); ferr(err, err_len, "FXP3 b2fxec block header overrun"); return 0; }
+        if (ip < packed_begin + 4u || ip > packed_end - 2u) { free(mem); ferr(err, err_len, "FXP3 b2fxec block header overrun"); return 0; }
         uint32_t block_len = b2_rd16(mem, ip); ip += 2u;
         if (block_len == 0u) break;
-        if (block_len > 0x7fffu || !b2_in_ram(ip, block_len)) { free(mem); ferr(err, err_len, "FXP3 b2fxec invalid block length"); return 0; }
+        /* This is the compressed byte count, not a 0x7fff decoded-byte cap. */
+        if (block_len < 4u || (block_len & 1u) || block_len > packed_end - ip) { free(mem); ferr(err, err_len, "FXP3 b2fxec invalid block length"); return 0; }
+        uint32_t block_end = ip + block_len;
         uint32_t lo = b2_rd16(mem, ip); ip += 2u;
         uint32_t hi = b2_rd16(mem, ip); ip += 2u;
         b2ctx_t ctx;
@@ -384,6 +429,7 @@ static int b2fxec_host_decrunch_fxp3(fxe_image_t *img, char *err, size_t err_len
         ctx.ip = ip;
         ctx.bit_count = 16;
         ctx.bitbuf = (lo << 16) | hi;
+        ctx.data_end = block_end;
 
         if (!b2fxp3_build_table(mem, pre_table, 16u, 0x00080000u)) { free(mem); ferr(err, err_len, "FXP3 pretable build failed"); return 0; }
         for (unsigned i = 0; i < 16u; ++i) {
@@ -410,9 +456,9 @@ static int b2fxec_host_decrunch_fxp3(fxe_image_t *img, char *err, size_t err_len
         uint32_t emitted = 0u;
         for (;;) {
             uint32_t sym = 0;
-            if (!b2fxp3_decode_symbol(&ctx, lit_table, &sym)) { free(mem); ferr(err, err_len, "FXP3 literal stream failed"); return 0; }
+            if (!b2fxp3_decode_symbol(&ctx, lit_table, 0x200u, &sym)) { free(mem); ferr(err, err_len, "FXP3 literal stream failed"); return 0; }
             if (sym < 0x100u) {
-                if (!b2_in_ram(outp, 1u)) { free(mem); ferr(err, err_len, "FXP3 output overflow"); return 0; }
+                if (outp >= output_end) { free(mem); ferr(err, err_len, "FXP3 output overflow"); return 0; }
                 b2_wr8(mem, outp++, (uint8_t)sym);
             } else if (sym == 0x100u) {
                 break;
@@ -426,28 +472,33 @@ static int b2fxec_host_decrunch_fxp3(fxe_image_t *img, char *err, size_t err_len
                     len_minus1 = sym - 0x101u;
                     old_len_minus1 = len_minus1;
                     uint32_t off_hi = 0;
-                    if (!b2fxp3_decode_symbol(&ctx, off_hi_table, &off_hi)) { free(mem); ferr(err, err_len, "FXP3 offset-high stream failed"); return 0; }
+                    if (!b2fxp3_decode_symbol(&ctx, off_hi_table, 0x100u, &off_hi)) { free(mem); ferr(err, err_len, "FXP3 offset-high stream failed"); return 0; }
                     if (off_hi == 0u) {
                         dist = old_offset_long;
                     } else {
                         dist = off_hi & 0x7fu;
                         if (dist != off_hi) {
                             uint32_t off_lo = 0;
-                            if (!b2fxp3_decode_symbol(&ctx, off_lo_table, &off_lo)) { free(mem); ferr(err, err_len, "FXP3 offset-low stream failed"); return 0; }
+                            if (!b2fxp3_decode_symbol(&ctx, off_lo_table, 0x100u, &off_lo)) { free(mem); ferr(err, err_len, "FXP3 offset-low stream failed"); return 0; }
                             dist = (dist << 8) | (off_lo & 0xffu);
                             old_offset_long = dist;
                         }
                     }
                     old_offset = dist;
                 }
-                if (dist == 0u) { free(mem); ferr(err, err_len, "FXP3 zero back-reference"); return 0; }
-                for (uint32_t i = 0; i <= len_minus1; ++i) {
-                    if (!b2_in_ram(outp, 1u) || dist > outp - GP32_RAM_BASE) { free(mem); ferr(err, err_len, "FXP3 back-reference overflow"); return 0; }
+                uint32_t match_len = len_minus1 + 1u;
+                if (dist == 0u || dist > outp - output_begin || match_len > output_end - outp) {
+                    free(mem); ferr(err, err_len, "FXP3 back-reference overflow"); return 0;
+                }
+                for (uint32_t i = 0; i < match_len; ++i) {
                     uint8_t v = b2_rd8(mem, outp - dist);
                     b2_wr8(mem, outp++, v);
                 }
             }
             if (++emitted > 0x01000000u) { free(mem); ferr(err, err_len, "FXP3 block did not terminate"); return 0; }
+        }
+        if (ctx.ip - (ctx.bit_count == 16 ? 4u : 2u) != block_end) {
+            free(mem); ferr(err, err_len, "FXP3 b2fxec block size mismatch"); return 0;
         }
         ip = ctx.ip;
         bit_count = ctx.bit_count;
@@ -456,6 +507,7 @@ static int b2fxec_host_decrunch_fxp3(fxe_image_t *img, char *err, size_t err_len
         if (++blocks > 4096u) { free(mem); ferr(err, err_len, "FXP3 too many blocks"); return 0; }
     }
 
+    if (outp != output_end) { free(mem); ferr(err, err_len, "FXP3 b2fxec decoded size mismatch"); return 0; }
     int ok = b2fxec_finish_decrunch(img, mem, rom_end, outp, err, err_len);
     free(mem);
     return ok;
@@ -469,8 +521,13 @@ static int b2fxec_host_decrunch(fxe_image_t *img, char *err, size_t err_len) {
     if (!img || !img->payload || img->payload_size < 0x40u) return 0;
     uint32_t rom_end = gp32_ld32le(img->payload + 12u);
     uint32_t comp_end = gp32_ld32le(img->payload + 20u);
-    if (!b2_in_ram(rom_end, 4u) || !b2_in_ram(comp_end, 0u) || comp_end <= rom_end || (size_t)(comp_end - GP32_RAM_BASE) > img->payload_size) {
+    if (!b2_in_ram(rom_end, 8u) || !b2_in_ram(comp_end, 0u) || comp_end <= rom_end ||
+        comp_end - rom_end < 8u || (size_t)(comp_end - GP32_RAM_BASE) > img->payload_size) {
         ferr(err, err_len, "unsupported b2fxec layout");
+        return 0;
+    }
+    if (gp32_ld32le(img->payload + (rom_end - GP32_RAM_BASE)) != 0x32505846u) {
+        ferr(err, err_len, "not an FXP2 b2fxec stream");
         return 0;
     }
     uint8_t *mem = (uint8_t *)calloc(1, ram_size);
@@ -497,7 +554,10 @@ static int b2fxec_host_decrunch(fxe_image_t *img, char *err, size_t err_len) {
     b2_wr32(mem, r9, first);
     r9 += 4u;
 
-    uint32_t sp = GP32_RAM_BASE + (uint32_t)ram_size - 16u - 0x780u;
+    /* The relocated stream occupies the top of RAM. Putting Huffman tables
+     * below the RAM end overwrites unread input; keep them below the stream. */
+    if (r8 < GP32_RAM_BASE + 16u + 0x780u) { free(mem); ferr(err, err_len, "b2fxec stream leaves no table room"); return 0; }
+    uint32_t sp = r8 - 16u - 0x780u;
     uint32_t ip = r8 - 4u;
     uint32_t outp = r9;
     unsigned blocks = 0;
@@ -513,6 +573,7 @@ static int b2fxec_host_decrunch(fxe_image_t *img, char *err, size_t err_len) {
         ctx.ip = ip;
         ctx.bit_count = 16;
         ctx.bitbuf = (lo << 16) | hi;
+        ctx.data_end = 0u;
         uint32_t block_end = ip + block_len;
         if (block_end < GP32_RAM_BASE || block_end > GP32_RAM_BASE + 0x00800004u) { free(mem); ferr(err, err_len, "b2fxec block outside RAM"); return 0; }
 
@@ -541,7 +602,7 @@ static int b2fxec_host_decrunch(fxe_image_t *img, char *err, size_t err_len) {
             if (!b2_decode_symbol(&ctx, sp + 0x90u, &sym)) { free(mem); ferr(err, err_len, "b2fxec data stream failed"); return 0; }
             if (sym == 0x100u) break;
             if (sym < 0x100u) {
-                if (!b2_in_ram(outp, 1u)) { free(mem); ferr(err, err_len, "b2fxec output overflow"); return 0; }
+                if (outp >= sp || !b2_in_ram(outp, 1u)) { free(mem); ferr(err, err_len, "b2fxec output overlaps tables"); return 0; }
                 b2_wr8(mem, outp++, (uint8_t)sym);
             } else {
                 uint32_t v = sym - adjust;
@@ -552,7 +613,7 @@ static int b2fxec_host_decrunch(fxe_image_t *img, char *err, size_t err_len) {
                 uint32_t dist = 1u;
                 if (high) { uint32_t extra = 0; dist = 1u << high; if (!b2_read_bits(&ctx, high, &extra)) { free(mem); ferr(err, err_len, "b2fxec distance stream failed"); return 0; } dist += extra; }
                 for (uint32_t i = 0; i < len; ++i) {
-                    if (!b2_in_ram(outp, 1u) || dist > outp - GP32_RAM_BASE) { free(mem); ferr(err, err_len, "b2fxec back-reference overflow"); return 0; }
+                    if (outp >= sp || !b2_in_ram(outp, 1u) || dist > outp - GP32_RAM_BASE) { free(mem); ferr(err, err_len, "b2fxec back-reference overflow"); return 0; }
                     uint8_t v8 = b2_rd8(mem, outp - dist);
                     b2_wr8(mem, outp++, v8);
                 }
@@ -563,32 +624,9 @@ static int b2fxec_host_decrunch(fxe_image_t *img, char *err, size_t err_len) {
         if (++blocks > 4096u) { free(mem); ferr(err, err_len, "b2fxec too many blocks"); return 0; }
     }
 
-    uint32_t source = rom_end;
-    uint32_t image_size = (uint32_t)(outp - source);
-    if (b2_in_ram(source + 4u, 32u) && !branch_opcode(b2_rd32(mem, source)) && branch_opcode(b2_rd32(mem, source + 4u))) {
-        image_size = b2_rd32(mem, source);
-        source += 4u;
-    }
-    if (!b2_in_ram(source, 32u) || !branch_opcode(b2_rd32(mem, source))) {
-        free(mem);
-        ferr(err, err_len, "b2fxec did not produce a GXB header");
-        return 0;
-    }
-    if (image_size < 32u || !b2_in_ram(source, image_size)) {
-        free(mem);
-        ferr(err, err_len, "invalid b2fxec output size");
-        return 0;
-    }
-    uint8_t *new_payload = (uint8_t *)calloc(1, (size_t)image_size);
-    if (!new_payload) { free(mem); ferr(err, err_len, "out of memory storing decrunched image"); return 0; }
-    memcpy(new_payload, mem + (source - GP32_RAM_BASE), (size_t)image_size);
+    int ok = b2fxec_finish_decrunch(img, mem, rom_end, outp, err, err_len);
     free(mem);
-    free(img->payload);
-    img->payload = new_payload;
-    img->payload_size = (size_t)image_size;
-    img->was_host_decrunched = 1;
-    if (!parse_gxb_header(img, err, err_len)) return 0;
-    return 1;
+    return ok;
 }
 
 void fxe_image_free(fxe_image_t *img) {
@@ -606,12 +644,13 @@ static int parse_gxb_header(fxe_image_t *img, char *err, size_t err_len) {
     uint32_t rom_start = gp32_ld32le(&img->payload[4]);
     uint32_t rom_end = gp32_ld32le(&img->payload[8]);
     uint32_t bss_start = gp32_ld32le(&img->payload[12]);
-    uint32_t ram_end = gp32_ld32le(&img->payload[16]);
     if (!branch_opcode(first) || rom_start < GP32_RAM_BASE || rom_start >= GP32_RAM_BASE + 0x02000000u) {
         ferr(err, err_len, "not a GP32 GXB/AXF payload");
         return 0;
     }
-    if (rom_end < rom_start || bss_start < rom_start || ram_end < bss_start) {
+    /* +16 duplicates the SDK's BSS-end word, but the firmware does not use
+     * it when placing an image. Some packers leave a non-address value there. */
+    if (rom_end < rom_start || bss_start < rom_start) {
         ferr(err, err_len, "invalid GXB address fields");
         return 0;
     }

@@ -1,29 +1,35 @@
 # GP32emu 사용설명서
 
-GP32emu 1.0.1의 Windows·Android 앱과 RetroArch 코어 설치·조작·저장 안내입니다.
+GP32emu의 Windows·Android 앱과 RetroArch 코어 설치·조작·저장 안내입니다.
 BIOS와 게임 파일은 포함하지 않습니다. 직접 보유한 덤프를 사용하세요.
+
+개발 중인 **1.1.0**에는 iPhone·iPad 앱도 있습니다. 아래 1.0.1 공개 패키지에는
+포함되지 않으며, 설치 방법은 [iOS 개발 버전 안내](#iphoneipad-개발-버전)를 참고하세요.
 
 ## 필요한 파일
 
+아래 파일명의 `VERSION`은 내려받을 릴리스의 버전 번호입니다.
+
 | 대상 | ZIP 패키지와 루트의 실행 파일 |
 | --- | --- |
-| Windows x64 독립 실행 | `gp32emu-1.0.1-windows-x64.zip`: `gp32emu_win64.exe`, `SDL3.dll` |
-| Windows x64 RetroArch | `gp32emu-1.0.1-libretro-windows-x64.zip`: `gp32emu_libretro.dll` |
-| Linux AArch64 RetroArch | `gp32emu-1.0.1-linux-aarch64.zip`: `gp32emu_libretro.so` |
-| Android 앱 | `gp32emu-1.0.1-android.apk`: 별도 설치, RetroArch 불필요 |
-| Android ARM64 RetroArch | `gp32emu-1.0.1-android-arm64.zip`: `gp32emu_libretro_android.so` |
-| Android ARMv7 RetroArch | `gp32emu-1.0.1-android-armv7.zip`: `gp32emu_libretro_android.so` |
-| Nintendo Switch RetroArch | `gp32emu-1.0.1-switch-libnx.zip`: 실험적 NRO 코어 |
+| Windows x64 독립 실행 | `gp32emu-VERSION-windows-x64.zip`: `gp32emu_win64.exe`, `SDL3.dll` |
+| Windows x64 RetroArch | `gp32emu-VERSION-libretro-windows-x64.zip`: `gp32emu_libretro.dll` |
+| Linux AArch64 RetroArch | `gp32emu-VERSION-linux-aarch64.zip`: `gp32emu_libretro.so` |
+| Android 앱 | `gp32emu-VERSION-android.apk`: 별도 설치, RetroArch 불필요 |
+| Android ARM64 RetroArch | `gp32emu-VERSION-android-arm64.zip`: `gp32emu_libretro_android.so` |
+| Android ARMv7 RetroArch | `gp32emu-VERSION-android-armv7.zip`: `gp32emu_libretro_android.so` |
+| Nintendo Switch RetroArch | `gp32emu-VERSION-switch-libnx.zip`: 실험적 NRO 코어 |
 
 각 코어 ZIP에는 `gp32emu_libretro.info`도 포함되어 있습니다. 실행용 ZIP에는 README,
 릴리스 노트, 이 설명서, `licenses/`, `manifest.json`이 함께 들어 있습니다.
 Linux 코어는 glibc 2.17 이상, Android 코어는 API 21 이상을 대상으로 합니다.
-Android 앱은 Android 6.0 이상이 필요합니다. 실제 ARM 휴대전화 검증은 아직 남아 있습니다. ARMv7은 JIT 없이 동작하므로
-ARM64보다 상당히 느립니다.
+Android 앱은 Android 6.0 이상이 필요합니다. 1.1.0 개발 앱은 ARM64 휴대전화에서
+일부 게임의 실행·오디오·입력을 확인했습니다. Android RetroArch 통합 검증은 남아 있습니다.
+ARMv7은 JIT 없이 동작하므로 ARM64보다 상당히 느립니다.
 
-`gp32emu-1.0.1-source.zip`은 모든 플랫폼을 포함한 전체 프로젝트 소스입니다.
-`gp32emu-1.0.1-switch-libnx-source.zip`은 Switch 코어 소스·정적 라이브러리·빌드 안내입니다.
-설치하려면 소스 압축파일 대신 `gp32emu-1.0.1-switch-libnx.zip`을 받으세요.
+`gp32emu-VERSION-source.zip`은 모든 플랫폼을 포함한 전체 프로젝트 소스입니다.
+`gp32emu-VERSION-switch-libnx-source.zip`은 Switch 코어 소스·정적 라이브러리·빌드 안내입니다.
+설치하려면 소스 압축파일 대신 `gp32emu-VERSION-switch-libnx.zip`을 받으세요.
 
 게임은 `.smc` 카드 이미지와 `.fxe`, `.fpk` 형식을 엽니다. GP32 BIOS는 압축을 푼
 512 KiB 이하의 덤프를 사용하며, 파일 이름은 `gp32166m.bin`을 권장합니다. BIOS 없이 실행할
@@ -36,6 +42,27 @@ ARM64보다 상당히 느립니다.
 - **Android:** 기존 앱을 지우지 말고 새 APK를 덮어 설치하면 가져온 게임과 세이브가 유지됩니다.
 - **RetroArch:** 게임을 종료하고 같은 플랫폼·아키텍처의 코어와 정보 파일을 교체합니다.
   BIOS·롬·저장 파일과 기존 RetroArch 설정은 그대로 사용하세요.
+
+## iPhone/iPad 개발 버전
+
+iOS/iPadOS 15 이상의 ARM64 기기용 `gp32emu-1.1.0-ios-unsigned.ipa`를 테스트 중입니다.
+아직 공개 릴리스가 아니며, SideStore를 통한 전체 설치 과정은 확인이 남아 있습니다.
+
+1. [SideStore 공식 안내](https://docs.sidestore.io/docs/installation/prerequisites)에 따라
+   SideStore를 준비하고, IPA를 가져와 본인 계정으로 서명·설치합니다.
+2. GP32emu 메뉴에서 BIOS와 압축을 푼 SMC·FXE·FPK 게임을 가져옵니다.
+3. 업데이트는 같은 서명 계정과 앱 식별자로 덮어 설치하세요. 앱을 지우면 로컬 데이터도
+   지워지므로 먼저 삭제하지 마세요.
+
+IPA에 JIT 코드가 포함되어 있지만, 기본 실행은 인터프리터입니다. 지원되는 기기에서
+StikDebug 초기 설정을 마친 뒤 게임 메뉴의 **Enable JIT with StikDebug**를 선택하고,
+복귀 후 **JIT enabled** 표시를 확인해야 합니다. 앱 설치만으로 JIT가 켜지지는 않습니다.
+기기·서명 조건에 따라 활성화가 안 될 수 있으며, 이때도 인터프리터로 실행할 수 있습니다.
+자동 연동은 실험적 기능이고 실제 StikDebug 연동 검증은 남아 있습니다.
+
+가로 화면에서는 메뉴 아이콘이 잠시 후 사라집니다. 게임 화면 위쪽 가운데의 같은 위치를
+누르면 메뉴가 열립니다. 상태 저장과 게임 내 저장은 별개입니다.
+자세한 조작·저장 위치·JIT 조건은 [iPhone/iPad 안내](../ios/README.md)를 참고하세요.
 
 ## Nintendo Switch
 

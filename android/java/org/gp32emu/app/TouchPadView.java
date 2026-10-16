@@ -73,6 +73,7 @@ public final class TouchPadView extends View {
 
     void setHaptics(boolean enabled) { haptics = enabled; }
     boolean haptics() { return haptics; }
+    boolean isTracking() { return tracking; }
 
     /** Highest control edge, so portrait video can sit above the controls.
      *  Safe to read from the emulation thread. */

@@ -670,7 +670,7 @@ static void direct_sync_fwinfo(gp32_t *g) {
 
 static void direct_copy_bytes_if_ram(gp32_t *g, uint32_t dst, const uint8_t *src, uint32_t len) {
     if (!g || !src || !direct_ram_range(g, dst, len)) return;
-    for (uint32_t i = 0; i < len; ++i) s3c2400_write8(g->soc, dst + i, src[i]);
+    (void)s3c2400_load_ram_image(g->soc, dst, src, len, NULL, 0u);
     arm920t_invalidate_icache_range(g->cpu, dst, len); /* the copy may replace translated code */
 }
 
@@ -693,14 +693,15 @@ static void direct_apply_gxb_scatterload(gp32_t *g, const fxe_image_t *img) {
     uint32_t rom_start = gp32_ld32le(img->payload + 4u);
     uint32_t ro_limit = gp32_ld32le(img->payload + 8u);
     uint32_t rw_base = gp32_ld32le(img->payload + 12u);
-    uint32_t zi_limit = gp32_ld32le(img->payload + 16u);
+    uint32_t zi_limit = gp32_ld32le(img->payload + 24u);
     uint32_t rw_limit = gp32_ld32le(img->payload + 20u);
     if ((first & 0x0f000000u) != 0x0a000000u) return;
     if (rom_start != img->load_addr || ro_limit < rom_start) return;
-    if (rw_base < GP32_RAM_BASE || rw_limit < rw_base || zi_limit < rw_limit) return;
+    if (rw_base < GP32_RAM_BASE || rw_limit < rw_base) return;
     uint32_t ro_size = ro_limit - rom_start;
     uint32_t rw_size = rw_limit - rw_base;
-    uint32_t zi_size = zi_limit - rw_limit;
+    /* A missing ZI window must not suppress the independent RW copy. */
+    uint32_t zi_size = zi_limit > rw_limit ? zi_limit - rw_limit : 0u;
     if (rw_size && (uint64_t)ro_size + (uint64_t)rw_size <= img->payload_size) {
         direct_copy_bytes_if_ram(g, rw_base, img->payload + ro_size, rw_size);
     }
@@ -1683,6 +1684,22 @@ static void direct_fix_gp32_additive_blend_shadow_pixels(gp32_t *g) {
 
     for (unsigned pass = 0; pass < 8u; ++pass) {
         uint32_t changed = 0u;
+        if (pixels) {
+            /* Same row-major order and in-place updates as the byte loop
+             * below; memchr only skips bytes that are not 0x78. */
+            const uint32_t total = width * height;
+            for (uint32_t offset = 0u; offset < total; ++offset) {
+                const uint8_t *hit = memchr(pixels + offset, 0x78, total - offset);
+                if (!hit) break;
+                offset = (uint32_t)(hit - pixels);
+                if (!direct_surface_has_shadow_neighbour(g, pixels, fb_addr, width, height,
+                                                         offset % width, offset / width)) continue;
+                pixels[offset] = 0x77u;
+                changed++;
+            }
+            if (!changed) break;
+            continue;
+        }
         for (uint32_t y = 0; y < height; ++y) {
             for (uint32_t x = 0; x < width; ++x) {
                 uint32_t offset = y * width + x;
@@ -2152,7 +2169,7 @@ static uint32_t direct_sdk_sound_buffer_base(gp32_t *g, uint32_t bytes) {
         uint32_t ro_start = gp32_ld32le(img->payload + 4u);
         uint32_t ro_end = gp32_ld32le(img->payload + 8u);
         uint32_t rw_start = gp32_ld32le(img->payload + 12u);
-        uint32_t zi_end = gp32_ld32le(img->payload + 16u);
+        uint32_t zi_end = gp32_ld32le(img->payload + 24u);
         uint32_t rw_end = gp32_ld32le(img->payload + 20u);
         if ((first & 0x0f000000u) == 0x0a000000u && ro_start == img->load_addr &&
             ro_end >= ro_start && rw_start >= GP32_RAM_BASE && rw_end >= rw_start &&
@@ -2756,7 +2773,7 @@ static size_t direct_read_fpk_to_ram(gp32_t *g, const fpk_asset_t *a, size_t *po
     uint32_t ram_end = GP32_RAM_BASE + (uint32_t)s3c2400_ram_size(g->soc);
     size_t room = (dst >= GP32_RAM_BASE && dst < ram_end) ? (size_t)(ram_end - dst) : 0u;
     if (n > room) n = room;
-    for (size_t i = 0; i < n; ++i) s3c2400_write8(g->soc, dst + (uint32_t)i, a->data[*posp + i]);
+    if (n) (void)s3c2400_load_ram_image(g->soc, dst, a->data + *posp, n, NULL, 0u);
     arm920t_invalidate_icache_range(g->cpu, dst, (uint32_t)n); /* a file read may load code over translated blocks */
     *posp += n;
     return n;
@@ -3712,8 +3729,8 @@ static int direct_resume_ready_sdk_task(gp32_t *g, uint32_t pc, uint32_t first_t
  * Steps 2 and 3 are what make a hand-off work at all: the image is still at its
  * scratch address when it arrives, so its .data and .bss exist nowhere else
  * yet.  Both overlapping moves follow memmove rules.  The field offsets are the
- * ones that firmware routine reads; they agree with the GXB headers in the
- * corpus, where hdr[+16] and hdr[+24] are always equal.  Returns 0 when the
+ * ones that firmware routine reads; hdr[+16] is only an SDK duplicate and
+ * need not equal hdr[+24]. Returns 0 when the
  * header is absent or the declared window is not usable, in which case the
  * caller keeps the unrelocated image. */
 static int direct_gxb_place_image(gp32_t *g, uint32_t hdr, uint32_t *out_hdr, uint32_t *out_end) {
@@ -5220,6 +5237,19 @@ gp32_status_t gp32_set_jit(gp32_t *g, int enabled) {
     return GP32_OK;
 }
 
+int gp32_prepare_ios_jit(gp32_t *g, gp32_ios_jit_region_t *region) {
+    return arm920t_prepare_ios_jit(g ? g->cpu : NULL, region);
+}
+int gp32_activate_ios_jit(gp32_t *g) {
+    return arm920t_activate_ios_jit(g ? g->cpu : NULL);
+}
+int gp32_activate_ios_jit_universal(gp32_t *g) {
+    return arm920t_activate_ios_jit_universal(g ? g->cpu : NULL);
+}
+int gp32_get_jit_enabled(const gp32_t *g) {
+    return arm920t_get_jit_enabled(g ? g->cpu : NULL);
+}
+
 /* Opt-in sweep diagnostics: undefined-instruction and abort vector entries.
  * Not part of the machine state; a NULL sink leaves the run unchanged. */
 void gp32_set_diag_log(gp32_t *g, gp32_diag_fn fn, void *user) {
@@ -5663,7 +5693,8 @@ static const uint8_t gp32_state_magic_v12[16] = { 'G','P','3','2','S','T','A','T
  * image the frontend passed instead of the whole 17-34 MB card. The section is
  * self-describing, so every older magic keeps loading through the full-image
  * layout and an older build refuses this magic outright. */
-static const uint8_t gp32_state_magic[16] = { 'G','P','3','2','S','T','A','T','E','v','0','0','1','4',0,0 };
+static const uint8_t gp32_state_magic_v14[16] = { 'G','P','3','2','S','T','A','T','E','v','0','0','1','4',0,0 };
+static const uint8_t gp32_state_magic[16] = { 'G','P','3','2','S','T','A','T','E','v','0','0','1','5',0,0 };
 static_assert(sizeof(gp32_frame_time_t) == 16u, "fixed frame-time wire extension");
 static_assert(sizeof(gp32_elapsed_time_t) == 16u, "fixed elapsed-time wire extension");
 
@@ -5849,7 +5880,8 @@ static int gp32_state_read(gp32_t *g, state_io_t *io, gp32_state_image_t *direct
     uint8_t got[sizeof(gp32_state_magic)];
     if (!state_io_read(io, got, sizeof(got))) return 0;
     int legacy = memcmp(got, gp32_state_magic_v2, sizeof(got)) == 0;
-    int has_tasks = memcmp(got, gp32_state_magic, sizeof(got)) == 0 ||
+    int has_translation = memcmp(got,gp32_state_magic,sizeof(got))==0;
+    int has_tasks = has_translation || memcmp(got,gp32_state_magic_v14,sizeof(got))==0 ||
                     memcmp(got, gp32_state_magic_v12, sizeof(got)) == 0;
     int has_wait = has_tasks || memcmp(got, gp32_state_magic_v11, sizeof(got)) == 0;
     int has_resume = has_wait || memcmp(got, gp32_state_magic_v10, sizeof(got)) == 0;
@@ -5882,8 +5914,10 @@ static int gp32_state_read(gp32_t *g, state_io_t *io, gp32_state_image_t *direct
      * the CPU image must not remain on that stack during the SoC call. */
     arm920t_state_image_t *cpu = malloc(sizeof(*cpu));
     if (!cpu) return 0;
-    int ok = (!has_resume || gp32_resume_read(io, resume, has_wait, has_tasks)) && state_io_read(io, cpu, sizeof(*cpu)) &&
-        (!has_resume || gp32_resume_validate(resume, direct, cpu, &elapsed));
+    arm920t_translation_state_image_t translation;
+    int ok = (!has_resume || gp32_resume_read(io,resume,has_wait,has_tasks)) && state_io_read(io,cpu,sizeof(*cpu)) &&
+        (!has_translation || arm920t_translation_state_read_io(io,&translation)) &&
+        (!has_resume || gp32_resume_validate(resume,direct,cpu,&elapsed));
     uint32_t required_ram_size = 0u;
     if (ok && has_wait && (direct->direct_vblank_next_cycle || direct->direct_vblank_wait_cycles ||
                            direct->direct_vblank_wait_requested)) ok = 0;
@@ -5907,7 +5941,7 @@ static int gp32_state_read(gp32_t *g, state_io_t *io, gp32_state_image_t *direct
     }
     if (ok) ok = s3c2400_state_load_io_checked(g->soc, io, has_spans, has_iis_phase, has_lcd_phase, has_idle_phase, has_codec,
                                                resume->ram_size, resume->run_clock, required_ram_size,
-                                               memcmp(got, gp32_state_magic, sizeof(got)) == 0 ? SMC_STATE_FORMAT_V14
+                                               (has_translation || memcmp(got,gp32_state_magic_v14,sizeof(got))==0) ? SMC_STATE_FORMAT_V14
                                                                                                 : SMC_STATE_FORMAT_PRE_V14);
     if (ok) {
         if (legacy) {
@@ -5920,6 +5954,7 @@ static int gp32_state_read(gp32_t *g, state_io_t *io, gp32_state_image_t *direct
             elapsed.clock_hz = clock;
         }
         arm920t_state_apply(g->cpu, cpu);
+        if(has_translation)arm920t_translation_state_apply(g->cpu,&translation);
         g->elapsed = elapsed;
         g->frame_time = frame_time;
     }

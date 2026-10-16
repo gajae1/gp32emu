@@ -59,5 +59,5 @@
     <string name="state_load_failed">상태를 불러오지 못했습니다: %1$s</string>
     <string name="touchpad_description">GP32 방향 패드, A, B, L, R, Start, Select</string>
     <string name="stopped">에뮬레이션 중지: %1$s</string>
-    <string name="about_text">GP32emu 1.0.1\n\n게임 중 뒤로가기나 메뉴 버튼을 누르면 일시정지 메뉴가 열립니다. 게임패드에서는 Mode 버튼을 누르거나 Start와 Select를 동시에 누르세요. 터치 조작을 숨기면 키보드(방향키, Z/X = A/B, A/S = L/R, Enter = Start, Shift = Select)나 게임패드로 조작할 수 있습니다.\n\n게임은 앱 저장소로 복사되고 세이브는 자동으로 저장됩니다. 상태 저장은 일시정지 메뉴에서 게임당 3개 슬롯을 쓸 수 있습니다. 앱을 삭제하면 복사본, 세이브, 상태도 함께 삭제됩니다.\n\ngameblabla/gp32emu 기반\ngithub.com/gajae1/gp32emu</string>
+    <string name="about_text">GP32emu 1.1.0\n\n게임 중 뒤로가기나 메뉴 버튼을 누르면 일시정지 메뉴가 열립니다. 게임패드에서는 Mode 버튼을 누르거나 Start와 Select를 동시에 누르세요. 터치 조작을 숨기면 키보드(방향키, Z/X = A/B, A/S = L/R, Enter = Start, Shift = Select)나 게임패드로 조작할 수 있습니다.\n\n게임은 앱 저장소로 복사되고 세이브는 자동으로 저장됩니다. 상태 저장은 일시정지 메뉴에서 게임당 3개 슬롯을 쓸 수 있습니다. 앱을 삭제하면 복사본, 세이브, 상태도 함께 삭제됩니다.\n\ngameblabla/gp32emu 기반\ngithub.com/gajae1/gp32emu</string>
 </resources>

@@ -32,8 +32,16 @@ int main(void) {
             set_mem_both(first + 4u * i, insn);
             set_mem_both(second + 4u * i, insn);
         }
+        /* The first visit now records portable metadata without allocating
+         * native code. Prime the failure target so its next visit actually
+         * attempts the libnx operation being tested. */
+        run_at(second);
+        CHECK(!has_native(second) && !cpu_jit->jit_memory_failed,
+              "cold failure target must stay portable without a memory failure");
         if (failure == 0) switch_test_fail_create = 1;
         else {
+            run_at(first);
+            CHECK(!has_native(first), "cold warmup unexpectedly compiled native code");
             run_at(first);
             CHECK(has_native(first), "warm block was not native");
             if (failure == 1) switch_test_fail_write = 1;

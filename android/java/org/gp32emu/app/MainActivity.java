@@ -69,7 +69,9 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     TouchPadView touchPad;
     private SurfaceView screen;
     private FrameLayout play;
+    private FrameLayout gameArea;
     private Button menuButton;
+    private boolean menuTouchBlocked;
     private LinearLayout home;
     private TextView biosStatus;
     private Button biosButton, continueButton;
@@ -122,20 +124,29 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         FrameLayout root = new FrameLayout(this);
         root.setBackgroundColor(Color.BLACK);
         play = new FrameLayout(this);
+        gameArea = new FrameLayout(this);
         screen = new SurfaceView(this);
         screen.getHolder().addCallback(this);
-        play.addView(screen, new FrameLayout.LayoutParams(-1, -1));
+        gameArea.addView(screen, new FrameLayout.LayoutParams(-1, -1));
         touchPad = new TouchPadView(this, input);
         touchPad.setHaptics(prefs.getBoolean("haptics", true));
-        play.addView(touchPad, new FrameLayout.LayoutParams(-1, -1));
+        gameArea.addView(touchPad, new FrameLayout.LayoutParams(-1, -1));
+        play.addView(gameArea, new FrameLayout.LayoutParams(-1, -1));
         menuButton = new Button(this);
         menuButton.setText("\u2261");
         menuButton.setTextSize(22);
         menuButton.setTextColor(Color.WHITE);
         menuButton.setContentDescription(getString(R.string.menu));
         menuButton.setBackground(rounded(Color.argb(110, 26, 34, 46), 12));
-        menuButton.setAlpha(0.8f);
+        menuButton.setAlpha(0.9f);
         menuButton.setPadding(0, 0, 0, 0);
+        menuButton.setOnTouchListener((view, event) -> {
+            if (event.getActionMasked() == MotionEvent.ACTION_DOWN) menuTouchBlocked = false;
+            // A second finger or a slide out of the controls must not pause play.
+            if (touchPad.isTracking()) menuTouchBlocked = true;
+            if (menuTouchBlocked) { view.setPressed(false); view.cancelLongPress(); }
+            return menuTouchBlocked;
+        });
         menuButton.setOnClickListener(v -> showMenu());
         play.addView(menuButton, new FrameLayout.LayoutParams(dp(48), dp(48)));
         placeMenuButton(getResources().getConfiguration());
@@ -283,6 +294,12 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         return d;
     }
     private void padForInsets(View view, WindowInsets insets) {
+        if (Build.VERSION.SDK_INT >= 30) {
+            android.graphics.Insets safe = insets.getInsets(WindowInsets.Type.systemBars()
+                    | WindowInsets.Type.displayCutout() | WindowInsets.Type.mandatorySystemGestures());
+            view.setPadding(safe.left, safe.top, safe.right, safe.bottom);
+            return;
+        }
         int l = insets.getSystemWindowInsetLeft(), t = insets.getSystemWindowInsetTop();
         int r = insets.getSystemWindowInsetRight(), b = insets.getSystemWindowInsetBottom();
         if (Build.VERSION.SDK_INT >= 28 && insets.getDisplayCutout() != null) {
@@ -669,10 +686,17 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
                     deadline = 0;
                     continue;
                 }
-                if (suspended) { track.play(); suspended = false; }
                 int count = NativeCore.frame(input.mask(), image, pcm);
                 if (count < 0) throw new IllegalStateException("Frame delivery failed.");
                 int written = 0;
+                if (suspended && count > 0 && !stopped && !paused) {
+                    // Produce and queue PCM before starting an empty track. A cold
+                    // JIT frame must not leave the audio consumer waiting for data.
+                    // Nonblocking priming also handles frames larger than the buffer.
+                    written = track.write(pcm, 0, count, AudioTrack.WRITE_NON_BLOCKING);
+                    if (written < 0) throw new IllegalStateException("Audio output stopped (" + written + ").");
+                    track.play(); suspended = false;
+                }
                 while (written < count && !stopped && !paused) {
                     int n = track.write(pcm, written, count - written, AudioTrack.WRITE_BLOCKING);
                     if (n <= 0) throw new IllegalStateException("Audio output stopped (" + n + ").");
@@ -702,13 +726,17 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             if (!surfaceReady) return;
             Canvas canvas = null;
             try {
-                canvas = screen.getHolder().lockCanvas();
+                // CPU canvas scaling can stall the emulation/audio owner for
+                // multiple refreshes on high-resolution panels. GPU rendering
+                // keeps that work out of the PCM producer; older Android keeps
+                // the software path. Both paths redraw the entire surface.
+                canvas = Build.VERSION.SDK_INT >= 26
+                        ? screen.getHolder().lockHardwareCanvas() : screen.getHolder().lockCanvas();
                 if (canvas == null) return;
                 canvas.drawColor(Color.BLACK);
                 int width = canvas.getWidth(), height = canvas.getHeight();
                 int top = 0, bottom = height;
                 if (height > width) {
-                    top = dp(60); // Menu button row in portrait.
                     // Before the touch pad's first layout its edge is still unknown.
                     if (touchEnabled) bottom = Math.max(top + 1,
                             (int)Math.min(height, touchPad.controlsTop()) - dp(8));
@@ -809,14 +837,17 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         else if (gameLoaded) showGame();
         else finish();
     }
-    /** Portrait: top-right above the picture. Landscape: top centre, clear of L/R. */
+    /** A separate rail keeps the menu outside both the picture and touch pad.
+     *  Pointer streams that begin on the pad cannot activate this sibling. */
     private void placeMenuButton(Configuration config) {
+        boolean landscape = config.orientation == Configuration.ORIENTATION_LANDSCAPE;
+        FrameLayout.LayoutParams area = (FrameLayout.LayoutParams)gameArea.getLayoutParams();
+        area.setMarginStart(landscape ? dp(64) : 0);
+        area.topMargin = landscape ? 0 : dp(64);
+        gameArea.setLayoutParams(area);
         FrameLayout.LayoutParams p = (FrameLayout.LayoutParams)menuButton.getLayoutParams();
-        p.gravity = Gravity.TOP | (config.orientation == Configuration.ORIENTATION_LANDSCAPE
-                ? Gravity.CENTER_HORIZONTAL : Gravity.END);
-        // Over the picture in landscape, so keep it faint there.
-        menuButton.setAlpha(config.orientation == Configuration.ORIENTATION_LANDSCAPE ? 0.45f : 0.8f);
-        p.setMargins(dp(6), dp(6), dp(6), dp(6));
+        p.gravity = landscape ? Gravity.START | Gravity.CENTER_VERTICAL : Gravity.TOP | Gravity.END;
+        p.setMargins(dp(8), dp(8), dp(8), dp(8));
         menuButton.setLayoutParams(p);
     }
 }
