@@ -60,6 +60,11 @@ picture at the top, L/R and the main controls at the sides, and Select/Start
 below the picture. A is above and to the right of B. Slide across the D-pad for
 diagonals. Rotating the device releases held touch input.
 
+Choose **Hide touch controls** when using a keyboard or controller. The picture
+uses the space reserved for the controls, including the Start/Select row, while
+keeping its 4:3 aspect ratio. **Show touch controls** restores the buttons; the
+app remembers your choice.
+
 The ellipsis opens the menu. In landscape it disappears after three seconds;
 tap its position or the nearby area at the upper center of the picture to open
 the menu again. Its touch target is larger than the visible icon.

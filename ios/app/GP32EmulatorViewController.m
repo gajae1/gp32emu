@@ -43,6 +43,7 @@ typedef NS_ENUM(NSInteger, GP32ImportKind) {
 static NSString *const GP32DefaultBIOSKey = @"GP32SelectedBIOS";
 static NSString *const GP32DefaultGameKey = @"GP32SelectedGame";
 static NSString *const GP32DefaultBootModeKey = @"GP32BootMode";
+static NSString *const GP32TouchControlsHiddenKey = @"GP32TouchControlsHidden";
 
 @interface GP32EmulatorViewController () <UIDocumentPickerDelegate, UIAdaptivePresentationControllerDelegate>
 + (NSString *)importURL:(NSURL *)source into:(NSString *)directory error:(NSError **)error;
@@ -51,6 +52,7 @@ static NSString *const GP32DefaultBootModeKey = @"GP32BootMode";
 - (void)buildInterface;
 - (void)presentPixels:(NSData *)pixels;
 - (void)setTouchMask:(uint32_t)touchMask;
+- (void)setTouchControlsHidden:(BOOL)hidden;
 - (void)setKeyboardMask:(uint32_t)keyboardMask;
 - (void)setControllerMask:(uint32_t)controllerMask;
 - (void)pushButtonMask;
@@ -104,6 +106,7 @@ static NSString *const GP32DefaultBootModeKey = @"GP32BootMode";
     UIView *_menuGlyph;
     NSTimer *_menuHideTimer;
     BOOL _landscapeLayout;
+    BOOL _touchControlsHidden;
     CGRect _lastLayoutArea;
 
     CADisplayLink *_displayLink;
@@ -197,6 +200,7 @@ static NSString *const GP32DefaultBootModeKey = @"GP32BootMode";
     _padButtons = [[NSMutableArray alloc] init];
 
     [self buildInterface];
+    [self setTouchControlsHidden:[[NSUserDefaults standardUserDefaults] boolForKey:GP32TouchControlsHiddenKey]];
 
     for (NSString *directory in @[[GP32EmulatorViewController gamesDirectory],
                                   [GP32EmulatorViewController biosDirectory],
@@ -408,6 +412,21 @@ static NSString *const GP32DefaultBootModeKey = @"GP32BootMode";
     [self.view addSubview:_menuButton];
 }
 
+- (void)setTouchControlsHidden:(BOOL)hidden {
+    _touchControlsHidden = hidden;
+    for (GP32PadButton *button in _padButtons) {
+        [button cancelTrackingWithEvent:nil];
+        [button cancelPress];
+        button.hidden = hidden;
+    }
+    [_pad cancelTrackingWithEvent:nil];
+    [_pad resetMask];
+    _pad.hidden = hidden;
+    [self setTouchMask:0];
+    [[NSUserDefaults standardUserDefaults] setBool:hidden forKey:GP32TouchControlsHiddenKey];
+    [self.view setNeedsLayout];
+}
+
 - (void)viewDidLayoutSubviews {
     [super viewDidLayoutSubviews];
     CGRect safe = UIEdgeInsetsInsetRect(self.view.bounds, self.view.safeAreaInsets);
@@ -471,6 +490,12 @@ static NSString *const GP32DefaultBootModeKey = @"GP32BootMode";
     _buttonB.frame = CGRectMake(right - padSize, bottom - actionSize, actionSize, actionSize);
     _buttonA.layer.cornerRadius = actionSize / 2;
     _buttonB.layer.cornerRadius = actionSize / 2;
+    if (_touchControlsHidden) {
+        // Reclaim both side columns and the Start/Select row. In portrait the
+        // menu keeps its own top row; hardware input remains available.
+        CGFloat pictureTop = landscape ? top : top + 56;
+        pictureArea = CGRectMake(left, pictureTop, width, MAX(1, bottom - pictureTop));
+    }
     CGFloat pictureWidth = MIN(pictureArea.size.width, pictureArea.size.height * 4.0 / 3.0);
     CGFloat pictureHeight = pictureWidth * 3.0 / 4.0;
     _pictureView.frame = CGRectIntegral(CGRectMake(CGRectGetMidX(pictureArea) - pictureWidth / 2,
@@ -1052,6 +1077,16 @@ static NSString *const GP32DefaultBootModeKey = @"GP32BootMode";
         popover.permittedArrowDirections = 0;
         chooser.presentationController.delegate = self;
         [self presentSoon:chooser];
+    }]];
+
+    [menu addAction:[UIAlertAction actionWithTitle:(_touchControlsHidden ? @"Show touch controls" : @"Hide touch controls")
+                                            style:UIAlertActionStyleDefault
+                                          handler:^(UIAlertAction *action) {
+        (void)action;
+        typeof(self) self = weakSelf;
+        if (!self) return;
+        [self setTouchControlsHidden:!self->_touchControlsHidden];
+        [self menuDidClose];
     }]];
 
     [menu addAction:[UIAlertAction actionWithTitle:@"Save state"
