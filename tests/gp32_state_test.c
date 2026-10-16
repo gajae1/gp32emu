@@ -23,6 +23,7 @@
 
 static int failures;
 #define CHECK(c, msg) do { if (!(c)) { fprintf(stderr, "FAIL: %s (%d)\n", (msg), __LINE__); ++failures; } } while (0)
+#include "translation_fixture.h"
 
 /* v0007 tail: uint64 exact LCD phase + uint64 fractional HCLK remainder. */
 static const size_t lcd_tail_bytes = 2u * sizeof(uint64_t);
@@ -77,6 +78,7 @@ static uint8_t *capture_state(gp32_t *g, size_t *size) {
         *size = 0;
         return NULL;
     }
+*size = fixture_v14(buf, *size);
 #ifdef GP32_CONTINUATION_BYTES
     /* These fixtures deliberately exercise the frozen v2-v9 layouts. Remove
      * the combined extension; callback/wait tests cover active v10/v11 tails. */
@@ -93,7 +95,7 @@ static uint8_t *capture_state(gp32_t *g, size_t *size) {
  * declared, so a frozen baseline gp32.c compiles against its own headers. */
 static size_t cpu_image_bytes(const gp32_t *g) {
     state_io_t io = state_io_counter();
-    return arm920t_state_save_io(g->cpu, &io) ? io.pos : 0u;
+    return arm920t_state_save_io(g->cpu, &io) ? io.pos - sizeof(arm920t_translation_state_image_t) : 0u;
 }
 
 /* Load the first `cut` bytes of `image` (memory buffer, or the same bytes

@@ -146,6 +146,28 @@ gp32_status_t gp32_run_cycles(gp32_t *gp32, uint32_t cycles);
  * Pacing carry, callbacks and guest display waits are restored by savestates. */
 gp32_status_t gp32_run_frame(gp32_t *gp32);
 gp32_status_t gp32_set_jit(gp32_t *gp32, int enabled);
+/* Whether native JIT execution is enabled for this instance. Individual
+ * instructions may still use the interpreter. Unsupported builds return 0. */
+int gp32_get_jit_enabled(const gp32_t *gp32);
+/* Optional iOS developer JIT handshake. Both calls are owner-thread-only,
+ * outside execution. Prepare returns a fresh RX mapping shared with a second
+ * view. An attached debugger must initialize the ENTIRE region with marker
+ * words before activate may make the second view writable and enable JIT.
+ * The mapping belongs to this instance; never retain it across content unload.
+ * Re-preparing an active arena is rejected. Unsupported builds return 0.
+ * No host addresses, permissions or JIT policy are included in savestates. */
+typedef struct gp32_ios_jit_region {
+    void *execute;
+    size_t size;
+    size_t page_size;
+    uint32_t marker;
+} gp32_ios_jit_region_t;
+int gp32_prepare_ios_jit(gp32_t *gp32, gp32_ios_jit_region_t *region);
+int gp32_activate_ios_jit(gp32_t *gp32);
+/* Alternative activation after the matching StikDebug universal.js protocol
+ * has returned and detached. Requires its 0x69 witness on every 16 KiB host
+ * page in both views; ordinary debugger attachment is not sufficient. */
+int gp32_activate_ios_jit_universal(gp32_t *gp32);
 void gp32_set_diag_log(gp32_t *gp32, gp32_diag_fn fn, void *user);
 /* Install the host pump; see gp32_host_pump_fn. Independent of savestates. */
 void gp32_set_host_pump(gp32_t *gp32, gp32_host_pump_fn fn, void *user);

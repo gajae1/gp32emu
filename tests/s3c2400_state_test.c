@@ -2,11 +2,14 @@
  * Include the wire-image definition but link all other real subsystems. */
 #include "../src/s3c2400.c"
 #include <limits.h>
+#if defined(__APPLE__)
+#include <pthread.h>
+#endif
 
 static int failures;
 #define CHECK(c, msg) do { if (!(c)) { fprintf(stderr, "FAIL: %s (%d)\n", msg, __LINE__); ++failures; } } while (0)
 
-int main(void) {
+static int run_state_tests(void) {
     s3c2400_t *s = s3c2400_create(1024u * 1024u);
     CHECK(s != NULL, "create state fixture");
     if (!s) return 1;
@@ -61,4 +64,30 @@ end:
     if (failures) return 1;
     puts("PASS: state index validation and IIC transaction continuation");
     return 0;
+}
+
+#if defined(__APPLE__)
+static void *run_state_worker(void *unused) {
+    (void)unused;
+    return (void *)(uintptr_t)run_state_tests();
+}
+#endif
+
+int main(void) {
+#if defined(__APPLE__)
+    /* iOS runs persistence on a dispatch worker with a small stack. The wire
+     * image includes BIOS and pixels and must not live on that stack. */
+    pthread_attr_t attr;
+    pthread_t worker;
+    if (pthread_attr_init(&attr)) return 1;
+    int err = pthread_attr_setstacksize(&attr, 512u * 1024u);
+    if (!err) err = pthread_create(&worker, &attr, run_state_worker, NULL);
+    pthread_attr_destroy(&attr);
+    if (err) return 1;
+    void *result = NULL;
+    if (pthread_join(worker, &result)) return 1;
+    return (int)(uintptr_t)result;
+#else
+    return run_state_tests();
+#endif
 }

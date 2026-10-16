@@ -7,6 +7,9 @@ root. For packaged binaries, see the [README](../README.md) and
 The sources build as C23 and fall back to C11 on older compilers. Configure with
 `-DGP32EMU_REQUIRE_C23=ON` to fail instead of falling back.
 
+For the iPhone/iPad app, Xcode signing, unsigned IPA packaging and debugger-assisted
+JIT, see [Building the iOS app](IOS_BUILD.md).
+
 ## Libretro core
 
 The CMake project supports Linux, Windows and the Android NDK:
@@ -49,9 +52,10 @@ in the Android NDK). Debug information is removed only from packaged `.so`
 copies; original build outputs keep their symbols. Tests, build caches and local
 results are not packaged.
 
-The outputs are `gp32emu-1.0.1-windows-x64.zip`,
-`gp32emu-1.0.1-libretro-windows-x64.zip`, `gp32emu-1.0.1-linux-aarch64.zip`,
-`gp32emu-1.0.1-android-arm64.zip` and `gp32emu-1.0.1-android-armv7.zip`.
+The development defaults produce `gp32emu-1.1.0-windows-x64.zip`,
+`gp32emu-1.1.0-libretro-windows-x64.zip`, `gp32emu-1.1.0-linux-aarch64.zip`,
+`gp32emu-1.1.0-android-arm64.zip` and `gp32emu-1.1.0-android-armv7.zip`.
+These are future build outputs; the current public downloads remain 1.0.1.
 Each archive places its binaries and, for cores, `gp32emu_libretro.info` at the
 root, then adds the common README, release notes, Korean manual, `licenses/`
 and `manifest.json`. The output directory also receives `SHA256SUMS.txt` for
@@ -149,6 +153,20 @@ For a multi-configuration build, also pass `-C Release` to CTest. The existing
 suite covers CPU and JIT behavior, the SoC, audio delivery, save states, file
 handling and libretro entry points. `-DGP32EMU_BUILD_BENCHMARK=ON` builds the
 optional `gp32_bench` runner and library probes.
+
+## Release packaging
+
+Commit the reviewed source before running `scripts/package_release.ps1`. Supply
+the four build directories, SDL3 DLL and license, LLVM strip tool, and a new
+output directory using the script's named parameters. Build those inputs from
+the same source revision; the packaging step does not compile them.
+
+The script produces separate Windows-app and Windows/Linux/Android core ZIPs,
+a committed-source ZIP, and `SHA256SUMS.txt`. Optional `-AndroidApk` and `-IosIpa`
+arguments add the standalone mobile downloads without nesting them inside ZIPs.
+The IPA must be the unsigned public build; provisioning profiles and embedded
+executable signatures are rejected. See [iOS builds](IOS_BUILD.md) for preparing it.
+Switch NRO and companion source packages use the separate Switch workflow above.
 
 ## Source layout
 

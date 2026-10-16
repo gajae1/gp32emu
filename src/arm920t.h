@@ -40,6 +40,8 @@ int arm920t_set_accelerators(arm920t_t *cpu, const arm_accel_entry_t *entries,
  * entire span. Never walks page tables, accesses MMIO or creates fault state.
  * Reacquire after guest callbacks, state loads or any CPU run boundary. */
 uint8_t *arm920t_peek_identity_ram(arm920t_t *cpu, uint32_t addr, size_t bytes, int write);
+/* Read-only instruction-side counterpart; no lookup refill or page walk. */
+const uint8_t *arm920t_peek_identity_code(arm920t_t *cpu, uint32_t addr, size_t bytes);
 
 typedef struct arm_bus {
     arm_read8_fn read8;
@@ -106,6 +108,10 @@ void arm920t_stop_run(arm920t_t *cpu);
 int arm920t_is_running(const arm920t_t *cpu);
 void arm920t_add_idle_cycles(arm920t_t *cpu, uint32_t cycles);
 void arm920t_set_jit(arm920t_t *cpu, int enabled);
+int arm920t_get_jit_enabled(const arm920t_t *cpu);
+int arm920t_prepare_ios_jit(arm920t_t *cpu, gp32_ios_jit_region_t *region);
+int arm920t_activate_ios_jit(arm920t_t *cpu);
+int arm920t_activate_ios_jit_universal(arm920t_t *cpu);
 void arm920t_flush_jit(arm920t_t *cpu);
 /* Call after a non-CPU writer (DMA, HLE file or asset copy) stores len bytes
  * at physical addr. When translated code may have been fetched from that
@@ -167,5 +173,18 @@ int arm920t_state_save(const arm920t_t *cpu, FILE *f);
 int arm920t_state_load(arm920t_t *cpu, FILE *f);
 int arm920t_state_save_io(const arm920t_t *cpu, state_io_t *io);
 int arm920t_state_load_io(arm920t_t *cpu, state_io_t *io);
+
+/* v0015 whole-machine state extension. Fast lookup mirrors are derived. */
+typedef struct arm920t_tlb_entry_image {
+    uint32_t va_base, pa_base, mask, valid;
+} arm920t_tlb_entry_image_t;
+typedef struct arm920t_translation_state_image {
+    uint32_t version, instruction_victim, data_victim, reserved;
+    arm920t_tlb_entry_image_t instruction[64], data[64];
+    uint32_t instruction_control, data_control;
+    uint64_t instruction_preserved, data_preserved;
+} arm920t_translation_state_image_t;
+int arm920t_translation_state_read_io(state_io_t *io, arm920t_translation_state_image_t *state);
+void arm920t_translation_state_apply(arm920t_t *cpu, const arm920t_translation_state_image_t *validated);
 
 #endif

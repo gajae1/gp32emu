@@ -17,15 +17,17 @@
 /* Way-aware lookups: a set holds ARM_JIT_BLOCK_WAYS slots, so matching the
  * set base alone no longer identifies this PC's own block. */
 static arm_jit_block_t *block_for_pc(uint32_t pc) {
+    if (!cpu_jit->jit_blocks) return NULL;
     arm_jit_block_t *set = &cpu_jit->jit_blocks[arm_jit_block_index(pc)];
     for (unsigned way = 0; way < ARM_JIT_BLOCK_WAYS; ++way)
-        if (set[way].valid && set[way].tag_pc == pc) return &set[way];
+        if (set[way].valid && set[way].generation == cpu_jit->jit_generation && set[way].tag_pc == pc) return &set[way];
     return NULL;
 }
 static arm_jit_block_t *native_block_for_pc(uint32_t pc) {
+    if (!cpu_jit->jit_blocks) return NULL;
     arm_jit_block_t *set = &cpu_jit->jit_blocks[arm_jit_block_index(pc)];
     for (unsigned way = 0; way < ARM_JIT_BLOCK_WAYS; ++way)
-        if (set[way].valid && set[way].tag_pc == pc && set[way].native_ok && set[way].native)
+        if (set[way].valid && set[way].generation == cpu_jit->jit_generation && set[way].tag_pc == pc && set[way].native_ok && set[way].native)
             return &set[way];
     return NULL;
 }
@@ -58,9 +60,21 @@ int main(void) {
         }
     }
     uint32_t initial_generation = cpu_jit->jit_generation;
+    unsigned cold_passes = 0;
     for (unsigned i = 0; i < 3000u; ++i) {
-        set_reg_both(15u, addresses[i % 3u]);
-        set_reg_both(1u, addresses[i % 3u] + 31u * 4u);
+        uint32_t pc = addresses[i % 3u];
+        set_reg_both(15u, pc);
+        set_reg_both(1u, pc + 31u * 4u);
+        if (!native_block_for_pc(pc)) {
+            uint64_t calls = cpu_jit->prof.native_block_calls;
+            CHECK(arm920t_run(cpu_jit, 32u) == arm920t_run(cpu_ref, 32u), "cold churn budget");
+            arm_jit_block_t *cold = block_for_pc(pc);
+            CHECK(cold && !cold->native && cold->native_ok == 0u, "cold churn must retain portable metadata");
+            CHECK(cpu_jit->prof.native_block_calls == calls, "cold churn unexpectedly executed native code");
+            ++cold_passes;
+            if ((i % 100u) == 0u) compare_state();
+            set_reg_both(15u, pc);
+        }
         CHECK(arm920t_run(cpu_jit, 32u) == arm920t_run(cpu_ref, 32u), "churn budget");
         CHECK(native_block_for_pc(addresses[i % 3u]) != NULL,
               "new block lost native execution after cache fill");
@@ -68,6 +82,8 @@ int main(void) {
         if (failures) break;
     }
     compare_state();
+    CHECK(cold_passes > 1000u, "churn did not exercise cold retranslation");
+    printf("cold_passes=%u native_calls=%llu\n", cold_passes, (unsigned long long)cpu_jit->prof.native_block_calls);
     CHECK(cpu_jit->prof.native_block_calls == 3000u, "churn did not execute each native block");
     /* Invoke the native entry directly with insufficient budget: its early
      * return must unwind the host frame without changing guest state. */
@@ -98,16 +114,28 @@ int main(void) {
     compare_state();
     CHECK(cpu_jit->jit_generation == 1u, "generation wrap failed");
     arm_jit_block_t *wrapped_block = block_for_pc(addresses[0]);
-    CHECK(wrapped_block && wrapped_block->native_ok,
-          "wrap cleared the block under translation");
+    CHECK(wrapped_block && wrapped_block->native_ok == 0u && !wrapped_block->native,
+          "wrap cleared the cold block under translation");
+    set_reg_both(15u, addresses[0]);
+    CHECK(arm920t_run(cpu_jit, 32u) == arm920t_run(cpu_ref, 32u), "post-wrap promotion budget");
+    compare_state();
+    CHECK(native_block_for_pc(addresses[0]) != NULL, "post-wrap block did not promote");
     /* A guest cache epoch can wrap while its MCR native block is active.
      * It must retire that arena without overwriting the returning block. */
+    set_mem_both(CODE_ADDR, 0xee070f15u); /* MCR p15,0,r0,c7,c5,0 */
+    for (unsigned visit = 0; visit < 2u; ++visit) {
+        set_reg_both(15u, CODE_ADDR);
+        CHECK(arm920t_run(cpu_jit, 1u) == arm920t_run(cpu_ref, 1u), "prepare active MCR budget");
+        compare_state();
+    }
+    CHECK(native_block_for_pc(CODE_ADDR) != NULL, "epoch-wrap MCR is not native");
+    uint64_t calls_before_wrap = cpu_jit->prof.native_block_calls;
     uint32_t before_cache_wrap = cpu_jit->jit_generation;
     cpu_jit->jit_cache_epoch = UINT32_MAX;
-    set_mem_both(CODE_ADDR, 0xee070f15u); /* MCR p15,0,r0,c7,c5,0 */
     set_reg_both(15u, CODE_ADDR);
     CHECK(arm920t_run(cpu_jit, 1u) == arm920t_run(cpu_ref, 1u), "cache epoch wrap budget");
     compare_state();
+    CHECK(cpu_jit->prof.native_block_calls == calls_before_wrap + 1u, "epoch wrap did not execute active native MCR");
     CHECK(cpu_jit->jit_generation != before_cache_wrap && cpu_jit->jit_code_used == 0u,
           "cache epoch wrap retained obsolete native code");
     set_reg_both(15u, addresses[0]);

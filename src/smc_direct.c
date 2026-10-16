@@ -406,11 +406,10 @@ static int valid_gxb_header(const uint8_t *p, size_t header_size, size_t size, u
     uint32_t rom = gp32_ld32le(p + 4u);
     uint32_t ro_limit = gp32_ld32le(p + 8u);
     uint32_t rw_base = gp32_ld32le(p + 12u);
-    uint32_t zi_limit = gp32_ld32le(p + 16u);
     uint32_t rw_limit = gp32_ld32le(p + 20u);
     if ((first & 0x0f000000u) != 0x0a000000u) return 0;
     if (rom < 0x0c000000u || rom >= 0x0e000000u || ro_limit < rom ||
-        rw_base < rom || rw_limit < rw_base || zi_limit < rw_limit) return 0;
+        rw_base < rom || rw_limit < rw_base) return 0;
     uint32_t ro_size = ro_limit - rom;
     uint32_t rw_size = rw_limit - rw_base;
     if (ro_size < 32u || (size_t)ro_size > size) return 0;

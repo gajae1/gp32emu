@@ -41,7 +41,7 @@ typedef struct gp32_audio_resampler {
     uint32_t fade_left;
     uint32_t fade_total;
     /* Anti-imaging kernel.  poly_src_rate/poly_dst_rate name the rates the
-     * coefficients were built for, so clearing them invalidates the table
+     * coefficients are valid for, so clearing them invalidates the table
      * and a plain struct copy carries it.  poly_hist_* ends at the newest
      * source frame seen, i.e. at the sample a later block carries in prev. */
     uint32_t poly_src_rate;

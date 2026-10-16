@@ -79,7 +79,7 @@ static uint32_t gp32_ecc_accelerate(void *user, arm920t_t *cpu, uint32_t budget)
     uint32_t frame_addr = fp - 0x16cu;
     if (gp32_ecc_overlap(frame_addr, 0x170u, 0x0c048d70u, 0x1274u)) return 0;
     uint8_t *frame = arm920t_peek_identity_ram(cpu, frame_addr, 0x170u, 1);
-    const uint8_t *code = arm920t_peek_identity_ram(cpu, GP32_ECC_LOOP_PC, GP32_ECC_LOOP_BYTES, 0);
+    const uint8_t *code = arm920t_peek_identity_code(cpu, GP32_ECC_LOOP_PC, GP32_ECC_LOOP_BYTES);
     if (!frame || !gp32_ecc_first_code_matches(code)) return 0;
     unsigned index = gp32_ld32le(frame + 340u);
     uint32_t input = gp32_ld32le(frame + 348u), cursor = gp32_ld32le(frame + 8u);
@@ -130,7 +130,7 @@ static uint32_t gp32_ecc_row_accelerate(void *user, arm920t_t *cpu, uint32_t bud
     uint32_t frame_addr = fp - 0x16cu;
     if (gp32_ecc_overlap(frame_addr, 0x170u, 0x0c048d70u, 0x1274u)) return 0;
     uint8_t *frame = arm920t_peek_identity_ram(cpu, frame_addr, 0x170u, 1);
-    const uint8_t *code = arm920t_peek_identity_ram(cpu, 0x0c049868u, 0x6cu, 0);
+    const uint8_t *code = arm920t_peek_identity_code(cpu, 0x0c049868u, 0x6cu);
     if (!frame || !code) return 0;
     if (!gp32_ecc_row_code_matches(code)) return 0;
     unsigned index = gp32_ld32le(frame + 336u);
@@ -162,7 +162,7 @@ static uint32_t gp32_ecc_stride2_accelerate(void *user, arm920t_t *cpu, uint32_t
     uint32_t frame_addr = fp - 0x16cu;
     if (gp32_ecc_overlap(frame_addr, 0x170u, 0x0c048d70u, 0x1274u)) return 0;
     uint8_t *frame = arm920t_peek_identity_ram(cpu, frame_addr, 0x170u, 1);
-    const uint8_t *code = arm920t_peek_identity_ram(cpu, 0x0c04946cu, 0x58u, 0);
+    const uint8_t *code = arm920t_peek_identity_code(cpu, 0x0c04946cu, 0x58u);
     if (!frame || !gp32_ecc_stride_code_matches(code)) return 0;
     unsigned index = gp32_ld32le(frame + 340u);
     if (index >= 256u || (index & 1u) ||

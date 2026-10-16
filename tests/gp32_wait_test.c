@@ -3,6 +3,7 @@
 
 static int failures;
 #define CHECK(c, m) do { if (!(c)) { fprintf(stderr, "FAIL: %s (%d)\n", m, __LINE__); ++failures; } } while (0)
+#include "translation_fixture.h"
 static const uint32_t fn = GP32_RAM_BASE + 0x2000u, marker = GP32_RAM_BASE + 0x4000u;
 static const uint32_t surface = GP32_RAM_BASE + 0x5000u, caller = GP32_RAM_BASE + 0x20000u;
 
@@ -96,7 +97,7 @@ static void check_callback_wait(int jit, uint64_t origin, int change_clock, cons
     }
     size_t size = 0; uint8_t *image = save(g, &size);
     if (image) {
-        CHECK(!memcmp(image, "GP32STATEv0014", 14u), "v14 combined state writer");
+        CHECK(!memcmp(image, "GP32STATEv0015", 14u), "v15 combined state writer");
         CHECK(gp32_load_state_data(clone, image, size) == GP32_OK, "restore pending display/callback");
         CHECK(gp32_save_state(g, path) == GP32_OK && gp32_load_state(clone, path) == GP32_OK, "file wait continuation roundtrip");
         CHECK(gp32_get_pc(g) == gp32_get_pc(clone) && call_deadline(clone) == deadline, "restore live guest deadline without rearming");
@@ -151,6 +152,7 @@ static void check_legacy(int jit) {
     size_t size = 0; uint8_t *image = save(g, &size);
     const size_t off = 16u + sizeof(gp32_state_image_t) + 32u;
     if (image) {
+        size = fixture_v14(image, size);
         uint8_t *v10 = malloc(size); CHECK(v10 != NULL, "allocate v10 fixture");
         if (v10) {
             memcpy(v10, image, size); memcpy(v10, gp32_state_magic_v10, 16u);
@@ -293,11 +295,13 @@ static void check_state_reset_and_watchdog(int jit) {
         }
         /* Old callback-only v10 body: keep all 81 fields and live callback,
          * remove the later cadence/task extensions. Its legacy stub is upgraded. */
-        memcpy(bad, image, size); memcpy(bad, gp32_state_magic_v10, 16u);
+        memcpy(bad, image, size);
+        size_t old_size = fixture_v14(bad, size);
+        memcpy(bad, gp32_state_magic_v10, 16u);
         size_t cut = off + GP32_CONTINUATION_V10_WORDS * 4u;
         size_t drop = GP32_CONTINUATION_BYTES - GP32_CONTINUATION_V10_WORDS * 4u;
-        memmove(bad + cut, bad + cut + drop, size - cut - drop);
-        CHECK(gp32_load_state_data(clone, bad, size - drop) == GP32_OK && finish(clone), "load/resume active v10 callback");
+        memmove(bad + cut, bad + cut + drop, old_size - cut - drop);
+        CHECK(gp32_load_state_data(clone, bad, old_size - drop) == GP32_OK && finish(clone), "load/resume active v10 callback");
         CHECK(gp32_reset(g) == GP32_OK && !g->direct_callback.owner && !g->direct_tick.clock &&
               !g->direct_vblank_time.valid && !g->direct_vblank_wait_requested, "reset cancels pending callback and wait");
         CHECK(gp32_load_state_data(g, image, size) == GP32_OK, "restore pending wait for image replacement");
@@ -395,9 +399,11 @@ static void check_legacy_request(int jit) {
     size_t size = 0; uint8_t *pristine = save(g, &size), *legacy = malloc(size);
     if (pristine && legacy) {
         const size_t off = 16u + sizeof(gp32_state_image_t) + 32u;
-        memcpy(legacy, pristine, size); memcpy(legacy, gp32_state_magic_v9, 16u);
-        memmove(legacy + off, legacy + off + GP32_CONTINUATION_BYTES, size - off - GP32_CONTINUATION_BYTES);
-        size_t legacy_size = size - GP32_CONTINUATION_BYTES;
+        memcpy(legacy, pristine, size);
+        size_t old_size = fixture_v14(legacy, size);
+        memcpy(legacy, gp32_state_magic_v9, 16u);
+        memmove(legacy + off, legacy + off + GP32_CONTINUATION_BYTES, old_size - off - GP32_CONTINUATION_BYTES);
+        size_t legacy_size = old_size - GP32_CONTINUATION_BYTES;
         ((gp32_state_image_t *)(legacy + 16u))->direct_vblank_wait_requested = 1;
         CHECK(gp32_load_state_data(clone, legacy, legacy_size) == GP32_OK && gp32_get_run_clock_hz(clone) == 48000000u &&
               display_interval(clone, call_deadline(clone) - clone->elapsed.nanoseconds, 1u, 1u),

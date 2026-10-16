@@ -20,6 +20,7 @@
 
 static int failures;
 #define CHECK(c, msg) do { if (!(c)) { fprintf(stderr, "FAIL: %s (%d)\n", (msg), __LINE__); ++failures; } } while (0)
+#include "translation_fixture.h"
 
 /* Deterministic card image whose pages are never all 0xff, so an erase and a
  * program both change what a page holds. */
@@ -153,7 +154,7 @@ int main(int argc, char **argv) {
     if (!state) return 2;
     /* The delta section must stand in for most of the 4.1 MiB image. */
     CHECK(state_size + CARD_BYTES / 2u < full_expected, "state carries only the differing pages");
-    CHECK(!memcmp(state, "GP32STATEv0014", 14u), "v14 writer");
+    CHECK(!memcmp(state, "GP32STATEv0015", 14u), "v15 writer");
     /* A state saved before any guest write is the same size: one mounted card
      * always serializes to one size. */
     gp32_t *probe = machine_with_card(content, CARD_BYTES);
@@ -281,6 +282,7 @@ int main(int argc, char **argv) {
                 if (legacy) {
                     /* The full form of v0014 is byte-identical to the older
                      * layout, so only the magic distinguishes them. */
+                    legacy_size = fixture_v14(legacy, legacy_size);
                     memcpy(legacy, "GP32STATEv0012", 14u);
                     gp32_t *target = machine_with_card(content, CARD_BYTES);
                     CHECK(target != NULL, "create the legacy target");

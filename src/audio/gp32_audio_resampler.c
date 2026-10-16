@@ -70,14 +70,18 @@ static int16_t poly_round_q15(double value) {
     return (int16_t)q;
 }
 
+static double poly_cutoff(uint32_t src_rate, uint32_t dst_rate) {
+    uint32_t min_rate = src_rate < dst_rate ? src_rate : dst_rate;
+    return GP32_AUDIO_POLY_FC * (double)min_rate / (double)src_rate;
+}
+
 /* One table row per fractional phase.  Row p interpolates frac = p/phases
  * and tap i multiplies the source frame i steps older than floor(phase).
  * Normalizing every row to sum to exactly 1.0 in Q15 keeps a constant input
  * an exact constant output; the remainder lands on the largest tap, where it
  * moves one coefficient by at most one LSB. */
 static void poly_build_table(gp32_audio_resampler_t *r, uint32_t src_rate, uint32_t dst_rate) {
-    uint32_t min_rate = src_rate < dst_rate ? src_rate : dst_rate;
-    double fc = GP32_AUDIO_POLY_FC * (double)min_rate / (double)src_rate;
+    double fc = poly_cutoff(src_rate, dst_rate);
     double i0_beta = bessel_i0(GP32_AUDIO_POLY_BETA);
     for (unsigned p = 0; p < GP32_AUDIO_POLY_PHASES; ++p) {
         double frac = (double)p / (double)GP32_AUDIO_POLY_PHASES;
@@ -270,7 +274,7 @@ void gp32_audio_resampler_reset(gp32_audio_resampler_t *r) {
     int have_last = r->have_last_out;
     /* Coefficients depend only on their rate keys, not stream history. Keep
      * them across gaps: rebuilding 256 sinc rows delays underrun recovery.
-     * process() still rebuilds on a different source/destination rate. */
+     * process() still rebuilds when the filter cutoff changes. */
     memset(r, 0, offsetof(gp32_audio_resampler_t, poly_src_rate));
     memset(r->poly_hist_l, 0, sizeof(r->poly_hist_l));
     memset(r->poly_hist_r, 0, sizeof(r->poly_hist_r));
@@ -372,8 +376,17 @@ size_t gp32_audio_resampler_process(gp32_audio_resampler_t *r,
             r->fade_total = fade;
         }
     }
-    if (r->poly_src_rate != src_rate_hz || r->poly_dst_rate != dst_rate_hz)
-        poly_build_table(r, src_rate_hz, dst_rate_hz);
+    if (r->poly_src_rate != src_rate_hz || r->poly_dst_rate != dst_rate_hz) {
+        /* Rates affect the coefficients only through fc. In particular, many
+         * upsampling rate changes use the very same filter. Compare the actual
+         * double inputs, not approximate ratios, to preserve Q15 rounding. */
+        if (!r->poly_src_rate || !r->poly_dst_rate ||
+            poly_cutoff(r->poly_src_rate, r->poly_dst_rate) !=
+                poly_cutoff(src_rate_hz, dst_rate_hz))
+            poly_build_table(r, src_rate_hz, dst_rate_hz);
+        r->poly_src_rate = src_rate_hz;
+        r->poly_dst_rate = dst_rate_hz;
+    }
 
     int have_prev = r->have_prev;
     if (!have_prev) poly_history_prime(r, src_s16_stereo);
@@ -475,7 +488,7 @@ size_t gp32_audio_resampler_copy(gp32_audio_resampler_t *r,
      * resampler stays a resampler that has just emitted them, so a later rate
      * change resumes from a continuous endpoint and kernel history.  The
      * table key is left alone: it still names whatever rates the coefficients
-     * were built for, and any other rate rebuilds it on demand. */
+     * are valid for, and a different cutoff rebuilds it on demand. */
     if (!r->have_prev) poly_history_prime(r, src_s16_stereo);
     poly_history_advance(r, src_s16_stereo, input_frames, r->have_prev);
 

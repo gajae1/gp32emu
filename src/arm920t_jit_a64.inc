@@ -7,8 +7,8 @@
  *   x19  CPU pointer
  *   x20  &c->jit_tlb_page[0]
  *   x21  c->jit_ram_base (a helper that changes it must leave the chain)
- *   w22  remaining cycle budget at the entry of the current block
- *   w23  guest ops completed earlier in this call (linked blocks, loop passes)
+ *   w22  entry budget plus ops skipped in the current block (modulo 2^32)
+ *   w23  earlier completed ops minus current-block skips (modulo 2^32)
  *   x24  {jit_generation, jit_cache_epoch} at the entry of the current block
  *   x25  &c->irq_line, the base of the CPU control fields
  *   x26-x29  write-through copies of up to four guest registers that the
@@ -56,8 +56,16 @@
 /* Block prologue before the body: bti, budget cmp, b.lo, frame stp, bl. */
 #define A64_BODY_WORDS 5u
 /* Host registers holding cached guest registers (all callee-saved). */
+#if defined(__APPLE__)
+/* Apple requires x29 to remain a valid frame pointer even between calls.
+ * Keep the dispatcher's frame chain intact while helpers run or a profiler
+ * samples native code. A saved/restored guest value in x29 is not sufficient. */
+#define A64_CACHE_REGS 3u
+static const uint8_t a64_cache_pool[A64_CACHE_REGS] = {26u, 27u, 28u};
+#else
 #define A64_CACHE_REGS 4u
 static const uint8_t a64_cache_pool[A64_CACHE_REGS] = {26u, 27u, 28u, 29u};
+#endif
 enum { A64_EXT_EXIT = 0, A64_EXT_HOP, A64_EXT_ENTER };
 #define A64_EXT_MAX (ARM_JIT_MAX_INSNS * 8u + 8u)
 /* Compile-time switch for linked exits (rt_hop); 0 returns every exit. */
@@ -69,12 +77,19 @@ _Static_assert(sizeof(arm_jit_block_t) * ARM_JIT_BLOCK_WAYS == 64u &&
                offsetof(arm_jit_block_t, generation) == 8u && offsetof(arm_jit_block_t, native) == 24u,
                "rt_hop indexes 64-byte sets and reads the block header as word pairs");
 
+typedef struct a64_fetch_fix {
+    uint32_t pc, pa, done;
+    size_t branch, cont;
+} a64_fetch_fix_t;
+
 typedef struct a64_emit {
     uint32_t *code;
     size_t pos, cap;
+    uint16_t *branch_map; /* one bit per emitted word; runtime stubs use NULL */
     int fail;
     int ram_read, ram_write, mmu;
     int hop;         /* clean exits may link to a resident successor */
+    int counted;     /* shape has per-load native observation support */
     /* Guest register -> host register holding a write-through copy, or 0.
      * Fixed for the whole block: every path keeps each copy equal to c->r[]
      * (stores through a64_put_guest update it, helpers reload it), so a copy
@@ -95,6 +110,8 @@ typedef struct a64_emit {
     size_t live_read32_count;
     struct a64_cold_op *cold; /* deferred cold chains, one per fast-path op */
     unsigned cold_count, cold_cap;
+    a64_fetch_fix_t *fetch;
+    unsigned fetch_count;
     uint32_t ext_at[A64_EXT_MAX]; /* B/BL sites that target a runtime stub */
     uint8_t ext_to[A64_EXT_MAX];  /* A64_EXT_* */
     unsigned ext_count;
@@ -140,7 +157,8 @@ ARM_FORCE_INLINE int arm_a64_can_continue(const arm920t_t *c, int stop,
            (c->cpsr & 0xffu) == status &&
            (c->r[15] & ~3u) == expected_next &&
            !(c->irq_line && !(c->cpsr & I_FLAG)) &&
-           !(c->fiq_line && !(c->cpsr & F_FLAG));
+           !(c->fiq_line && !(c->cpsr & F_FLAG)) &&
+           (!(c->cp15[1] & 1u) || c->jit_fetch_page != UINT32_MAX);
 }
 
 static int arm_a64_exec_checked(arm920t_t *c, const arm_jit_op_t *op,
@@ -150,6 +168,26 @@ static int arm_a64_exec_checked(arm920t_t *c, const arm_jit_op_t *op,
     uint8_t *ram_base = c->jit_ram_base;
     arm_jit_exec_classified(c, op);
     return arm_a64_can_continue(c, stop, expected_next, generation, status, epoch, run_limit, ram_base);
+}
+
+/* The portable observer queries stability before committing PC+4 and
+ * performing the real load. Keep that order and the checked helper's fence. */
+static int arm_a64_observe_checked(arm920t_t *c, const arm_jit_op_t *op,
+                                   uint32_t expected_next, uint32_t generation) {
+    int stop = op->stop;
+    uint32_t status = c->cpsr & 0xffu, epoch = c->jit_cache_epoch, run_limit = c->run_limit;
+    uint8_t *ram_base = c->jit_ram_base;
+    if (c->jit_counted_observing && c->jit_counted_stable) {
+        c->r[15] = op->pc;
+        if (!arm_poll_read_stable(c, op)) c->jit_counted_stable = 0;
+    }
+    /* The emitter selects this helper only for SINGLE_DT. Share its actual
+     * transfer and instruction prelude without duplicating other opcodes. */
+    arm_profile_helper_op(c, op);
+    if (arm_jit_begin_classified(c, op, op->pc, op->insn)) op_single_dt_bc(c, op);
+    int next = arm_a64_can_continue(c, stop, expected_next, generation, status, epoch, run_limit, ram_base);
+    if (!next) c->jit_counted_stable = 0;
+    return next;
 }
 
 /* Only used for a terminating MSR. No callback can observe an intermediate
@@ -247,6 +285,12 @@ static void a64_u32(a64_emit_t *e, uint32_t v) {
 
 static int a64_logical_imm32(uint32_t mask, uint32_t *encoding);
 
+/* Call only for PC-relative B/BL, B.cond, CBZ/CBNZ and TBZ/TBNZ. */
+static void a64_branch_word(a64_emit_t *e, uint32_t word) {
+    if (e->pos < e->cap && e->branch_map)
+        e->branch_map[e->pos >> 4] |= (uint16_t)(1u << (e->pos & 15u));
+    a64_u32(e, word);
+}
 static void a64_imm(a64_emit_t *e, unsigned rd, uint32_t v) {
     if (!(v & 0xffffu))
         a64_u32(e, 0x52a00000u | ((v >> 16) << 5) | rd); /* movz W, lsl #16 */
@@ -261,14 +305,37 @@ static void a64_imm(a64_emit_t *e, unsigned rd, uint32_t v) {
          * W forms clear the upper half and preserve host condition flags. */
         if ((v >> 16) && a64_logical_imm32(v, &encoding))
             a64_u32(e, 0x320003e0u | encoding | rd); /* orr W, wzr, #imm */
-        else {
+        else if (!(v >> 16))
             a64_u32(e, 0x52800000u | ((v & 0xffffu) << 5) | rd); /* movz W */
-            if (v >> 16) a64_u32(e, 0x72a00000u | ((v >> 16) << 5) | rd);
+        else if (e->pos <= e->cap && e->cap - e->pos >= 2u) {
+            /* The two-word MOVZ+MOVK pair has room: write both words and
+             * publish the final position once. Near the buffer end, retain
+             * the original partial-write/failure path. */
+            e->code[e->pos] = 0x52800000u | ((v & 0xffffu) << 5) | rd; /* movz W */
+            e->code[e->pos + 1u] = 0x72a00000u | ((v >> 16) << 5) | rd; /* movk W, lsl #16 */
+            e->pos += 2u;
+        } else {
+            a64_u32(e, 0x52800000u | ((v & 0xffffu) << 5) | rd); /* movz W */
+            a64_u32(e, 0x72a00000u | ((v >> 16) << 5) | rd); /* movk W, lsl #16 */
         }
     }
 }
 
 static void a64_ptr(a64_emit_t *e, unsigned rd, uintptr_t v) {
+    /* The common path has room for all four possible move-wide words.
+     * Write through one local cursor, then publish its final position once.
+     * Near the buffer end, retain the original partial-write/failure path. */
+    if (e->pos <= e->cap && e->cap - e->pos >= 4u) {
+        uint32_t *out = e->code + e->pos;
+        *out++ = 0xd2800000u | (((uint32_t)v & 0xffffu) << 5) | rd;
+        for (unsigned i = 1; i < 4; ++i)
+            if ((v >> (16u * i)) & 0xffffu)
+                *out++ = 0xf2800000u | (i << 21) |
+                         ((uint32_t)((v >> (16u * i)) & 0xffffu) << 5) | rd;
+        e->pos = (size_t)(out - e->code);
+        return;
+    }
+
     a64_u32(e, 0xd2800000u | (((uint32_t)v & 0xffffu) << 5) | rd);
     for (unsigned i = 1; i < 4; ++i)
         if ((v >> (16u * i)) & 0xffffu)
@@ -346,7 +413,8 @@ static void a64_guest(a64_emit_t *e, unsigned rt, unsigned r, uint32_t pc) {
 /* Keep a cached copy equal to a guest register that was just written from rt
  * by a store that does not pass a64_put_guest. */
 static void a64_cache_sync(a64_emit_t *e, unsigned r, unsigned rt) {
-    if (r < 15u && e->cache_host[r]) a64_mov(e, e->cache_host[r], rt);
+    if (r < 15u && e->cache_host[r] && e->cache_host[r] != rt)
+        a64_mov(e, e->cache_host[r], rt);
 }
 static void a64_put_guest(a64_emit_t *e, unsigned r, unsigned rt) {
     a64_store(e, rt, offsetof(arm920t_t, r) + r * 4u);
@@ -362,40 +430,40 @@ static void a64_cache_reload(a64_emit_t *e) {
 /* Return packed immr/imms fields only; leave *encoding unchanged on failure. */
 static int a64_logical_imm32(uint32_t mask, uint32_t *encoding) {
     if (!mask || mask == UINT32_MAX) return 0;
-    /* W-form logical immediates repeat a rotated run of 1..width-1 ones
-     * in a 2/4/8/16/32-bit element. N stays zero for the 32-bit form. */
-    for (unsigned width = 2u; width <= 32u; width <<= 1) {
-        uint32_t element_mask = UINT32_MAX >> (32u - width);
-        uint32_t element = mask & element_mask, repeated = element;
-        for (unsigned bit = width; bit < 32u; bit += width)
-            repeated |= element << bit;
-        if (repeated != mask) continue;
-        /* A circular run has exactly one 0->1 transition. Locate that edge
-         * directly: searching rotations is costly when games flush JIT code
-         * frequently. Neither ctz input can be zero for a nonuniform run. */
-        uint32_t previous = ((element << 1) | (element >> (width - 1u))) & element_mask;
-        uint32_t starts = element & ~previous;
-        if (!starts || (starts & (starts - 1u))) continue;
-        unsigned first = 0;
+    /* Rotation by a power-of-two width preserves exactly the masks made by
+     * repeating that element. Find the smallest period without rebuilding
+     * the 32-bit mask for every candidate width. */
+    unsigned width = 32u;
+    for (unsigned w = 2u; w < 32u; w <<= 1)
+        if (((mask << w) | (mask >> (32u - w))) == mask) {
+            width = w;
+            break;
+        }
+    uint32_t element_mask = UINT32_MAX >> (32u - width);
+    uint32_t element = mask & element_mask;
+    uint32_t previous = ((element << 1) | (element >> (width - 1u))) & element_mask;
+    uint32_t starts = element & ~previous;
+    /* A larger repeating element only multiplies its circular transitions;
+     * it cannot turn a rejected minimal period into a single run of ones. */
+    if (!starts || (starts & (starts - 1u))) return 0;
+    unsigned first = 0;
 #if defined(__GNUC__) || defined(__clang__)
-        first = (unsigned)__builtin_ctz(starts);
+    first = (unsigned)__builtin_ctz(starts);
 #else
-        for (uint32_t bits = starts; !(bits & 1u); bits >>= 1) ++first;
+    for (uint32_t bits = starts; !(bits & 1u); bits >>= 1) ++first;
 #endif
-        uint32_t run = first ? ((element >> first) |
-            (element << (width - first))) & element_mask : element;
-        unsigned ones = 0;
+    uint32_t run = first ? ((element >> first) |
+        (element << (width - first))) & element_mask : element;
+    unsigned ones = 0;
 #if defined(__GNUC__) || defined(__clang__)
-        ones = (unsigned)__builtin_ctz(~run);
+    ones = (unsigned)__builtin_ctz(~run);
 #else
-        for (uint32_t bits = run; bits & 1u; bits >>= 1) ++ones;
+    for (uint32_t bits = run; bits & 1u; bits >>= 1) ++ones;
 #endif
-        unsigned rotate = (width - first) & (width - 1u);
-        uint32_t imms = ((0u - (width << 1)) | (ones - 1u)) & 63u;
-        *encoding = (rotate << 16) | (imms << 10);
-        return 1;
-    }
-    return 0;
+    unsigned rotate = (width - first) & (width - 1u);
+    uint32_t imms = ((0u - (width << 1)) | (ones - 1u)) & 63u;
+    *encoding = (rotate << 16) | (imms << 10);
+    return 1;
 }
 
 static void a64_mask(a64_emit_t *e, unsigned rd, unsigned rn, uint32_t mask) {
@@ -428,7 +496,7 @@ static void a64_lsl(a64_emit_t *e, unsigned rd, unsigned rn, unsigned amount) {
  * emitted directly by a64_branch_back instead of being patched. */
 static size_t a64_jump(a64_emit_t *e, unsigned cond) {
     size_t p = e->pos;
-    a64_u32(e, cond == 14u ? 0x14000000u : (0x54000000u | cond));
+    a64_branch_word(e, cond == 14u ? 0x14000000u : (0x54000000u | cond));
     return p;
 }
 static void a64_patch(a64_emit_t *e, size_t at, size_t target) {
@@ -447,14 +515,18 @@ static void a64_patch(a64_emit_t *e, size_t at, size_t target) {
 /* Emit an unconditional backward branch to an already emitted position. */
 static void a64_branch_back(a64_emit_t *e, size_t target) {
     if (e->fail || target > e->pos || e->pos - target >= (1u << 25)) { e->fail = 1; return; }
-    a64_u32(e, 0x14000000u | ((uint32_t)(target - e->pos) & 0x03ffffffu));
+    a64_branch_word(e, 0x14000000u | ((uint32_t)(target - e->pos) & 0x03ffffffu));
 }
 /* Record one cold chain; the hot body has already reached its continuation. */
 static a64_cold_op_t *a64_cold_open(a64_emit_t *e, const arm_jit_op_t *op,
                                     uint32_t done, unsigned kind) {
     if (e->fail || e->cold_count >= e->cold_cap) { e->fail = 1; return NULL; }
     a64_cold_op_t *c = &e->cold[e->cold_count++];
-    memset(c, 0, sizeof(*c));
+    /* Keep every zero default the full-struct memset provided except fixup[]:
+     * a64_cold_fix fills slots 0..nfixup-1 in order and a64_cold_flush reads
+     * exactly that prefix, so the array is written before it is ever read. */
+    memset(c, 0, offsetof(a64_cold_op_t, fixup));
+    memset(&c->sibling, 0, sizeof(*c) - offsetof(a64_cold_op_t, sibling));
     c->op = op;
     c->cont = e->pos;
     c->done = done;
@@ -482,7 +554,7 @@ static void a64_ext(a64_emit_t *e, uint32_t opcode, unsigned to) {
     if (e->fail || e->ext_count >= A64_EXT_MAX) { e->fail = 1; return; }
     e->ext_at[e->ext_count] = (uint32_t)e->pos;
     e->ext_to[e->ext_count++] = (uint8_t)to;
-    a64_u32(e, opcode);
+    a64_branch_word(e, opcode);
 }
 
 /* Leave the call: w0 = ops completed by this block, rt_exit adds w23. */
@@ -522,63 +594,87 @@ static void a64_hop_reg(a64_emit_t *e, unsigned reg, uint32_t done) {
  * Guards run after the real B retires and before accounting/re-entry. Thus
  * every rejected edge returns completed prefixes + this partial prefix; w22
  * and w23 are only advanced once the next pass is accepted. */
-static void a64_selfloop(a64_emit_t *e, uint32_t done) {
-    size_t exits[5];
-    unsigned n = 0;
-    /* Generation and epoch are two adjacent words, read as one 64-bit pair
-     * and compared against the entry snapshot in x24. Neither the dispatcher
-     * nor rt_hop enters a block whose generation differs from the one its
-     * code was built for, so the entry-time pair is exactly the {compiled
-     * generation, entry epoch} the two separate compares used. */
-    _Static_assert(offsetof(arm920t_t, jit_cache_epoch) ==
-                   offsetof(arm920t_t, jit_generation) + 4u &&
-                   ((offsetof(arm920t_t, jit_generation) -
-                     offsetof(arm920t_t, irq_line)) & 7u) == 0u,
-                   "AArch64 generation/epoch fence pair layout");
-    a64_cpu_mem(e, 0xf9400000u, 0, offsetof(arm920t_t, jit_generation), 3);
-    a64_rr(e, 0xeb000000u, 31, 0, 24); /* cmp x0, x24 */
-    exits[n++] = a64_jump(e, 1); /* NE */
-    /* Allowed direct ops cannot change control state or RAM anchoring.
-     * Every callback runs through the checked helper above, which exits on
-     * halt/trace/JIT disable, mode/base/PC changes or pending interrupts.
-     * Retain edge cache and interrupt fences; avoid rechecking the same
-     * control state on every callback-free repetition. */
-    _Static_assert(sizeof(((arm920t_t *)0)->irq_line) == 4u &&
-                   sizeof(((arm920t_t *)0)->fiq_line) == 4u &&
-                   offsetof(arm920t_t, fiq_line) == offsetof(arm920t_t, irq_line) + 4u,
-                   "AArch64 interrupt pair layout");
-    /* Both inactive is the common case. Test the complete pair, including
-     * noncanonical nonzero values restored from a state image. Pending lines
-     * still take the original independent CPSR-mask checks below. */
-    a64_cpu_mem(e, 0xf9400000u, 0, offsetof(arm920t_t, irq_line), 3);
-    size_t no_pending = e->pos;
-    a64_u32(e, 0xb4000000u); /* cbz x0: both 32-bit lines are zero */
-    a64_load(e, 3, offsetof(arm920t_t, cpsr));
-    a64_load(e, 0, offsetof(arm920t_t, irq_line));
-    a64_cmp_imm(e, 0, 0);
-    size_t no_irq = a64_jump(e, 0);
-    a64_mask(e, 0, 3, I_FLAG);
-    a64_cmp_imm(e, 0, 0);
-    exits[n++] = a64_jump(e, 0);
-    a64_patch(e, no_irq, e->pos);
-    a64_load(e, 0, offsetof(arm920t_t, fiq_line));
-    a64_cmp_imm(e, 0, 0);
-    size_t no_fiq = a64_jump(e, 0);
-    a64_mask(e, 0, 3, F_FLAG);
-    a64_cmp_imm(e, 0, 0);
-    exits[n++] = a64_jump(e, 0);
-    a64_patch(e, no_fiq, e->pos);
-    a64_patch(e, no_pending, e->pos);
-    /* The pass fits when the budget left after this prefix still covers the
-     * full block: remaining - done >= count, compared without changing w22. */
+/* Residency checks have no bus access or TLB mutation. Only a complete
+ * live 1KiB span may update the fetch certificate without dispatcher work. */
+static void a64_fetch_resident(a64_emit_t *e, uint32_t pc, uint32_t pa, uint32_t done) {
+    size_t off = offsetof(arm920t_t, itlb_entry) +
+                 arm_itlb_index(pc) * sizeof(arm_tlb_entry_t);
+    a64_load(e, 16, off + offsetof(arm_tlb_entry_t, valid));
+    a64_cmp_imm(e, 16, 0);
+    size_t invalid = a64_jump(e, 0);
+    a64_load(e, 16, off + offsetof(arm_tlb_entry_t, mask));
+    a64_mask(e, 17, 16, ARM_JIT_PAGE_MASK);
+    a64_cmp_imm(e, 17, ARM_JIT_PAGE_MASK);
+    size_t partial = a64_jump(e, 1);
+    a64_imm(e, 17, pc);
+    a64_rr(e, 0x0a200000u, 15, 17, 16); /* bic w15,w17,w16 */
+    a64_load(e, 16, off + offsetof(arm_tlb_entry_t, va_base));
+    a64_cmp(e, 15, 16);
+    size_t conflict = a64_jump(e, 1);
+    a64_load(e, 16, off + offsetof(arm_tlb_entry_t, mask));
+    a64_imm(e, 17, pc);
+    a64_rr(e, 0x0a000000u, 15, 17, 16); /* and w15,w17,w16 */
+    a64_load(e, 16, off + offsetof(arm_tlb_entry_t, pa_base));
+    a64_rr(e, 0x2a000000u, 15, 15, 16);
+    a64_imm(e, 17, pa);
+    a64_cmp(e, 15, 17);
+    size_t remapped = a64_jump(e, 1);
+    a64_store_imm(e, offsetof(arm920t_t, jit_fetch_page), pc >> 10);
+    size_t resident = a64_jump(e, 14);
+    a64_patch(e, invalid, e->pos);
+    a64_patch(e, partial, e->pos);
+    a64_patch(e, conflict, e->pos);
+    a64_patch(e, remapped, e->pos);
+    a64_store_imm(e, offsetof(arm920t_t, jit_fetch_page), UINT32_MAX);
+    a64_store_imm(e, offsetof(arm920t_t, r) + 15u * 4u, pc);
+    a64_return(e, done);
+    a64_patch(e, resident, e->pos);
+}
+
+/* Keep an already certified page on the contiguous hot path. Residency
+ * checks retain the original instruction sequence in the cold area. */
+static void a64_fetch_guard(arm920t_t *c, a64_emit_t *e, uint32_t pc, uint32_t done) {
+    if (e->fail || e->fetch_count >= ARM_JIT_MAX_INSNS) { e->fail = 1; return; }
+    uint32_t pa, mask;
+    if (!arm_jit_peek_translate(c, pc, &pa, &mask)) { e->fail = 1; return; }
+    a64_load(e, 16, offsetof(arm920t_t, jit_fetch_page));
+    a64_imm(e, 17, pc >> 10);
+    a64_cmp(e, 16, 17);
+    size_t branch = a64_jump(e, 1);
+    e->fetch[e->fetch_count++] = (a64_fetch_fix_t){pc, pa, done, branch, e->pos};
+    e->nzcv_valid = 0;
+    e->fwd_guest = -1;
+}
+
+static void a64_fetch_flush(a64_emit_t *e) {
+    for (unsigned i = 0; i < e->fetch_count && !e->fail; ++i) {
+        const a64_fetch_fix_t *f = &e->fetch[i];
+        a64_patch(e, f->branch, e->pos);
+        a64_fetch_resident(e, f->pc, f->pa, f->done);
+        a64_branch_back(e, f->cont);
+    }
+}
+
+static void a64_selfloop(a64_emit_t *e, uint32_t done, uint32_t target) {
+    /* A repetition reaches this edge only through direct native ops and
+     * checked helpers. Every helper that resumes native code has already
+     * required, via arm_a64_can_continue, the compiled generation, the entry
+     * cache epoch, an unchanged mode/IRQ/FIQ mask byte, run limit and RAM base,
+     * and no deliverable IRQ/FIQ. Direct ops cannot change any of them, so a
+     * callback-free repetition leaves the state the block was entered with.
+     * The pass fits when the budget left after this prefix still covers the
+     * full block: remaining - done >= count, compared without changing w22.
+     * PC is needed only when control leaves the block. */
     a64_cmp_imm(e, 22, done + e->block_count);
-    exits[n++] = a64_jump(e, 3); /* LO */
+    size_t leave = a64_jump(e, 3); /* LO */
     a64_u32(e, 0x51000000u | (done << 10) | (22u << 5) | 22u); /* sub w22, w22, #done */
     a64_u32(e, 0x11000000u | (done << 10) | (23u << 5) | 23u); /* add w23, w23, #done */
     /* Dedicated signed imm26 backedge; existing forward fixups stay intact. */
     if (e->loop_head > e->pos || e->pos - e->loop_head >= (1u << 25)) e->fail = 1;
-    a64_u32(e, 0x14000000u | ((uint32_t)(e->loop_head - e->pos) & 0x03ffffffu));
-    for (unsigned i = 0; i < n; ++i) a64_patch(e, exits[i], e->pos);
+    a64_branch_word(e, 0x14000000u | ((uint32_t)(e->loop_head - e->pos) & 0x03ffffffu));
+    a64_patch(e, leave, e->pos);
+    a64_imm(e, 16, target);
+    a64_store(e, 16, offsetof(arm920t_t, r) + 15u * 4u);
     a64_return(e, done);
 }
 static void a64_slow(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
@@ -602,7 +698,8 @@ static void a64_slow(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
     }
     a64_imm(e, 2, e->expected_next);
     a64_imm(e, 3, e->generation);
-    a64_ptr(e, 16, (uintptr_t)arm_a64_exec_checked);
+    a64_ptr(e, 16, e->counted && op->kind == ARM_JIT_OP_SINGLE_DT ?
+        (uintptr_t)arm_a64_observe_checked : (uintptr_t)arm_a64_exec_checked);
     a64_u32(e, 0xd63f0200u); /* blr x16; helper commits PC and CPSR */
     a64_cmp_imm(e, 0, 0);
     size_t next = a64_jump(e, 1);
@@ -642,8 +739,8 @@ static void a64_mem_slow(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done,
 
 /* Establish w0 as the aligned physical word using the authoritative TLB.
  * Failed proofs skip all physical-window probes and reach the checked helper.
- * The read-only and I/O probes can share this proof: neither a rejected window
- * test nor a read-only success runs a callback before that decision. Preserve
+ * Live-word, read-only and I/O probes share this proof: no rejected window
+ * test or read-only success runs a callback before that decision. Preserve
  * w12 (original VA), w2 (writeback), and w11 (unaligned load rotation). */
 static void a64_word_pa(a64_emit_t *e, size_t *cold, unsigned *ncold) {
     a64_mask(e, 3, 12, ~3u);  /* the checked path translates the aligned word */
@@ -659,7 +756,7 @@ static void a64_word_pa(a64_emit_t *e, size_t *cold, unsigned *ncold) {
         a64_rr(e, 0x8b001000u, 8, 8, 6); /* add x8, x8, x6, lsl #4 */
         a64_u32(e, 0x29400000u | (9u << 10) | (8u << 5) | 7u); /* ldp w7, w9, [x8]: VA, PA */
         a64_u32(e, 0x29410000u | (6u << 10) | (8u << 5) | 5u); /* ldp w5, w6, [x8, #8]: mask, valid */
-        a64_u32(e, 0x34000000u | 6u); /* cbz w6, cold */
+        a64_branch_word(e, 0x34000000u | 6u); /* cbz w6, cold */
         cold[(*ncold)++] = e->pos - 1u;
         a64_rr(e, 0x0a200000u, 6, 3, 5); /* bic w6, w3, w5: outside the mapped page? */
         a64_cmp(e, 6, 7);
@@ -693,7 +790,7 @@ static void a64_io_word_pa(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done,
     a64_ptr(e, 16, (uintptr_t)arm_a64_io_word_checked);
     a64_u32(e, 0xd63f0200u); /* blr x16 */
     size_t keep = e->pos;
-    a64_u32(e, 0x35000000u); /* cbnz w0: commits are done, may continue */
+    a64_branch_word(e, 0x35000000u); /* cbnz w0: commits are done, may continue */
     a64_return(e, done);
     a64_patch(e, keep, e->pos);
     a64_cache_reload(e);
@@ -754,6 +851,10 @@ static int a64_data(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
     int fwd = e->fwd_guest;
     e->fwd_guest = -1;
     if (op->d & ARM_BC_DATA_REGSHIFT) return 0;
+    /* Write a cached destination directly. Its old value remains available
+     * to operand selection until the ALU instruction retires. Uncached and
+     * PC destinations retain w2 and the existing one-instruction forwarding. */
+    unsigned result = !test && op->c < 15u && e->cache_host[op->c] ? e->cache_host[op->c] : 2u;
     int arith_imm = (op->d & ARM_BC_DATA_IMM) &&
         (code == 2u || code == 4u || code == 10u || code == 11u) &&
         (op->imm <= 0xfffu || (!(op->imm & 0xfffu) && (op->imm >> 12) <= 0xfffu));
@@ -817,7 +918,7 @@ static int a64_data(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
         (!(op->d & ARM_BC_DATA_IMM) && op->g == 3u && !op->h))
         a64_load(e, 3, offsetof(arm920t_t, cpsr));
     if (op->d & ARM_BC_DATA_IMM) {
-        if (!arith_imm && !logic_op) a64_imm(e, code == 13u ? 2u : 1u, op->imm);
+        if (!arith_imm && !logic_op) a64_imm(e, code == 13u ? result : 1u, op->imm);
         if (flags && logical) {
             if (op->d & ARM_BC_DATA_IMM_CV) a64_imm(e, 4, (op->d & ARM_BC_DATA_IMM_C) ? C_FLAG : 0u);
             else a64_mask(e, 4, 3, C_FLAG);
@@ -827,36 +928,36 @@ static int a64_data(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
         if (!folded_shift) a64_shift(e, op->g, op->h, flags && logical);
     }
     uint32_t s = flags ? 0x20000000u : 0u;
-    /* and/eor/orr W2, <first operand or wzr>, #imm */
+    /* and/eor/orr result, <first operand or wzr>, #imm */
     if (logic_op)
         a64_u32(e, logic_op | logic_enc |
-                    ((code == 13u || code == 15u ? 31u : rn) << 5) | 2u);
+                    ((code == 13u || code == 15u ? 31u : rn) << 5) | result);
     else switch (code) {
-    case 0: case 8: a64_rr(e, 0x0a000000u | shift_bits, 2, rn, rm); break;
-    case 1: case 9: a64_rr(e, 0x4a000000u | shift_bits, 2, rn, rm); break;
+    case 0: case 8: a64_rr(e, 0x0a000000u | shift_bits, result, rn, rm); break;
+    case 1: case 9: a64_rr(e, 0x4a000000u | shift_bits, result, rn, rm); break;
     case 2: case 10:
-        if (arith_imm) a64_u32(e, 0x51000000u | s | imm_bits | (rn << 5) | 2u); /* sub[s] w2, rn, #imm */
-        else a64_rr(e, 0x4b000000u | s | shift_bits, 2, rn, rm);
+        if (arith_imm) a64_u32(e, 0x51000000u | s | imm_bits | (rn << 5) | result);
+        else a64_rr(e, 0x4b000000u | s | shift_bits, result, rn, rm);
         break;
-    case 3: a64_rr(e, 0x4b000000u | s, 2, rm, rn); break;
+    case 3: a64_rr(e, 0x4b000000u | s, result, rm, rn); break;
     case 4: case 11:
-        if (arith_imm) a64_u32(e, 0x11000000u | s | imm_bits | (rn << 5) | 2u); /* add[s] w2, rn, #imm */
-        else a64_rr(e, 0x0b000000u | s | shift_bits, 2, rn, rm);
+        if (arith_imm) a64_u32(e, 0x11000000u | s | imm_bits | (rn << 5) | result);
+        else a64_rr(e, 0x0b000000u | s | shift_bits, result, rn, rm);
         break;
     case 5: case 6: case 7:
         a64_u32(e, 0xd51b4203u); /* msr nzcv, x3: ARM/A64 carry is no-borrow */
         a64_rr(e, (code == 5u ? 0x1a000000u : 0x5a000000u) | s,
-               2, code == 7u ? rm : rn, code == 7u ? rn : rm);
+               result, code == 7u ? rm : rn, code == 7u ? rn : rm);
         break;
-    case 12: a64_rr(e, 0x2a000000u | shift_bits, 2, rn, rm); break;
+    case 12: a64_rr(e, 0x2a000000u | shift_bits, result, rn, rm); break;
     case 13:
-        if (!(op->d & ARM_BC_DATA_IMM)) a64_rr(e, 0x2a000000u | shift_bits, 2, 31, rm);
+        if (!(op->d & ARM_BC_DATA_IMM)) a64_rr(e, 0x2a000000u | shift_bits, result, 31, rm);
         break;
-    case 14: a64_rr(e, 0x0a200000u | shift_bits, 2, rn, rm); break;
-    case 15: a64_rr(e, 0x2a200000u | shift_bits, 2, 31, rm); break;
+    case 14: a64_rr(e, 0x0a200000u | shift_bits, result, rn, rm); break;
+    case 15: a64_rr(e, 0x2a200000u | shift_bits, result, 31, rm); break;
     }
     if (flags) {
-        if (logical) a64_cmp_imm(e, 2, 0);
+        if (logical) a64_cmp_imm(e, result, 0);
         a64_u32(e, 0xd53b4205u); /* mrs x5, nzcv */
         if (logical) {
             a64_mask(e, 5, 5, N_FLAG | Z_FLAG);
@@ -876,7 +977,7 @@ static int a64_data(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
             return 1;
         }
         if (op->c == 15u) a64_mask(e, 2, 2, ~3u);
-        a64_put_guest(e, op->c, 2);
+        a64_put_guest(e, op->c, result);
         if (op->c == 15u) {
             if (op->reserved == 7u) {
                 /* Retire the real MOV pc,lr; an unexpected LR exits with its
@@ -892,7 +993,7 @@ static int a64_data(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
     /* An unconditional plain register write leaves its committed value in w2
      * for the next op; a conditional op's fall-through reaches the same store
      * without executing it, so only cond==14 may publish the result. */
-    if (!test && op->cond == 14u && op->c != 15u) e->fwd_guest = (int)op->c;
+    if (!test && result == 2u && op->cond == 14u && op->c != 15u) e->fwd_guest = (int)op->c;
     return 1;
 }
 
@@ -943,40 +1044,20 @@ static void a64_ram_offset(a64_emit_t *e, size_t *slow, unsigned *nslow, unsigne
     }
 }
 
-/* Cold path only: preserve the original VA in w12 for the checked fallback.
- * Read the authoritative TLB, without filling it or widening a restored mask.
- * Certificates contain live storage, never a cached value or skipped read.
- * A matched certificate resumes the hot continuation of its own access. */
-static void a64_live_read32(a64_emit_t *e, unsigned rd, size_t cont) {
+/* The shared word probe has established the current physical address in w0.
+ * Certificates require an aligned original VA and use the aligned physical
+ * word; preserve w0 for the following ROM/open-bus/I/O probes on rejection.
+ * No callback separates these checks. Each certificate still reads its live
+ * storage afresh and resumes only this access's hot continuation. */
+static void a64_live_read32_pa(a64_emit_t *e, unsigned rd, size_t cont) {
     if (!e->live_read32_count) return;
-    size_t reject[3];
-    unsigned nreject = 0;
     a64_mask(e, 6, 12, 3u);
     a64_cmp(e, 6, 31);
-    reject[nreject++] = a64_jump(e, 1);
-    if (e->mmu) {
-        _Static_assert(sizeof(arm_tlb_entry_t) == 16u &&
-                       offsetof(arm_tlb_entry_t, pa_base) == 4u &&
-                       offsetof(arm_tlb_entry_t, mask) == 8u &&
-                       offsetof(arm_tlb_entry_t, valid) == 12u,
-                       "live read packed TLB layout");
-        a64_ubfx(e, 6, 12, 12, 12);
-        a64_cpu_addr(e, 10, offsetof(arm920t_t, tlb_entry));
-        a64_rr(e, 0x8b001000u, 10, 10, 6); /* add x10, x10, x6, lsl #4 */
-        a64_u32(e, 0x29400000u | (9u << 10) | (10u << 5) | 7u); /* VA, PA */
-        a64_u32(e, 0x29410000u | (8u << 10) | (10u << 5) | 6u); /* mask, valid */
-        a64_cmp(e, 8, 31);
-        reject[nreject++] = a64_jump(e, 0);
-        a64_rr(e, 0x0a200000u, 8, 12, 6); /* bic w8, w12, w6 */
-        a64_cmp(e, 8, 7);
-        reject[nreject++] = a64_jump(e, 1);
-        a64_rr(e, 0x0a000000u, 0, 12, 6);
-        a64_rr(e, 0x2a000000u, 0, 0, 9);
-        a64_mask(e, 0, 0, ~3u);
-    } else a64_mov(e, 0, 12);
+    size_t unaligned = a64_jump(e, 1);
+    a64_mask(e, 7, 0, ~3u);
     for (size_t i = 0; i < e->live_read32_count && !e->fail; ++i) {
         a64_imm(e, 6, e->live_read32[i].pa);
-        a64_cmp(e, 0, 6);
+        a64_cmp(e, 7, 6);
         size_t unmatched = a64_jump(e, 1);
         a64_ptr(e, 10, (uintptr_t)e->live_read32[i].word);
         a64_u32(e, 0xb9400000u | (10u << 5) | 1u); /* fresh ldr w1, [x10] */
@@ -985,7 +1066,7 @@ static void a64_live_read32(a64_emit_t *e, unsigned rd, size_t cont) {
         a64_branch_back(e, cont);
         a64_patch(e, unmatched, e->pos);
     }
-    for (unsigned i = 0; i < nreject; ++i) a64_patch(e, reject[i], e->pos);
+    a64_patch(e, unaligned, e->pos);
 }
 
 /* Cold chain probe after a64_word_pa has established the aligned physical
@@ -1108,22 +1189,28 @@ static int a64_single_dt(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
         }
     }
     a64_ram_offset(e, slow, &nslow, byte ? 1u : 4u, !byte);
+    /* Keep the authoritative guest store, but avoid moving its value through
+     * w1 when a write-through register is already assigned. Guard failures
+     * still enter the unchanged cold path before any guest value is written. */
+    unsigned value = e->cache_host[op->b] ? e->cache_host[op->b] : 1u;
     if (load) {
         /* w9 is already the in-RAM offset; register-offset addressing folds
          * the jit_ram_base add into the access itself. */
-        a64_u32(e, (byte ? 0x38606800u : 0xb8606800u) | (9u << 16) | (21u << 5) | 1u);
+        a64_u32(e, (byte ? 0x38606800u : 0xb8606800u) | (9u << 16) | (21u << 5) | value);
         if (!byte) {
-            if (!literal) a64_rr(e, 0x1ac02c00u, 1, 1, 11); /* rorv w1, w1, w11 */
+            if (!literal) a64_rr(e, 0x1ac02c00u, value, value, 11);
             else if (literal_addr & 3u)
-                a64_u32(e, 0x13810021u | (((literal_addr & 3u) * 8u) << 10)); /* ror w1 */
+                a64_u32(e, 0x13800000u | (value << 16) |
+                           (((literal_addr & 3u) * 8u) << 10) | (value << 5) | value);
         }
         /* Match bytecode LDR PC: ARM state, word alignment, no interworking. */
         if (op->b == 15u) a64_mask(e, 1, 1, ~3u);
-        a64_put_guest(e, op->b, 1);
+        a64_put_guest(e, op->b, value);
     } else {
-        if (!fwd_store) a64_guest(e, 1, op->b, op->pc);
+        if (fwd_store) value = 2u;
+        else if (value == 1u) a64_guest(e, value, op->b, op->pc + 4u); /* STR PC = instruction+12 */
         a64_u32(e, (byte ? 0x38206800u : 0xb8206800u) | (9u << 16) | (21u << 5) |
-                   (fwd_store ? 2u : 1u));
+                   value);
     }
     if (wb) a64_put_guest(e, op->a, 2); /* includes the helper's Rn==Rd order */
     if (load && op->b == 15u) {
@@ -1158,7 +1245,7 @@ static int a64_single_dt(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
 
 /* ARM_JIT_OP_HALF: LDRH/LDRSB/LDRSH/STRH through the same TLB + direct RAM
  * window contract as a64_single_dt, sized for the actual access (LDRSB is a
- * byte).  Rd==PC (loads mask and redirect, stores read raw r15) and Rn==PC
+ * byte).  Rd==PC (loads mask and redirect, stores read instruction+12) and Rn==PC
  * writeback (a control-flow change that lacks the stop bit) stay on the
  * classified helper, as does the interpreter's byte-store aliasing for
  * S=1,L=0 encodings.  The register offset is the raw pipeline PC - the
@@ -1185,15 +1272,16 @@ static int a64_half(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
     a64_rr(e, (d & ARM_BC_HALF_U) ? 0x0b000000u : 0x4b000000u, folded_half ? 0u : 2u, 0, 1);
     if (p && !folded_half) a64_mov(e, 0, 2); /* pre-indexed accesses target the offset address */
     a64_ram_offset(e, slow, &nslow, (load && sh == 2u) ? 1u : 2u, 0);
+    unsigned value = e->cache_host[op->b] ? e->cache_host[op->b] : 1u;
     if (load) {
-        /* ldrh/ldrsb/ldrsh w1, [x21, w9]: A64 already yields the exact
+        /* ldrh/ldrsb/ldrsh: A64 already yields the exact
          * zero/sign extension op_halfword_bc produces. */
         a64_u32(e, (sh == 1u ? 0x78606800u : sh == 2u ? 0x38e06800u : 0x78e06800u) |
-                 (9u << 16) | (21u << 5) | 1u);
-        a64_put_guest(e, op->b, 1);
+                 (9u << 16) | (21u << 5) | value);
+        a64_put_guest(e, op->b, value);
     } else {
-        a64_guest(e, 1, op->b, op->pc);
-        a64_u32(e, 0x78206800u | (9u << 16) | (21u << 5) | 1u); /* strh w1, [x21, x9] */
+        if (value == 1u) a64_guest(e, value, op->b, op->pc);
+        a64_u32(e, 0x78206800u | (9u << 16) | (21u << 5) | value);
     }
     if (wb) a64_put_guest(e, op->a, 2);
     /* As for a64_single_dt: the fast path is complete, and the guard
@@ -1217,7 +1305,7 @@ static void a64_block_dt_exit(a64_emit_t *e, const arm_jit_op_t *op,
  * transfers (STMDB!/STMIA!/LDMIA!/LDMDB).  The compile-time subset is the
  * part that still collapses to plain word moves: S=0, a non-empty list and
  * Rn != PC.  Rn may itself be transferred.  Stores materialize r15's pipeline
- * value (op->pc + 8); loads let a transferred Rn override its old value and,
+ * value (op->pc + 12); loads let a transferred Rn override its old value and,
  * exactly like op_block_dt_bc, suppress final Rn writeback.  A one-page span
  * uses the original single translation.  A span crossing one 4 KiB boundary
  * saves addr0 in w11, resolves both page representatives while preserving
@@ -1254,7 +1342,7 @@ static int a64_block_dt(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
     }
     a64_mask(e, 6, 0, 3u);
     slow[nslow++] = e->pos;
-    a64_u32(e, 0x35000000u | 6u); /* cbnz w6 -> helper on unaligned span */
+    a64_branch_word(e, 0x35000000u | 6u); /* cbnz w6 -> helper on unaligned span */
     if (count > 1u) {
         /* Same virtual 4 KiB page takes the original single-translation path.
          * A span crossing a 4 KiB boundary branches to the cold two-page retry
@@ -1264,7 +1352,7 @@ static int a64_block_dt(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
         a64_rr(e, 0x4a000000u, 6, 0, 5); /* eor w6, w0, w5 */
         a64_ubfx(e, 6, 6, 12, 20);
         xpage = e->pos;
-        a64_u32(e, 0x35000000u | 6u); /* cbnz w6 -> cold two-page retry */
+        a64_branch_word(e, 0x35000000u | 6u); /* cbnz w6 -> cold two-page retry */
     }
     /* The span stays within this 4 KiB page, so proving its aligned first
      * word in a full RAM page also proves every transferred word. */
@@ -1349,6 +1437,9 @@ static void a64_block_dt_transfer(a64_emit_t *e, const arm_jit_op_t *op,
                                    unsigned count, int two_page,
                                    size_t *slow, unsigned *nslow) {
     uint32_t list = op->imm;
+    /* w2 holds final writeback. Only a non-first base source uses it;
+     * choose at translation time, with no runtime condition added. */
+    unsigned updated_rn = (op->d & 2u) && (list & ((1u << op->a) - 1u)) ? op->a : 16u;
     int load = !!(op->d & 0x01u);
     int pc_load = load && (list & 0x8000u);
     if (pc_load) {
@@ -1360,7 +1451,7 @@ static void a64_block_dt_transfer(a64_emit_t *e, const arm_jit_op_t *op,
         a64_u32(e, 0xb9400000u | ((count - 1u) << 10) | (base << 5) | 14u);
         a64_mask(e, 6, 14, 1u);
         slow[(*nslow)++] = e->pos;
-        a64_u32(e, 0x35000000u | 6u); /* cbnz w6 -> conservative odd-target helper */
+        a64_branch_word(e, 0x35000000u | 6u); /* cbnz w6 -> conservative odd-target helper */
     }
     unsigned idx = 0;
     for (unsigned r = 0; r < 16u; ++r) {
@@ -1395,6 +1486,8 @@ static void a64_block_dt_transfer(a64_emit_t *e, const arm_jit_op_t *op,
                         a64_guest(e, 1, r, op->pc);
                         a64_guest(e, 3, next, op->pc);
                     }
+                    if (r == updated_rn) a64_mov(e, 1, 2);
+                    if (next == updated_rn) a64_mov(e, 3, 2);
                     a64_u32(e, ram_pair); /* stp w1, w3, [x12, #idx*4] */
                 }
                 r = next;
@@ -1420,7 +1513,8 @@ static void a64_block_dt_transfer(a64_emit_t *e, const arm_jit_op_t *op,
                 a64_put_guest(e, r, 1);
             }
         } else {
-            a64_guest(e, 1, r, op->pc); /* r15 materializes pc + 8 exactly */
+            if (r == updated_rn) a64_mov(e, 1, 2);
+            else a64_guest(e, 1, r, op->pc + 4u); /* STM PC = instruction+12 */
             a64_u32(e, 0xb9000000u | (off << 10) | (base << 5) | 1u);
         }
         ++idx;
@@ -1493,7 +1587,21 @@ static int a64_one(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
         return a64_data(e, op, done);
     }
     /* This emitter consumes a forwarded store value before clearing it. */
-    if (op->kind == ARM_JIT_OP_SINGLE_DT) return a64_single_dt(e, op, done);
+    if (op->kind == ARM_JIT_OP_SINGLE_DT) {
+        if (!e->counted) return a64_single_dt(e, op, done);
+        e->fwd_guest = -1;
+        a64_load(e, 16, offsetof(arm920t_t, jit_counted_observing));
+        a64_cmp_imm(e, 16, 0u);
+        size_t normal = a64_jump(e, 0);
+        a64_slow(e, op, done);
+        size_t join = a64_jump(e, 14);
+        a64_patch(e, normal, e->pos);
+        if (!a64_single_dt(e, op, done)) a64_slow(e, op, done);
+        a64_patch(e, join, e->pos);
+        e->fwd_guest = -1;
+        e->nzcv_valid = 0;
+        return 1;
+    }
     /* Every other emitter writes w2 (address formation, transfer value,
      * writeback) or calls a helper that clobbers it: the forwarded result of
      * the previous op can never survive one of them. */
@@ -1511,10 +1619,13 @@ static int a64_one(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
             a64_imm(e, 16, op->pc + 4u);
             a64_put_guest(e, 14u, 16);
         }
+        if (e->loop_done == done) {
+            a64_selfloop(e, done, arm_jit_branch_target(op->pc, op->insn));
+            return 1;
+        }
         /* w16 keeps the committed target for a linked exit below. */
         a64_imm(e, 16, arm_jit_branch_target(op->pc, op->insn));
         a64_store(e, 16, offsetof(arm920t_t, r) + 15u * 4u);
-        if (e->loop_done == done) { a64_selfloop(e, done); return 1; }
         /* Inlined BL and stitched unconditional B follow the decoded trace. */
         if (op->reserved != 2u && (op->stop || !arm_jit_is_uncond_b_no_link(op->insn))) a64_hop(e, done);
         return 1;
@@ -1610,7 +1721,6 @@ static void a64_cold_flush(a64_emit_t *e) {
             a64_cold_op_t *sib = c->sibling < e->cold_count ? &e->cold[c->sibling] : NULL;
             a64_block_dt_xpage(e, c->op, c->done, xslow, &nxs);
             if (sib) for (unsigned j = 0; j < nxs; ++j) a64_cold_fix(e, sib, xslow[j]);
-            a64_branch_back(e, c->cont);
             break;
         }
         case A64_COLD_SINGLE_DT: {
@@ -1620,13 +1730,15 @@ static void a64_cold_flush(a64_emit_t *e) {
              * established w12 handover, which is restored here (cold bytes,
              * never walked by the fast path). */
             a64_mov(e, 12, 0);
-            if (c->live) a64_live_read32(e, c->op->b, c->cont);
             size_t io_cold[4];
             unsigned nio = 0;
             if (c->ro || (c->access && !c->byte)) {
-                /* No callback separates these probes. Prove the physical word
-                 * once; a TLB miss bypasses both probes to the checked helper. */
+                /* No callback separates the live, read-only and I/O probes.
+                 * Prove the physical word once; a TLB miss bypasses all three
+                 * to the checked helper. Live certificates only cover word
+                 * loads without writeback, a subset of this access path. */
                 a64_word_pa(e, io_cold, &nio);
+                if (c->live) a64_live_read32_pa(e, c->op->b, c->cont);
                 if (c->ro) a64_ro_word_pa(e, c->op, c->cont);
                 if (c->access && !c->byte)
                     a64_io_word_pa(e, c->op, c->done, c->load, c->wb, io_cold, &nio, c->cont);
@@ -1644,9 +1756,9 @@ static void a64_cold_flush(a64_emit_t *e) {
             a64_slow(e, c->op, c->done);
             break;
         }
-        /* Both checked helpers end with a "may continue" edge that lands
-         * exactly here; this is the recorded fall-through of the inline
-         * layout, now a backward branch into the hot body. */
+        /* The two-page retry falls through here; both checked helpers end
+         * with a "may continue" edge that lands here. Emit one shared return
+         * to the recorded hot continuation for each cold chain. */
         a64_branch_back(e, c->cont);
     }
 }
@@ -1656,31 +1768,88 @@ static void a64_cold_flush(a64_emit_t *e) {
  * instructions (no literals), so every PC-relative branch is found by its
  * encoding; only branches crossing the hot/cold boundary change, and each is
  * re-encoded for the new distance.  Returns 0 if one would not reach. */
-static int a64_place(uint32_t *hot_dst, uint32_t *cold_dst, const uint32_t *src,
+static ARM_NOINLINE int a64_place_legacy(uint32_t *hot_dst, uint32_t *cold_dst, const uint32_t *src,
                      size_t hot, size_t n) {
-    for (size_t i = 0; i < n; ++i) {
-        uint32_t w = src[i], mask;
-        unsigned bits;
-        if ((w & 0x7c000000u) == 0x14000000u) { bits = 26; mask = 0x03ffffffu; }
-        else if ((w & 0xff000010u) == 0x54000000u || (w & 0x7e000000u) == 0x34000000u) { bits = 19; mask = 0x7ffffu << 5; }
-        else if ((w & 0x7e000000u) == 0x36000000u) { bits = 14; mask = 0x3fffu << 5; }
-        else bits = 0, mask = 0;
-        if (bits) {
+    /* Each span moves by one fixed displacement. Only branches crossing the
+     * split need that displacement added to their existing immediate. */
+    intptr_t gap = ((intptr_t)cold_dst - (intptr_t)hot_dst) / 4 - (intptr_t)hot;
+    for (unsigned part = 0; part < 2u; ++part) {
+        size_t first = part ? hot : 0u, end = part ? n : hot;
+        uint32_t *dst = part ? cold_dst : hot_dst;
+        for (size_t i = first; i < end; ++i) {
+            uint32_t w = src[i];
+            /* All supported PC-relative branches have these bits in common;
+             * most emitted instructions need no further opcode tests. */
+            if ((w & 0x1c000000u) == 0x14000000u) {
+                uint32_t mask;
+                unsigned bits;
+                if ((w & 0x7c000000u) == 0x14000000u) { bits = 26; mask = 0x03ffffffu; }
+                else if ((w & 0xff000010u) == 0x54000000u || (w & 0x7e000000u) == 0x34000000u) { bits = 19; mask = 0x7ffffu << 5; }
+                else if ((w & 0x7e000000u) == 0x36000000u) { bits = 14; mask = 0x3fffu << 5; }
+                else bits = 0, mask = 0;
+                if (bits) {
+                    unsigned shift = bits == 26 ? 0u : 5u;
+                    int64_t imm = (int64_t)((w & mask) >> shift);
+                    if (imm & ((int64_t)1 << (bits - 1))) imm -= (int64_t)1 << bits;
+                    int64_t t = (int64_t)i + imm;
+                    if (t < 0 || t > (int64_t)n) return 0;
+                    if ((i < hot) != ((size_t)t < hot)) {
+                        int64_t d = imm + (part ? -gap : gap);
+                        if (d >= ((int64_t)1 << (bits - 1)) || d < -((int64_t)1 << (bits - 1))) return 0;
+                        w = (w & ~mask) | (((uint32_t)d << shift) & mask);
+                    }
+                }
+            }
+            dst[i - first] = w;
+        }
+    }
+    return 1;
+}
+
+static int a64_place(uint32_t *hot_dst, uint32_t *cold_dst, const uint32_t *src,
+                     size_t hot, size_t n, const uint16_t *branch_map) {
+    intptr_t gap = ((intptr_t)cold_dst - (intptr_t)hot_dst) / 4 - (intptr_t)hot;
+    /* Validate once and retain only crossing-branch replacements. Overflow
+     * returns to the original scanner before writing either output span. */
+    _Static_assert(ARM_JIT_NATIVE_MAX_BYTES / sizeof(uint32_t) <= UINT16_MAX, "fixup index fits");
+    enum { FIX_CAP = ARM_JIT_MAX_INSNS * 4u };
+    uint16_t fix_at[FIX_CAP];
+    uint32_t fix_word[FIX_CAP];
+    unsigned fixes = 0;
+    for (size_t group = 0; group < (n + 15u) / 16u; ++group) {
+        uint32_t pending = branch_map[group];
+        while (pending) {
+            size_t i = group * 16u + arm_ctz16(pending);
+            pending &= pending - 1u;
+            uint32_t w = src[i], mask;
+            unsigned bits;
+            if ((w & 0x7c000000u) == 0x14000000u) { bits = 26; mask = 0x03ffffffu; }
+            else if ((w & 0xff000010u) == 0x54000000u || (w & 0x7e000000u) == 0x34000000u) { bits = 19; mask = 0x7ffffu << 5; }
+            else if ((w & 0x7e000000u) == 0x36000000u) { bits = 14; mask = 0x3fffu << 5; }
+            else continue;
             unsigned shift = bits == 26 ? 0u : 5u;
             int64_t imm = (int64_t)((w & mask) >> shift);
             if (imm & ((int64_t)1 << (bits - 1))) imm -= (int64_t)1 << bits;
             int64_t t = (int64_t)i + imm;
-            if (t < 0 || t > (int64_t)n) return 0;
+            if (t < 0 || t > (int64_t)n)
+                return a64_place_legacy(hot_dst, cold_dst, src, hot, n);
             if ((i < hot) != ((size_t)t < hot)) {
-                intptr_t from = i < hot ? (intptr_t)(hot_dst + i) : (intptr_t)(cold_dst + (i - hot));
-                intptr_t to = (size_t)t < hot ? (intptr_t)(hot_dst + t) : (intptr_t)(cold_dst + ((size_t)t - hot));
-                int64_t d = (int64_t)(to - from) / 4;
-                if (d >= ((int64_t)1 << (bits - 1)) || d < -((int64_t)1 << (bits - 1))) return 0;
-                w = (w & ~mask) | (((uint32_t)d << shift) & mask);
+                int64_t d = imm + (i < hot ? gap : -gap);
+                if (d >= ((int64_t)1 << (bits - 1)) || d < -((int64_t)1 << (bits - 1)))
+                    return a64_place_legacy(hot_dst, cold_dst, src, hot, n);
+                if (fixes == FIX_CAP)
+                    return a64_place_legacy(hot_dst, cold_dst, src, hot, n);
+                fix_at[fixes] = (uint16_t)i;
+                fix_word[fixes++] = (w & ~mask) | (((uint32_t)d << shift) & mask);
             }
         }
-        if (i < hot) hot_dst[i] = w;
-        else cold_dst[i - hot] = w;
+    }
+    memcpy(hot_dst, src, hot * sizeof(*src));
+    memcpy(cold_dst, src + hot, (n - hot) * sizeof(*src));
+    for (unsigned k = 0; k < fixes; ++k) {
+        size_t i = fix_at[k];
+        uint32_t *dst = i < hot ? hot_dst + i : cold_dst + i - hot;
+        *dst = fix_word[k];
     }
     return 1;
 }
@@ -1700,6 +1869,8 @@ _Static_assert(ARM_JIT_CODE_SIZE <= (1u << 27), "B/BL from every block reach the
 static uint8_t *a64_exec_addr(arm920t_t *c, size_t offset) {
 #if defined(__SWITCH__)
     return (uint8_t *)jitGetRxAddr(&c->jit_memory) + offset;
+#elif defined(ARM_JIT_IOS_A64)
+    return c->jit_ios_rx + offset;
 #else
     return c->jit_code + offset;
 #endif
@@ -1722,20 +1893,35 @@ static void a64_disable_exec(arm920t_t *c) {
 #endif
 
 static int a64_prepare_write(arm920t_t *c) {
-#if defined(__SWITCH__)
+#if defined(ARM_JIT_IOS_A64)
+    return c->jit_ios_ready;
+#elif defined(__SWITCH__)
     if (R_FAILED(jitTransitionToWritable(&c->jit_memory))) {
         a64_disable_exec(c);
         return 0;
     }
 #else
     GP32_UNUSED(c);
+#if defined(ARM_JIT_DARWIN_A64)
+    pthread_jit_write_protect_np(0);
+#endif
 #endif
     return 1;
 }
 
 static int a64_publish(arm920t_t *c, size_t hot, size_t hot_bytes,
                        size_t cold, size_t cold_bytes) {
-#if defined(__SWITCH__)
+#if defined(ARM_JIT_IOS_A64)
+    if (!c->jit_ios_ready) return 0;
+    if (hot_bytes) {
+        sys_dcache_flush(c->jit_code + hot, hot_bytes);
+        sys_icache_invalidate(a64_exec_addr(c, hot), hot_bytes);
+    }
+    if (cold_bytes) {
+        sys_dcache_flush(c->jit_code + cold, cold_bytes);
+        sys_icache_invalidate(a64_exec_addr(c, cold), cold_bytes);
+    }
+#elif defined(__SWITCH__)
     Jit *j = &c->jit_memory;
     if (j->type == JitType_CodeMemory) {
         /* libnx's transition flushes the entire allocation. CodeMemory keeps
@@ -1750,6 +1936,9 @@ static int a64_publish(arm920t_t *c, size_t hot, size_t hot_bytes,
         return 0;
     }
 #else
+#if defined(ARM_JIT_DARWIN_A64)
+    pthread_jit_write_protect_np(1);
+#endif
     arm_jit_flush_exec(c->jit_code + hot, hot_bytes);
     if (cold_bytes) arm_jit_flush_exec(c->jit_code + cold, cold_bytes);
 #endif
@@ -1832,8 +2021,10 @@ static void a64_pick_cache(a64_emit_t *e, const arm_jit_op_t *ops, unsigned coun
 }
 
 static int a64_emit_runtime(arm920t_t *c) {
+    /* Build privately so failed emission never leaves a JIT mapping writable. */
+    uint32_t runtime[A64_RT_BYTES / sizeof(uint32_t)] = {0};
     a64_emit_t e = {0};
-    e.code = (uint32_t *)(void *)c->jit_code;
+    e.code = runtime;
     e.cap = A64_RT_BYTES / sizeof(uint32_t);
     const size_t ctl = offsetof(arm920t_t, irq_line);
     size_t fail[8];
@@ -1876,7 +2067,7 @@ static int a64_emit_runtime(arm920t_t *c) {
     a64_mask(&e, 11, 11, ARM_JIT_BLOCK_MASK >> 1);
     a64_u32(&e, 0x8b000000u | (11u << 16) | (6u << 10) | (12u << 5) | 12u); /* add x12, x12, x11, lsl #6 */
     fail[nf++] = e.pos;
-    a64_u32(&e, 0xb5000000u | 9u); /* cbnz x9: an interrupt line is raised */
+    a64_branch_word(&e, 0xb5000000u | 9u); /* cbnz x9: an interrupt line is raised */
     a64_u32(&e, 0xa940398du); /* ldp x13, x14, [x12]: {tag, valid}, {generation, epoch} */
     a64_cpu_mem(&e, 0xf9400000u, 9, offsetof(arm920t_t, jit_generation), 3); /* live pair */
     a64_u32(&e, 0xf940098fu); /* ldr x15, [x12, #16]: count, native_ok, poll, deferred */
@@ -1909,7 +2100,28 @@ static int a64_emit_runtime(arm920t_t *c) {
                 ((((uint32_t)rel >> 2) & 0x7ffffu) << 5) | 17u); /* adr x17, rt_exit */
     a64_u32(&e, 0xd65f03c0u); /* ret */
     if (e.fail) return 0;
+    if (!a64_prepare_write(c)) return 0;
+    memcpy(c->jit_code, runtime, sizeof(runtime));
     return a64_publish(c, 0, A64_RT_BYTES, 0, 0);
+}
+
+/* A conditional B whose target is a later op of the same straight-line trace
+ * can jump there inside the block instead of leaving it. Every op between the
+ * two must be a plain, non-terminating op at consecutive addresses, so the
+ * target is reached by the same emission on both paths. The self backedge
+ * keeps its own path. Returns the target op index, or 0. */
+static unsigned a64_fwd_target(const arm_jit_op_t *ops, unsigned count, unsigned i, uint32_t loop_done) {
+    const arm_jit_op_t *op = &ops[i];
+    if (op->kind != ARM_JIT_OP_BRANCH || op->cond >= 14u || op->stop || op->reserved ||
+        (op->insn & (1u << 24)) || loop_done == i + 1u) return 0;
+    uint32_t target = arm_jit_branch_target(op->pc, op->insn);
+    for (unsigned k = i + 1u; k < count; ++k) {
+        const arm_jit_op_t *o = &ops[k];
+        if (o->pc != op->pc + 4u * (k - i)) return 0;
+        if (o->pc == target) return k;
+        if (o->stop || o->reserved) return 0;
+    }
+    return 0;
 }
 
 static void arm_jit_compile_host(arm920t_t *c, arm_jit_block_t *b) {
@@ -1918,11 +2130,15 @@ static void arm_jit_compile_host(arm920t_t *c, arm_jit_block_t *b) {
     if (c->jit_memory_failed) return;
 #endif
     uint32_t tmp[ARM_JIT_NATIVE_MAX_BYTES / sizeof(uint32_t)];
+    uint16_t branches[(ARM_JIT_NATIVE_MAX_BYTES / sizeof(uint32_t) + 15u) / 16u] = {0};
     a64_cold_op_t cold[ARM_JIT_MAX_INSNS];
+    a64_fetch_fix_t fetch[ARM_JIT_MAX_INSNS];
     a64_emit_t e = {0};
     e.code = tmp;
+    e.branch_map = branches;
     e.cap = sizeof(tmp) / sizeof(tmp[0]);
     e.cold = cold;
+    e.fetch = fetch;
     e.cold_cap = ARM_JIT_MAX_INSNS;
     e.fwd_guest = -1;
     e.mmu = !!(c->cp15[1] & 1u);
@@ -1933,6 +2149,7 @@ static void arm_jit_compile_host(arm920t_t *c, arm_jit_block_t *b) {
     c->profile_native_loop[b - c->jit_blocks] = e.loop_done != 0;
 #endif
     e.block_count = b->count;
+    e.counted = (b->poll_backedge >> 1) != 0;
     /* Validate the complete direct window, including write permission.
      * Tiny or discontinuous test buses must retain their callback path. */
     e.ram_read = c->jit_ram_base && fastmem(c, ARM_JIT_RAM_BASE_ADDR, ARM_JIT_RAM_SIZE_BYTES, 0) == c->jit_ram_base;
@@ -1969,13 +2186,38 @@ static void arm_jit_compile_host(arm920t_t *c, arm_jit_block_t *b) {
         if (e.cache_host[r]) a64_load(&e, e.cache_host[r], offsetof(arm920t_t, r) + r * 4u);
     e.loop_head = e.pos;
     int stopped = 0;
+    /* Pending in-block forward branches: site and target op index. Poll
+     * sources keep their dispatcher-owned repetition bookkeeping, which
+     * compares a returned count with the full block, so they never skip. */
+    size_t fwd_site[ARM_JIT_MAX_INSNS];
+    uint16_t fwd_to[ARM_JIT_MAX_INSNS];
+    unsigned nfwd = 0;
+    const int fwd_ok = !b->poll_backedge;
     for (unsigned i = 0; i < b->count; ++i) {
         const arm_jit_op_t *op = &arm_jit_ops(c, b)[i];
+        int joined = 0;
+        for (unsigned k = 0; k < nfwd; ++k)
+            if (fwd_to[k] == i) {
+                a64_patch(&e, fwd_site[k], e.pos);
+                fwd_to[k] = UINT16_MAX;
+                joined = 1;
+            }
+        if (joined) {
+            /* Both paths meet here with only c->r[]/CPSR and the
+             * write-through register copies in common. */
+            e.nzcv_valid = 0;
+            e.fwd_guest = -1;
+        }
         e.expected_next = i + 1u < b->count ? arm_jit_ops(c, b)[i + 1u].pc : op->pc + 4u;
         e.generation = b->generation;
         e.want_nzcv = i + 1u < b->count && arm_jit_ops(c, b)[i + 1u].cond < 14u;
+        /* No TLB mutation on a resident I-side hit; semantic eviction
+         * changes the epoch and checked helpers leave before continuing. */
         uint32_t folded;
         unsigned nfold = arm_jit_fold_const_data(arm_jit_ops(c, b), b->count, i, &folded);
+        if (e.mmu && nfold && (arm_jit_ops(c, b)[i + nfold - 1u].pc >> 10) != (op->pc >> 10)) nfold = 0;
+        for (unsigned k = 0; nfold && k < nfwd; ++k)
+            if (fwd_to[k] > i && fwd_to[k] < i + nfold) nfold = 0; /* keep the join point */
         if (nfold) {
             a64_imm(&e, 2, folded);
             a64_put_guest(&e, op->c, 2);
@@ -2006,6 +2248,31 @@ static void arm_jit_compile_host(arm920t_t *c, arm_jit_block_t *b) {
         /* A self move preserves the guest value and flags; any preceding
          * forwarded result remains valid. Counts and exit PC commits stay. */
         if (arm_jit_is_side_effect_free_nop(op->insn)) continue;
+        unsigned fwd = fwd_ok ? a64_fwd_target(arm_jit_ops(c, b), b->count, i, e.loop_done) : 0u;
+        if (fwd) {
+            /* The skipped ops never run. The taken path returns them to the
+             * entry budget (w22) and the completed count (w23), so every later
+             * exit keeps its constant op count and still reports exactly the
+             * instructions that ran. With prefix P and skips S, w23+P is the
+             * retired count and w22-P is the remaining budget. P >= S at
+             * every exit, so 32-bit wrap restores the correct unsigned value.
+             * A wrapped w22 can only make the self-loop budget guard return
+             * early; dispatch then resumes with the real remaining budget. */
+            unsigned skipped = fwd - i - 1u;
+            if (!skipped) continue; /* a branch to the next op changes nothing */
+            if (!e.nzcv_valid) {
+                a64_load(&e, 3, offsetof(arm920t_t, cpsr));
+                a64_u32(&e, 0xd51b4203u);
+            }
+            size_t fall = a64_jump(&e, op->cond ^ 1u);
+            a64_u32(&e, 0x11000000u | (skipped << 10) | (22u << 5) | 22u); /* add w22, w22, #skipped */
+            a64_u32(&e, 0x51000000u | (skipped << 10) | (23u << 5) | 23u); /* sub w23, w23, #skipped */
+            fwd_site[nfwd] = a64_jump(&e, 14u);
+            fwd_to[nfwd++] = (uint16_t)fwd;
+            a64_patch(&e, fall, e.pos);
+            e.nzcv_valid = 1; /* the fall-through still holds the committed flags */
+            continue;
+        }
         size_t skip = 0;
         if (op->cond == 15u) {
             /* ARMv4 NV is never, unlike A64's condition 15 (always). */
@@ -2034,7 +2301,13 @@ static void arm_jit_compile_host(arm920t_t *c, arm_jit_block_t *b) {
              * never-executed op changes nothing. Other stop ops (PSR writes,
              * SWI, coprocessor) may have changed control state here, so the
              * dispatcher observes them before anything else runs. */
-            if (op->kind == ARM_JIT_OP_BRANCH || op->cond == 15u) {
+            /* A non-stitched LDM-to-PC also always exits when executed,
+             * through a64_block_dt_exit or the terminating classified helper.
+             * Its epilogue is reached only on a failed condition. Reuse that
+             * epilogue for a guarded hop; no extra executed-stop tail is needed. */
+            int skipped_ldm_pc = op->cond < 14u && !op->reserved &&
+                op->kind == ARM_JIT_OP_BLOCK_DT && (op->d & 1u) && (op->imm & 0x8000u);
+            if (op->kind == ARM_JIT_OP_BRANCH || op->cond == 15u || skipped_ldm_pc) {
                 a64_exit_const(&e, op->pc + 4u, i + 1u);
             } else {
                 a64_store_imm(&e, offsetof(arm920t_t, r) + 15u * 4u, op->pc + 4u);
@@ -2044,6 +2317,8 @@ static void arm_jit_compile_host(arm920t_t *c, arm_jit_block_t *b) {
             break;
         }
     }
+    for (unsigned k = 0; k < nfwd; ++k)
+        if (fwd_to[k] != UINT16_MAX) e.fail = 1; /* every target is a later op */
     if (!stopped) {
         /* The last op can itself be a stitched branch at the block-size limit. */
         const arm_jit_op_t *last = &arm_jit_ops(c, b)[b->count - 1u];
@@ -2058,6 +2333,7 @@ static void arm_jit_compile_host(arm920t_t *c, arm_jit_block_t *b) {
         a64_imm(&e, 0, 0);
         a64_u32(&e, 0xd65f03c0u); /* ret: no frame was opened */
     }
+    a64_fetch_flush(&e);
     a64_cold_flush(&e);
     if (e.fail) return;
     size_t hot_bytes = e.hot_end * sizeof(tmp[0]);
@@ -2109,7 +2385,7 @@ static void arm_jit_compile_host(arm920t_t *c, arm_jit_block_t *b) {
     if (!a64_prepare_write(c)) return;
     uint32_t *hot_dst = (uint32_t *)(void *)(c->jit_code + start);
     uint32_t *cold_dst = (uint32_t *)(void *)(c->jit_code + cold_at);
-    if (!a64_place(hot_dst, cold_dst, tmp, e.hot_end, e.pos)) {
+    if (!a64_place(hot_dst, cold_dst, tmp, e.hot_end, e.pos, branches)) {
         c->jit_cold_floor = cold_at + cold_bytes;
         /* Restore old entries on permission-based libnx after a placement
          * failure. No new entry is published. */
@@ -2244,7 +2520,7 @@ static int a64_data_regshift(a64_emit_t *e, const arm_jit_op_t *op, uint32_t don
     int flags = test || (op->d & ARM_BC_DATA_S);
     int logical = code < 2u || code == 8u || code == 9u || code >= 12u;
     if (!(op->d & ARM_BC_DATA_REGSHIFT) || op->e == 15u || op->f == 15u) return 0;
-    a64_guest(e, 0, op->b, op->pc);                        /* w0 = Rn */
+    a64_guest(e, 0, op->b, op->pc + 4u);                  /* Rn PC = instruction+12 for register shifts */
     a64_guest(e, 6, op->e, op->pc);                        /* w6 = Rm */
     a64_guest(e, 7, op->f, op->pc);                        /* w7 = Rs */
     a64_mask(e, 7, 7, 0xffu);                              /* amount = Rs & 0xff */
@@ -2332,12 +2608,24 @@ static int a64_long_mul(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
     return 1;
 }
 
-/* Local p15 operations have no bus callback or control-flow effects. Reads
+/* Privileged local p15 operations have no bus callback or control-flow effects. Reads
  * mirror cp15_read; allowed MCR data-cache/drain operations only record c7,
  * matching cp15_write. I-cache/MMU maintenance retains the checked helper. */
 static int a64_local_p15(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
     const uint32_t insn = op->insn;
     if (!arm_jit_is_local_cp15_op(insn)) return 0;
+    /* A cached block can run in USER mode after it was compiled in SVC/SYS.
+     * No CP15 effect is allowed before this live check. */
+    a64_load(e, 1, offsetof(arm920t_t, cpsr));
+    a64_mask(e, 1, 1, MODE_MASK);
+    a64_cmp_imm(e, 1, MODE_USR);
+    size_t privileged = a64_jump(e, 1u); /* NE */
+    a64_rr(e, 0xaa000000u, 0, 31, 19);
+    a64_ptr(e, 1, (uintptr_t)op);
+    a64_ptr(e, 16, (uintptr_t)arm_jit_exec_classified);
+    a64_u32(e, 0xd63f0200u);
+    a64_return(e, done);
+    a64_patch(e, privileged, e->pos);
     unsigned crn = (insn >> 16) & 0xfu, rd = (insn >> 12) & 0xfu;
     if (!GP32_BIT(insn, 20)) {
         a64_guest(e, 1, rd, op->pc);
@@ -2349,7 +2637,6 @@ static int a64_local_p15(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
         a64_load(e, 1, offsetof(arm920t_t, cp15) + crn * 4u);
         a64_put_guest(e, rd, 1);
     }
-    GP32_UNUSED(done);
     return 1;
 }
 
@@ -2438,7 +2725,7 @@ static int a64_psr_mov(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
                  * take the shared helper, which enforces flags-only access. */
                 a64_mask(e, 6, 5, MODE_MASK);
                 switch_bank = e->pos;
-                a64_u32(e, 0x35000006u); /* cbnz w6 -> shared bank-switch helper */
+                a64_branch_word(e, 0x35000006u); /* cbnz w6 -> shared bank-switch helper */
             }
             unsigned effective_mask = 2u;
             if (mask & 0x00ffffffu) {

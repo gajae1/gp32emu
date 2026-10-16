@@ -12,7 +12,20 @@
  * comparing two identically wrong runs.
  */
 
+/* Native instruction fixtures prepare derived code without executing a
+ * guest warm-up. Cold-to-native policy has a separate regression test. The
+ * recycle/policy tests already include the core before including this file. */
+#ifndef GP32EMU_CPU_PROFILE
+#define GP32EMU_CPU_PROFILE 1
+#endif
+#ifndef ARM920T_NATIVE_BACKEND
+#include "../src/arm920t.c"
+#endif
+
 #include "arm920t.h"
+static void apply_io_fixture_state(arm920t_t *, const arm920t_state_image_t *);
+static void prepare_native_block(arm920t_t *c, uint32_t pc);
+static uint32_t prepared_native_run(arm920t_t *c, uint32_t budget);
 
 #include <stdint.h>
 #include <stdio.h>
@@ -35,7 +48,9 @@ typedef struct {
     uint8_t ram[RAM_SIZE];
     arm920t_t *observe_cpu;
     uint32_t io_pc[8];
+    uint32_t io_regs[8][16], io_cpsr[8];
     unsigned io_count;
+    unsigned io_fiq_at;
     /* Loop callback controls: raise IRQ once at the Nth IO_ADDR access and
      * count writes to IO_ADDR+4 that acknowledge it.  Zero when unused, so
      * the pre-existing cases observe no behavior change. */
@@ -70,6 +85,30 @@ static void report(const char *what, uint64_t jit, uint64_t ref) {
 }
 #define CHECK(cond, msg) do { if (!(cond)) fail(msg); } while (0)
 
+#if defined(__APPLE__) && defined(ARM_JIT_NATIVE_A64)
+#include <pthread.h>
+static int check_host_frames;
+/* Inspect actual helper-call frame links while native guest registers are
+ * live. Validate every pointer against this thread's stack before reading it. */
+__attribute__((noinline)) static void check_apple_frame_chain(void) {
+    uintptr_t high = (uintptr_t)pthread_get_stackaddr_np(pthread_self());
+    uintptr_t low = high - pthread_get_stacksize_np(pthread_self());
+    uintptr_t frame = (uintptr_t)__builtin_frame_address(0);
+    for (unsigned depth = 0; frame && depth < 16u; ++depth) {
+        if ((frame & 15u) || frame < low || frame > high - 2u * sizeof(uintptr_t)) {
+            fail("native callback has an invalid Apple frame chain");
+            return;
+        }
+        uintptr_t next = *(const uintptr_t *)frame;
+        if (next && next <= frame) {
+            fail("native callback frame chain does not advance");
+            return;
+        }
+        frame = next;
+    }
+}
+#endif
+
 static uint8_t *bus_ptr(test_bus_t *b, uint32_t a, size_t bytes) {
     if (a < BIOS_SIZE && bytes <= BIOS_SIZE - a) return b->bios + a;
     if (a >= RAM_BASE && (uint64_t)(a - RAM_BASE) + bytes <= RAM_SIZE) return b->ram + (a - RAM_BASE);
@@ -86,9 +125,20 @@ static uint32_t tb_io_value(test_bus_t *b, uint32_t a) {
         return b->live_value;
     }
     if (b->observe_cpu && a == IO_ADDR) {
+#if defined(__APPLE__) && defined(ARM_JIT_NATIVE_A64)
+        if (check_host_frames) check_apple_frame_chain();
+#endif
         uint32_t pc = arm920t_get_pc(b->observe_cpu);
-        if (b->io_count < GP32_ARRAY_COUNT(b->io_pc)) b->io_pc[b->io_count] = pc;
+        if (b->io_count < GP32_ARRAY_COUNT(b->io_pc)) {
+            b->io_pc[b->io_count] = pc;
+            for (unsigned r = 0; r < 16u; ++r)
+                b->io_regs[b->io_count][r] = arm920t_get_reg(b->observe_cpu, r);
+            b->io_cpsr[b->io_count] = arm920t_get_cpsr(b->observe_cpu);
+        }
         ++b->io_count;
+        if (b->io_fiq_at && b->io_count == b->io_fiq_at)
+            arm920t_set_cpsr(b->observe_cpu,
+                            (arm920t_get_cpsr(b->observe_cpu) & ~0x1fu) | 0x11u);
         /* Assert inside MMIO; the native helper must exit before executing
          * the following instruction with an unmasked pending interrupt. */
         if (b->io_raise_at && b->io_count == b->io_raise_at)
@@ -445,6 +495,127 @@ static const uint32_t P_FLAGS[] = {
     0x02868001u, /* ADDEQ r8, r6, #1         ; Z=0 so skipped              */
     0xEAFFFFFEu, /* B .                                                    */
 };
+/* A callback must see the latest registers and complete CPSR, even when the
+ * first conditional flag producer was skipped. Check at the observation point,
+ * not only after the JIT has returned and repaired its architectural state. */
+static void case_alu_callback_state(void) {
+#if defined(__APPLE__) && defined(ARM_JIT_NATIVE_A64)
+    check_host_frames = 1;
+#endif
+    const uint32_t program[] = {
+        0x02944001u, /* ADDSEQ r4,r4,#1 */
+        0xe2a44001u, /* ADC    r4,r4,#1 */
+        0xe0245005u, /* EOR    r5,r4,r5 */
+        0xe2944001u, /* ADDS   r4,r4,#1 */
+        0x12a55001u, /* ADCNE  r5,r5,#1 */
+        0xe1b06065u, /* MOVS   r6,r5,RRX */
+        0xe0844006u, /* ADD    r4,r4,r6 */
+        0xe0888004u, /* ADD    r8,r8,r4: dirty a banked, cached register */
+        0xe0888005u, /* ADD    r8,r8,r5 */
+        0xe5910000u, /* LDR    r0,[r1]: observe before the load commits */
+        0xe2944002u, /* ADDS   r4,r4,#2 */
+        0x02b55001u, /* ADCSEQ r5,r5,#1 */
+        0xe0844005u, /* ADD    r4,r4,r5 */
+        0xe5910000u, /* LDR    r0,[r1]: observe the second ALU region */
+        0xeafffffeu,
+    };
+    for (unsigned flags = 0; flags < 16u; ++flags) {
+        for (unsigned scenario = 0; scenario < 4u; ++scenario) {
+            current_case = "alu-callback-state";
+            setup_pair();
+            arm920t_set_trace(cpu_ref, 1, NULL, NULL);
+            load_both(program, GP32_ARRAY_COUNT(program));
+            bus_jit.observe_cpu = cpu_jit;
+            bus_ref.observe_cpu = cpu_ref;
+            bus_jit.io_fiq_at = bus_ref.io_fiq_at = (scenario & 2u) ? 1u : 0u;
+            set_reg_both(1u, IO_ADDR);
+            set_reg_both(4u, 0x7fffffffu);
+            set_reg_both(5u, 0xa5a5a5a5u);
+            set_reg_both(8u, 0x12345678u);
+            arm920t_set_cpsr(cpu_jit, 0xd3u | (flags << 28));
+            arm920t_set_cpsr(cpu_ref, 0xd3u | (flags << 28));
+            if (scenario & 1u) run_chunks();
+            else {
+                CHECK(prepared_native_run(cpu_jit, 64u) == arm920t_run(cpu_ref, 64u),
+                      "ALU callback budget");
+                compare_state();
+                gp32_cpu_profile_t p;
+                arm920t_get_cpu_profile(cpu_jit, &p);
+                if (p.supported && p.native_backend)
+                    CHECK(p.native_arm_insns >= 10u, "ALU callback must exercise the native prefix");
+            }
+            CHECK(bus_ref.io_count == 2u && bus_jit.io_count == 2u,
+                  "ALU callback count");
+            CHECK(!memcmp(bus_jit.io_regs, bus_ref.io_regs, sizeof(bus_ref.io_regs)),
+                  "callback observed stale guest registers");
+            CHECK(!memcmp(bus_jit.io_cpsr, bus_ref.io_cpsr, sizeof(bus_ref.io_cpsr)),
+                  "callback observed stale guest flags");
+            if (scenario & 2u) {
+                /* Returning to SVC must expose the committed pre-FIQ r8. */
+                arm920t_set_cpsr(cpu_jit, 0xd3u);
+                arm920t_set_cpsr(cpu_ref, 0xd3u);
+                compare_state();
+                CHECK(ref_reg(8u) == bus_ref.io_regs[0][8], "old register bank lost its ALU result");
+            }
+            teardown_pair();
+        }
+    }
+#if defined(__APPLE__) && defined(ARM_JIT_NATIVE_A64)
+    check_host_frames = 0;
+#endif
+}
+
+/* The first access on a later repetition must observe the previous pass's
+ * values, even before this pass has written any register. The post-indexed
+ * store also checks that carried address writeback reaches each callback. */
+static void case_loop_callback_state(void) {
+    const uint32_t program[] = {
+        0xe5910000u, /* LDR    r0,[r1] */
+        0x02988001u, /* ADDSEQ r8,r8,#1 */
+        0xe0a88004u, /* ADC    r8,r8,r4 */
+        0xe0285005u, /* EOR    r5,r8,r5 */
+        0xe2944001u, /* ADDS   r4,r4,#1 */
+        0x10a88005u, /* ADCNE  r8,r8,r5 */
+        0xe2823004u, /* ADD    r3,r2,#4 */
+        0xe4828004u, /* STR    r8,[r2],#4 */
+        0xe2577001u, /* SUBS   r7,r7,#1 */
+        0x1afffff5u, /* BNE    loop */
+        0xeafffffeu,
+    };
+    for (unsigned scenario = 0; scenario < 4u; ++scenario) {
+        current_case = "loop-callback-state";
+        setup_pair();
+        arm920t_set_trace(cpu_ref, 1, NULL, NULL);
+        load_both(program, GP32_ARRAY_COUNT(program));
+        bus_jit.observe_cpu = cpu_jit;
+        bus_ref.observe_cpu = cpu_ref;
+        bus_jit.io_fiq_at = bus_ref.io_fiq_at = (scenario & 2u) ? 3u : 0u;
+        set_reg_both(1u, IO_ADDR);
+        set_reg_both(2u, DATA_ADDR);
+        set_reg_both(4u, 0x7fffffffu);
+        set_reg_both(5u, 0xa5a5a5a5u);
+        set_reg_both(7u, 8u);
+        set_reg_both(8u, 0x12345678u);
+        if (scenario & 1u) run_chunks();
+        else {
+            CHECK(arm920t_run(cpu_jit, 120u) == arm920t_run(cpu_ref, 120u), "loop callback budget");
+            compare_state();
+        }
+        CHECK(bus_ref.io_count == 8u && bus_jit.io_count == 8u, "loop callback count");
+        CHECK(!memcmp(bus_jit.io_regs, bus_ref.io_regs, sizeof(bus_ref.io_regs)),
+              "callback lost previous iteration registers");
+        CHECK(!memcmp(bus_jit.io_cpsr, bus_ref.io_cpsr, sizeof(bus_ref.io_cpsr)),
+              "callback lost previous iteration flags");
+        if (scenario & 2u) {
+            arm920t_set_cpsr(cpu_jit, 0xd3u);
+            arm920t_set_cpsr(cpu_ref, 0xd3u);
+            compare_state();
+            CHECK(ref_reg(8u) == bus_ref.io_regs[2][8], "loop lost old register bank");
+        }
+        teardown_pair();
+    }
+}
+
 static void case_flags(void) {
     current_case = "flags";
     setup_pair();
@@ -488,6 +659,56 @@ static void case_shift(void) {
     CHECK(ref_reg(7) == 0x00000000u, "LSL by 32 result");
     CHECK(ref_reg(10) == 0x00000081u, "ROR by 32 result");
     teardown_pair();
+}
+
+/* S3C2400 user's manual, ARM instruction set p.3-16: PC operands are
+ * instruction+12 for register-specified shifts, versus +8 for immediate
+ * shifts. Golden values also catch raw/decoded/native agreeing incorrectly.
+ * Rs=PC is excluded: the manual forbids PC as the shift-count register. */
+static void case_regshift_pc(void) {
+    static const struct { uint32_t insn, shift, expected, nzcv; } cases[] = {
+        {0xe1a0000fu, 0u, CODE_ADDR+8u,  0x30000000u}, /* MOV r0,pc */
+        {0xe08f0082u, 0u, CODE_ADDR+10u, 0x30000000u}, /* ADD r0,pc,r2,LSL #1 */
+        {0xe28f0010u, 0u, CODE_ADDR+24u, 0x30000000u}, /* ADD r0,pc,#16 (bit4 set) */
+        {0xe1a0011fu, 0u, CODE_ADDR+12u, 0x30000000u}, /* MOV r0,pc,LSL r1 */
+        {0xe1a0011fu, 1u, (CODE_ADDR+12u)*2u, 0x30000000u},
+        {0xe08f0112u, 0u, CODE_ADDR+13u, 0x30000000u}, /* ADD r0,pc,r2,LSL r1 */
+        {0xe08f0112u, 1u, CODE_ADDR+14u, 0x30000000u},
+        {0xe08f011fu, 0u, (CODE_ADDR+12u)*2u, 0x30000000u}, /* both operands PC */
+        {0xe0af0112u, 0u, CODE_ADDR+14u, 0x30000000u}, /* ADC, preserve carry input */
+        {0xe1b0011fu, 0u, CODE_ADDR+12u, 0x30000000u}, /* MOVS, zero keeps C */
+        {0xe1b0017fu,32u, CODE_ADDR+12u, 0x10000000u}, /* MOVS ROR 32, C = bit31 */
+        {0x01a0011fu, 0u, 0x55u, 0x30000000u}         /* failed EQ leaves destination */
+    };
+    for (unsigned native = 0; native < 2; ++native) {
+        for (unsigned i = 0; i < GP32_ARRAY_COUNT(cases); ++i) {
+            current_case = "register-shift-PC";
+            setup_pair();
+            arm920t_set_trace(cpu_ref, 1, NULL, NULL); /* force raw instruction path */
+            arm920t_set_jit(cpu_jit, native);
+            arm920t_set_cpsr(cpu_ref, 0x30000013u);
+            arm920t_set_cpsr(cpu_jit, 0x30000013u);
+            set_reg_both(0u, 0x55u);
+            set_reg_both(1u, cases[i].shift);
+            set_reg_both(2u, 1u);
+            uint32_t program[] = {cases[i].insn, 0xeafffffeu};
+            load_both(program, GP32_ARRAY_COUNT(program));
+            /* Cover the full translated block, then park on B .; a two-step
+             * budget would silently keep a three-op trace on the portable path. */
+            CHECK(prepared_native_run(cpu_jit, 8u) == arm920t_run(cpu_ref, 8u), "PC operand budget");
+            compare_state();
+            CHECK(ref_reg(0u) == cases[i].expected, "raw PC operand golden value");
+            CHECK(arm920t_get_reg(cpu_jit, 0u) == cases[i].expected, "decoded/native PC operand golden value");
+            CHECK((arm920t_get_cpsr(cpu_ref) & 0xf0000000u) == cases[i].nzcv, "PC operand flags");
+            if (native) {
+                gp32_cpu_profile_t profile;
+                arm920t_get_cpu_profile(cpu_jit, &profile);
+                if (profile.supported && profile.native_backend)
+                    CHECK(profile.native_block_calls > 0u, "PC operand native block exercised");
+            }
+            teardown_pair();
+        }
+    }
 }
 
 /* Forward B, BL into a leaf returning via BX lr, a SUBS/BNE loop, a taken BEQ. */
@@ -651,13 +872,18 @@ static void case_bx(void) {
     teardown_pair();
 
     static const uint32_t pipeline[] = {
-        0xE12FFF1Fu, /* BX PC reads the interpreter's pipeline PC */
+        0xE12FFF1Fu, /* BX PC: ARM DDI0100I A4-20 requires PC+8 */
+        0xE3A02055u, /* MOV r2,#0x55: must be skipped */
+        0xE3A030AAu, /* MOV r3,#0xaa: branch destination */
         0xEAFFFFFEu, /* B . */
     };
     current_case = "bx-pc";
     setup_pair();
     load_both(pipeline, GP32_ARRAY_COUNT(pipeline));
     run_chunks();
+    CHECK(ref_reg(2) == 0u, "BX PC must skip the following ARM instruction");
+    CHECK(ref_reg(3) == 0xAAu, "BX PC must reach the second following word");
+    CHECK(arm920t_get_pc(cpu_ref) == CODE_ADDR + 12u, "BX PC reached the wrong target");
     teardown_pair();
 }
 
@@ -781,10 +1007,10 @@ static void case_native_ldm_pc(void) {
             set_mem_both(DATA_ADDR, 0x11223344u);
             set_mem_both(DATA_ADDR + 4u, 0x55667788u);
             set_mem_both(DATA_ADDR + 8u, target | low_bits);
-            CHECK(arm920t_run(cpu_jit, 3u) == arm920t_run(cpu_ref, 3u), "LDM setup budget");
+            CHECK(prepared_native_run(cpu_jit, 3u) == arm920t_run(cpu_ref, 3u), "LDM setup budget");
             compare_state();
             arm920t_reset_cpu_profile(cpu_jit);
-            CHECK(arm920t_run(cpu_jit, 1u) == arm920t_run(cpu_ref, 1u), "LDM return budget");
+            CHECK(prepared_native_run(cpu_jit, 1u) == arm920t_run(cpu_ref, 1u), "LDM return budget");
             compare_state();
             CHECK(ref_reg(9u) == 0u, "return cannot execute fallthrough");
             CHECK(arm920t_get_cpsr(cpu_ref) == 0x200000d3u, "LDM preserves ARM state and flags");
@@ -1012,8 +1238,8 @@ static void case_ldm_pc(void) {
     CHECK(ref_reg(1) == DATA_ADDR + 10u, "unaligned LDM pc writeback");
     teardown_pair();
 
-    /* stmia r1!, {r4, pc} stays on the helper: the stored PC slot must hold
-     * the instruction's pipeline value (its own pc + 8), and LDM reads it. */
+    /* STM stores its instruction address+12, also when a native RAM path
+     * handles the transfer. The following LDR observes that saved value. */
     const uint32_t stm_pc[] = {
         0xE3A0140Cu, 0xE2811A01u,
         0xE3A04044u,                            /* MOV  r4, #0x44              */
@@ -1026,7 +1252,7 @@ static void case_ldm_pc(void) {
     setup_pair();
     load_both(stm_pc, GP32_ARRAY_COUNT(stm_pc));
     run_chunks();
-    CHECK(ref_reg(7) == CODE_ADDR + 0x14u, "STM {..,pc} stored wrong PC value");
+    CHECK(ref_reg(7) == CODE_ADDR + 0x18u, "STM {..,pc} stored wrong PC value");
     CHECK(ref_reg(1) == DATA_ADDR + 8u, "STM pc writeback");
     teardown_pair();
 
@@ -1126,10 +1352,10 @@ static void case_native_ldr_pc(void) {
             set_mem_both(ttb + 0x400u, RAM_BASE | 2u);
             set_mem_both(DATA_ADDR, target | low);
             set_mem_both(DATA_ADDR + 4u, target | low);
-            CHECK(arm920t_run(cpu_jit, 3u) == arm920t_run(cpu_ref, 3u), "LDR pc setup budget");
+            CHECK(prepared_native_run(cpu_jit, 3u) == arm920t_run(cpu_ref, 3u), "LDR pc setup budget");
             compare_state();
             arm920t_reset_cpu_profile(cpu_jit);
-            CHECK(arm920t_run(cpu_jit, 1u) == arm920t_run(cpu_ref, 1u), "LDR pc load budget");
+            CHECK(prepared_native_run(cpu_jit, 1u) == arm920t_run(cpu_ref, 1u), "LDR pc load budget");
             compare_state();
             CHECK(ref_reg(2u) == (variant == 6u ? 0xffffffffu : (target | low)),
                   "primed load observed the data word");
@@ -1429,6 +1655,101 @@ static void run_native_case(void) {
     compare_state();
 }
 
+/* A conditional forward branch inside one trace skips ops without leaving the
+ * block: a byte blit that leaves transparent (zero) source bytes alone, inside
+ * a counted self loop, then a second skip after the loop. Ragged budgets end
+ * runs inside the skipped and joined paths; registers, CPSR, the retired cycle
+ * count and RAM must match the interpreter after every run. */
+static void case_native_internal_forward(void) {
+    static const uint32_t program[] = {
+        0xe4d27001u, /* loop: LDRB r7,[r2],#1 */
+        0xe3977000u, /*       ORRS r7,r7,#0 */
+        0x0a000001u, /*       BEQ skip */
+        0xe5c37000u, /*       STRB r7,[r3] */
+        0xe2866001u, /*       ADD r6,r6,#1 */
+        0xe2833001u, /* skip: ADD r3,r3,#1 */
+        0xe25aa001u, /*       SUBS r10,r10,#1 */
+        0x1afffff7u, /*       BNE loop */
+        0xe3560010u, /*       CMP r6,#16 */
+        0x3a000000u, /*       BLO tail */
+        0xe3a08055u, /*       MOV r8,#0x55 */
+        0xe2899001u, /* tail: ADD r9,r9,#1 */
+        0xeafffffeu, /*       B . */
+    };
+    for (unsigned variant = 0; variant < 3u; ++variant) {
+        current_case = variant == 0u ? "native-internal-forward-mixed" :
+                       variant == 1u ? "native-internal-forward-all-skip" : "native-internal-forward-none";
+        setup_pair();
+        load_both(program, GP32_ARRAY_COUNT(program));
+        for (uint32_t k = 0; k < 64u; k += 4u) {
+            uint32_t w = variant == 1u ? 0u : variant == 2u ? 0x01020304u + k * 0x01010101u :
+                         ((k & 8u) ? 0x00110022u : 0x33004400u) + k;
+            set_mem_both(DATA_ADDR + k, w);
+        }
+        set_reg_both(2u, DATA_ADDR);
+        set_reg_both(3u, DATA_ADDR + 0x100u);
+        set_reg_both(6u, 0u);
+        set_reg_both(8u, 0u);
+        set_reg_both(9u, 0u);
+        set_reg_both(10u, 64u);
+        run_native_case();
+        run_chunks();
+        for (uint32_t budget = 1u; budget < 24u; ++budget) {
+            uint32_t dj = arm920t_run(cpu_jit, budget), dr = arm920t_run(cpu_ref, budget);
+            if (dj != dr) report("internal forward budget", dj, dr);
+            compare_state();
+        }
+        CHECK(ref_reg(10u) == 0u && ref_reg(9u) == 1u, "internal forward loop and tail ran");
+        CHECK(ref_reg(6u) == (variant == 1u ? 0u : variant == 2u ? 64u : 39u) &&
+              ref_reg(8u) == (ref_reg(6u) >= 16u ? 0x55u : 0u), "internal forward skip results");
+        gp32_cpu_profile_t profile;
+        arm920t_get_cpu_profile(cpu_jit, &profile);
+        if (profile.supported && profile.native_backend)
+            CHECK(profile.native_block_calls != 0u, "internal forward case never entered native code");
+        teardown_pair();
+    }
+}
+
+/* Two forward edges share a flags-consuming join. A callback at that join
+ * stops the run, so even UINT32_MAX budgets finish after a bounded prefix. */
+static void case_native_forward_callback(void) {
+    static const uint32_t program[] = {
+        0xe3500000u, /* CMP r0,#0 */
+        0x0a000003u, /* BEQ join */
+        0xe3500001u, /* CMP r0,#1 */
+        0x0a000001u, /* BEQ join */
+        0xe3a05055u, /* MOV r5,#0x55 */
+        0xe2966001u, /* ADDS r6,r6,#1 */
+        0x03a07077u, /* join: MOVEQ r7,#0x77 */
+        0xe5918000u, /* LDR r8,[r1] -> stop callback */
+        0xe3a090eeu, /* must not execute */
+        0xeafffffeu,
+    };
+    static const uint32_t budgets[] = {64u, UINT32_MAX - 1u, UINT32_MAX};
+    for (unsigned v = 0; v < 3u; ++v) {
+        for (unsigned k = 0; k < GP32_ARRAY_COUNT(budgets); ++k) {
+            current_case = "native-forward-callback";
+            setup_pair();
+            load_both(program, GP32_ARRAY_COUNT(program));
+            set_reg_both(0u, v);
+            set_reg_both(1u, IO_ADDR);
+            bus_jit.observe_cpu = cpu_jit;
+            bus_ref.observe_cpu = cpu_ref;
+            bus_jit.mem_probe = bus_ref.mem_probe = 1u;
+            bus_jit.mem_effect = bus_ref.mem_effect = 1u;
+            uint32_t j = arm920t_run(cpu_jit, budgets[k]);
+            uint32_t r = arm920t_run(cpu_ref, budgets[k]);
+            CHECK(j == r && r == 4u + 2u * v, "forward callback retired prefix");
+            compare_state();
+            CHECK(ref_reg(7u) == (v < 2u ? 0x77u : 0u) && ref_reg(9u) == 0u,
+                  "forward flags join and stop");
+            CHECK(bus_jit.mem_calls == 1u && bus_ref.mem_calls == 1u,
+                  "forward callback count");
+            teardown_pair();
+        }
+    }
+}
+
 /* Bus callbacks observe the current instruction's PC+4, even after an inlined
  * return. Cover each MMU-off native bus helper in one caller sequence. */
 static void case_callback_pc(void) {
@@ -1494,7 +1815,7 @@ static void case_unframed_leaf(void) {
                 current_case = ret ? "unframed-leaf-bx" : "unframed-leaf-mov";
                 setup_pair(); load_both(program, GP32_ARRAY_COUNT(program));
                 set_reg_both(0, inputs[input]);
-                CHECK(arm920t_run(cpu_jit, budgets[budget]) ==
+                CHECK(prepared_native_run(cpu_jit, budgets[budget]) ==
                       arm920t_run(cpu_ref, budgets[budget]), "unframed leaf partial budget");
                 compare_state();
                 if (budgets[budget] == 4u) {
@@ -1633,7 +1954,7 @@ static void case_terminal_swi_yield(void) {
     unsigned observed_jit = 0, observed_ref = 0;
     arm920t_set_swi_handler(cpu_jit, terminal_swi_yield, &observed_jit);
     arm920t_set_swi_handler(cpu_ref, terminal_swi_yield, &observed_ref);
-    CHECK(arm920t_run(cpu_jit, 32u) == 1u && arm920t_run(cpu_ref, 32u) == 1u,
+    CHECK(prepared_native_run(cpu_jit, 32u) == 1u && arm920t_run(cpu_ref, 32u) == 1u,
           "terminal callback yields after its instruction");
     compare_state();
     CHECK(observed_jit == 1u && observed_ref == 1u && ref_reg(5u) == 0u &&
@@ -1643,7 +1964,7 @@ static void case_terminal_swi_yield(void) {
     if (profile.supported && profile.native_backend)
         CHECK(profile.native_block_calls == 1u && profile.native_arm_insns == 1u,
               "yield must leave an active native block");
-    CHECK(arm920t_run(cpu_jit, 1u) == arm920t_run(cpu_ref, 1u), "pending IRQ budget");
+    CHECK(prepared_native_run(cpu_jit, 1u) == arm920t_run(cpu_ref, 1u), "pending IRQ budget");
     compare_state();
     CHECK(ref_reg(5u) == 0u && ref_reg(6u) == 0x66u &&
           (arm920t_get_cpsr(cpu_ref) & 31u) == 0x12u,
@@ -1651,13 +1972,167 @@ static void case_terminal_swi_yield(void) {
     teardown_pair();
 }
 
+static void case_stm_base(void) {
+    /* S3C2400 p.3-44: with writeback, a transferred base stores its old
+     * value only in the first slot; later slots store the updated base.
+     * Explicit offsets below are relative to the lowest stored address. */
+    static const struct {
+        unsigned p, u, w, rn, list, count;
+        int before, after, saved;
+    } cases[] = {
+        {0,1,1,1,0x03,2, 0, 8, 8}, /* IA: paired second register */
+        {1,1,1,1,0x03,2,-4, 4, 4}, /* IB */
+        {0,0,1,1,0x03,2, 4,-4,-4}, /* DA */
+        {1,0,1,1,0x03,2, 8, 0, 0}, /* DB */
+        {0,1,1,0,0x03,2, 0, 8, 0}, /* first source keeps old base */
+        {0,1,0,1,0x03,2, 0, 0, 0}, /* no writeback keeps old base */
+        {0,1,1,2,0x07,3, 0,12,12}, /* scalar third slot */
+        {0,1,1,3,0x09,2, 0, 8, 8}, /* sparse pair */
+        {0,1,1,2,0x0f,4, 0,16,16}  /* first lane of second pair */
+    };
+    static const uint32_t starts[] = {DATA_ADDR, RAM_BASE+0x1ffcu, 0x20000u};
+    for (unsigned native=0; native<2u; ++native) {
+        for (unsigned place=0; place<GP32_ARRAY_COUNT(starts); ++place) {
+            uint32_t start=starts[place];
+            for (unsigned i=0; i<GP32_ARRAY_COUNT(cases); ++i) {
+                current_case="STM-base-in-list";
+                setup_pair();
+                arm920t_set_trace(cpu_ref,1,NULL,NULL);
+                arm920t_set_jit(cpu_jit,native);
+                for (unsigned r=0; r<4u; ++r) set_reg_both(r,0x11220000u+r);
+                set_reg_both(cases[i].rn,start+(uint32_t)cases[i].before);
+                uint32_t program[]={block_insn(cases[i].p,cases[i].u,0,cases[i].w,0,cases[i].rn,cases[i].list),0xeafffffeu};
+                load_both(program,GP32_ARRAY_COUNT(program));
+                CHECK(prepared_native_run(cpu_jit,8u)==arm920t_run(cpu_ref,8u),"STM base budget");
+                compare_state();
+                for (unsigned which=0; which<2u; ++which) {
+                    uint8_t *data=bus_ptr(which?&bus_jit:&bus_ref,start,4u*cases[i].count);
+                    unsigned slot=0;
+                    for (unsigned r=0; r<4u; ++r) if (cases[i].list&(1u<<r)) {
+                        uint32_t expected=r==cases[i].rn?start+(uint32_t)cases[i].saved:0x11220000u+r;
+                        CHECK(gp32_ld32le(data+4u*slot)==expected,"STM stored base/ordinary golden value");
+                        ++slot;
+                    }
+                }
+                CHECK(ref_reg(cases[i].rn)==start+(uint32_t)cases[i].after,"STM final writeback");
+                if (native) {
+                    gp32_cpu_profile_t profile;
+                    arm920t_get_cpu_profile(cpu_jit,&profile);
+                    if (profile.supported && profile.native_backend)
+                        CHECK(profile.native_block_calls>0u,"STM base native coverage");
+                }
+                teardown_pair();
+            }
+        }
+    }
+}
+
+/* S3C2400 instruction set pp.3-31,3-37,3-40: STR/STRH/STM store
+ * instruction+12 for R15. Base-register PC reads still use instruction+8. */
+static void case_store_pc(void) {
+    static const struct {
+        uint32_t insn, base_offset, writeback, pc_offset, expected;
+        unsigned half;
+    } cases[] = {
+        {0xe581f000u, 0, 0, 0, CODE_ADDR+12u, 0}, /* STR pc,[r1] */
+        {0xe481f004u, 0, 4, 0, CODE_ADDR+12u, 0}, /* STR pc,[r1],#4 */
+        {0xe1c1f0b0u, 0, 0, 0, CODE_ADDR+12u, 1}, /* STRH pc,[r1] */
+        {0xe8818001u, 0, 0, 4, CODE_ADDR+12u, 0}, /* STMIA r1,{r0,pc} */
+        {0xe8c18001u, 0, 0, 4, CODE_ADDR+12u, 0}, /* STMIA r1,{r0,pc}^ */
+        {0xe9218001u, 8, 0, 4, CODE_ADDR+12u, 0}, /* STMDB r1!,{r0,pc} */
+        {0x0581f000u, 0, 0, 0, 0xa5a5a5a5u, 0},/* failed EQ */
+        {0xe5810000u, 0, 0, 0, 0x12345678u, 0}  /* ordinary source */
+    };
+    for (unsigned native = 0; native < 2u; ++native) {
+        /* BIOS-backed writable test memory lies outside the native RAM
+         * window, exercising rejected direct spans and whole-op helpers. */
+        for (unsigned slow = 0; slow < 2u; ++slow) {
+            uint32_t target = slow ? 0x20000u : DATA_ADDR;
+            for (unsigned i = 0; i < GP32_ARRAY_COUNT(cases); ++i) {
+                current_case = "store-PC";
+                setup_pair();
+                arm920t_set_trace(cpu_ref, 1, NULL, NULL);
+                arm920t_set_jit(cpu_jit, native);
+                arm920t_set_cpsr(cpu_ref, 0x30000013u);
+                arm920t_set_cpsr(cpu_jit, 0x30000013u);
+                set_reg_both(0u, 0x12345678u);
+                set_reg_both(1u, target + cases[i].base_offset);
+                memset(bus_ptr(&bus_ref, target, 12u), 0xa5, 12u);
+                memset(bus_ptr(&bus_jit, target, 12u), 0xa5, 12u);
+                const uint32_t program[] = {cases[i].insn, 0xeafffffeu};
+                load_both(program, GP32_ARRAY_COUNT(program));
+                CHECK(prepared_native_run(cpu_jit, 8u) == arm920t_run(cpu_ref, 8u), "store PC budget");
+                compare_state();
+                for (unsigned which = 0; which < 2u; ++which) {
+                    uint8_t *data = bus_ptr(which ? &bus_jit : &bus_ref, target, 12u);
+                    uint32_t value = cases[i].half ? gp32_ld16le(data) : gp32_ld32le(data + cases[i].pc_offset);
+                    CHECK(value == cases[i].expected, "store PC golden value");
+                    if (cases[i].pc_offset) CHECK(gp32_ld32le(data) == 0x12345678u, "STM ordinary register");
+                    if (cases[i].half) CHECK(gp32_ld16le(data+2u) == 0xa5a5u, "halfword store width");
+                    CHECK(gp32_ld32le(data+8u) == 0xa5a5a5a5u, "store does not overrun");
+                }
+                CHECK(ref_reg(1u) == target + cases[i].writeback, "store base writeback");
+                CHECK(arm920t_get_cpsr(cpu_ref) == 0x30000013u, "store preserves flags and mode");
+                if (native) {
+                    gp32_cpu_profile_t profile;
+                    arm920t_get_cpu_profile(cpu_jit, &profile);
+                    if (profile.supported && profile.native_backend)
+                        CHECK(profile.native_block_calls > 0u && profile.native_arm_insns > 0u,
+                              "store PC native execution");
+                }
+                teardown_pair();
+            }
+        }
+    }
+}
+
+/* ARM920T MCR with R15 transfers instruction+12, not the committed next PC.
+ * Check CP15 explicitly: the general differential comparison excludes it. */
+static void case_mcr_pc(void) {
+    static const struct { uint32_t insn, cpsr, expected; int trap; } cases[] = {
+        {0xee03ff10u, 0x30000013u, CODE_ADDR + 12u, 0}, /* MCR p15,0,pc,c3,c0,0 */
+        {0xee030f10u, 0x30000013u, 0x12345678u, 0},   /* ordinary r0 source */
+        {0x0e03ff10u, 0x30000013u, 0u, 0},           /* failed EQ */
+        {0xee03ff10u, 0x30000010u, 0u, 1},           /* user access traps */
+        {0x0e03ff10u, 0x30000010u, 0u, 0}            /* failed user EQ skips */
+    };
+    for (unsigned native = 0; native < 2u; ++native) {
+        for (unsigned i = 0; i < GP32_ARRAY_COUNT(cases); ++i) {
+            current_case = "MCR-PC";
+            setup_pair();
+            arm920t_set_trace(cpu_ref, 1, NULL, NULL);
+            arm920t_set_jit(cpu_jit, native);
+            arm920t_set_cpsr(cpu_ref, cases[i].cpsr);
+            arm920t_set_cpsr(cpu_jit, cases[i].cpsr);
+            set_reg_both(0u, 0x12345678u);
+            const uint32_t program[] = {cases[i].insn, 0xeafffffeu};
+            load_both(program, GP32_ARRAY_COUNT(program));
+            CHECK(prepared_native_run(cpu_jit, 1u) == arm920t_run(cpu_ref, 1u), "MCR budget");
+            compare_state();
+            CHECK(arm920t_get_cp15(cpu_ref, 3u) == cases[i].expected, "raw MCR source golden value");
+            CHECK(arm920t_get_cp15(cpu_jit, 3u) == cases[i].expected, "decoded/native MCR source golden value");
+            CHECK(arm920t_get_pc(cpu_ref) == (cases[i].trap ? 4u : CODE_ADDR + 4u), "MCR next PC");
+            CHECK(arm920t_get_cpsr(cpu_ref) == (cases[i].trap ? 0x3000009bu : cases[i].cpsr), "MCR flags and mode");
+            if (cases[i].trap)
+                CHECK(ref_reg(14u) == CODE_ADDR + 4u, "MCR exception return address");
+            if (native) {
+                gp32_cpu_profile_t profile;
+                arm920t_get_cpu_profile(cpu_jit, &profile);
+                if (profile.supported && profile.native_backend)
+                    CHECK(profile.native_block_calls == 1u && profile.native_arm_insns == 1u,
+                          "MCR instruction itself executed through native block");
+            }
+            teardown_pair();
+        }
+    }
+}
+
 /* A predicate-failed coprocessor load ends its native block. The classified
  * executor commits PC+4 before it tests the predicate, so the block's failed
  * path must commit the same PC; otherwise the dispatcher re-enters this PC
- * forever and no further guest instruction ever retires. ARM920T has no p8
- * coprocessor and this model keeps the unallocated access a no-op, so a failed
- * predicate has exactly one architectural effect: the PC advances and no
- * writeback happens. */
+ * forever and no further guest instruction ever retires. This GP32 has no p8
+ * coprocessor, so a passing predicate must enter UND; a failed predicate only
+ * advances PC and must not trap or write back. */
 static void case_terminal_coproc_predicate(void) {
     static const struct { const char *name; uint32_t insn, cpsr; int failed; } cases[] = {
         {"ldc-cs-predicate-failed", 0x2cb358a5u, 0x80000053u, 1}, /* C=0 -> CS fails */
@@ -1678,11 +2153,15 @@ static void case_terminal_coproc_predicate(void) {
         arm920t_set_cpsr(cpu_jit, cases[k].cpsr);
         arm920t_set_cpsr(cpu_ref, cases[k].cpsr);
         run_chunks();
-        CHECK(ref_reg(2u) == 0x11u, "terminal coprocessor load must advance the PC");
-        if (cases[k].failed)
-            CHECK(ref_reg(3u) == 0u, "failed predicate must suppress the writeback");
-        CHECK(arm920t_get_pc(cpu_ref) == CODE_ADDR + 12u && arm920t_get_pc(cpu_jit) == CODE_ADDR + 12u,
-              "both backends park after the terminal load");
+        CHECK(ref_reg(2u) == (cases[k].failed ? 0x11u : 0u), "only failed predicate reaches the following marker");
+        CHECK(ref_reg(3u) == 0u, "absent coprocessor must not write back");
+        uint32_t expected_pc = cases[k].failed ? CODE_ADDR + 12u : 4u;
+        CHECK(arm920t_get_pc(cpu_ref) == expected_pc && arm920t_get_pc(cpu_jit) == expected_pc,
+              "both backends park after the skipped load or at the UND vector");
+        if (!cases[k].failed) {
+            CHECK(arm920t_get_cpsr(cpu_ref) == 0x600000dbu, "absent p8 enters UND with preserved flags");
+            CHECK(ref_reg(14u) == CODE_ADDR + 8u, "absent p8 exception return address");
+        }
         gp32_cpu_profile_t profile;
         arm920t_get_cpu_profile(cpu_jit, &profile);
         if (profile.supported && profile.native_backend)
@@ -1850,7 +2329,7 @@ static void case_native_store_forwarding(void) {
                     seeds[seed] ? 0x77u : 7u, seeds[seed] + 6u, DATA_ADDR
                 };
                 for (unsigned i = 0; i < GP32_ARRAY_COUNT(expected); ++i)
-                    CHECK(gp32_ld32le(bus_ref.ram + DATA_ADDR - RAM_BASE + i * 4u) == expected[i],
+                    CHECK(gp32_ld32le(bus_ref.ram + (DATA_ADDR - RAM_BASE) + i * 4u) == expected[i],
                           "store forwarding fixture result");
                 CHECK(ref_reg(7u) == seeds[seed] + 5u && ref_reg(4u) == DATA_ADDR + 32u,
                       "writeback retains the original store source");
@@ -1878,7 +2357,7 @@ static void case_native_store_forwarding(void) {
               bus_jit.mem_pc == CODE_ADDR + 8u && bus_ref.mem_pc == CODE_ADDR + 8u,
               "cold store observes committed source and PC");
         CHECK(ref_reg(5u) == (load ? 0x8877ff80u : 0xabcdef02u) &&
-              gp32_ld32le(bus_ref.ram + DATA_ADDR - RAM_BASE) == (load ? 0xabcdef01u : 0xabcdef02u),
+              gp32_ld32le(bus_ref.ram + (DATA_ADDR - RAM_BASE)) == (load ? 0xabcdef01u : 0xabcdef02u),
               "following ALU rereads the callback-mutated register");
         if (load) CHECK(ref_reg(6u) == 0x8877ff81u, "cold load reaches its live continuation");
         teardown_pair();
@@ -2407,11 +2886,12 @@ static void case_native_data_pc(void) {
     teardown_pair();
 
     const uint32_t regshift[] = {
-        0xe08ff130u, /* ADD pc,pc,r0,LSR r1: r0=0x40, r1=3 -> pc+8+8 */
+        0xe08ff130u, /* ADD pc,pc,r0,LSR r1: r0=0x40, r1=3 -> pc+12+8 */
         0xe3a03011u,
         0xe3a03022u,
         0xe3a03033u,
-        0xe3a05077u, /* landing */
+        0xe3a03044u, /* old PC+8 behavior would incorrectly land here */
+        0xe3a05077u, /* landing at +0x14 */
         0xeafffffeu
     };
     current_case = "data-pc-regshift";
@@ -2818,7 +3298,7 @@ static void case_native_exception_return(void) {
         }
         const uint32_t program[] = {rows[i].insn, 0xe1a0f00fu};
         load_both(program, GP32_ARRAY_COUNT(program));
-        CHECK(arm920t_run(cpu_jit, 1u) == 1u, "native return exact budget");
+        CHECK(prepared_native_run(cpu_jit, 1u) == 1u, "native return exact budget");
         CHECK(arm920t_run(cpu_ref, 1u) == 1u, "reference return exact budget");
         compare_state();
         compare_spsr_banks();
@@ -2841,7 +3321,7 @@ static void case_native_exception_return(void) {
              * the first target instruction, even across the run boundary. */
             arm920t_set_irq(cpu_jit, 1);
             arm920t_set_irq(cpu_ref, 1);
-            CHECK(arm920t_run(cpu_jit, 1u) == 1u, "return IRQ native budget");
+            CHECK(prepared_native_run(cpu_jit, 1u) == 1u, "return IRQ native budget");
             CHECK(arm920t_run(cpu_ref, 1u) == 1u, "return IRQ reference budget");
             compare_state();
             compare_spsr_banks();
@@ -2875,7 +3355,7 @@ static void case_native_psr_continuation(void) {
         static const uint32_t cuts[] = {1u, 1u, 1u, 1u, 2u, 1u};
         for (unsigned i = 0; i < (split ? GP32_ARRAY_COUNT(cuts) : 1u); ++i) {
             uint32_t budget = split ? cuts[i] : 7u;
-            CHECK(arm920t_run(cpu_jit, budget) == budget, "PSR native budget");
+            CHECK(prepared_native_run(cpu_jit, budget) == budget, "PSR native budget");
             CHECK(arm920t_run(cpu_ref, budget) == budget, "PSR reference budget");
             compare_state();
             compare_spsr_banks();
@@ -3001,7 +3481,7 @@ static void case_native_cpsr_same_mode(void) {
             set_cpsr_both(0x123456c0u | m);
             set_reg_both(1u, 0xa55a5a40u | (m == 0x10u ? 0x11u : m));
             set_pc_both(CODE_ADDR);
-            CHECK(arm920t_run(cpu_jit, 1u) == 1u, "CPSR exact native budget");
+            CHECK(prepared_native_run(cpu_jit, 1u) == 1u, "CPSR exact native budget");
             CHECK(arm920t_run(cpu_ref, 1u) == 1u, "CPSR exact reference budget");
             compare_state();
             CHECK(arm920t_get_cpsr(cpu_ref) ==
@@ -3153,7 +3633,7 @@ static void case_native_mapped_block(void) {
             CHECK(gp32_ld32le(bus_ref.ram + 0x10ffcu) == va, "STM base-in-list value");
             CHECK(ref_reg(0) == va + 12u, "STM writeback");
             if (!nonram)
-                CHECK(gp32_ld32le(bus_ref.ram + 0x30004u) == CODE_ADDR + 24u, "STM PC pipeline");
+                CHECK(gp32_ld32le(bus_ref.ram + 0x30004u) == CODE_ADDR + 28u, "STM PC pipeline");
         } else {
             CHECK(ref_reg(0) == 0x11223344u && ref_reg(3) == 0x55667788u,
                   "LDM noncontiguous pages and base-in-list");
@@ -3265,6 +3745,140 @@ static void case_cold_leaf_mapping(void) {
     CHECK(ref_reg(0) == 0x77u, "cache maintenance revalidates collected callee");
     teardown_pair();
 }
+/* A derived lookup alias cannot evict a resident architectural I entry.
+ * I-cache maintenance retains it; explicit I-TLB invalidation replaces it. */
+static void case_aliased_fetch_proof(int tiny) {
+    const uint32_t caller = 0x10001000u, callee = tiny ? 0x10001500u : 0x11001000u;
+    const uint32_t code = RAM_BASE + 0x10000u;
+    const uint32_t leaf = tiny ? code + 0x100u : RAM_BASE + 0x20000u;
+    const uint32_t alternate = RAM_BASE + 0x30000u;
+    const uint32_t ttb = RAM_BASE + 0x4000u, l2a = RAM_BASE + 0x8000u, l2b = RAM_BASE + 0x9000u;
+    const uint32_t setup[] = {0xee02af10u, 0xee01bf10u, 0xee070f15u};
+    current_case = tiny ? "tiny-aliased-fetch-proof" : "aliased-fetch-proof";
+    setup_pair();
+    arm920t_set_trace(cpu_ref, 1, NULL, NULL);
+    load_both(setup, GP32_ARRAY_COUNT(setup));
+    set_mem_both(ttb, 2u);
+    set_mem_both(ttb + 0x300u, RAM_BASE | 2u);
+    set_mem_both(ttb + 0x400u, l2a | 1u);
+    set_mem_both(ttb + 0x440u, l2b | 1u);
+    set_mem_both(l2a + 4u, code | (tiny ? 3u : 2u));
+    set_mem_both(l2b + 4u, leaf | 2u);
+    set_mem_both(code, cache_branch(caller, callee, 1));
+    set_mem_both(code + 4u, 0xe2844001u);
+    set_mem_both(code + 8u, cache_branch(caller + 8u, caller, 0));
+    set_mem_both(leaf, 0xe3a00011u);
+    set_mem_both(leaf + 4u, 0xe12fff1eu);
+    if (tiny) {
+        /* Both tiny VA regions use one coarse-table descriptor; preserve
+         * the caller bytes while changing the callee in the new mapping. */
+        set_mem_both(alternate, cache_branch(caller, callee, 1));
+        set_mem_both(alternate + 4u, 0xe2844001u);
+        set_mem_both(alternate + 8u, cache_branch(caller + 8u, caller, 0));
+    }
+    set_mem_both(alternate + (tiny ? 0x100u : 0u), 0xe3a00022u);
+    set_mem_both(alternate + (tiny ? 0x104u : 4u), 0xe12fff1eu);
+    set_reg_both(10u, ttb); set_reg_both(11u, 1u);
+    run_cache_pair(CODE_ADDR, 2u);
+    run_cache_pair(caller, 100u);
+    run_cache_pair(callee, 1u);
+    set_mem_both((tiny ? l2a : l2b) + 4u, alternate | (tiny ? 3u : 2u));
+    run_cache_pair(CODE_ADDR + 8u, 1u);
+    run_cache_pair(caller, 5u);
+    CHECK(ref_reg(0u) == 0x11u, "derived alias must retain the resident I mapping");
+    cp15_write(cpu_ref,8u,5u,0u,1u,callee);cp15_write(cpu_jit,8u,5u,0u,1u,callee);
+    run_cache_pair(caller,5u);
+    CHECK(ref_reg(0u) == 0x22u,"actual I invalidation exposes changed callee mapping");
+    teardown_pair();
+}
+
+/* A data load before BL cannot evict the independent I mapping. Include tiny
+ * pages and a full-page mapping changed to tiny after code was cached. */
+static void case_data_aliased_fetch_proof(unsigned shape) {
+    const uint32_t caller = 0x10002000u, callee = shape ? 0x11001500u : 0x11001000u;
+    const uint32_t code = RAM_BASE + 0x10000u, leaf = RAM_BASE + 0x20000u;
+    const uint32_t alternate = RAM_BASE + 0x30000u;
+    const uint32_t ttb = RAM_BASE + 0x4000u, l2a = RAM_BASE + 0x8000u, l2b = RAM_BASE + 0x9000u;
+    const uint32_t setup[] = {0xee02af10u, 0xee01bf10u, 0xee070f15u};
+    current_case = shape == 2u ? "data-aliased-split-proof" :
+        shape ? "data-aliased-tiny-proof" : "data-aliased-fetch-proof";
+    setup_pair();
+    arm920t_set_trace(cpu_ref, 1, NULL, NULL);
+    load_both(setup, GP32_ARRAY_COUNT(setup));
+    set_mem_both(ttb, 2u);
+    set_mem_both(ttb + 0x300u, RAM_BASE | 2u);
+    set_mem_both(ttb + 0x400u, l2a | 1u);
+    set_mem_both(ttb + 0x440u, l2b | 1u);
+    set_mem_both(l2a + 8u, code | 2u);
+    set_mem_both(l2a + 4u, (RAM_BASE + 0x50000u) | 2u);
+    set_mem_both(l2b + 4u, leaf | (shape == 1u ? 3u : 2u));
+    uint32_t old_offset = shape == 1u ? 0x100u : shape == 2u ? 0x500u : 0u;
+    uint32_t new_base = shape == 2u ? leaf : alternate;
+    uint32_t new_offset = shape ? 0x100u : 0u;
+    set_mem_both(code, 0xe5965000u);
+    set_mem_both(code + 4u, cache_branch(caller + 4u, callee, 1));
+    set_mem_both(code + 8u, 0xe2844001u);
+    set_mem_both(code + 12u, cache_branch(caller + 12u, caller, 0));
+    set_mem_both(leaf + old_offset, 0xe3a00011u);
+    set_mem_both(leaf + old_offset + 4u, 0xe12fff1eu);
+    set_mem_both(new_base + new_offset, 0xe3a00022u);
+    set_mem_both(new_base + new_offset + 4u, 0xe12fff1eu);
+    set_reg_both(6u, 0x10001000u);
+    set_reg_both(10u, ttb); set_reg_both(11u, 1u);
+    run_cache_pair(CODE_ADDR, 2u);
+    run_cache_pair(caller, 100u);
+    run_cache_pair(callee, 1u);
+    set_mem_both(l2b + 4u, new_base | (shape ? 3u : 2u));
+    run_cache_pair(CODE_ADDR + 8u, 1u);
+    run_cache_pair(caller, 6u);
+    CHECK(ref_reg(0u) == 0x11u, "data refill must retain the independent I mapping");
+    cp15_write(cpu_ref,8u,5u,0u,1u,callee);cp15_write(cpu_jit,8u,5u,0u,1u,callee);
+    run_cache_pair(caller,6u);
+    CHECK(ref_reg(0u) == 0x22u,"actual I invalidation exposes changed callee mapping");
+    teardown_pair();
+}
+
+/* A cold callee must not refill the TLB during translation, ahead of an
+ * earlier LDR that still observes the old resident mapping. */
+static void case_decode_refill_order(void) {
+    const uint32_t caller=0x10002000u, old_va=0x11001000u, third=0x10001000u;
+    const uint32_t code=RAM_BASE+0x10000u, leaf=RAM_BASE+0x20000u;
+    const uint32_t alternate=RAM_BASE+0x30000u, third_code=RAM_BASE+0x50000u;
+    const uint32_t ttb=RAM_BASE+0x4000u,l2a=RAM_BASE+0x8000u,l2b=RAM_BASE+0x9000u;
+    const uint32_t setup[]={0xee02af10u,0xee01bf10u,0xee070f15u};
+    current_case="decode-refill-before-data-read";
+    setup_pair(); arm920t_set_trace(cpu_ref,1,NULL,NULL);
+    load_both(setup,GP32_ARRAY_COUNT(setup));
+    set_mem_both(ttb,2u);set_mem_both(ttb+0x300u,RAM_BASE|2u);
+    set_mem_both(ttb+0x400u,l2a|1u);set_mem_both(ttb+0x440u,l2b|1u);
+    set_mem_both(l2a+8u,code|2u);set_mem_both(l2a+4u,third_code|2u);
+    set_mem_both(l2b+4u,leaf|2u);
+    set_mem_both(code,0xe5965000u); /* LDR r5,[r6], must see old resident mapping */
+    set_mem_both(code+4u,cache_branch(caller+4u,third,1));
+    set_mem_both(code+8u,0xe2844001u);
+    set_mem_both(code+12u,cache_branch(caller+12u,caller+12u,0));
+    set_mem_both(third_code,0xe5987000u); /* LDR keeps this out of ALU-leaf collector */
+    set_mem_both(third_code+4u,0xe12fff1eu);
+    set_mem_both(leaf,0xe3a00011u);set_mem_both(leaf+4u,0xeafffffeu);
+    set_mem_both(alternate,0xe3a00022u);set_mem_both(alternate+4u,0xeafffffeu);
+    set_reg_both(6u,old_va);set_reg_both(8u,RAM_BASE+0x70000u);
+    set_reg_both(10u,ttb);set_reg_both(11u,1u);
+    run_cache_pair(CODE_ADDR,2u);
+    run_cache_pair(old_va,1u); /* Fill I; caller remains cold. */
+    CHECK(rb32(cpu_ref,old_va)==0xe3a00011u && rb32(cpu_jit,old_va)==0xe3a00011u,
+          "prime independent old data mapping before changing descriptor");
+    set_mem_both(l2b+4u,alternate|2u);
+    run_cache_pair(CODE_ADDR+8u,1u);
+    run_cache_pair(caller,6u);
+    CHECK(ref_reg(5u) == 0xe3a00011u, "cold trace decode must preserve the first data mapping");
+    run_cache_pair(caller,6u);
+    CHECK(ref_reg(5u) == 0xe3a00011u,"a real instruction fetch does not evict the old data mapping");
+    cp15_write(cpu_ref,8u,6u,0u,1u,old_va);cp15_write(cpu_jit,8u,6u,0u,1u,old_va);
+    run_cache_pair(caller,6u);
+    CHECK(ref_reg(5u) == 0xe3a00022u,"actual D invalidation exposes changed data mapping");
+    teardown_pair();
+}
+
 static void case_cache_unchanged(void) {
     const uint32_t target = RAM_BASE + 0x3000u;
     current_case = "cache-unchanged-reuse";
@@ -3274,7 +3888,9 @@ static void case_cache_unchanged(void) {
     set_mem_both(target + 8u, 0xeafffffeu);
     set_mem_both(CODE_ADDR + 0x1000u, 0x87654321u);
     set_reg_both(7, CODE_ADDR + 0x1000u);
-    run_cache_pair(CODE_ADDR, 1u); /* warm the terminal CP15 block too */
+    run_cache_pair(CODE_ADDR, 1u); /* first encounter */
+    run_cache_pair(target, 32u);
+    run_cache_pair(CODE_ADDR, 1u); /* mature both tiers before arena snapshot */
     run_cache_pair(target, 32u);
     uint64_t misses = arm920t_get_jit_misses(cpu_jit), used = cache_code_used();
     for (unsigned i = 0; i < 3u; ++i) {
@@ -3832,6 +4448,69 @@ static void superblock_program(uint32_t ret_imm) {
     set_reg_both(13u, DATA_ADDR + 0x100u);
 }
 
+/* A callee may consume inline data through LR, including an unchanged store,
+ * or replace LR with the low half of a long multiply. Its return must use the
+ * new value rather than the continuation recorded when BL was translated. */
+static void case_superblock_lr_writes(void) {
+    static const struct { const char *name; uint32_t insn; } cases[] = {
+        {"trace-lr-ldr",   0xe49e0004u}, /* LDR r0,[lr],#4 */
+        {"trace-lr-str",   0xe48e0004u}, /* STR r0,[lr],#4 */
+        {"trace-lr-ldrh",  0xe0de00b4u}, /* LDRH r0,[lr],#4 */
+        {"trace-lr-strh",  0xe0ce00b4u}, /* STRH r0,[lr],#4 */
+        {"trace-lr-ldm",   0xe8be0001u}, /* LDMIA lr!,{r0} */
+        {"trace-lr-stm",   0xe8ae0001u}, /* STMIA lr!,{r0} */
+        {"trace-lr-umull", 0xe081e392u}, /* UMULL lr,r1,r2,r3 */
+    };
+    for (unsigned ram = 0; ram < 2u; ++ram) {
+        uint32_t base = ram ? RAM_BASE + 0x20000u : CODE_ADDR;
+        for (unsigned k = 0; k < GP32_ARRAY_COUNT(cases); ++k) {
+            for (unsigned bx = 0; bx < 2u; ++bx) {
+                current_case = cases[k].name;
+                setup_pair();
+                arm920t_set_trace(cpu_ref, 1, NULL, NULL);
+                set_reg_both(15u, base);
+                set_mem_both(base, cache_branch(base, base + 0x40u, 1));
+                set_mem_both(base + 4u, 0xe3a05055u); /* skipped inline word */
+                set_mem_both(base + 8u, 0xe3a06066u); /* real continuation */
+                set_mem_both(base + 12u, 0xeafffffeu);
+                set_mem_both(base + 0x40u, cases[k].insn);
+                set_mem_both(base + 0x44u, bx ? 0xe12fff1eu : 0xe1a0f00eu);
+                set_reg_both(0u, 0xe3a05055u); /* stores leave inline bytes intact */
+                set_reg_both(2u, 1u);
+                int thumb_target = bx && k + 1u == GP32_ARRAY_COUNT(cases);
+                set_reg_both(3u, thumb_target ? base + 0x81u : base + 8u);
+                set_mem_both(base + 0x80u, 0xe7fe2666u); /* Thumb MOV r6,#0x66; B . */
+                CHECK(arm920t_run(cpu_jit, 64u) == arm920t_run(cpu_ref, 64u),
+                      "LR mutation return budget");
+                compare_state();
+                CHECK(ref_reg(5u) == 0u && ref_reg(6u) == 0x66u,
+                      "modified LR skips inline word");
+                CHECK(!!(arm920t_get_cpsr(cpu_ref) & 0x20u) == thumb_target,
+                      "BX uses the new LR execution state");
+                teardown_pair();
+            }
+        }
+    }
+    current_case = "trace-lr-conditional-repeated-call";
+    setup_pair();
+    arm920t_set_trace(cpu_ref, 1, NULL, NULL);
+    const uint32_t program[] = {
+        cache_branch(CODE_ADDR, CODE_ADDR + 0x40u, 1),
+        0xe2888001u, 0xe2899001u, 0xe3590003u,
+        cond_branch(11u, CODE_ADDR + 16u, CODE_ADDR), 0xeafffffeu
+    };
+    load_both(program, GP32_ARRAY_COUNT(program));
+    set_mem_both(CODE_ADDR + 0x40u, 0xe3590001u); /* CMP r9,#1 */
+    set_mem_both(CODE_ADDR + 0x44u, 0x049e0004u); /* LDREQ r0,[lr],#4 */
+    set_mem_both(CODE_ADDR + 0x48u, 0xe1a0f00eu);
+    CHECK(arm920t_run(cpu_jit, 200u) == arm920t_run(cpu_ref, 200u),
+          "conditional LR mutation repeated-call budget");
+    compare_state();
+    CHECK(ref_reg(8u) == 2u && ref_reg(9u) == 3u,
+          "only the second call skips its continuation");
+    teardown_pair();
+}
+
 static void case_superblock_trace(void) {
     const uint32_t callee = CODE_ADDR + 0x40u;
     current_case = "superblock-call-return";
@@ -3841,10 +4520,10 @@ static void case_superblock_trace(void) {
         setup_pair();
         arm920t_set_trace(cpu_ref, 1, NULL, NULL);
         superblock_program(1u);
-        CHECK(arm920t_run(cpu_jit, budget) == arm920t_run(cpu_ref, budget),
+        CHECK(prepared_native_run(cpu_jit, budget) == arm920t_run(cpu_ref, budget),
               "superblock short budget");
         compare_state();
-        CHECK(arm920t_run(cpu_jit, 40u) == arm920t_run(cpu_ref, 40u),
+        CHECK(prepared_native_run(cpu_jit, 40u) == arm920t_run(cpu_ref, 40u),
               "superblock remaining budget");
         compare_state();
         CHECK(ref_reg(0u) == 22u, "superblock callee result");
@@ -3860,7 +4539,7 @@ static void case_superblock_trace(void) {
     arm920t_set_trace(cpu_ref, 1, NULL, NULL);
     superblock_program(1u);
     arm920t_reset_cpu_profile(cpu_jit);
-    CHECK(arm920t_run(cpu_jit, 12u) == arm920t_run(cpu_ref, 12u), "superblock single trace run");
+    CHECK(prepared_native_run(cpu_jit, 12u) == arm920t_run(cpu_ref, 12u), "superblock single trace run");
     compare_state();
     {
         gp32_cpu_profile_t profile;
@@ -3898,7 +4577,7 @@ static void case_superblock_trace(void) {
         bus_jit.observe_cpu = cpu_jit;
         bus_ref.observe_cpu = cpu_ref;
         bus_jit.io_return_at = bus_ref.io_return_at = redirect ? 1u : 0u;
-        CHECK(arm920t_run(cpu_jit, 40u) == arm920t_run(cpu_ref, 40u),
+        CHECK(prepared_native_run(cpu_jit, 40u) == arm920t_run(cpu_ref, 40u),
               "superblock guarded return budget");
         compare_state();
         CHECK(ref_reg(0u) == (redirect ? 1u : 8u), "superblock guarded return result");
@@ -3925,7 +4604,7 @@ static void case_superblock_trace(void) {
         set_reg_both(1u, 4u);
         set_reg_both(3u, DATA_ADDR);
         set_reg_both(13u, DATA_ADDR + 0x100u);
-        CHECK(arm920t_run(cpu_jit, 40u) == arm920t_run(cpu_ref, 40u), "superblock LR return");
+        CHECK(prepared_native_run(cpu_jit, 40u) == arm920t_run(cpu_ref, 40u), "superblock LR return");
         compare_state();
         CHECK(ref_reg(1u) == (clobber ? 4u : 12u), "superblock LR return result");
         /* The clobbered link is the absolute 0x50, where the BIOS filler parks. */
@@ -3949,7 +4628,7 @@ static void case_superblock_trace(void) {
         set_mem_both(inner + 0x14u, 0xe2800008u);
         set_mem_both(inner + 0x18u, 0xe8bd8000u);
         set_reg_both(13u, DATA_ADDR + 0x100u);
-        CHECK(arm920t_run(cpu_jit, 40u) == arm920t_run(cpu_ref, 40u), "superblock cross page");
+        CHECK(prepared_native_run(cpu_jit, 40u) == arm920t_run(cpu_ref, 40u), "superblock cross page");
         compare_state();
         CHECK(ref_reg(0u) == 7u, "superblock cross-page result");
     }
@@ -3975,7 +4654,7 @@ static void case_superblock_trace(void) {
         set_mem_both(deep + 0x14u, 0xe2800008u);
         set_mem_both(deep + 0x18u, 0xe8bd8000u);
         set_reg_both(13u, DATA_ADDR + 0x100u);
-        CHECK(arm920t_run(cpu_jit, 60u) == arm920t_run(cpu_ref, 60u), "superblock nested levels");
+        CHECK(prepared_native_run(cpu_jit, 60u) == arm920t_run(cpu_ref, 60u), "superblock nested levels");
         compare_state();
         CHECK(ref_reg(0u) == 7u, "superblock nested result");
         CHECK(ref_reg(13u) == DATA_ADDR + 0x100u, "superblock nested stack balanced");
@@ -3999,7 +4678,7 @@ static void case_superblock_trace(void) {
         set_mem_both(callee + 0x14u, 0xe2800007u);
         set_mem_both(callee + 0x18u, 0xe8bd8000u);
         set_reg_both(13u, DATA_ADDR + 0x100u);
-        CHECK(arm920t_run(cpu_jit, 700u) == arm920t_run(cpu_ref, 700u), "superblock call loop");
+        CHECK(prepared_native_run(cpu_jit, 700u) == arm920t_run(cpu_ref, 700u), "superblock call loop");
         compare_state();
         /* r0 == 0 adds 7 through the taken side exit, the remaining 49
          * repetitions add 3 on the fall-through path: 7 + 49 * 3. */
@@ -4013,7 +4692,7 @@ static void case_superblock_trace(void) {
     setup_pair();
     arm920t_set_trace(cpu_ref, 1, NULL, NULL);
     superblock_program(1u);
-    CHECK(arm920t_run(cpu_jit, 40u) == arm920t_run(cpu_ref, 40u), "superblock pre-modification");
+    CHECK(prepared_native_run(cpu_jit, 40u) == arm920t_run(cpu_ref, 40u), "superblock pre-modification");
     compare_state();
     CHECK(ref_reg(0u) == 22u, "superblock pre-modification result");
     set_mem_both(callee + 0x14u, 0xe2800009u);   /* ADD r0,r0,#9 */
@@ -4021,7 +4700,7 @@ static void case_superblock_trace(void) {
     set_reg_both(0u, 0u);                        /* re-enter the caller entry */
     set_reg_both(13u, DATA_ADDR + 0x100u);
     set_reg_both(15u, CODE_ADDR);
-    CHECK(arm920t_run(cpu_jit, 40u) == arm920t_run(cpu_ref, 40u), "superblock post-modification");
+    CHECK(prepared_native_run(cpu_jit, 40u) == arm920t_run(cpu_ref, 40u), "superblock post-modification");
     compare_state();
     CHECK(ref_reg(0u) == 30u, "superblock modified appended instruction");
     teardown_pair();
@@ -4099,7 +4778,7 @@ static void case_block_callback_yield(void) {
         bus_jit.block_io = bus_ref.block_io = 1u;
         bus_jit.block_effect = bus_ref.block_effect = 4u;
         bus_jit.block_at = bus_ref.block_at = at;
-        CHECK(arm920t_run(cpu_jit, 128u) == 1u && arm920t_run(cpu_ref, 128u) == 1u,
+        CHECK(prepared_native_run(cpu_jit, 128u) == 1u && arm920t_run(cpu_ref, 128u) == 1u,
               "MMIO yield returns one completed instruction");
         compare_state();
         CHECK(bus_jit.block_count == 3u && bus_ref.block_count == 3u,
@@ -4115,7 +4794,7 @@ static void case_block_callback_yield(void) {
         arm920t_get_cpu_profile(cpu_jit, &profile);
         if (profile.supported && profile.native_backend)
             CHECK(profile.native_block_calls == 1u, "yield exercises native helper exit");
-        CHECK(arm920t_run(cpu_jit, 1u) == 1u && arm920t_run(cpu_ref, 1u) == 1u,
+        CHECK(prepared_native_run(cpu_jit, 1u) == 1u && arm920t_run(cpu_ref, 1u) == 1u,
               "yield resumes next instruction");
         compare_state();
         CHECK(ref_reg(6u) == 1u && bus_jit.block_count == 3u, "yield does not replay stores");
@@ -4155,7 +4834,7 @@ static void case_block_callback_exit(void) {
         bus_jit.block_io = bus_ref.block_io = 1u;
         bus_jit.block_effect = bus_ref.block_effect = effect;
         bus_jit.block_at = bus_ref.block_at = at;
-        CHECK(arm920t_run(cpu_jit, 32u) == arm920t_run(cpu_ref, 32u), "block exit budget");
+        CHECK(prepared_native_run(cpu_jit, 32u) == arm920t_run(cpu_ref, 32u), "block exit budget");
         compare_state();
         CHECK(bus_jit.block_count == 3u && bus_ref.block_count == 3u, "all lanes commit once");
         CHECK(!memcmp(bus_jit.block_addr, bus_ref.block_addr, sizeof(bus_ref.block_addr)), "lane ordering");
@@ -4265,7 +4944,7 @@ static void case_checked_access(void) {
         bus_jit.observe_cpu = cpu_jit; bus_ref.observe_cpu = cpu_ref;
         bus_jit.mem_probe = bus_ref.mem_probe = 1u;
         bus_jit.mem_effect = bus_ref.mem_effect = cases[i].effect;
-        uint32_t dj = arm920t_run(cpu_jit, 32u), dr = arm920t_run(cpu_ref, 32u);
+        uint32_t dj = prepared_native_run(cpu_jit, 32u), dr = arm920t_run(cpu_ref, 32u);
         CHECK(dj == dr, "checked-access budget");
         compare_state();
         CHECK(bus_jit.mem_calls == 1u && bus_ref.mem_calls == 1u, "one bus access");
@@ -4277,7 +4956,7 @@ static void case_checked_access(void) {
         if (cases[i].effect == 1u) {
             CHECK(dj == 1u && ref_reg(6u) == 0u && ref_reg(4u) == IO_ADDR + 4u,
                   "yield completes transfer and WB before next instruction");
-            CHECK(arm920t_run(cpu_jit, 1u) == arm920t_run(cpu_ref, 1u), "yield resumes");
+            CHECK(prepared_native_run(cpu_jit, 1u) == arm920t_run(cpu_ref, 1u), "yield resumes");
             compare_state();
             CHECK(bus_jit.mem_calls == 1u && ref_reg(6u) == 1u, "yield never replays access");
         }
@@ -4364,9 +5043,9 @@ static void case_physical_access_once(void) {
                 set_reg_both(10u, ttb); set_reg_both(11u, 1u);
                 bus_jit.observe_cpu = cpu_jit; bus_ref.observe_cpu = cpu_ref;
                 bus_jit.mem_probe = bus_ref.mem_probe = 1u;
-                CHECK(arm920t_run(cpu_jit, 2u) == 2u && arm920t_run(cpu_ref, 2u) == 2u,
+                CHECK(prepared_native_run(cpu_jit, 2u) == 2u && arm920t_run(cpu_ref, 2u) == 2u,
                       "physical access MMU setup");
-                CHECK(arm920t_run(cpu_jit, 32u) == 32u && arm920t_run(cpu_ref, 32u) == 32u,
+                CHECK(prepared_native_run(cpu_jit, 32u) == 32u && arm920t_run(cpu_ref, 32u) == 32u,
                       "physical access execution");
                 compare_state();
                 CHECK(bus_jit.mem_calls == 1u && bus_ref.mem_calls == 1u &&
@@ -4427,9 +5106,9 @@ static void case_checked_access_translation(void) {
     set_mem_both(ttb + 0x400u, IO_ADDR | 2u);
     set_mem_both(0x2acu, 0x76543210u);
     bus_jit.observe_cpu = cpu_jit; bus_ref.observe_cpu = cpu_ref;
-    CHECK(arm920t_run(cpu_jit, 2u) == arm920t_run(cpu_ref, 2u), "MMU setup budget");
+    CHECK(prepared_native_run(cpu_jit, 2u) == arm920t_run(cpu_ref, 2u), "MMU setup budget");
     compare_state();
-    CHECK(arm920t_run(cpu_jit, 32u) == arm920t_run(cpu_ref, 32u), "MMU access budget");
+    CHECK(prepared_native_run(cpu_jit, 32u) == arm920t_run(cpu_ref, 32u), "MMU access budget");
     compare_state();
     CHECK(ref_reg(2u) == 0x0c000004u && ref_reg(3u) == 0xffffu &&
           ref_reg(5u) == 0x76543210u && ref_reg(6u) == UINT32_MAX,
@@ -4481,7 +5160,7 @@ static void case_live_read32(void) {
             unsigned idx = (va >> 12) & 0xfffu;
             state->tlb_valid[idx] = 1; state->tlb_mask[idx] = masks[k];
             state->tlb_va_base[idx] = va & ~masks[k]; state->tlb_pa_base[idx] = IO_ADDR;
-            arm920t_state_apply(cpu_ref, state); arm920t_state_apply(cpu_jit, state);
+            apply_io_fixture_state(cpu_ref, state); apply_io_fixture_state(cpu_jit, state);
             free(state);
             arm920t_set_jit(cpu_jit, 1);
         }
@@ -4491,6 +5170,7 @@ static void case_live_read32(void) {
         bus_ref.observe_cpu = cpu_ref; bus_jit.observe_cpu = cpu_jit;
         arm_live_read32_t reads[] = {{pa, &bus_jit.live_value}};
         CHECK(arm920t_set_live_read32(cpu_jit, reads, 1), "register live word");
+        prepare_native_block(cpu_jit, CODE_ADDR);
         run_cache_pair(CODE_ADDR, 64u);
         CHECK(ref_reg(1) == 0x12345678u && ref_reg(3) == 0xa1b2c3d4u &&
               ref_reg(5) == 0xd4a1b2c3u && ref_reg(6) == 0xd4u && ref_reg(7) == UINT32_MAX,
@@ -4520,6 +5200,43 @@ static void case_live_read32(void) {
     }
 }
 
+
+/* A stale physical target must not authorize a live read when its TLB entry
+ * is invalid. The ordinary unmapped access returns open bus, not the live
+ * value advertised at the stale target. */
+static void case_live_read32_cold_tlb(void) {
+    const uint32_t va = 0x10008000u;
+    const uint32_t program[] = {0xe5942000u, 0xe3a06001u, 0xeafffffeu};
+    current_case = "live-word-cold-TLB";
+    setup_pair();
+    load_both(program, GP32_ARRAY_COUNT(program));
+    arm920t_state_image_t *state = calloc(1, sizeof(*state));
+    if (!state) exit(2);
+    state->r[15] = CODE_ADDR; state->cpsr = 0x13u; state->cp15[1] = 1u;
+    state->tlb_valid[0] = 1; state->tlb_mask[0] = 0xfffu;
+    unsigned idx = (va >> 12) & 0xfffu;
+    state->tlb_va_base[idx] = va; state->tlb_pa_base[idx] = IO_ADDR;
+    state->tlb_mask[idx] = 0xfffu; /* stale fields; valid remains zero */
+    apply_io_fixture_state(cpu_ref, state); apply_io_fixture_state(cpu_jit, state);
+    free(state);
+    arm920t_set_jit(cpu_jit, 1);
+    set_reg_both(4u, va);
+    bus_ref.live_pa = bus_jit.live_pa = IO_ADDR;
+    bus_ref.live_value = bus_jit.live_value = 0x12345678u;
+    arm_live_read32_t reads[] = {{IO_ADDR, &bus_jit.live_value}};
+    CHECK(arm920t_set_live_read32(cpu_jit, reads, 1), "register cold-TLB live word");
+    prepare_native_block(cpu_jit, CODE_ADDR);
+    run_cache_pair(CODE_ADDR, 32u);
+    CHECK(ref_reg(2) == UINT32_MAX && bus_jit.live_reads == 0u && bus_ref.live_reads == 0u,
+          "invalid mapping cannot use its stale live-word target");
+    gp32_cpu_profile_t profile;
+    arm920t_get_cpu_profile(cpu_jit, &profile);
+    if (profile.supported && profile.native_backend == 2u) {
+        CHECK(profile.helper_ld_word == 1u && profile.slow_bail_single_tlbmiss == 1u,
+              "cold TLB bypasses certificates and retains the checked word helper");
+    }
+    teardown_pair();
+}
 
 /* Direct identity-I/O word path (A64): after the RAM guard rejects the
  * address the emitter proves the current full-mask TLB entry (MMU on) or the
@@ -4567,14 +5284,14 @@ static void case_io_direct_word(void) {
                     unsigned idx = (va >> 12) & 0xfffu;
                     state->tlb_valid[idx] = 1; state->tlb_mask[idx] = masks[v];
                     state->tlb_va_base[idx] = va & ~masks[v]; state->tlb_pa_base[idx] = IO_ADDR;
-                    arm920t_state_apply(cpu_ref, state); arm920t_state_apply(cpu_jit, state);
+                    apply_io_fixture_state(cpu_ref, state); apply_io_fixture_state(cpu_jit, state);
                     free(state);
                     arm920t_set_jit(cpu_jit, 1);
                 }
                 set_reg_both(1u, 2u); set_reg_both(2u, 0x12345678u); set_reg_both(4u, base);
                 bus_jit.observe_cpu = cpu_jit; bus_ref.observe_cpu = cpu_ref;
                 bus_jit.mem_probe = bus_ref.mem_probe = 1u;
-                CHECK(arm920t_run(cpu_jit, 32u) == arm920t_run(cpu_ref, 32u), "io-direct budget");
+                CHECK(prepared_native_run(cpu_jit, 32u) == arm920t_run(cpu_ref, 32u), "io-direct budget");
                 compare_state();
                 CHECK(bus_jit.mem_calls == 1u && bus_ref.mem_calls == 1u, "io-direct one bus access");
                 CHECK(bus_ref.mem_addr == pa && bus_jit.mem_addr == pa,
@@ -4617,13 +5334,13 @@ static void case_io_direct_word(void) {
         if (!state) exit(2);
         state->r[15] = CODE_ADDR; state->cpsr = 0x13u; state->cp15[1] = 1u;
         state->tlb_valid[0] = 1; state->tlb_mask[0] = 0xfffu;
-        arm920t_state_apply(cpu_ref, state); arm920t_state_apply(cpu_jit, state);
+        apply_io_fixture_state(cpu_ref, state); apply_io_fixture_state(cpu_jit, state);
         free(state);
         arm920t_set_jit(cpu_jit, 1);
         set_reg_both(2u, 0x12345678u); set_reg_both(4u, va);
         bus_jit.observe_cpu = cpu_jit; bus_ref.observe_cpu = cpu_ref;
         bus_jit.mem_probe = bus_ref.mem_probe = 1u;
-        CHECK(arm920t_run(cpu_jit, 32u) == arm920t_run(cpu_ref, 32u), "io-direct cold TLB budget");
+        CHECK(prepared_native_run(cpu_jit, 32u) == arm920t_run(cpu_ref, 32u), "io-direct cold TLB budget");
         compare_state();
         CHECK(bus_jit.mem_calls == 1u && bus_ref.mem_calls == 1u && bus_ref.mem_addr == va,
               "cold TLB keeps one checked access");
@@ -4660,13 +5377,13 @@ static void case_io_direct_word(void) {
             unsigned idx = (va >> 12) & 0xfffu;
             state->tlb_valid[idx] = 1; state->tlb_mask[idx] = 0xfffu;
             state->tlb_va_base[idx] = va; state->tlb_pa_base[idx] = pa;
-            arm920t_state_apply(cpu_ref, state); arm920t_state_apply(cpu_jit, state);
+            apply_io_fixture_state(cpu_ref, state); apply_io_fixture_state(cpu_jit, state);
             free(state);
             arm920t_set_jit(cpu_jit, 1);
             set_reg_both(2u, 0x12345678u); set_reg_both(4u, va);
             bus_jit.observe_cpu = cpu_jit; bus_ref.observe_cpu = cpu_ref;
             bus_jit.mem_probe = bus_ref.mem_probe = 1u;
-            CHECK(arm920t_run(cpu_jit, 32u) == arm920t_run(cpu_ref, 32u), "io-direct non-IO budget");
+            CHECK(prepared_native_run(cpu_jit, 32u) == arm920t_run(cpu_ref, 32u), "io-direct non-IO budget");
             compare_state();
             CHECK(bus_jit.mem_calls == 1u && bus_ref.mem_calls == 1u && bus_ref.mem_addr == pa,
                   "non-IO mapped target keeps one checked access");
@@ -4709,7 +5426,7 @@ static void case_io_direct_word(void) {
         arm920t_set_cpsr(cpu_jit, 0x1fu); arm920t_set_cpsr(cpu_ref, 0x1fu);
         bus_jit.observe_cpu = cpu_jit; bus_ref.observe_cpu = cpu_ref;
         bus_jit.io_raise_at = bus_ref.io_raise_at = 1u;
-        CHECK(arm920t_run(cpu_jit, 32u) == arm920t_run(cpu_ref, 32u), "io-direct IRQ budget");
+        CHECK(prepared_native_run(cpu_jit, 32u) == arm920t_run(cpu_ref, 32u), "io-direct IRQ budget");
         compare_state();
         CHECK(gp32_ld32le(bus_ptr(&bus_ref, DATA_ADDR, 4u)) == 0u &&
               gp32_ld32le(bus_ptr(&bus_jit, DATA_ADDR, 4u)) == 0u,
@@ -4795,7 +5512,7 @@ static void case_native_const_data(void) {
         } else run_cache_pair(CODE_ADDR, 64u);
         if (!negative) {
             for (unsigned j = 0; j < GP32_ARRAY_COUNT(expected); ++j)
-                CHECK(gp32_ld32le(bus_ref.ram + DATA_ADDR - RAM_BASE + 4u*j) == expected[j],
+                CHECK(gp32_ld32le(bus_ref.ram + (DATA_ADDR - RAM_BASE) + 4u*j) == expected[j],
                       "folded fixture result");
             CHECK(bus_jit.mem_calls == 1u && bus_ref.mem_calls == 1u &&
                   bus_jit.mem_pc == CODE_ADDR + 88u && bus_ref.mem_pc == CODE_ADDR + 88u &&
@@ -4804,9 +5521,9 @@ static void case_native_const_data(void) {
             CHECK(ref_reg(2u) == 0xabcdef01u && ref_reg(11u) == 0xfffffebau,
                   "callback mutation and following forwarded consumer survive");
         } else {
-            CHECK(gp32_ld32le(bus_ref.ram + DATA_ADDR - RAM_BASE) ==
+            CHECK(gp32_ld32le(bus_ref.ram + (DATA_ADDR - RAM_BASE)) ==
                   (carry ? 0x80000001u : 1u), "RRX uses input carry");
-            CHECK(gp32_ld32le(bus_ref.ram + DATA_ADDR - RAM_BASE + 4u) == 32u,
+            CHECK(gp32_ld32le(bus_ref.ram + (DATA_ADDR - RAM_BASE) + 4u) == 32u,
                   "register-controlled shift uses live amount");
             CHECK(ref_reg(4u) == 7u && ref_reg(5u) == 9u && ref_reg(7u) == 9u,
                   "predicates, external operands and carry remain live");
@@ -4869,7 +5586,7 @@ static void case_native_const_chain(void) {
             run_cache_pair(CODE_ADDR, 64u);
         }
         CHECK(ref_reg(1u) == 0x15600000u && ref_reg(2u) == rrx + 0x10u &&
-              gp32_ld32le(bus_ref.ram + DATA_ADDR - RAM_BASE + 0x80u) == rrx + 0x10u,
+              gp32_ld32le(bus_ref.ram + (DATA_ADDR - RAM_BASE) + 0x80u) == rrx + 0x10u,
               "chain final values");
         CHECK(bus_jit.mem_calls == 1u && bus_ref.mem_calls == 1u &&
               bus_jit.mem_pc == CODE_ADDR + 20u && bus_ref.mem_pc == CODE_ADDR + 20u &&
@@ -4881,6 +5598,45 @@ static void case_native_const_chain(void) {
             CHECK(profile.native_block_calls != 0u, "constant-chain native coverage");
         teardown_pair();
     }
+}
+
+static void case_ldm_predicate(void) {
+    /* Conditional LDM/LDR/MOV PC, MSR control, SWI and CP15 maintenance.
+     * Only skipped LDM chains; the other kinds and true conditions retain their exits. */
+    const uint32_t ops[]={0x18b08001u,0x1590f000u,0x11a0f006u,
+                          0x1121f008u,0x1f000000u,0x1e078f15u};
+    const unsigned budgets[]={1u,2u,3u,5u,10u};
+    unsigned cases=0;
+    for(unsigned op=0;op<GP32_ARRAY_COUNT(ops);++op)
+    for(unsigned taken=0;taken<2;++taken)
+    for(unsigned k=0;k<GP32_ARRAY_COUNT(budgets);++k) {
+        current_case="predicated-stop-native-hop";
+        setup_pair();arm920t_set_trace(cpu_ref,1,NULL,NULL);
+        const uint32_t source[]={0xe3a02023u,ops[op],0xe2844003u,0xe58a4000u,0xe1a0f007u};
+        load_both(source,GP32_ARRAY_COUNT(source));
+        set_reg_both(0,DATA_ADDR+0x100u);set_reg_both(6,CODE_ADDR+8u);
+        set_reg_both(7,CODE_ADDR);set_reg_both(8,0xd3u);set_reg_both(10,DATA_ADDR);
+        set_mem_both(DATA_ADDR+0x100u,CODE_ADDR+8u);
+        set_mem_both(DATA_ADDR+0x104u,CODE_ADDR+8u);
+        set_cpsr_both((taken?0u:0x40000000u)|0x53u);
+        prepare_native_block(cpu_jit,CODE_ADDR+8u);prepare_native_block(cpu_jit,CODE_ADDR);
+        arm920t_reset_cpu_profile(cpu_jit);
+        CHECK(arm920t_run(cpu_jit,budgets[k])==arm920t_run(cpu_ref,budgets[k]),"predicated stop budget");
+        compare_state();
+        if(!taken && budgets[k]==10u) {
+            CHECK(ref_reg(4)==6u && arm920t_get_pc(cpu_ref)==CODE_ADDR,"false-condition golden");
+            gp32_cpu_profile_t p;arm920t_get_cpu_profile(cpu_jit,&p);
+            printf("conditional coverage op=%u calls=%llu hops=%llu native=%llu\n",op,
+                (unsigned long long)p.native_block_calls,(unsigned long long)p.native_chain_hops,
+                (unsigned long long)p.native_arm_insns);
+#if defined(ARM_JIT_NATIVE_A64) && ARM_JIT_A64_LINK
+            CHECK(p.native_chain_hops==(op==0u?3u:1u) && p.native_block_calls==(op==0u?1u:3u),
+                  "only skipped LDM uses the new successor hop");
+#endif
+        }
+        teardown_pair();++cases;
+    }
+    printf("predicated-stop cases=%u\n",cases);
 }
 
 int main(int argc, char **argv) {
@@ -4904,22 +5660,61 @@ int main(int argc, char **argv) {
     int psr_only = argc == 2 && !strcmp(argv[1], "--psr");
     int terminal_coproc_only = argc == 2 && !strcmp(argv[1], "--terminal-coproc");
     int selfmove_only = argc == 2 && !strcmp(argv[1], "--self-move-nop");
-    if (argc == 2 && !strcmp(argv[1], "--store-forwarding")) {
+    if (argc == 2 && !strcmp(argv[1], "--ldm-predicate")) {
+        case_ldm_predicate();
+    } else if (argc == 2 && !strcmp(argv[1], "--promotion-access")) {
+        case_live_read32_cold_tlb();
+        case_io_direct_word();
+        case_checked_access();
+        case_checked_access_translation();
+    } else if (argc == 2 && !strcmp(argv[1], "--promotion-fixtures")) {
+        case_live_read32();
+        case_cache_unchanged();
+        case_terminal_swi_yield();
+        case_native_ldm_pc();
+        case_native_ldr_pc();
+        case_native_exception_return();
+        case_native_psr_continuation();
+        case_native_cpsr_same_mode();
+        case_unframed_leaf();
+        case_block_callback_exit();
+        case_block_callback_yield();
+        case_superblock_trace();
+        case_io_direct_word();
+        case_checked_access();
+        case_physical_access_once();
+        case_checked_access_translation();
+    } else if (argc == 2 && !strcmp(argv[1], "--trace-lr")) {
+        case_superblock_lr_writes();
+    } else if (argc == 2 && !strcmp(argv[1], "--alu-callback-state")) {
+        case_alu_callback_state();
+        case_loop_callback_state();
+    } else if (argc == 2 && !strcmp(argv[1], "--store-forwarding")) {
         case_native_store_forwarding();
     } else if (argc == 2 && !strcmp(argv[1], "--sflag-logic")) {
         case_native_sflag_logic();
+    } else if (argc == 2 && !strcmp(argv[1], "--stm-base")) {
+        case_stm_base();
+    } else if (argc == 2 && !strcmp(argv[1], "--store-pc")) {
+        case_store_pc();
+    } else if (argc == 2 && !strcmp(argv[1], "--mcr-pc")) {
+        case_mcr_pc();
+    } else if (argc == 2 && !strcmp(argv[1], "--shift-pc")) {
+        case_regshift_pc();
     } else if (argc == 2 && !strcmp(argv[1], "--const-data")) {
         case_native_const_data();
         case_native_const_chain();
     } else if (argc == 2 && !strcmp(argv[1], "--word-probes")) {
         case_native_read_windows();
         case_live_read32();
+        case_live_read32_cold_tlb();
         case_io_direct_word();
         case_checked_access_translation();
     } else if (argc == 2 && !strcmp(argv[1], "--read-windows")) {
         case_native_read_windows();
     } else if (argc == 2 && !strcmp(argv[1], "--live-read32")) {
         case_live_read32();
+        case_live_read32_cold_tlb();
         case_io_direct_word();
     } else if (argc == 2 && !strcmp(argv[1], "--ram-page-tags")) {
         case_native_mapped_pages();
@@ -4977,8 +5772,20 @@ int main(int argc, char **argv) {
         case_cache_unchanged();
         case_cache_modified(0);
         case_cache_modified(1);
+        case_aliased_fetch_proof(0);
+        case_aliased_fetch_proof(1);
+        case_data_aliased_fetch_proof(0);
+        case_data_aliased_fetch_proof(1);
+        case_data_aliased_fetch_proof(2);
+        case_decode_refill_order();
     } else if (cold_only) {
         case_cold_leaf_mapping();
+        case_aliased_fetch_proof(0);
+        case_aliased_fetch_proof(1);
+        case_data_aliased_fetch_proof(0);
+        case_data_aliased_fetch_proof(1);
+        case_data_aliased_fetch_proof(2);
+        case_decode_refill_order();
     } else if (nested_only) {
         case_nested_framed_leaf();
     } else if (portable_only) {
@@ -5010,8 +5817,10 @@ int main(int argc, char **argv) {
     } else if (ram_end_only) {
         case_native_mapped_ram_end();
     } else {
+    case_ldm_predicate();
     case_native_read_windows();
     case_live_read32();
+    case_live_read32_cold_tlb();
     case_io_direct_word();
     case_terminal_swi_yield();
     case_terminal_coproc_predicate();
@@ -5025,6 +5834,12 @@ int main(int argc, char **argv) {
     case_native_mapped_ram_end();
     case_cache_unchanged();
     case_cold_leaf_mapping();
+    case_aliased_fetch_proof(0);
+    case_aliased_fetch_proof(1);
+    case_data_aliased_fetch_proof(0);
+    case_data_aliased_fetch_proof(1);
+    case_data_aliased_fetch_proof(2);
+    case_decode_refill_order();
     case_cache_modified(0);
     case_cache_modified(1);
     case_native_alu_region();
@@ -5059,8 +5874,14 @@ int main(int argc, char **argv) {
     case_block_callback_exit();
     case_loop_callback_trace();
     portable_callbacks = 0;
+    case_alu_callback_state();
+    case_loop_callback_state();
     case_flags();
     case_shift();
+    case_regshift_pc();
+    case_mcr_pc();
+    case_store_pc();
+    case_stm_base();
     case_branch();
     case_branch_chain();
     case_forward_loop();
@@ -5074,6 +5895,8 @@ int main(int argc, char **argv) {
     case_seeded();
     case_budget();
     case_direct_dispatch();
+    case_native_internal_forward();
+    case_native_forward_callback();
     case_loop_irq_fence();
     case_loop_smc_epoch();
     case_loop_callback_flush();
@@ -5081,6 +5904,7 @@ int main(int argc, char **argv) {
     case_loop_framed_leaf();
     case_nested_framed_leaf();
     case_superblock_trace();
+    case_superblock_lr_writes();
     }
     current_case = "summary";
     if (jit_events == 0)
@@ -5091,6 +5915,13 @@ int main(int argc, char **argv) {
         return 1;
     }
     printf("PASS: arm jit differential (%s), jit events=%" PRIu64 " fallbacks=%" PRIu64 "\n",
+           (argc == 2 && !strcmp(argv[1], "--ldm-predicate")) ? "ldm-predicate" :
+           (argc == 2 && !strcmp(argv[1], "--stm-base")) ? "STM-base" :
+           (argc == 2 && !strcmp(argv[1], "--store-pc")) ? "store-PC" :
+           (argc == 2 && !strcmp(argv[1], "--mcr-pc")) ? "MCR-PC" :
+           (argc == 2 && !strcmp(argv[1], "--shift-pc")) ? "register-shift-PC" :
+           (argc == 2 && !strcmp(argv[1], "--trace-lr")) ? "trace-lr" :
+           (argc == 2 && !strcmp(argv[1], "--alu-callback-state")) ? "alu-callback-state" :
            (argc == 2 && !strcmp(argv[1], "--word-probes")) ? "word-probes" :
            (argc == 2 && !strcmp(argv[1], "--read-windows")) ? "read-windows" :
            (argc == 2 && !strcmp(argv[1], "--ram-page-tags")) ? "ram-page-tags" :
@@ -5103,4 +5934,54 @@ int main(int argc, char **argv) {
            (argc == 2 && !strcmp(argv[1], "--carry-arith")) ? "carry-arith" : selfmove_only ? "self-move-nop" : psr_only ? "spsr" : poll_only ? "poll-progress" : io_only ? "io-direct" : access_only ? "checked-access" : pairs_only ? "block-pairs/fences" : portable_only ? "portable-callback" : block_only ? "block-callback" : irq_only ? "callback-IRQ" : chain_only ? "branch-chain" : forward_only ? "forward-loop" : callback_only ? "callback-PC" : (leaf_only ? "unframed-leaf" : (ram_end_only ? "mapped-page-RAM-end" : (loops_only ? "loop-fences" : "flags/shift/branch/mem/half/block/mul/seeded/budget/loop-fences"))),
            jit_events, jit_fallbacks);
     return 0;
+}
+
+/* Test-only fixture preparation, not a guest warm-up. Backend tests must
+ * execute their exact instruction in native code without replaying its MMIO,
+ * changing privilege state or changing their expected register results.
+ * Default cold/promotion policy is checked separately with real guest runs. */
+static void prepare_native_block(arm920t_t *c, uint32_t pc) {
+#if ARM920T_NATIVE_BACKEND
+    if (c->jit_enabled && !thumb(c) && !c->trace && !c->halted) {
+        uint8_t architectural[offsetof(arm920t_t, tlb_va_base)];
+        memcpy(architectural,c,sizeof(architectural));
+        uint64_t cycles=c->cycles_total;
+        arm_jit_block_t *b=NULL;
+        if(c->jit_blocks) {
+            unsigned slot=arm_jit_block_index(pc);
+            for(unsigned way=0;way<ARM_JIT_BLOCK_WAYS;++way) {
+                arm_jit_block_t *try=&c->jit_blocks[slot+way];
+                if(try->valid && try->generation==c->jit_generation && try->tag_pc==pc && try->tag_cache_epoch==c->jit_cache_epoch) {b=try;break;}
+            }
+        }
+        if(!b) b=arm_jit_translate(c,pc);
+        if(b && !b->poll_backedge && !b->native) {
+            if(b->native_ok==4u) b->native_ok=0u;
+            if(arm_jit_lazy_compile(c,b)) {
+                b=arm_jit_translate(c,pc);
+                if(b && b->native_ok==4u) b->native_ok=0u;
+                if(b) CHECK(!arm_jit_lazy_compile(c,b),"fixture repeated native recycle");
+            }
+            CHECK(b && b->native,"fixture failed to prepare native code");
+        }
+        CHECK(c->cycles_total==cycles && !memcmp(architectural,c,sizeof(architectural)),"fixture changed architectural state before native run");
+    }
+#endif
+}
+static uint32_t prepared_native_run(arm920t_t *c, uint32_t budget) {
+    if(budget) prepare_native_block(c,c->r[15]&~3u);
+    return arm920t_run(c,budget);
+}
+
+static void apply_io_fixture_state(arm920t_t *c,const arm920t_state_image_t *st) {
+    /* These I/O fixtures specify a resident identity BIOS code page. The
+     * legacy wire image now seeds only D mappings, so seed I explicitly. */
+    CHECK(st->tlb_valid[0] && st->tlb_va_base[0]==0 && st->tlb_pa_base[0]==0 &&
+          st->tlb_mask[0]==0xfffu,"fixture specifies resident BIOS code");
+    arm920t_state_apply(c,st);
+    itlb_store(c,0u,0u,0xfffu);
+    /* These fixtures exercise hot data probes, not the legacy import's cold
+     * derived lookup policy. Invalid data slots intentionally stay cold. */
+    for(unsigned i=0;i<4096u;++i)if(st->tlb_valid[i])
+        (void)mmu_translate(c,st->tlb_va_base[i]);
 }
