@@ -61,7 +61,8 @@ below the picture. A is above and to the right of B. Slide across the D-pad for
 diagonals. Rotating the device releases held touch input.
 
 The ellipsis opens the menu. In landscape it disappears after three seconds;
-tap its position at the upper center of the picture to open the menu again.
+tap its position or the nearby area at the upper center of the picture to open
+the menu again. Its touch target is larger than the visible icon.
 Rotation briefly shows the icon. Save/load success messages disappear after
 two seconds; errors stay visible.
 

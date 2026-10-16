@@ -312,7 +312,7 @@ static NSString *const GP32DefaultBootModeKey = @"GP32BootMode";
     button.accessibilityLabel = @"Menu";
     button.accessibilityHint = @"Pause the game and open options.";
     /* Fade the artwork, not the button: alpha-zero UIViews stop hit testing.
-     * The clear 44-point target must still open the menu after the icon hides. */
+     * The clear target must still open the menu after the icon hides. */
     _menuGlyph = [[UIView alloc] initWithFrame:CGRectMake(6, 6, 32, 32)];
     _menuGlyph.userInteractionEnabled = NO;
     _menuGlyph.backgroundColor = [UIColor colorWithWhite:0.15 alpha:0.8];
@@ -479,9 +479,11 @@ static NSString *const GP32DefaultBootModeKey = @"GP32BootMode";
                                                   pictureWidth, pictureHeight));
     _statusLabel.frame = CGRectInset(_pictureView.frame, 16, 16);
     if (landscape) {
-        _menuButton.frame = CGRectMake(CGRectGetMidX(_pictureView.frame) - 22,
-                                      CGRectGetMinY(_pictureView.frame), 44, 44);
+        _menuButton.frame = CGRectMake(CGRectGetMidX(_pictureView.frame) - 36,
+                                      CGRectGetMinY(_pictureView.frame), 72, 56);
     }
+    /* Keep the 32-point artwork in place while widening the clear touch target. */
+    _menuGlyph.frame = CGRectMake((CGRectGetWidth(_menuButton.bounds) - 32) / 2, 6, 32, 32);
     if (layoutChanged) [self revealMenuButton];
 }
 

@@ -11,6 +11,7 @@ BIOS and game files, supports in-game card saves and save states, and provides
 touch, keyboard and controller input. Portrait keeps controls below the picture;
 landscape separates the shoulder buttons from Start/Select. The menu icon hides
 during landscape play and can be opened by tapping its position.
+Its enlarged touch target remains active after the icon hides.
 
 The IPA is intended for SideStore or another compatible signing tool. It has no
 publisher signature, provisioning profile, BIOS, games or saves. The complete
