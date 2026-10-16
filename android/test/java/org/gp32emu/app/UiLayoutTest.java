@@ -94,17 +94,21 @@ public final class UiLayoutTest extends Instrumentation {
         play.left += playView.getPaddingLeft(); play.top += playView.getPaddingTop();
         play.right -= playView.getPaddingRight(); play.bottom -= playView.getPaddingBottom();
         check(play.contains(menu) && play.contains(picture) && play.contains(pad), "menu, picture and controls respect safe insets");
-        check(!Rect.intersects(menu, picture) && !Rect.intersects(menu, pad), "menu is outside picture and controls");
-        int gap = Math.max(Math.max(pad.left - menu.right, menu.left - pad.right),
-                Math.max(pad.top - menu.bottom, menu.top - pad.bottom));
         float density = activity.getResources().getDisplayMetrics().density;
-        check(gap >= Math.round(8 * density) && menu.width() >= Math.round(48 * density)
-                && menu.height() >= Math.round(48 * density), "separate accessible menu target");
+        boolean landscape = activity.getResources().getConfiguration().orientation == Configuration.ORIENTATION_LANDSCAPE;
+        if (landscape) {
+            check(picture.left == play.left && picture.right == play.right, "landscape has no menu side rail");
+            check(Math.abs(menu.exactCenterX() - play.exactCenterX()) <= 1 && menu.top < play.centerY(), "landscape menu is at upper center");
+        } else check(!Rect.intersects(menu, picture), "portrait menu remains above picture");
+        check(menu.width() >= Math.round(48 * density) && menu.height() >= Math.round(48 * density), "accessible menu target");
         Rect video = new Rect();
         activity.touchPad.videoBounds(video, activity.touchPad.getWidth(), activity.touchPad.getHeight(), true);
+        RectF localMenu = new RectF(menu); localMenu.offset(-pad.left, -pad.top);
         for (int button : new int[]{InputState.UP, InputState.DOWN, InputState.LEFT, InputState.RIGHT,
-                InputState.A, InputState.B, InputState.L, InputState.R, InputState.START, InputState.SELECT})
+                InputState.A, InputState.B, InputState.L, InputState.R, InputState.START, InputState.SELECT}) {
             check(!RectF.intersects(new RectF(video), activity.touchPad.boundsFor(button)), "video excludes every touch control");
+            check(!RectF.intersects(localMenu, activity.touchPad.boundsFor(button)), "menu target excludes every touch control");
+        }
         Rect full = new Rect();
         activity.touchPad.videoBounds(full, activity.touchPad.getWidth(), activity.touchPad.getHeight(), false);
         check(full.contains(video) && full.height() > video.height(), "hidden controls reclaim their space");
@@ -128,8 +132,8 @@ public final class UiLayoutTest extends Instrumentation {
             pointer(MotionEvent.ACTION_CANCEL, menu);
             check(activity.input.mask() == 0 && !menuShowing(), "cancel releases gesture without pausing");
             if (activity.getResources().getConfiguration().orientation == Configuration.ORIENTATION_LANDSCAPE) {
-                // Exercise the empty rail just outside the visible button.
-                menu[0] -= ((View)field("menuButton")).getWidth() / 2f
+                // Exercise the clear target outside the icon, even when hidden.
+                menu[0] -= ((View)field("menuGlyph")).getWidth() / 2f
                         + 4 * activity.getResources().getDisplayMetrics().density;
             }
             pointer(MotionEvent.ACTION_DOWN, menu);
@@ -179,9 +183,14 @@ public final class UiLayoutTest extends Instrumentation {
             if (separate) gestures();
             ui(() -> pointer(MotionEvent.ACTION_DOWN, padPoint(InputState.A)));
             rotate(true); capture(prefix + "-landscape", true);
+            SystemClock.sleep(3400); waitForIdleSync();
+            ui(() -> check(((View)field("menuGlyph")).getAlpha() == 0f
+                    && ((View)field("menuButton")).getVisibility() == View.VISIBLE, "landscape icon fully hides but target remains"));
+            capture(prefix + "-hidden-menu", true);
             if (separate) gestures();
+            ui(() -> check(((View)field("menuGlyph")).getAlpha() == 1f, "closing menu briefly reveals icon"));
             ui(() -> activity.setTouchEnabled(false)); waitForIdleSync();
-            if (separate) ui(() -> check(!Rect.intersects(bounds((View)field("menuButton")), bounds((View)field("screen"))), "hidden pad retains separate menu"));
+            if (separate) ui(() -> check(((View)field("menuButton")).isClickable(), "hidden pad retains menu access"));
             capture(prefix + "-gamepad", true);
             ui(() -> activity.setTouchEnabled(true));
             rotate(false); if (separate) gestures();

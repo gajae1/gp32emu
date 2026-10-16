@@ -26,7 +26,6 @@ import android.view.DisplayCutout;
 import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
-import android.view.TouchDelegate;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
 import android.view.View;
@@ -71,7 +70,8 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private SurfaceView screen;
     private FrameLayout play;
     private FrameLayout gameArea;
-    private Button menuButton;
+    private FrameLayout menuButton;
+    private TextView menuGlyph;
     private boolean menuTouchBlocked;
     private LinearLayout home;
     private TextView biosStatus;
@@ -93,6 +93,11 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private volatile int pauseSequence;
     private AlertDialog menu;
     private AudioManager audioManager;
+    private final Runnable hideMenuGlyph = () -> {
+        if (getResources().getConfiguration().orientation == Configuration.ORIENTATION_LANDSCAPE
+                && home.getVisibility() != View.VISIBLE && openDialogs == 0)
+            menuGlyph.animate().alpha(0f).setDuration(250).start();
+    };
 
     private static final class StateRequest {
         final boolean save;
@@ -133,14 +138,17 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         touchPad.setHaptics(prefs.getBoolean("haptics", true));
         gameArea.addView(touchPad, new FrameLayout.LayoutParams(-1, -1));
         play.addView(gameArea, new FrameLayout.LayoutParams(-1, -1));
-        menuButton = new Button(this);
-        menuButton.setText("\u2261");
-        menuButton.setTextSize(22);
-        menuButton.setTextColor(Color.WHITE);
+        menuButton = new FrameLayout(this);
         menuButton.setContentDescription(getString(R.string.menu));
-        menuButton.setBackground(rounded(Color.argb(110, 26, 34, 46), 12));
-        menuButton.setAlpha(0.9f);
-        menuButton.setPadding(0, 0, 0, 0);
+        menuButton.setFocusable(true);
+        menuGlyph = new TextView(this);
+        menuGlyph.setText("\u2261");
+        menuGlyph.setTextSize(22);
+        menuGlyph.setTextColor(Color.WHITE);
+        menuGlyph.setGravity(Gravity.CENTER);
+        menuGlyph.setBackground(rounded(Color.argb(110, 26, 34, 46), 12));
+        menuGlyph.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        menuButton.addView(menuGlyph, new FrameLayout.LayoutParams(dp(48), dp(48)));
         menuButton.setOnTouchListener((view, event) -> {
             if (event.getActionMasked() == MotionEvent.ACTION_DOWN) menuTouchBlocked = false;
             // A second finger or a slide out of the controls must not pause play.
@@ -149,14 +157,6 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             return menuTouchBlocked;
         });
         menuButton.setOnClickListener(v -> showMenu());
-        menuButton.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) -> {
-            Rect target = new Rect();
-            menuButton.getHitRect(target);
-            // Expand into the empty menu rail, never into the game controls.
-            if (getResources().getConfiguration().orientation == Configuration.ORIENTATION_LANDSCAPE)
-                target.inset(-dp(8), -dp(8));
-            play.setTouchDelegate(new TouchDelegate(target, menuButton));
-        });
         play.addView(menuButton, new FrameLayout.LayoutParams(dp(48), dp(48)));
         placeMenuButton(getResources().getConfiguration());
         play.setOnApplyWindowInsetsListener((view, insets) -> { padForInsets(view, insets); return insets; });
@@ -346,12 +346,14 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         uiHold = true; signal();
         refreshHome();
         home.setVisibility(View.VISIBLE);
+        revealMenuButton();
         setFullscreen(false);
     }
     void showGame() {
         home.setVisibility(View.GONE);
         setFullscreen(true);
         uiHold = openDialogs > 0;
+        revealMenuButton();
         signal();
     }
     @SuppressWarnings("deprecation")
@@ -419,6 +421,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private void present(AlertDialog dialog) {
         clearInput();
         ++openDialogs;
+        revealMenuButton();
         uiHold = true; signal();
         dialog.setOnKeyListener((d, code, event) -> {
             if ((code == KeyEvent.KEYCODE_BUTTON_MODE || code == KeyEvent.KEYCODE_MENU) && event.getAction() == KeyEvent.ACTION_UP) {
@@ -429,7 +432,9 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         });
         dialog.setOnDismissListener(d -> {
             if (d == menu) menu = null;
-            if (--openDialogs == 0 && home.getVisibility() != View.VISIBLE) { uiHold = false; setFullscreen(true); signal(); }
+            if (--openDialogs == 0 && home.getVisibility() != View.VISIBLE) {
+                uiHold = false; setFullscreen(true); revealMenuButton(); signal();
+            }
         });
         dialog.show();
     }
@@ -810,14 +815,18 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         focusGranted = audioManager.requestAudioFocus(audioFocus, AudioManager.STREAM_MUSIC,
                 AudioManager.AUDIOFOCUS_GAIN) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED;
         if (home.getVisibility() != View.VISIBLE) setFullscreen(true);
+        revealMenuButton();
         signal();
     }
     @Override protected void onPause() {
+        menuButton.removeCallbacks(hideMenuGlyph);
+        menuGlyph.animate().cancel();
         paused = true; ++pauseSequence; clearInput(); signal();
         audioManager.abandonAudioFocus(audioFocus); focusGranted = false;
         super.onPause();
     }
     @Override protected void onDestroy() {
+        menuButton.removeCallbacks(hideMenuGlyph);
         stopped = true; clearInput(); signal(); importer.shutdown();
         super.onDestroy();
     }
@@ -829,7 +838,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     @Override public void onWindowFocusChanged(boolean hasFocus) {
         super.onWindowFocusChanged(hasFocus);
         if (!hasFocus) clearInput();
-        else if (home.getVisibility() != View.VISIBLE) setFullscreen(true);
+        else if (home.getVisibility() != View.VISIBLE) { setFullscreen(true); revealMenuButton(); }
     }
     @Override public void surfaceCreated(SurfaceHolder holder) { surfaceReady = true; signal(); }
     @Override public void surfaceChanged(SurfaceHolder holder, int format, int width, int height) { clearInput(); signal(); }
@@ -842,17 +851,33 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         else if (gameLoaded) showGame();
         else finish();
     }
-    /** A separate rail keeps the menu outside both the picture and touch pad.
-     *  Pointer streams that begin on the pad cannot activate this sibling. */
+    /** Fade only the artwork: the clear target remains available during play. */
+    private void revealMenuButton() {
+        menuButton.removeCallbacks(hideMenuGlyph);
+        menuGlyph.animate().cancel();
+        menuGlyph.setAlpha(1f);
+        if (!paused && home != null && home.getVisibility() != View.VISIBLE && openDialogs == 0
+                && getResources().getConfiguration().orientation == Configuration.ORIENTATION_LANDSCAPE)
+            menuButton.postDelayed(hideMenuGlyph, 3000);
+    }
+
     private void placeMenuButton(Configuration config) {
         boolean landscape = config.orientation == Configuration.ORIENTATION_LANDSCAPE;
         FrameLayout.LayoutParams area = (FrameLayout.LayoutParams)gameArea.getLayoutParams();
-        area.setMarginStart(landscape ? dp(64) : 0);
+        area.setMarginStart(0);
         area.topMargin = landscape ? 0 : dp(64);
         gameArea.setLayoutParams(area);
         FrameLayout.LayoutParams p = (FrameLayout.LayoutParams)menuButton.getLayoutParams();
-        p.gravity = landscape ? Gravity.START | Gravity.CENTER_VERTICAL : Gravity.TOP | Gravity.END;
-        p.setMargins(dp(8), dp(8), dp(8), dp(8));
+        p.width = dp(landscape ? 72 : 48);
+        p.height = dp(landscape ? 56 : 48);
+        p.gravity = Gravity.TOP | (landscape ? Gravity.CENTER_HORIZONTAL : Gravity.END);
+        p.setMargins(0, dp(8), landscape ? 0 : dp(8), 0);
         menuButton.setLayoutParams(p);
+        FrameLayout.LayoutParams glyph = (FrameLayout.LayoutParams)menuGlyph.getLayoutParams();
+        glyph.width = glyph.height = dp(landscape ? 32 : 48);
+        glyph.gravity = Gravity.TOP | Gravity.CENTER_HORIZONTAL;
+        glyph.topMargin = landscape ? dp(6) : 0;
+        menuGlyph.setLayoutParams(glyph);
+        revealMenuButton();
     }
 }

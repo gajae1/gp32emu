@@ -36,7 +36,7 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGE = "org.gp32emu.app"
 VERSION = "1.1.0"
-VERSION_CODE = 6
+VERSION_CODE = 7
 MIN_API, TARGET_API = 23, 35
 ANDROID_NS = "http://schemas.android.com/apk/res/android"
 ABIS = {
