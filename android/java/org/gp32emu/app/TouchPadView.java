@@ -231,9 +231,10 @@ public final class TouchPadView extends View {
             if (pointer != released) next |= hit(event.getX(pointer), event.getY(pointer));
         }
         if (haptics && (next & ~touchMask) != 0) performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY);
+        boolean changed = next != touchMask;
         touchMask = next;
         input.setTouch(next);
-        invalidate();
+        if (changed) invalidate();
         return true;
     }
 
