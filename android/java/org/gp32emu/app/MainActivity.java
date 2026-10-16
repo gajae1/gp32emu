@@ -26,6 +26,7 @@ import android.view.DisplayCutout;
 import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
+import android.view.TouchDelegate;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
 import android.view.View;
@@ -148,6 +149,14 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             return menuTouchBlocked;
         });
         menuButton.setOnClickListener(v -> showMenu());
+        menuButton.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) -> {
+            Rect target = new Rect();
+            menuButton.getHitRect(target);
+            // Expand into the empty menu rail, never into the game controls.
+            if (getResources().getConfiguration().orientation == Configuration.ORIENTATION_LANDSCAPE)
+                target.inset(-dp(8), -dp(8));
+            play.setTouchDelegate(new TouchDelegate(target, menuButton));
+        });
         play.addView(menuButton, new FrameLayout.LayoutParams(dp(48), dp(48)));
         placeMenuButton(getResources().getConfiguration());
         play.setOnApplyWindowInsetsListener((view, insets) -> { padForInsets(view, insets); return insets; });

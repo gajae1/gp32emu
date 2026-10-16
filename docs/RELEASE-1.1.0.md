@@ -12,6 +12,8 @@ touch, keyboard and controller input. Portrait keeps controls below the picture;
 landscape separates the shoulder buttons from Start/Select. The menu icon hides
 during landscape play and can be opened by tapping its position.
 Its enlarged touch target remains active after the icon hides.
+Hiding touch controls reclaims their screen space, including the Start/Select
+row, while preserving the game's 4:3 aspect ratio and hardware input.
 
 The IPA is intended for SideStore or another compatible signing tool. It has no
 publisher signature, provisioning profile, BIOS, games or saves. The complete
@@ -43,6 +45,7 @@ Audio and lifecycle changes include:
 ## Android
 
 - Moves the menu button outside the game picture and touch controls.
+- Enlarges the landscape menu's touch target without enlarging its icon.
 - Prevents extra fingers or gestures begun on the controls from opening the menu.
 - Keeps controls inside system bars, display cutouts and gesture areas.
 - Uses a hardware-accelerated canvas on Android 8 and newer, reducing the time

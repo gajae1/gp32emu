@@ -82,7 +82,9 @@ public final class UiLayoutTest extends Instrumentation {
             });
             if (!ready[0]) SystemClock.sleep(25);
         } while (!ready[0] && SystemClock.uptimeMillis() < end);
-        check(ready[0], "rotation and layout settled");
+        check(ready[0], "rotation and layout settled (landscape=" + landscape
+                + ", orientation=" + activity.getResources().getConfiguration().orientation
+                + ", play=" + ((View)field("play")).getWidth() + "x" + ((View)field("play")).getHeight() + ")");
         ui(() -> check(activity.input.mask() == 0, "rotation releases inputs"));
     }
     private void separation() {
@@ -117,6 +119,11 @@ public final class UiLayoutTest extends Instrumentation {
             pointer(MotionEvent.ACTION_MOVE, menu);
             pointer(MotionEvent.ACTION_CANCEL, menu);
             check(activity.input.mask() == 0 && !menuShowing(), "cancel releases gesture without pausing");
+            if (activity.getResources().getConfiguration().orientation == Configuration.ORIENTATION_LANDSCAPE) {
+                // Exercise the empty rail just outside the visible button.
+                menu[0] -= ((View)field("menuButton")).getWidth() / 2f
+                        + 4 * activity.getResources().getDisplayMetrics().density;
+            }
             pointer(MotionEvent.ACTION_DOWN, menu);
             pointer(MotionEvent.ACTION_UP, menu);
         });

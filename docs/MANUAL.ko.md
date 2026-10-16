@@ -68,6 +68,9 @@ StikDebug 초기 설정을 마친 뒤 게임 메뉴의 **Enable JIT with StikDeb
 
 가로 화면에서는 메뉴 아이콘이 잠시 후 사라집니다. 게임 화면 위쪽 가운데의 같은 위치를
 누르면 메뉴가 열립니다. 상태 저장과 게임 내 저장은 별개입니다.
+메뉴의 **Hide touch controls**를 선택하면 Start·Select와 양옆 조작부의 여백까지
+게임 화면에 사용합니다. 화면은 4:3 비율을 유지하며, 키보드와 게임패드는 계속 사용할 수
+있습니다. **Show touch controls**로 버튼을 다시 표시합니다.
 자세한 조작·저장 위치·JIT 조건은 [iPhone/iPad 안내](../ios/README.md)를 참고하세요.
 
 ## Nintendo Switch
