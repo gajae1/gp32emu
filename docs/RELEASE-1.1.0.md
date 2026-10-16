@@ -46,6 +46,8 @@ Audio and lifecycle changes include:
 
 - Moves the menu button outside the game picture and touch controls.
 - Enlarges the landscape menu's touch target without enlarging its icon.
+- Keeps the landscape picture clear of touch controls, with Start/Select below
+  it. Hiding controls restores the full available 4:3 display area.
 - Prevents extra fingers or gestures begun on the controls from opening the menu.
 - Keeps controls inside system bars, display cutouts and gesture areas.
 - Uses a hardware-accelerated canvas on Android 8 and newer, reducing the time

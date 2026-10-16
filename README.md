@@ -120,7 +120,9 @@ During play, Back or the ≡ button pauses and opens the menu: resume, save stat
 load state, restart, show or hide touch controls, touch vibration, sharp integer
 scaling, game list, about and quit. Each game has three state slots. Touch
 controls cover the D-pad, A/B, L/R, Start and Select, and
-move beside the picture in landscape. Multiple buttons can be held together.
+move beside the picture in landscape, with Start/Select below it. Controls do
+not cover the picture; hiding them expands the available 4:3 display area.
+Multiple buttons can be held together.
 Rotation, focus loss and backgrounding release held input.
 
 Keyboard controls match the Windows defaults. Gamepads work with touch controls

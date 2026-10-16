@@ -100,6 +100,14 @@ public final class UiLayoutTest extends Instrumentation {
         float density = activity.getResources().getDisplayMetrics().density;
         check(gap >= Math.round(8 * density) && menu.width() >= Math.round(48 * density)
                 && menu.height() >= Math.round(48 * density), "separate accessible menu target");
+        Rect video = new Rect();
+        activity.touchPad.videoBounds(video, activity.touchPad.getWidth(), activity.touchPad.getHeight(), true);
+        for (int button : new int[]{InputState.UP, InputState.DOWN, InputState.LEFT, InputState.RIGHT,
+                InputState.A, InputState.B, InputState.L, InputState.R, InputState.START, InputState.SELECT})
+            check(!RectF.intersects(new RectF(video), activity.touchPad.boundsFor(button)), "video excludes every touch control");
+        Rect full = new Rect();
+        activity.touchPad.videoBounds(full, activity.touchPad.getWidth(), activity.touchPad.getHeight(), false);
+        check(full.contains(video) && full.height() > video.height(), "hidden controls reclaim their space");
     }
     private void gestures() {
         ui(() -> {
@@ -148,7 +156,7 @@ public final class UiLayoutTest extends Instrumentation {
         SystemClock.sleep(1000); // Include the compositor's rotation animation, not only View layout.
         Bitmap bitmap = getUiAutomation().takeScreenshot();
         check(bitmap != null && (bitmap.getWidth() > bitmap.getHeight()) == landscape, "screenshot orientation");
-        try (FileOutputStream out = new FileOutputStream(new File(getTargetContext().getFilesDir(), name + ".png"))) {
+        try (FileOutputStream out = new FileOutputStream(new File(getTargetContext().getExternalCacheDir(), name + ".png"))) {
             bitmap.compress(Bitmap.CompressFormat.PNG, 100, out);
         }
         bitmap.recycle();
