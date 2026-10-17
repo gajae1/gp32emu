@@ -979,7 +979,7 @@ static int a64_data(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
         if (op->c == 15u) a64_mask(e, 2, 2, ~3u);
         a64_put_guest(e, op->c, result);
         if (op->c == 15u) {
-            if (op->reserved == 7u) {
+            if (op->reserved == ARM_JIT_RETURN_GUARDED) {
                 /* Retire the real MOV pc,lr; an unexpected LR exits with its
                  * actual aligned PC instead of following a stale caller. */
                 a64_imm(e, 6, e->expected_next);
@@ -1653,9 +1653,9 @@ static uint32_t a64_selfloop_prefix(arm920t_t *c, arm_jit_block_t *b) {
         return 0;
     for (unsigned i = 0; i < b->count; ++i) {
         const arm_jit_op_t *op = &arm_jit_ops(c, b)[i];
-        /* Existing register-only leaf inlining proves LR/SP/mode unchanged.
-         * Its decoded return is materialized directly by the main emitter. */
-        if (op->reserved == 7u) continue;
+        /* General trace returns check live LR and execution state. Proven
+         * register-only leaves materialize their known caller directly. */
+        if (op->reserved == ARM_JIT_RETURN_GUARDED || op->reserved == ARM_JIT_RETURN_LEAF) continue;
         /* The decoder has already validated these framed leaf operations.
          * Keep their real stack reads/writes and existing return-target guard;
          * a changed/Thumb return exits before reaching the self backedge. */
@@ -2230,7 +2230,7 @@ static void arm_jit_compile_host(arm920t_t *c, arm_jit_block_t *b) {
          * Keep the architectural PC visible to subsequent callbacks, but a
          * decoded caller successor needs no dynamic return-target guard. The
          * guest op/cycle count and guarded boundary returns remain intact. */
-        if (op->reserved == 7u && i + 1u < b->count) {
+        if (op->reserved == ARM_JIT_RETURN_LEAF && i + 1u < b->count) {
             a64_store_imm(&e, offsetof(arm920t_t, r) + 15u * 4u, e.expected_next);
             continue;
         }

@@ -234,6 +234,12 @@ typedef struct arm_jit_op {
 } arm_jit_op_t;
 _Static_assert(sizeof(arm_jit_op_t) == 20, "packed decoded op footprint");
 
+/* Return markers in op->reserved. General traces can call the bus before
+ * returning, so their live LR/Thumb target needs a guard even without an ARM
+ * write to LR. Only the register-only leaf collector proves safe elision. */
+#define ARM_JIT_RETURN_GUARDED 7u
+#define ARM_JIT_RETURN_LEAF    9u
+
 typedef uint32_t (*arm_jit_native_fn)(arm920t_t *cpu, uint32_t cycles);
 
 /* Revalidation proof of one block slot, parallel to jit_ops: the fetched
@@ -2676,13 +2682,12 @@ static ARM_NOINLINE arm_jit_block_t *arm_jit_translate(arm920t_t *c, uint32_t pc
                         cop->cond = (uint8_t)(leaf[k] >> 28);
                         cop->kind = (uint8_t)arm_jit_classify(leaf[k]);
                         cop->stop = 0;
-                        cop->reserved = k + 1u == nleaf ? 7u : 0u;
+                        cop->reserved = k + 1u == nleaf ? ARM_JIT_RETURN_LEAF : 0u;
                         arm_bc_decode_op(cop);
                     }
                     b->count = (uint8_t)(i + 1u);
-                    /* Marker 7 keeps the real return instruction. Native
-                     * MOV guards its aligned PC; BX uses the checked helper.
-                     * Portable execution checks PC/Thumb after every op. */
+                    /* The leaf marker proves native return elision. Portable
+                     * execution still checks the real PC/Thumb after each op. */
                     cur += 4u;
                     continue;
                 }
@@ -2740,7 +2745,7 @@ static ARM_NOINLINE arm_jit_block_t *arm_jit_translate(arm920t_t *c, uint32_t pc
             if (trace_lr[trace_depth - 1u] &&
                 (insn == 0xe1a0f00eu || insn == 0xe12fff1eu)) {
                 op->stop = 0;
-                op->reserved = 7u;
+                op->reserved = ARM_JIT_RETURN_GUARDED;
                 --trace_depth;
                 page_anchor = trace_anchor[trace_depth];
                 cur = trace_resume[trace_depth];
@@ -2786,7 +2791,8 @@ static ARM_NOINLINE arm_jit_block_t *arm_jit_translate(arm920t_t *c, uint32_t pc
      * its real commit, so the boundary keeps the ordinary stop shape. */
     if (b->count) {
         arm_jit_op_t *tail = &arm_jit_ops(c, b)[b->count - 1u];
-        if (tail->reserved == 3u || tail->reserved == 5u || tail->reserved == 7u) {
+        if (tail->reserved == 3u || tail->reserved == 5u ||
+            tail->reserved == ARM_JIT_RETURN_GUARDED || tail->reserved == ARM_JIT_RETURN_LEAF) {
             tail->reserved = 0u;
             tail->stop = 1u;
         }
@@ -2800,7 +2806,8 @@ static ARM_NOINLINE arm_jit_block_t *arm_jit_translate(arm920t_t *c, uint32_t pc
     for (uint8_t i = 0; i < b->count; ++i) {
         const arm_jit_op_t *op = &arm_jit_ops(c, b)[i];
         if (op->kind == ARM_JIT_OP_DATA) {
-            if (op->c == 15u && op->reserved != 7u) break;
+            if (op->c == 15u && op->reserved != ARM_JIT_RETURN_GUARDED &&
+                op->reserved != ARM_JIT_RETURN_LEAF) break;
         } else if (op->kind == ARM_JIT_OP_SINGLE_DT) {
             if ((op->d & ~(ARM_BC_SD_U | ARM_BC_SD_L)) != ARM_BC_SD_P || op->b == 15u) break;
         } else if (op->kind == ARM_JIT_OP_BRANCH) {
@@ -4005,7 +4012,7 @@ static int x64_emit_data_proc(x64_emit_t *e, const arm_jit_op_t *op, uint32_t do
         if (!s && opc == 0xdu && !(insn & (1u << 25)) && !(insn & (1u << 4)) && (((insn >> 5) & 3u) == 0u) && (((insn >> 7) & 0x1fu) == 0u)) {
             unsigned rm = insn & 0xfu;
             x64_emit_load_arm_reg(e, X64_EAX, rm, op->pc);
-            if (op->reserved == 7u) {
+            if (op->reserved == ARM_JIT_RETURN_GUARDED) {
                 x64_alu_r32_imm(e, 4, X64_EAX, ~3u);
                 x64_mov_mem_cpu_r32(e, arm_reg_off(15), X64_EAX);
                 x64_alu_r32_imm(e, 7, X64_EAX, e->expected_next);
@@ -4800,7 +4807,7 @@ static int x64_emit_one(x64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
     e->fwd_guest = -1;
     if (op->kind == ARM_JIT_OP_PSR && x64_emit_msr_cpsr(e, op, done)) return 1;
     if (op->kind == ARM_JIT_OP_PSR && x64_emit_mrs_psr(e, op)) return 1;
-    if (op->kind == ARM_JIT_OP_INTERP && op->reserved == 7u) {
+    if (op->kind == ARM_JIT_OP_INTERP && op->reserved == ARM_JIT_RETURN_GUARDED) {
         /* BX lr must commit interworking and prove PC/status/interrupt state
          * before following the caller. Reuse the precise checked helper. */
         x64_emit_call_helper_op(e, op);
@@ -4949,7 +4956,7 @@ static void arm_jit_compile_host(arm920t_t *c, arm_jit_block_t *b) {
         /* A real BL and register-only leaf preserve the link/execution state.
          * Elide its known return guard, retaining PC and guest cycle indices.
          * Boundary returns still execute their guarded real-PC path. */
-        if (op->reserved == 7u && i + 1u < b->count) {
+        if (op->reserved == ARM_JIT_RETURN_LEAF && i + 1u < b->count) {
             e.fwd_guest = -1;
             x64_mov_mem_cpu_imm(&e, arm_reg_off(15), e.expected_next);
             continue;
