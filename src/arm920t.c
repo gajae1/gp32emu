@@ -1692,6 +1692,7 @@ static int arm920t_armv4t_invalid_arm_insn(uint32_t insn) {
            (insn & 0x0ffffff0u) == 0x012fff30u ||        /* BLX register */
            (insn & 0x0fff0ff0u) == 0x016f0f10u ||        /* CLZ */
            (insn & 0x0ff000f0u) == 0x01200070u ||        /* BKPT */
+           (insn & 0x0f900090u) == 0x01000080u ||        /* SMLAxy/SMLAWy/SMULWy/SMLALxy/SMULxy: ARMv5TE */
            (insn & 0x0f9000f0u) == 0x01000050u;          /* QADD/QSUB/QDADD/QDSUB */
 }
 
