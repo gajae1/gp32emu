@@ -837,7 +837,7 @@ uint64_t smc_host_time_ms(void) {
 #if defined(_WIN32)
     return GetTickCount64();
 #elif defined(GP32EMU_WASM)
-    return (uint64_t)((double)clock() * 1000.0 / CLOCKS_PER_SEC);
+    return (uint64_t)gp32_wasm_host_time_ms();
 #else
     struct timespec ts;
     if (clock_gettime(CLOCK_MONOTONIC, &ts)) return 0;
