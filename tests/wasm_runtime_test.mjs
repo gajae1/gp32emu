@@ -38,7 +38,7 @@ for (const name of ['test_vfs_growing_writes', 'test_vfs_close_full',
   } else console.log(`PASS: ${name}`);
 }
 
-/* Use the complete browser save path, including temporary VFS writes,
+/* Use the WASM-side save path used by the browser: temporary VFS writes,
  * publication, staging and removal. The tiny synthetic BIOS never executes. */
 const saved = await freshCore();
 assert.equal(saved.gp32_wasm_init(44100), 1);
