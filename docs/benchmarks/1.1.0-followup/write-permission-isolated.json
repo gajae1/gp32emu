@@ -1,0 +1,149 @@
+{
+  "cpu": 0,
+  "rows": [
+    {
+      "jit": 0,
+      "variant": "before",
+      "ns": 519813452,
+      "r0": 10100000,
+      "word": "009a1d1f",
+      "native": 0,
+      "cached": 60000000
+    },
+    {
+      "jit": 0,
+      "variant": "after",
+      "ns": 491931264,
+      "r0": 10100000,
+      "word": "009a1d1f",
+      "native": 0,
+      "cached": 60000000
+    },
+    {
+      "jit": 0,
+      "variant": "after",
+      "ns": 485226560,
+      "r0": 10100000,
+      "word": "009a1d1f",
+      "native": 0,
+      "cached": 60000000
+    },
+    {
+      "jit": 0,
+      "variant": "before",
+      "ns": 561265836,
+      "r0": 10100000,
+      "word": "009a1d1f",
+      "native": 0,
+      "cached": 60000000
+    },
+    {
+      "jit": 0,
+      "variant": "before",
+      "ns": 540831141,
+      "r0": 10100000,
+      "word": "009a1d1f",
+      "native": 0,
+      "cached": 60000000
+    },
+    {
+      "jit": 0,
+      "variant": "after",
+      "ns": 485384794,
+      "r0": 10100000,
+      "word": "009a1d1f",
+      "native": 0,
+      "cached": 60000000
+    },
+    {
+      "jit": 0,
+      "variant": "after",
+      "ns": 470513801,
+      "r0": 10100000,
+      "word": "009a1d1f",
+      "native": 0,
+      "cached": 60000000
+    },
+    {
+      "jit": 0,
+      "variant": "before",
+      "ns": 497489966,
+      "r0": 10100000,
+      "word": "009a1d1f",
+      "native": 0,
+      "cached": 60000000
+    },
+    {
+      "jit": 1,
+      "variant": "before",
+      "ns": 80837134,
+      "r0": 10100000,
+      "word": "009a1d1f",
+      "native": 60000000,
+      "cached": 0
+    },
+    {
+      "jit": 1,
+      "variant": "after",
+      "ns": 79810672,
+      "r0": 10100000,
+      "word": "009a1d1f",
+      "native": 60000000,
+      "cached": 0
+    },
+    {
+      "jit": 1,
+      "variant": "after",
+      "ns": 80982012,
+      "r0": 10100000,
+      "word": "009a1d1f",
+      "native": 60000000,
+      "cached": 0
+    },
+    {
+      "jit": 1,
+      "variant": "before",
+      "ns": 81005138,
+      "r0": 10100000,
+      "word": "009a1d1f",
+      "native": 60000000,
+      "cached": 0
+    },
+    {
+      "jit": 1,
+      "variant": "before",
+      "ns": 79990464,
+      "r0": 10100000,
+      "word": "009a1d1f",
+      "native": 60000000,
+      "cached": 0
+    },
+    {
+      "jit": 1,
+      "variant": "after",
+      "ns": 79920388,
+      "r0": 10100000,
+      "word": "009a1d1f",
+      "native": 60000000,
+      "cached": 0
+    },
+    {
+      "jit": 1,
+      "variant": "after",
+      "ns": 80565093,
+      "r0": 10100000,
+      "word": "009a1d1f",
+      "native": 60000000,
+      "cached": 0
+    },
+    {
+      "jit": 1,
+      "variant": "before",
+      "ns": 79860947,
+      "r0": 10100000,
+      "word": "009a1d1f",
+      "native": 60000000,
+      "cached": 0
+    }
+  ]
+}

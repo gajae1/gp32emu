@@ -7,6 +7,11 @@ execution regression fixture. The runtime memory improvement is demonstrated
 with repeated synthetic WASM saves. Gameplay speed, power consumption, and
 device compatibility still require measurements on the intended hardware.
 
+The [Korean follow-up report](REVIEW-1.1.0-FOLLOWUP.ko.md) adds the GP32 audio
+hardware/ISA investigation, further core fixes, exact SSE2 FIR measurements,
+rejected experiments, and the expanded C23 validation. Counts and measurements
+below describe the original review snapshot; see that report for current results.
+
 ## Review scope
 
 The review followed the ARM/Thumb interpreter, shared decoded blocks, x86-64 and
@@ -218,11 +223,12 @@ node --check tests/wasm_runtime_test.mjs
 
 ## Remaining correctness priorities
 
-These issues were reproduced or identified separately and are not corrected by
-the included patches. The passing regression suites cover their existing cases;
-they do not establish complete architectural emulation.
+These issues were reproduced or identified separately during the original
+review. Follow-up status is marked where a later change addresses them. Passing
+regression suites cover their existing cases; they do not establish complete
+architectural emulation.
 
-### P1: CPU stores can leave stale code while CP15.I is clear
+### Resolved in follow-up: CPU stores can leave stale code while CP15.I is clear
 
 With CP15 c1 at `0x70`, an indirect call executes `MOV r0,#0x11`, a guest STR
 replaces that word with `MOV r0,#0x22`, and a second indirect call still returns
@@ -243,6 +249,14 @@ every RAM store would introduce substantial avoidable work.
 Reference: DDI 0151C, 4.2.2–4.2.3, page 4-6. The existing
 [external code-write tests](../tests/arm_code_write_test.c) already expect fresh
 fetches with I-cache disabled, but exercise DMA/HLE writers.
+
+The follow-up implements physical instruction-word watches, coordinated raw and
+cached store notifications, and native guards before mutation on both backends.
+Its 88-scenario regression covers active traces, remaps, all STM lanes, and
+independently mapped physical fragments. This correctness fix has a measured
+store-throughput cost and a 256 KiB plus padding watch array; the
+[CPU code-write report](CPU-CODE-WRITES.md) records those costs and the rejected
+coarser prototypes. A full I/D-cache and pipeline model remains outside its scope.
 
 ### P2: WFI currently falls through
 
@@ -271,7 +285,7 @@ The MMU walker also retains explicit compatibility approximations for invalid
 descriptors, access permissions, and domain protection. Strict abort behavior
 needs a deliberate compatibility decision and precise exception tests.
 
-### P2: cached stores can bypass a bus's write-fastmem permission
+### Resolved in follow-up: cached stores can bypass write-fastmem permission
 
 A synthetic bus that supplies read fast memory but rejects writable fast memory
 receives the correct write callback in raw execution. Cached portable execution
@@ -283,6 +297,11 @@ The ordinary GP32 SDRAM bus is writable, so this proves a CPU/bus contract gap
 without establishing a current game failure. A separately authorized write
 base, refreshed with mapping changes, would preserve fast ordinary stores and
 route restricted writes through the correct callback.
+
+Implemented in the follow-up with a separate write certificate, lazy reset/state
+acquisition, and generation invalidation when write mappings change. The new
+`arm_write_permission` regression covers denied/partial/split-backed windows and
+permission changes within callbacks. This does not complete MMU AP/domain faults.
 
 ### Frontend follow-ups
 
@@ -330,7 +349,7 @@ show whether this matters for a slow title. A decoded Thumb path needs correct
 BL halfwords, interworking, exception/deadline boundaries, and code invalidation.
 Its value should be established from representative workloads first.
 
-### 3. Profile the FIR accumulation before adding SIMD
+### 3. FIR accumulation: exact x86 SSE2 added in follow-up
 
 The shared resampler's main stereo tap loop remains scalar in the reviewed
 GCC 13 x86-64 and AArch64 compiler output. An exact vector implementation is a
@@ -338,6 +357,11 @@ candidate if audio occupies material CPU time. Preserve the existing 64-bit
 accumulation; signed filter lobes and full-scale inputs make an unchecked
 32-bit replacement unsafe. Compare every output sample over history boundaries,
 rate changes, clipping extremes, and short input blocks.
+
+The follow-up implements exact wide SSE2 accumulation for both the contiguous
+source and history paths. It records complete PCM/state comparisons, independent
+mathematical checks, and 15-condition repeated GCC/Clang timings. AArch64 retains
+the scalar path; real ARM measurements are still needed before adding NEON.
 
 The exact output-count helper copies a 33,584-byte resampler, but its sole
 production caller uses it near libretro queue capacity. That makes it a lower

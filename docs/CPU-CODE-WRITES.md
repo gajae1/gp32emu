@@ -175,10 +175,11 @@ writable-fastmem-pointer fix:
 
 The selected array is exactly 256 KiB plus a four-byte padding word; structure
 alignment contributes a further four bytes here. It uses 245,768 more allocated
-bytes than the 64-byte prototype. Full invalidation clears this larger bitmap,
-so workloads repeatedly writing actual decoded code can also pay more clearing
-cost. The benchmark does not claim to measure that workload, ARM device cache
-behavior, or a particular game's memory budget.
+bytes than the 64-byte prototype. Full-generation invalidation clears this larger
+bitmap. Ordinary watched CPU writes with unchanged bus windows normally take
+the epoch-only path and preserve it. This benchmark does not measure workloads
+dominated by full flushes or code regeneration, ARM device cache behavior, or a
+particular game's memory budget.
 
 The earlier 4 KiB prototype invalidated on each write anywhere in a code page
 and failed the same-page data invariant. An initial single exploratory timing
