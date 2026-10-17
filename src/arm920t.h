@@ -13,6 +13,13 @@ typedef uint32_t (*arm_read32_fn)(void *user, uint32_t addr);
 typedef void (*arm_write8_fn)(void *user, uint32_t addr, uint8_t value);
 typedef void (*arm_write16_fn)(void *user, uint32_t addr, uint16_t value);
 typedef void (*arm_write32_fn)(void *user, uint32_t addr, uint32_t value);
+/* Optional side-effect-free direct physical mapping of the entire requested
+ * span. A nonzero write requests independent write permission; accepting a
+ * read never authorizes a store. NULL retains the matching bus callback.
+ * Full RAM/BIOS window pointers may be cached until reset, state load, JIT
+ * reconfiguration or arm920t_flush_jit. A bus changing those mappings or
+ * permissions must flush before the next guest instruction; a synchronous
+ * bus callback may change its mapping and flush before returning. */
 typedef uint8_t *(*arm_fastmem_fn)(void *user, uint32_t addr, size_t bytes, int write);
 typedef void (*arm_log_fn)(void *user, const char *line);
 /* Opt-in diagnostic sink for exception vector entries that a compatibility

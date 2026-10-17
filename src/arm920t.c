@@ -450,6 +450,9 @@ struct arm920t {
     uint8_t *jit_ios_rx; /* Shared executable alias, owned by this CPU only. */
     int jit_ios_ready;   /* Debugger initialization completed; never serialized. */
 #endif
+    /* Independent full-window write certificate; a read pointer is not one.
+     * Appended to preserve the native backends' existing hot-field offsets. */
+    uint8_t *jit_ram_write_base;
 };
 _Static_assert(offsetof(arm920t_t, jit_cache_epoch) == offsetof(arm920t_t, jit_generation) + 4u &&
                offsetof(arm_jit_block_t, tag_cache_epoch) == offsetof(arm_jit_block_t, generation) + 4u,
@@ -543,6 +546,17 @@ static void set_cpsr_full(arm920t_t *c, uint32_t value) {
 
 ARM_FORCE_INLINE uint8_t *fastmem(arm920t_t *c, uint32_t a, size_t bytes, int write) {
     return c->bus.fastmem ? c->bus.fastmem(c->bus.user, a, bytes, write) : NULL;
+}
+static int arm_jit_refresh_bus_windows(arm920t_t *c) {
+    uint8_t *ram = fastmem(c, ARM_JIT_RAM_BASE_ADDR, ARM_JIT_RAM_SIZE_BYTES, 0);
+    uint8_t *write = fastmem(c, ARM_JIT_RAM_BASE_ADDR, ARM_JIT_RAM_SIZE_BYTES, 1);
+    uint8_t *bios = fastmem(c, 0x00000000u, 1u, 0);
+    int changed = ram != c->jit_ram_base || write != c->jit_ram_write_base ||
+                  bios != c->jit_bios_base;
+    c->jit_ram_base = ram;
+    c->jit_ram_write_base = write;
+    c->jit_bios_base = bios;
+    return changed;
 }
 ARM_FORCE_INLINE uint32_t raw32(arm920t_t *c, uint32_t a) {
     uint8_t *p = fastmem(c, a, 4u, 0);
@@ -1250,8 +1264,8 @@ void arm920t_set_jit(arm920t_t *c, int enabled) {
         if (c->jit_enabled) {
             /* Block helpers index the whole RAM window from this base, so the
              * probe must cover all of it; a smaller RAM keeps the interpreter. */
-            c->jit_ram_base = fastmem(c, ARM_JIT_RAM_BASE_ADDR, ARM_JIT_RAM_SIZE_BYTES, 0);
-            c->jit_bios_base = fastmem(c, 0x00000000u, 1u, 0);
+            if (arm_jit_refresh_bus_windows(c))
+                arm920t_jit_invalidate_all(c, ARM_JIT_INV_API_FLUSH);
             if (!c->jit_ram_base || !c->jit_bios_base) c->jit_enabled = 0;
         } else arm920t_jit_invalidate_all(c, ARM_JIT_INV_JIT_DISABLE);
     }
@@ -2050,20 +2064,28 @@ static void arm920t_jit_invalidate_all(arm920t_t *c, unsigned cause) {
     default: break;
     }
 #endif
+    /* Reset/disable/state-load keep lazy acquisition: callers can finish
+     * wiring their bus after creating/resetting a CPU, and the SoC may replace
+     * RAM after applying a CPU image. Explicit flushes refresh immediately so
+     * a bus callback can revoke access before an STM's following lanes. */
+    int windows_changed = 0;
+    if (cause == ARM_JIT_INV_RESET || cause == ARM_JIT_INV_JIT_DISABLE ||
+        cause == ARM_JIT_INV_STATE_LOAD) {
+        c->jit_ram_base = NULL;
+        c->jit_ram_write_base = NULL;
+        c->jit_bios_base = NULL;
+    } else windows_changed = arm_jit_refresh_bus_windows(c);
     if (cause == ARM_JIT_INV_CP15_CACHE || cause == ARM_JIT_INV_TLB_REMAP) {
         /* Native memory helpers also depend on the cached physical windows.
-         * A changed bus window needs the ordinary full flush and fresh bases. */
-        uint8_t *ram = fastmem(c, ARM_JIT_RAM_BASE_ADDR, ARM_JIT_RAM_SIZE_BYTES, 0);
-        uint8_t *bios = fastmem(c, 0x00000000u, 1u, 0);
-        if (ram == c->jit_ram_base && bios == c->jit_bios_base) {
+         * A changed write certificate needs a full flush even when every
+         * read pointer is unchanged: native stores baked in that permission. */
+        if (!windows_changed) {
             /* MCR or the checked memory helper ends the active trace when
              * the epoch changes. Defer byte checks until a block is
              * next dispatched, while preserving its arena and baked native
              * generation. A wrapping epoch takes the full-flush path below. */
             if (++c->jit_cache_epoch) return;
         }
-        c->jit_ram_base = ram;
-        c->jit_bios_base = bios;
     }
     c->jit_cache_epoch = 1;
     c->jit_generation++;
@@ -2929,7 +2951,7 @@ ARM_FORCE_INLINE uint32_t arm_bc_ld_half_phys(arm920t_t *c, uint32_t addr) {
 }
 ARM_FORCE_INLINE void arm_bc_st_word_phys(arm920t_t *c, uint32_t addr, uint32_t v) {
     uint32_t a = addr & ~3u;
-    if (c->jit_ram_base && arm_jit_addr_in_ram(a, 4u)) { gp32_st32le(c->jit_ram_base + (a - ARM_JIT_RAM_BASE_ADDR), v); return; }
+    if (c->jit_ram_write_base && arm_jit_addr_in_ram(a, 4u)) { gp32_st32le(c->jit_ram_write_base + (a - ARM_JIT_RAM_BASE_ADDR), v); return; }
     if (arm_jit_addr_in_identity_io(a, 4u)) {
         (c->bus.write32_io ? c->bus.write32_io : c->bus.write32)(c->bus.user, a, v);
         return;
@@ -2939,14 +2961,14 @@ ARM_FORCE_INLINE void arm_bc_st_word_phys(arm920t_t *c, uint32_t addr, uint32_t 
     else c->bus.write32(c->bus.user, a, v);
 }
 ARM_FORCE_INLINE void arm_bc_st_byte_phys(arm920t_t *c, uint32_t addr, uint32_t v) {
-    if (c->jit_ram_base && arm_jit_addr_in_ram(addr, 1u)) { c->jit_ram_base[addr - ARM_JIT_RAM_BASE_ADDR] = (uint8_t)v; return; }
+    if (c->jit_ram_write_base && arm_jit_addr_in_ram(addr, 1u)) { c->jit_ram_write_base[addr - ARM_JIT_RAM_BASE_ADDR] = (uint8_t)v; return; }
     if (arm_jit_addr_in_identity_io(addr, 1u)) { c->bus.write8(c->bus.user, addr, (uint8_t)v); return; }
     uint8_t *p = fastmem(c, addr, 1u, 1);
     if (p) p[0] = (uint8_t)v;
     else c->bus.write8(c->bus.user, addr, (uint8_t)v);
 }
 ARM_FORCE_INLINE void arm_bc_st_half_phys(arm920t_t *c, uint32_t addr, uint32_t v) {
-    if (c->jit_ram_base && arm_jit_addr_in_ram(addr, 2u)) { gp32_st16le(c->jit_ram_base + (addr - ARM_JIT_RAM_BASE_ADDR), (uint16_t)v); return; }
+    if (c->jit_ram_write_base && arm_jit_addr_in_ram(addr, 2u)) { gp32_st16le(c->jit_ram_write_base + (addr - ARM_JIT_RAM_BASE_ADDR), (uint16_t)v); return; }
     if (arm_jit_addr_in_identity_io(addr, 2u)) { c->bus.write16(c->bus.user, addr, (uint16_t)v); return; }
     /* addr is physical even when a halfword straddles the RAM window. */
     uint8_t *p = fastmem(c, addr, 2u, 1);
@@ -5337,8 +5359,7 @@ static void arm_profile_native_exit(arm920t_t *c, const arm_jit_block_t *b,
 
 static uint32_t arm_jit_run(arm920t_t *c, uint32_t run_done) {
     if (!c || run_done >= c->run_limit || thumb(c) || c->trace) return 0;
-    if (!c->jit_ram_base) c->jit_ram_base = fastmem(c, ARM_JIT_RAM_BASE_ADDR, ARM_JIT_RAM_SIZE_BYTES, 0);
-    if (!c->jit_bios_base) c->jit_bios_base = fastmem(c, 0x00000000u, 1u, 0);
+    if (!c->jit_ram_base || !c->jit_bios_base) (void)arm_jit_refresh_bus_windows(c);
     uint32_t total = run_done;
     /* Block hits accumulate in a register and are published once per run. */
     uint64_t hits = 0;
@@ -5778,6 +5799,7 @@ void arm920t_state_apply(arm920t_t *c, const arm920t_state_image_t *st) {
      * Drop those cached bases so the next JIT run reacquires current RAM/BIOS
      * pointers through the bus instead of writing into freed state-load RAM. */
     c->jit_ram_base = NULL;
+    c->jit_ram_write_base = NULL;
     c->jit_bios_base = NULL;
     arm920t_jit_invalidate_all(c, ARM_JIT_INV_STATE_LOAD);
 }
