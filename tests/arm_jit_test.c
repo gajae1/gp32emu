@@ -59,6 +59,7 @@ typedef struct {
     unsigned io_flush_at, io_flushes;
     unsigned io_trace_at, trace_lines;
     unsigned io_return_at;
+    uint32_t io_lr_target;
     unsigned block_io, block_effect, block_at, block_count;
     uint32_t block_addr[3], block_pc[3], block_base[3], block_value[3];
     unsigned mem_probe, mem_effect, mem_calls;
@@ -136,6 +137,8 @@ static uint32_t tb_io_value(test_bus_t *b, uint32_t a) {
             b->io_cpsr[b->io_count] = arm920t_get_cpsr(b->observe_cpu);
         }
         ++b->io_count;
+        if (b->io_lr_target)
+            arm920t_set_reg(b->observe_cpu, 14u, b->io_lr_target);
         if (b->io_fiq_at && b->io_count == b->io_fiq_at)
             arm920t_set_cpsr(b->observe_cpu,
                             (arm920t_get_cpsr(b->observe_cpu) & ~0x1fu) | 0x11u);
@@ -4511,6 +4514,50 @@ static void case_superblock_lr_writes(void) {
     teardown_pair();
 }
 
+/* General traced callees may call the bus without an explicit ARM write to
+ * LR. A callback can still replace the link: retire MOV/BX through its live
+ * value and let BX select Thumb before executing any caller continuation. */
+static void case_superblock_callback_lr(void) {
+    const uint32_t returns[] = {0xe1a0f00eu, 0xe12fff1eu, 0xe12fff1eu};
+    const uint32_t budgets[] = {1u, 2u, 3u, 4u, 32u};
+    for (unsigned ret = 0; ret < GP32_ARRAY_COUNT(returns); ++ret) {
+        for (unsigned k = 0; k < GP32_ARRAY_COUNT(budgets); ++k) {
+            current_case = ret == 0u ? "trace-callback-lr-mov" :
+                           ret == 1u ? "trace-callback-lr-bx" : "trace-callback-lr-thumb";
+            setup_pair();
+            arm920t_set_trace(cpu_ref, 1, NULL, NULL);
+            const uint32_t program[] = {
+                cache_branch(CODE_ADDR, CODE_ADDR + 0x40u, 1),
+                0xe3a05055u, 0xeafffffeu
+            };
+            load_both(program, GP32_ARRAY_COUNT(program));
+            set_mem_both(CODE_ADDR + 0x40u, 0xe5910000u); /* LDR r0,[r1] */
+            set_mem_both(CODE_ADDR + 0x44u, returns[ret]);
+            int thumb_target = ret == 2u;
+            set_mem_both(CODE_ADDR + 0x80u,
+                         thumb_target ? 0xe7fe2666u : 0xe3a06066u); /* MOV r6,#0x66 */
+            set_mem_both(CODE_ADDR + 0x84u, 0xeafffffeu);
+            set_reg_both(1u, IO_ADDR);
+            bus_jit.observe_cpu = cpu_jit;
+            bus_ref.observe_cpu = cpu_ref;
+            bus_jit.io_lr_target = bus_ref.io_lr_target = CODE_ADDR + 0x80u + thumb_target;
+            CHECK(prepared_native_run(cpu_jit, budgets[k]) == arm920t_run(cpu_ref, budgets[k]),
+                  "callback LR return budget");
+            compare_state();
+            CHECK(ref_reg(5u) == 0u, "callback LR skips original caller continuation");
+            CHECK(ref_reg(6u) == (budgets[k] >= 4u ? 0x66u : 0u),
+                  "callback LR reaches replacement continuation");
+            CHECK(!!(arm920t_get_cpsr(cpu_ref) & 0x20u) == (thumb_target && budgets[k] >= 3u),
+                  "callback LR selects the BX execution state");
+            CHECK(bus_jit.io_count == (budgets[k] >= 2u) &&
+                  bus_ref.io_count == (budgets[k] >= 2u), "callback LR access count");
+            if (budgets[k] == 32u && ARM920T_NATIVE_BACKEND)
+                CHECK(cpu_jit->prof.native_arm_insns >= 3u, "callback LR return ran natively");
+            teardown_pair();
+        }
+    }
+}
+
 static void case_superblock_trace(void) {
     const uint32_t callee = CODE_ADDR + 0x40u;
     current_case = "superblock-call-return";
@@ -5686,6 +5733,7 @@ int main(int argc, char **argv) {
         case_checked_access_translation();
     } else if (argc == 2 && !strcmp(argv[1], "--trace-lr")) {
         case_superblock_lr_writes();
+        case_superblock_callback_lr();
     } else if (argc == 2 && !strcmp(argv[1], "--alu-callback-state")) {
         case_alu_callback_state();
         case_loop_callback_state();
@@ -5905,6 +5953,7 @@ int main(int argc, char **argv) {
     case_nested_framed_leaf();
     case_superblock_trace();
     case_superblock_lr_writes();
+    case_superblock_callback_lr();
     }
     current_case = "summary";
     if (jit_events == 0)
