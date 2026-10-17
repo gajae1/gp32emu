@@ -1,6 +1,7 @@
 # WebAssembly GP32emu build. Uses the portable ARM bytecode interpreter; native x64 JIT is intentionally unavailable for WASM.
 WASM_CC ?= clang
 WASM_LD ?= wasm-ld
+NODE ?= node
 GP32EMU_C_STD_CC := $(WASM_CC)
 
 include cmake/c_standard.mk
@@ -40,10 +41,21 @@ CORE_SRCS := \
   wasm/libc/src/pcfx_wasm_libc.c \
   wasm/gp32_wasm_core.c
 OBJS := $(patsubst %.c,$(BUILD_DIR)/%.o,$(CORE_SRCS))
+WASM_TEST := $(BUILD_DIR)/wasm_runtime_test.wasm
+WASM_TEST_OBJ := $(BUILD_DIR)/tests/wasm_runtime_test.o
+WASM_TEST_OBJS := $(OBJS) $(WASM_TEST_OBJ)
 
-.PHONY: all build clean serve
+.PHONY: all build clean serve test
 all: build
 build: $(OUT_WASM)
+
+# Runs the freestanding runtime, including its math and allocator, in Node's
+# WebAssembly engine. No browser, BIOS, game image or npm packages are needed.
+test: $(WASM_TEST)
+	$(NODE) tests/wasm_runtime_test.mjs $(WASM_TEST)
+
+$(WASM_TEST): $(WASM_TEST_OBJS)
+	$(WASM_LD) $(WASM_LDFLAGS) $(WASM_EXPORTS) -o $@ $(WASM_TEST_OBJS)
 
 $(OUT_WASM): $(OBJS) | $(OUT_DIR)
 	$(WASM_LD) $(WASM_LDFLAGS) $(WASM_EXPORTS) -o $@ $(OBJS)

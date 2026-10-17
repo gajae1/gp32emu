@@ -415,7 +415,7 @@ async function initWasm() {
   applyVideoSettings();
   updateTouchControlsAvailability();
   updateFullscreenButton();
-  const imports = { pcfx: { read_host_file: () => 0 } };
+  const imports = { pcfx: { read_host_file: () => 0, sin: Math.sin, now_ms: () => performance.now() } };
   const res = await fetch('gp32_wasm_core.wasm');
   const bin = await res.arrayBuffer();
   const mod = await WebAssembly.instantiate(bin, imports);

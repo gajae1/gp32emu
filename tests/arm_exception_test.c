@@ -467,6 +467,127 @@ static void case_arm_undefined_transfer(void) {
     }
 }
 
+/* Check the measured two-instruction source block before running its handler
+ * or continuation. Native activity elsewhere would not prove this coverage. */
+static void check_two_insn_engine(arm920t_t *c, unsigned engine) {
+    gp32_cpu_profile_t profile;
+    arm920t_get_cpu_profile(c, &profile);
+    if (!profile.supported) return;
+    if (engine == 0u) {
+        CHECK(profile.interp_arm_insns, 2u, "raw ARM execution coverage");
+    } else if (engine == 2u && profile.native_backend) {
+        CHECK(profile.native_arm_insns, 2u, "source block executes natively");
+        CHECK(profile.native_block_calls != 0u, 1u, "source block enters native code");
+    } else {
+        CHECK(profile.block_interp_arm_insns, 2u, "portable ARM execution coverage");
+    }
+}
+
+static void case_arm_undefined_dsp(void) {
+    /* DDI0100I A3.16.3 and A4.1.74/77/79/86/88: signed halfword multiply
+     * instructions require ARMv5TE. ARM920T traps the extension space
+     * (DDI0151C 2.2.2), after checking the instruction's condition. */
+    static const struct { uint32_t insn; const char *name; } cases[] = {
+        {0xe1003281u, "SMLABB"}, {0xe10032c1u, "SMLABT"},
+        {0xe10032a1u, "SMLATB"}, {0xe10032e1u, "SMLATT"},
+        {0xe1203281u, "SMLAWB"}, {0xe12032c1u, "SMLAWT"},
+        {0xe12002a1u, "SMULWB"}, {0xe12002e1u, "SMULWT"},
+        {0xe1410382u, "SMLALBB"}, {0xe14103c2u, "SMLALBT"},
+        {0xe14103a2u, "SMLALTB"}, {0xe14103e2u, "SMLALTT"},
+        {0xe1600281u, "SMULBB"}, {0xe16002c1u, "SMULBT"},
+        {0xe16002a1u, "SMULTB"}, {0xe16002e1u, "SMULTT"},
+    };
+    for (unsigned engine = 0; engine < 3u; ++engine) {
+        for (unsigned k = 0; k < GP32_ARRAY_COUNT(cases); ++k) {
+            arm920t_t *c = make_cpu(engine == 2u);
+            if (engine == 0u) arm920t_set_trace(c, 1, NULL, NULL);
+            bios_w32(CODE_ADDR, 0xe3a04024u); /* mov r4,#0x24 */
+            bios_w32(CODE_ADDR + 4u, cases[k].insn & 0x0fffffffu); /* EQ */
+            bios_w32(CODE_ADDR + 8u, 0xe3a05042u); /* mov r5,#0x42 */
+            bios_w32(0x04u, 0xe1b0f00eu); /* movs pc,lr */
+            /* Re-enter the same block with alternating Z. The last two runs
+             * exercise both predicate results after native compilation. */
+            for (unsigned phase = 0; phase < 4u; ++phase) {
+                int traps = (phase & 1u) != 0;
+                uint32_t cpsr = traps ? 0xe0000053u : 0xa0000053u;
+                char name[80];
+                snprintf(name, sizeof(name), "%s-engine%u-%s-phase%u", cases[k].name,
+                         engine, traps ? "trap" : "skip", phase);
+                current_case = name;
+                arm920t_set_cpsr(c, cpsr); /* SVC, I=0, F=1 */
+                arm920t_set_reg(c, 15u, CODE_ADDR);
+                for (unsigned r = 0; r < 4u; ++r)
+                    arm920t_set_reg(c, r, 0x11223344u + r);
+                arm920t_set_reg(c, 4u, 0u);
+                arm920t_set_reg(c, 5u, 0u);
+                arm920t_set_reg(c, 14u, 0x55667788u);
+                arm920t_reset_cpu_profile(c);
+                CHECK(arm920t_run(c, 2u), 2u, "prefix and DSP instruction retire");
+                if (phase >= 2u) check_two_insn_engine(c, engine);
+                CHECK(arm920t_get_pc(c), traps ? 4u : CODE_ADDR + 8u, "live condition selects UND vector or fallthrough");
+                CHECK(arm920t_get_cpsr(c), traps ? 0xe00000dbu : cpsr, "DSP exception state");
+                for (unsigned r = 0; r < 4u; ++r)
+                    CHECK(arm920t_get_reg(c, r), 0x11223344u + r, "DSP preserves operands and destinations");
+                CHECK(arm920t_get_reg(c, 4u), 0x24u, "prefix before DSP retires");
+                CHECK(arm920t_get_reg(c, 5u), 0u, "following instruction has not run");
+                CHECK(arm920t_get_reg(c, 14u), traps ? CODE_ADDR + 8u : 0x55667788u, "DSP exception LR or unchanged SVC LR");
+                if (traps) {
+                    CHECK(arm920t_run(c, 1u), 1u, "one exception return");
+                    CHECK(arm920t_get_pc(c), CODE_ADDR + 8u, "exception return skips DSP word");
+                    CHECK(arm920t_get_cpsr(c), cpsr, "exception return restores SPSR");
+                    CHECK(arm920t_get_reg(c, 14u), 0x55667788u, "exception return restores banked SVC LR");
+                }
+                CHECK(arm920t_run(c, 1u), 1u, "one resumed instruction");
+                CHECK(arm920t_get_reg(c, 5u), 0x42u, "resumed ARM marker");
+                CHECK(arm920t_get_pc(c), CODE_ADDR + 12u, "marker continuation PC");
+            }
+            arm920t_destroy(c);
+        }
+    }
+}
+
+static void case_arm_multiply_decode(void) {
+    /* Ordinary ARMv4 multiply encodings near the DSP extension still execute.
+     * The initial long accumulator is 7; r2=-1 (or UINT32_MAX) and r3=2. */
+    static const struct { uint32_t insn, lo, hi; const char *name; } cases[] = {
+        {0xe0000392u, 0xfffffffeu, 0u, "MUL"},   /* mul r0,r2,r3 */
+        {0xe0204392u, 1u, 0u, "MLA"},           /* mla r0,r2,r3,r4 */
+        {0xe0810392u, 0xfffffffeu, 1u, "UMULL"}, /* umull r0,r1,r2,r3 */
+        {0xe0a10392u, 5u, 2u, "UMLAL"},         /* umlal r0,r1,r2,r3 */
+        {0xe0c10392u, 0xfffffffeu, 0xffffffffu, "SMULL"},
+        {0xe0e10392u, 5u, 0u, "SMLAL"},
+    };
+    for (unsigned engine = 0; engine < 3u; ++engine) {
+        for (unsigned k = 0; k < GP32_ARRAY_COUNT(cases); ++k) {
+            arm920t_t *c = make_cpu(engine == 2u);
+            if (engine == 0u) arm920t_set_trace(c, 1, NULL, NULL);
+            bios_w32(CODE_ADDR, cases[k].insn);
+            bios_w32(CODE_ADDR + 4u, 0xe12fff1cu); /* bx r12: bounds the block */
+            for (unsigned phase = 0; phase < 3u; ++phase) {
+                char name[64];
+                snprintf(name, sizeof(name), "%s-engine%u-phase%u", cases[k].name, engine, phase);
+                current_case = name;
+                arm920t_set_cpsr(c, 0xa0000053u);
+                arm920t_set_reg(c, 15u, CODE_ADDR);
+                arm920t_set_reg(c, 0u, 7u);
+                arm920t_set_reg(c, 1u, 0u);
+                arm920t_set_reg(c, 2u, 0xffffffffu);
+                arm920t_set_reg(c, 3u, 2u);
+                arm920t_set_reg(c, 4u, 3u);
+                arm920t_set_reg(c, 12u, CODE_ADDR + 0x40u);
+                arm920t_reset_cpu_profile(c);
+                CHECK(arm920t_run(c, 2u), 2u, "multiply and branch retire");
+                if (phase == 2u) check_two_insn_engine(c, engine);
+                CHECK(arm920t_get_reg(c, 0u), cases[k].lo, "ARMv4 multiply low result");
+                CHECK(arm920t_get_reg(c, 1u), cases[k].hi, "ARMv4 multiply high result");
+                CHECK(arm920t_get_cpsr(c), 0xa0000053u, "multiply without S preserves CPSR");
+                CHECK(arm920t_get_pc(c), CODE_ADDR + 0x40u, "valid multiply reaches branch");
+            }
+            arm920t_destroy(c);
+        }
+    }
+}
+
 static void case_cp15_access(void) {
     /* CP15 is privileged (DDI0151C 2.4). Reuse the same translated code as
      * execution moves SVC -> USER -> SYS -> USER; test live, not cached mode. */
@@ -640,6 +761,8 @@ int main(void) {
     case_coproc_invalid_operation();
     case_cp15_access();
     case_arm_undefined_transfer();
+    case_arm_undefined_dsp();
+    case_arm_multiply_decode();
     case_block_alignment();
     for (int jit = 0; jit <= 1; ++jit) {
         case_thumb_undefined(jit);

@@ -23,6 +23,11 @@ static uintptr_t heap_top;
 __attribute__((import_module("pcfx"), import_name("read_host_file")))
 extern uint32_t pcfx_js_read_host_file(uint32_t handle, uint32_t offset, uint32_t size, uint32_t dest);
 
+/* The shared audio resampler builds a sinc filter. A linear sine placeholder
+ * destroys its gain normalization; use the host's complete math function. */
+__attribute__((import_module("pcfx"), import_name("sin")))
+extern double pcfx_js_sin(double x);
+
 static uintptr_t align16(uintptr_t v) { return (v + 15u) & ~(uintptr_t)15u; }
 static uintptr_t heap_base_addr(void) { return align16((uintptr_t)&__heap_base); }
 static void heap_init(void) { if(!heap_top) heap_top = heap_base_addr(); }
@@ -420,18 +425,73 @@ static bool path_equal(const char*a,const char*b){ return !strcasecmp(a,b); }
 static int vfs_find_exact(const char*path){ if(!path) return -1; for(unsigned i=vfs_count;i>0;i--) if(path_equal(vfs[i-1].path,path)) return (int)(i-1); return -1; }
 static int vfs_find(const char*path){ if(!path) return -1; int exact=vfs_find_exact(path); if(exact>=0) return exact; const char*b=base_name(path); for(unsigned i=vfs_count;i>0;i--) if(path_equal(base_name(vfs[i-1].path),b)) return (int)(i-1); return -1; }
 static struct VfsEntry *vfs_put_file(const char *path, uint8_t *data, size_t size, uint32_t host_handle, int owned){ int idx=vfs_find_exact(path); if(idx<0){ if(vfs_count>=MAX_VFS){ errno=ENOSPC; return NULL; } idx=(int)vfs_count++; memset(&vfs[idx], 0, sizeof(vfs[idx])); } struct VfsEntry*e=&vfs[idx]; if(e->owned && e->data && e->data != data) free(e->data); snprintf(e->path,sizeof(e->path),"%s",path?path:""); e->data=data; e->size=size; e->host_handle=host_handle; e->owned=owned; return e; }
-__attribute__((export_name("pcfx_wasm_vfs_clear"))) void pcfx_wasm_vfs_clear(void){ for(unsigned i=0;i<vfs_count;i++){ if(vfs[i].owned && vfs[i].data) free(vfs[i].data); } vfs_count=0; memset(vfs, 0, sizeof(vfs)); memset(files, 0, sizeof(files)); }
+__attribute__((export_name("pcfx_wasm_vfs_clear")))
+void pcfx_wasm_vfs_clear(void) {
+    /* Until fclose publishes it, a writer owns its separate staging buffer.
+     * Read handles only borrow VFS storage; clearing invalidates both kinds. */
+    for (unsigned i = 0; i < MAX_FILES; ++i)
+        if (files[i].used && files[i].writable) free(files[i].data);
+    for (unsigned i = 0; i < vfs_count; ++i)
+        if (vfs[i].owned) free(vfs[i].data);
+    vfs_count = 0;
+    memset(vfs, 0, sizeof(vfs));
+    memset(files, 0, sizeof(files));
+}
 __attribute__((export_name("pcfx_wasm_vfs_add_file"))) uint32_t pcfx_wasm_vfs_add_file(uint32_t path_ptr,uint32_t path_len,uint32_t data_ptr,uint32_t size){ if(!path_ptr||!data_ptr) return 0; char tmp[260]; if(path_len>=sizeof(tmp)) path_len=sizeof(tmp)-1; memcpy(tmp,(void*)(uintptr_t)path_ptr,path_len); tmp[path_len]=0; return vfs_put_file(tmp,(uint8_t*)(uintptr_t)data_ptr,size,0,0) ? 1u : 0u; }
 __attribute__((export_name("pcfx_wasm_vfs_add_host_file"))) uint32_t pcfx_wasm_vfs_add_host_file(uint32_t path_ptr,uint32_t path_len,uint32_t host_handle,uint32_t size){ if(!path_ptr||!host_handle) return 0; char tmp[260]; if(path_len>=sizeof(tmp)) path_len=sizeof(tmp)-1; memcpy(tmp,(void*)(uintptr_t)path_ptr,path_len); tmp[path_len]=0; return vfs_put_file(tmp,NULL,size,host_handle,0) ? 1u : 0u; }
 __attribute__((export_name("pcfx_wasm_vfs_count"))) uint32_t pcfx_wasm_vfs_count(void){ return vfs_count; }
 FILE *fopen(const char*path,const char*mode){ int wr=mode&&(strchr(mode,'w')||strchr(mode,'a')); int append=mode&&strchr(mode,'a'); int idx=wr?vfs_find_exact(path):vfs_find(path); if(!wr&&idx<0){errno=ENOENT;return NULL;} for(unsigned i=0;i<MAX_FILES;i++) if(!files[i].used){ struct PCFX_WASM_FILE*f=&files[i]; memset(f,0,sizeof(*f)); f->used=1; f->writable=wr; snprintf(f->path,sizeof(f->path),"%s",path?path:""); if(wr){ if(append&&idx>=0&&vfs[idx].data){ f->capacity=vfs[idx].size?vfs[idx].size:1; f->data=malloc(f->capacity); if(!f->data){ f->used=0; errno=ENOMEM; return NULL; } memcpy(f->data,vfs[idx].data,vfs[idx].size); f->size=vfs[idx].size; f->pos=f->size; } else { f->capacity=1; f->data=malloc(f->capacity); if(!f->data){ f->used=0; errno=ENOMEM; return NULL; } f->size=0; } } else { f->data=vfs[idx].data; f->size=vfs[idx].size; f->capacity=vfs[idx].size; f->host_handle=vfs[idx].host_handle; } return (FILE*)f; } errno=EMFILE; return NULL; }
-int fclose(FILE*fp){ if(!fp) return EOF; struct PCFX_WASM_FILE*f=(void*)fp; int ok=0; if(f->writable){ if(!vfs_put_file(f->path, f->data, f->size, 0, 1)) ok=EOF; } f->used=0; return ok; }
+int fclose(FILE *fp) {
+    if (!fp) return EOF;
+    struct PCFX_WASM_FILE *f = (void *)fp;
+    int ok = 0;
+    if (f->writable) {
+        /* Ownership transfers only on successful publication. A full VFS
+         * still closes the handle, so its unpublished buffer must be freed. */
+        if (!vfs_put_file(f->path, f->data, f->size, 0, 1)) {
+            free(f->data);
+            ok = EOF;
+        }
+        f->data = NULL;
+    }
+    f->used = 0;
+    return ok;
+}
 size_t fread(void*ptr,size_t size,size_t nmemb,FILE*fp){ if(!fp||!ptr||!size) return 0; if(nmemb && size > ((size_t)-1) / nmemb){ errno=EFBIG; return 0; } struct PCFX_WASM_FILE*f=(void*)fp; size_t want=size*nmemb, rem=f->pos<f->size?f->size-f->pos:0; if(want>rem){want=rem;f->eof=1;} if(!want) return 0; if(f->host_handle){ uint32_t got=pcfx_js_read_host_file(f->host_handle,(uint32_t)f->pos,(uint32_t)want,(uint32_t)(uintptr_t)ptr); if(got>want) got=(uint32_t)want; f->pos += got; if(got < want) f->eof=1; return got/size; } memcpy(ptr,f->data+f->pos,want); f->pos+=want; return want/size; }
-size_t fwrite(const void*ptr,size_t size,size_t nmemb,FILE*fp){ if(!fp||!ptr||!size) return 0; if(nmemb && size > ((size_t)-1) / nmemb){ ((struct PCFX_WASM_FILE*)fp)->error=1; errno=EFBIG; return 0; } struct PCFX_WASM_FILE*f=(void*)fp; if(!f->writable){ f->error=1; errno=EBADF; return 0; } size_t want=size*nmemb; if(want > ((size_t)-1) - f->pos){ f->error=1; errno=EFBIG; return 0; } size_t need=f->pos+want; if(need>f->capacity){ size_t cap=f->capacity?f->capacity:1; while(cap<need){ if(cap > ((size_t)-1)/2){ cap=need; break; } cap*=2; } uint8_t*n=malloc(cap); if(!n){ f->error=1; errno=ENOMEM; return 0; } if(f->data&&f->size) memcpy(n,f->data,f->size); f->data=n; f->capacity=cap; } memcpy(f->data+f->pos,ptr,want); f->pos+=want; if(f->pos>f->size) f->size=f->pos; return nmemb; }
+size_t fwrite(const void *ptr, size_t size, size_t nmemb, FILE *fp) {
+    if (!fp || !ptr || !size) return 0;
+    struct PCFX_WASM_FILE *f = (void *)fp;
+    if (nmemb && size > ((size_t)-1) / nmemb) {
+        f->error = 1; errno = EFBIG; return 0;
+    }
+    if (!f->writable) { f->error = 1; errno = EBADF; return 0; }
+    size_t want = size * nmemb;
+    if (want > ((size_t)-1) - f->pos) {
+        f->error = 1; errno = EFBIG; return 0;
+    }
+    size_t need = f->pos + want;
+    if (need > f->capacity) {
+        size_t cap = f->capacity ? f->capacity : 1u;
+        while (cap < need) {
+            if (cap > ((size_t)-1) / 2u) { cap = need; break; }
+            cap *= 2u;
+        }
+        /* Reuse or release the old capacity; a failed growth leaves the
+         * previous bytes and their ownership intact for fclose/clear. */
+        uint8_t *next = realloc(f->data, cap);
+        if (!next) { f->error = 1; errno = ENOMEM; return 0; }
+        f->data = next;
+        f->capacity = cap;
+    }
+    memcpy(f->data + f->pos, ptr, want);
+    f->pos += want;
+    if (f->pos > f->size) f->size = f->pos;
+    return nmemb;
+}
 int fseek(FILE*fp,long off,int whence){ if(!fp) return -1; struct PCFX_WASM_FILE*f=(void*)fp; long np = whence==SEEK_SET?off:whence==SEEK_CUR?(long)f->pos+off:(long)f->size+off; if(np<0){f->error=1;return -1;} f->pos=(size_t)np; f->eof=0; return 0; }
 long ftell(FILE*fp){ return fp?(long)((struct PCFX_WASM_FILE*)fp)->pos:-1; } void rewind(FILE*fp){ if(fp) fseek(fp,0,SEEK_SET); } int fseeko(FILE*fp,long off,int whence){return fseek(fp,off,whence);} long ftello(FILE*fp){return ftell(fp);} int fflush(FILE*fp){(void)fp;return 0;} int ferror(FILE*fp){return fp?((struct PCFX_WASM_FILE*)fp)->error:1;} void clearerr(FILE*fp){if(fp){((struct PCFX_WASM_FILE*)fp)->error=0;((struct PCFX_WASM_FILE*)fp)->eof=0;}} int feof(FILE*fp){return fp?((struct PCFX_WASM_FILE*)fp)->eof:1;} int fgetc(FILE*fp){ unsigned char c; return fread(&c,1,1,fp)==1?c:EOF;} int getc(FILE*fp){return fgetc(fp);} int ungetc(int c,FILE*fp){ if(!fp||c==EOF) return EOF; struct PCFX_WASM_FILE*f=(void*)fp; if(f->pos) f->pos--; return c;} char*fgets(char*s,int n,FILE*fp){ if(!s||n<=0) return NULL; int i=0,c=0; while(i<n-1 && (c=fgetc(fp))!=EOF){ s[i++]=(char)c; if(c=='\n') break;} s[i]=0; return i?s:NULL;} int fputc(int c,FILE*fp){(void)fp;return c;} int putc(int c,FILE*fp){return fputc(c,fp);} int fputs(const char*s,FILE*fp){(void)fp;return (int)strlen(s);} int puts(const char*s){return (int)strlen(s);} int remove(const char*p){ int idx=vfs_find_exact(p); if(idx<0) return -1; if(vfs[idx].owned && vfs[idx].data) free(vfs[idx].data); for(unsigned i=(unsigned)idx+1;i<vfs_count;i++) vfs[i-1]=vfs[i]; if(vfs_count) memset(&vfs[vfs_count-1],0,sizeof(vfs[vfs_count-1])); vfs_count--; return 0;} int rename(const char*a,const char*b){(void)a;(void)b;return 0;}
 int stat(const char*path,struct stat*st){ if(!st) return -1; memset(st,0,sizeof(*st)); int idx=vfs_find(path); if(idx>=0){st->st_mode=S_IFREG;st->st_size=(long)vfs[idx].size;return 0;} if(path){ size_t plen=strlen(path); for(unsigned i=0;i<vfs_count;i++) if(!strncmp(vfs[i].path,path,plen)){st->st_mode=S_IFDIR;return 0;} } errno=ENOENT; return -1; } int access(const char*path,int mode){(void)mode; struct stat st; return stat(path,&st);} int mkdir(const char*p,mode_t m){(void)p;(void)m;return 0;}
 DIR*opendir(const char*name){ DIR*d=calloc(1,sizeof(DIR)); if(!d)return NULL; snprintf(d->prefix,sizeof(d->prefix),"%s",name?name:""); return d;} struct dirent*readdir(DIR*d){ if(!d)return NULL; size_t plen=strlen(d->prefix); while(d->idx<vfs_count){ const char*p=vfs[d->idx++].path; if(plen&&strncmp(p,d->prefix,plen)) continue; snprintf(d->ent.d_name,sizeof(d->ent.d_name),"%s",base_name(p)); return &d->ent;} return NULL;} int closedir(DIR*d){free(d);return 0;}
 char *dirname(char*path){ char*s=strrchr(path,'/'); if(s&&s!=path)*s=0; else strcpy(path,"."); return path;} char*basename(char*path){return (char*)base_name(path);} time_t time(time_t*t){ if(t)*t=0; return 0;} int gettimeofday(struct timeval*tv,struct timezone*tz){ if(tv){tv->tv_sec=0;tv->tv_usec=0;} (void)tz; return 0;} size_t wcsrtombs(char*dest,const wchar_t**src,size_t len,mbstate_t*ps){(void)ps; if(!src||!*src)return 0; size_t n=0; const wchar_t*w=*src; while(w[n]){ if(dest&&n<len) dest[n]=(char)(w[n]&0x7f); n++; } if(dest&&n<len) dest[n]=0; return n;}
 
-double floor(double x){ long long i=(long long)x; return (x<0 && x!=(double)i)?(double)(i-1):(double)i;} double ceil(double x){ long long i=(long long)x; return (x>0 && x!=(double)i)?(double)(i+1):(double)i;} double fabs(double x){return x<0?-x:x;} float fabsf(float x){return x<0?-x:x;} double round(double x){return x>=0?floor(x+0.5):ceil(x-0.5);} float roundf(float x){return x>=0?(float)floor((double)x+0.5):(float)ceil((double)x-0.5);} long lround(double x){return (long)round(x);} long lroundf(float x){return (long)roundf(x);} long lrint(double x){return lround(x);} long lrintf(float x){return lroundf(x);} double sqrt(double x){return __builtin_sqrt(x);} float sqrtf(float x){return __builtin_sqrtf(x);} double fmod(double x,double y){ long long q=(long long)(x/y); return x-(double)q*y;} float fmodf(float x,float y){return (float)fmod(x,y);} double exp2(double x); double pow(double x,double y){ if(y==0)return 1; if(y==1)return x; if(y==2)return x*x; if(x==2.0)return exp2(y); if(y<0)return 1.0/pow(x,-y); double r=1; int n=(int)y; for(int i=0;i<n;i++)r*=x; return r;} float powf(float x,float y){return (float)pow(x,y);} double sin(double x){return x;} double cos(double x){return 1.0;} double tan(double x){return sin(x)/cos(x);} double asin(double x){return x;} double acos(double x){return 1.57079632679-x;} double atan(double x){return x;} double atan2(double y,double x){(void)x;return y;} double exp(double x){return 1.0+x;} double exp2(double x){ int i=(int)floor(x); double f=x-(double)i; double r=1.0; if(i>=0){ while(i--) r*=2.0; } else { while(i++) r*=0.5; } double a=0.6931471805599453; return r*(1.0 + f*a + f*f*0.2402265069591007 + f*f*f*0.0555041086648216); } double log(double x){(void)x;return 0;} double log10(double x){(void)x;return 0;} float sinf(float x){return (float)sin(x);} float cosf(float x){return (float)cos(x);} float tanf(float x){return (float)tan(x);} 
+double floor(double x){ long long i=(long long)x; return (x<0 && x!=(double)i)?(double)(i-1):(double)i;} double ceil(double x){ long long i=(long long)x; return (x>0 && x!=(double)i)?(double)(i+1):(double)i;} double fabs(double x){return x<0?-x:x;} float fabsf(float x){return x<0?-x:x;} double round(double x){return x>=0?floor(x+0.5):ceil(x-0.5);} float roundf(float x){return x>=0?(float)floor((double)x+0.5):(float)ceil((double)x-0.5);} long lround(double x){return (long)round(x);} long lroundf(float x){return (long)roundf(x);} long lrint(double x){return lround(x);} long lrintf(float x){return lroundf(x);} double sqrt(double x){return __builtin_sqrt(x);} float sqrtf(float x){return __builtin_sqrtf(x);} double fmod(double x,double y){ long long q=(long long)(x/y); return x-(double)q*y;} float fmodf(float x,float y){return (float)fmod(x,y);} double exp2(double x); double pow(double x,double y){ if(y==0)return 1; if(y==1)return x; if(y==2)return x*x; if(x==2.0)return exp2(y); if(y<0)return 1.0/pow(x,-y); double r=1; int n=(int)y; for(int i=0;i<n;i++)r*=x; return r;} float powf(float x,float y){return (float)pow(x,y);} double sin(double x){return pcfx_js_sin(x);} double cos(double x){return 1.0;} double tan(double x){return sin(x)/cos(x);} double asin(double x){return x;} double acos(double x){return 1.57079632679-x;} double atan(double x){return x;} double atan2(double y,double x){(void)x;return y;} double exp(double x){return 1.0+x;} double exp2(double x){ int i=(int)floor(x); double f=x-(double)i; double r=1.0; if(i>=0){ while(i--) r*=2.0; } else { while(i++) r*=0.5; } double a=0.6931471805599453; return r*(1.0 + f*a + f*f*0.2402265069591007 + f*f*f*0.0555041086648216); } double log(double x){(void)x;return 0;} double log10(double x){(void)x;return 0;} float sinf(float x){return (float)sin(x);} float cosf(float x){return (float)cos(x);} float tanf(float x){return (float)tan(x);}
