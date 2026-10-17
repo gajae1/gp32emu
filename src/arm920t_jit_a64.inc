@@ -87,7 +87,7 @@ typedef struct a64_emit {
     size_t pos, cap;
     uint16_t *branch_map; /* one bit per emitted word; runtime stubs use NULL */
     int fail;
-    int ram_read, ram_write, mmu;
+    int ram_read, ram_write, mmu, check_code_writes;
     int hop;         /* clean exits may link to a resident successor */
     int counted;     /* shape has per-load native observation support */
     /* Guest register -> host register holding a write-through copy, or 0.
@@ -1044,6 +1044,67 @@ static void a64_ram_offset(a64_emit_t *e, size_t *slow, unsigned *nslow, unsigne
     }
 }
 
+static void a64_code_watch_base(a64_emit_t *e) {
+    size_t off = offsetof(arm920t_t, jit_code_watches) - offsetof(arm920t_t, irq_line);
+    if (off <= 0xfffu)
+        a64_u32(e, 0x91000000u | ((uint32_t)off << 10) | (25u << 5) | 17u);
+    else a64_cpu_addr(e, 17, offsetof(arm920t_t, jit_code_watches));
+}
+
+/* A proved, aligned STM fragment contains at most 16 instruction words.
+ * The padded bitmap permits one 64-bit window covering any such range,
+ * including one ending at the final RAM word. count=0 takes its length from
+ * count_reg; both dynamic fragments of a two-page transfer have 1..15 words.
+ * Only x6/x7/x17 are scratch, preserving both physical offsets and w5's split. */
+static void a64_guard_code_words(a64_emit_t *e, size_t *slow, unsigned *nslow,
+                                  unsigned offset, unsigned count, unsigned count_reg) {
+    if (!e->check_code_writes) return;
+    a64_code_watch_base(e);
+    a64_ubfx(e, 6, offset, 7u, 25u);
+    a64_rr(e, 0x8b000800u, 6, 17, 6); /* x6 = bitmap + (offset >> 7) * 4 */
+    a64_u32(e, 0xf9400000u | (6u << 5) | 7u); /* ldr x7,[x6], including next bitmap word */
+    a64_ubfx(e, 6, offset, 2u, 5u);
+    a64_rr(e, 0x9ac02400u, 7, 7, 6); /* lsr x7,x7,x6 */
+    if (count) {
+        a64_mask(e, 7, 7, (1u << count) - 1u);
+    } else {
+        a64_imm(e, 6, 1u);
+        a64_rr(e, 0x1ac02000u, 6, 6, count_reg); /* lsl w6,w6,count */
+        a64_u32(e, 0x51000400u | (6u << 5) | 6u); /* sub w6,w6,#1 */
+        a64_rr(e, 0x0a000000u, 7, 7, 6);
+    }
+    slow[(*nslow)++] = e->pos;
+    a64_branch_word(e, 0x35000000u | 7u);
+}
+
+/* w9 is a proved physical RAM offset. Reject watched-span stores before any
+ * guest mutation and let the checked helper finish the instruction before
+ * its epoch fence leaves this trace. Keep w0/w2/w11 for its cold operands.
+ * Control writes flush native blocks, so no guard is emitted with CP15.I=1. */
+static void a64_guard_code_write(a64_emit_t *e, size_t *slow, unsigned *nslow,
+                                  unsigned last_delta) {
+    if (!e->check_code_writes) return;
+    if (last_delta >= 4u) {
+        a64_guard_code_words(e, slow, nslow, 9u, last_delta / 4u + 1u, 0u);
+        return;
+    }
+    a64_code_watch_base(e);
+    for (unsigned last = 0; last < (last_delta ? 2u : 1u); ++last) {
+        unsigned offset = 9u;
+        if (last) {
+            a64_u32(e, 0x11000000u | (last_delta << 10) | (9u << 5) | 16u);
+            offset = 16u;
+        }
+        a64_ubfx(e, 6, offset, ARM_JIT_CODE_WATCH_SHIFT + 5u, 32u - ARM_JIT_CODE_WATCH_SHIFT - 5u);
+        a64_u32(e, 0xb8605800u | (6u << 16) | (17u << 5) | 7u); /* ldr w7,[x17,w6,uxtw #2] */
+        a64_ubfx(e, 6, offset, ARM_JIT_CODE_WATCH_SHIFT, 5u);
+        a64_rr(e, 0x1ac02400u, 7, 7, 6); /* lsr w7,w7,w6 */
+        a64_mask(e, 7, 7, 1u);
+        slow[(*nslow)++] = e->pos;
+        a64_branch_word(e, 0x35000000u | 7u); /* cbnz w7 -> checked instruction */
+    }
+}
+
 /* The shared word probe has established the current physical address in w0.
  * Certificates require an aligned original VA and use the aligned physical
  * word; preserve w0 for the following ROM/open-bus/I/O probes on rejection.
@@ -1189,6 +1250,7 @@ static int a64_single_dt(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
         }
     }
     a64_ram_offset(e, slow, &nslow, byte ? 1u : 4u, !byte);
+    if (!load) a64_guard_code_write(e, slow, &nslow, 0u);
     /* Keep the authoritative guest store, but avoid moving its value through
      * w1 when a write-through register is already assigned. Guard failures
      * still enter the unchanged cold path before any guest value is written. */
@@ -1260,7 +1322,7 @@ static int a64_half(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
     int wb = !p || !!(d & ARM_BC_HALF_W);
     if (!(load ? e->ram_read : e->ram_write) || op->b == 15u ||
         (wb && op->a == 15u) || (load ? !sh : sh != 1u)) return 0;
-    size_t slow[4];
+    size_t slow[6];
     unsigned nslow = 0;
     if (d & ARM_BC_HALF_IMM) a64_imm(e, 1, op->imm);
     else if (op->c == 15u) a64_imm(e, 1, op->pc + 4u);
@@ -1272,6 +1334,7 @@ static int a64_half(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
     a64_rr(e, (d & ARM_BC_HALF_U) ? 0x0b000000u : 0x4b000000u, folded_half ? 0u : 2u, 0, 1);
     if (p && !folded_half) a64_mov(e, 0, 2); /* pre-indexed accesses target the offset address */
     a64_ram_offset(e, slow, &nslow, (load && sh == 2u) ? 1u : 2u, 0);
+    if (!load) a64_guard_code_write(e, slow, &nslow, 1u);
     unsigned value = e->cache_host[op->b] ? e->cache_host[op->b] : 1u;
     if (load) {
         /* ldrh/ldrsb/ldrsh: A64 already yields the exact
@@ -1357,6 +1420,7 @@ static int a64_block_dt(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
     /* The span stays within this 4 KiB page, so proving its aligned first
      * word in a full RAM page also proves every transferred word. */
     a64_ram_offset(e, slow, &nslow, 4u, 0);
+    if (!load) a64_guard_code_write(e, slow, &nslow, 4u * (count - 1u));
     a64_rr(e, 0x8b000000u, 12, 21, 9); /* x12 = jit_ram_base + in-RAM offset */
     a64_block_dt_transfer(e, op, count, 0, slow, &nslow);
     if (w && (!load || !(list & (1u << rn))))
@@ -1410,6 +1474,15 @@ static void a64_block_dt_xpage(a64_emit_t *e, const arm_jit_op_t *op, uint32_t d
     a64_imm(e, 6, 0x1000u);
     a64_rr(e, 0x4b000000u, 5, 6, 5); /* w5 = 0x1000 - addr0 page offset */
     a64_ubfx(e, 5, 5, 2, 30); /* w5 /= 4 */
+
+    if (!load && e->check_code_writes) {
+        /* Virtual neighbors can map to unrelated physical pages. Test all
+         * words in each resolved fragment, before any transfer or writeback. */
+        a64_guard_code_words(e, slow, nslow, 2u, 0u, 5u);
+        a64_imm(e, 16, count);
+        a64_rr(e, 0x4b000000u, 16, 16, 5); /* w16 = count - first-page count */
+        a64_guard_code_words(e, slow, nslow, 4u, 0u, 16u);
+    }
 
     /* Each fragment ends at or before its already-proved RAM page edge. */
     a64_rr(e, 0x8b000000u, 12, 21, 2); /* x12 = RAM pointer for page 0 */
@@ -2142,6 +2215,7 @@ static void arm_jit_compile_host(arm920t_t *c, arm_jit_block_t *b) {
     e.cold_cap = ARM_JIT_MAX_INSNS;
     e.fwd_guest = -1;
     e.mmu = !!(c->cp15[1] & 1u);
+    e.check_code_writes = !(c->cp15[1] & (1u << 12));
     e.live_read32 = c->live_read32;
     e.live_read32_count = c->live_read32_count;
     e.loop_done = a64_selfloop_prefix(c, b);
