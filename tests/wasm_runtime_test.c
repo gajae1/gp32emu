@@ -1,5 +1,6 @@
 /* Compiled with the real freestanding WASM libc, not the host's libm. */
 #include "audio/gp32_audio_resampler.h"
+#include "smartmedia.h"
 
 #include <stdint.h>
 
@@ -26,3 +27,6 @@ int32_t test_coefficient_sum(uint32_t phase) {
         sum += resampler.poly_coef[phase % GP32_AUDIO_POLY_PHASES][i];
     return sum;
 }
+
+__attribute__((export_name("test_smc_host_time_ms")))
+uint64_t test_smc_host_time_ms(void) { return smc_host_time_ms(); }

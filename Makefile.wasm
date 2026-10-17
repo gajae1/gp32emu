@@ -43,7 +43,7 @@ CORE_SRCS := \
 OBJS := $(patsubst %.c,$(BUILD_DIR)/%.o,$(CORE_SRCS))
 WASM_TEST := $(BUILD_DIR)/wasm_runtime_test.wasm
 WASM_TEST_OBJ := $(BUILD_DIR)/tests/wasm_runtime_test.o
-WASM_TEST_OBJS := $(BUILD_DIR)/src/audio/gp32_audio_resampler.o $(BUILD_DIR)/wasm/libc/src/pcfx_wasm_libc.o $(WASM_TEST_OBJ)
+WASM_TEST_OBJS := $(OBJS) $(WASM_TEST_OBJ)
 
 .PHONY: all build clean serve test
 all: build
@@ -55,7 +55,7 @@ test: $(WASM_TEST)
 	$(NODE) tests/wasm_runtime_test.mjs $(WASM_TEST)
 
 $(WASM_TEST): $(WASM_TEST_OBJS)
-	$(WASM_LD) $(WASM_LDFLAGS) -o $@ $(WASM_TEST_OBJS)
+	$(WASM_LD) $(WASM_LDFLAGS) $(WASM_EXPORTS) -o $@ $(WASM_TEST_OBJS)
 
 $(OUT_WASM): $(OBJS) | $(OUT_DIR)
 	$(WASM_LD) $(WASM_LDFLAGS) $(WASM_EXPORTS) -o $@ $(OBJS)
