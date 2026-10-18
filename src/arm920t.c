@@ -560,7 +560,9 @@ ARM_FORCE_INLINE uint8_t *fastmem(arm920t_t *c, uint32_t a, size_t bytes, int wr
 static int arm_jit_refresh_bus_windows(arm920t_t *c) {
     uint8_t *ram = fastmem(c, ARM_JIT_RAM_BASE_ADDR, ARM_JIT_RAM_SIZE_BYTES, 0);
     uint8_t *write = fastmem(c, ARM_JIT_RAM_BASE_ADDR, ARM_JIT_RAM_SIZE_BYTES, 1);
-    uint8_t *bios = fastmem(c, 0x00000000u, 1u, 0);
+    /* Decoded helpers index any byte in this window. A pointer to a short
+     * prefix does not authorize reads from its callback-backed remainder. */
+    uint8_t *bios = fastmem(c, 0x00000000u, ARM_JIT_BIOS_SIZE_BYTES, 0);
     int changed = ram != c->jit_ram_base || write != c->jit_ram_write_base ||
                   bios != c->jit_bios_base;
     c->jit_ram_base = ram;
@@ -1249,8 +1251,8 @@ void arm920t_set_jit(arm920t_t *c, int enabled) {
 #endif
         c->jit_enabled = enabled != 0;
         if (c->jit_enabled) {
-            /* Block helpers index the whole RAM window from this base, so the
-             * probe must cover all of it; a smaller RAM keeps the interpreter. */
+            /* Block helpers index whole RAM/BIOS windows from these bases,
+             * so partial direct mappings keep the portable fallback. */
             if (arm_jit_refresh_bus_windows(c))
                 arm920t_jit_invalidate_all(c, ARM_JIT_INV_API_FLUSH);
             if (!c->jit_ram_base || !c->jit_bios_base) c->jit_enabled = 0;
