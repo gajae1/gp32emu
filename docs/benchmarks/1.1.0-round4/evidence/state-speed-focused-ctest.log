@@ -1,0 +1,19 @@
+Test project /tmp/gp32-round4-soc-hle/build-hle
+    Start 21: s3c2400_timing
+1/7 Test #21: s3c2400_timing ...................   Passed    0.04 sec
+    Start 27: s3c2400_lcd
+2/7 Test #27: s3c2400_lcd ......................   Passed    0.04 sec
+    Start 31: s3c2400_state
+3/7 Test #31: s3c2400_state ....................   Passed    0.01 sec
+    Start 34: gp32_callback
+4/7 Test #34: gp32_callback ....................   Passed    0.41 sec
+    Start 36: gp32_wait
+5/7 Test #36: gp32_wait ........................   Passed    0.71 sec
+    Start 45: gp32_state
+6/7 Test #45: gp32_state .......................   Passed    0.16 sec
+    Start 46: gp32_state_speed
+7/7 Test #46: gp32_state_speed .................   Passed    0.15 sec
+
+100% tests passed out of 7
+
+Total Test time (real) =   1.52 sec

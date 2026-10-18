@@ -1,0 +1,2 @@
+forward-predicates cases=512
+PASS: arm jit differential (flags/shift/branch/mem/half/block/mul/seeded/budget/loop-fences), jit events=4546 fallbacks=0

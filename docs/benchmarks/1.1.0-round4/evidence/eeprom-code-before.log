@@ -1,0 +1,8 @@
+FAIL line 242: arm920t_get_reg(g->cpu, 0u) == 0x22u
+FAIL line 242: arm920t_get_reg(g->cpu, 0u) == 0x22u
+FAIL line 242: arm920t_get_reg(g->cpu, 0u) == 0x22u
+FAIL line 242: arm920t_get_reg(g->cpu, 0u) == 0x22u
+FAIL line 242: arm920t_get_reg(g->cpu, 0u) == 0x22u
+FAIL line 242: arm920t_get_reg(g->cpu, 0u) == 0x22u
+FAIL line 242: arm920t_get_reg(g->cpu, 0u) == 0x22u
+FAIL line 242: arm920t_get_reg(g->cpu, 0u) == 0x22u

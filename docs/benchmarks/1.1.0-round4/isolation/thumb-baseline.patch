@@ -1,0 +1,41 @@
+diff --git a/src/arm920t.c b/src/arm920t.c
+index 1e151e3..2d5049e 100644
+--- a/src/arm920t.c
++++ b/src/arm920t.c
+@@ -1675,6 +1675,15 @@ static void op_coproc(arm920t_t *c, uint32_t insn) {
+ }
+ 
+ static int arm920t_armv4t_invalid_arm_insn(uint32_t insn) {
++    /* DDI0151C 2.2.2 / DDI0100I A3.16.3: only MRS, MSR and BX are
++     * allocated in the ARMv4T control extension space. Test decode fields
++     * only; invalid reserved operand fields remain UNPREDICTABLE. In
++     * particular BXJ must not fall through the permissive MSR operand mask. */
++    if ((insn & 0x0d900000u) == 0x01000000u &&
++        (insn & 0x02000090u) != 0x00000090u)
++        return (insn & 0x0f9000f0u) != 0x01000000u && /* MRS / register MSR */
++               (insn & 0x0fb00000u) != 0x03200000u && /* immediate MSR */
++               (insn & 0x0ff000f0u) != 0x01200010u;   /* BX */
+     /* DDI0151C 2.2.2: unallocated extension encodings trap on ARM920T.
+      * S=H=0 belongs to MUL/long MUL/SWP, never a halfword transfer. Match
+      * their decode bits only: reserved operand bits are a separate concern. */
+@@ -1683,18 +1692,10 @@ static int arm920t_armv4t_invalid_arm_insn(uint32_t insn) {
+         (insn & 0x0f800000u) != 0x00800000u &&
+         (insn & 0x0fb00000u) != 0x01000000u)
+         return 1;
+-    /* ARM920T is ARMv4T.  Firebird targets ARM926/ARMv5TE and may translate
+-       BLX, CLZ, BKPT and DSP/saturating opcodes; those must be undefined on
+-       the GP32 CPU instead of being translated or treated as ARM926 CP15/cache
+-       behaviour. */
++    /* The remaining undefined forms lie outside the control extension space. */
+     return (insn & 0x0e000010u) == 0x06000010u ||        /* ARM undefined instruction space (DDI0151C 2.2.2) */
+            (insn & 0x0e1000d0u) == 0x000000d0u ||        /* LDRD/STRD: ARMv5TE load/store extension */
+-           (insn & 0xfe000000u) == 0xfa000000u ||        /* BLX immediate */
+-           (insn & 0x0ffffff0u) == 0x012fff30u ||        /* BLX register */
+-           (insn & 0x0fff0ff0u) == 0x016f0f10u ||        /* CLZ */
+-           (insn & 0x0ff000f0u) == 0x01200070u ||        /* BKPT */
+-           (insn & 0x0f900090u) == 0x01000080u ||        /* SMLAxy/SMLAWy/SMULWy/SMLALxy/SMULxy: ARMv5TE */
+-           (insn & 0x0f9000f0u) == 0x01000050u;          /* QADD/QSUB/QDADD/QDSUB */
++           (insn & 0xfe000000u) == 0xfa000000u;          /* BLX immediate */
+ }
+ 
+ static int arm920t_armv4t_rejects_arm(arm920t_t *c, uint32_t pc, uint32_t insn) {

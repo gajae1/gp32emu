@@ -1,0 +1,479 @@
+[  2%] Building C object CMakeFiles/arm_write_permission_test.dir/tests/arm_write_permission_test.c.o
+[  2%] Building C object CMakeFiles/gp32emu.dir/src/gp32.c.o
+[  2%] Building C object CMakeFiles/gp32emu.dir/src/arm920t.c.o
+/tmp/gp32-round4/src/arm920t.c: In function ‘arm_jit_fold_const_step’:
+/tmp/gp32-round4/src/arm920t.c:3498:59: warning: comparison is always false due to limited range of data type [-Wtype-limits]
+ 3498 |         if (next->e != prev->c || next->g > 3u || next->h > 31u) return 0;
+      |                                                           ^
+/tmp/gp32-round4/src/arm920t.c: At top level:
+/tmp/gp32-round4/src/arm920t.c:3811:13: warning: ‘x64_fetch_guard’ defined but not used [-Wunused-function]
+ 3811 | static void x64_fetch_guard(arm920t_t *c, x64_emit_t *e, uint32_t pc, uint32_t done) {
+      |             ^~~~~~~~~~~~~~~
+/tmp/gp32-round4/src/arm920t.c:837:13: warning: ‘itlb_store’ defined but not used [-Wunused-function]
+  837 | static void itlb_store(arm920t_t *c,uint32_t va,uint32_t pa,uint32_t mask) {
+      |             ^~~~~~~~~~
+[  3%] Building C object CMakeFiles/gp32emu.dir/src/s3c2400.c.o
+/tmp/gp32-round4/src/s3c2400.c: In function ‘audio_prepare_rate’:
+/tmp/gp32-round4/src/s3c2400.c:892:67: warning: comparison is always false due to limited range of data type [-Wtype-limits]
+  892 |                 if (cap <= s->audio_boundary_cap || (uint64_t)cap > SIZE_MAX / sizeof(*s->audio_boundaries)) return 0;
+      |                                                                   ^
+/tmp/gp32-round4/src/s3c2400.c: In function ‘s3c2400_state_load_image’:
+/tmp/gp32-round4/src/s3c2400.c:2847:67: warning: comparison is always false due to limited range of data type [-Wtype-limits]
+ 2847 |             span_count > st->audio_frames || (uint64_t)span_count > SIZE_MAX / sizeof(*new_spans)) goto bad_audio;
+      |                                                                   ^
+[  3%] Linking C executable arm_write_permission_test
+[  3%] Built target arm_write_permission_test
+[  4%] Building C object CMakeFiles/arm_read_window_test.dir/tests/arm_read_window_test.c.o
+[  5%] Building C object CMakeFiles/gp32emu.dir/src/gp32_codec.c.o
+[  6%] Building C object CMakeFiles/gp32emu.dir/src/smartmedia.c.o
+[  6%] Building C object CMakeFiles/gp32emu.dir/src/smc_direct.c.o
+[  7%] Building C object CMakeFiles/gp32emu.dir/src/fxe.c.o
+[  8%] Building C object CMakeFiles/gp32emu.dir/src/fpk.c.o
+[  9%] Building C object CMakeFiles/gp32emu.dir/src/gp32_zip.c.o
+[ 10%] Building C object CMakeFiles/gp32emu.dir/src/third_party/zip/zip.c.o
+[ 10%] Building C object CMakeFiles/gp32emu.dir/src/input_script.c.o
+[ 11%] Building C object CMakeFiles/gp32emu.dir/src/platform/platform.c.o
+[ 12%] Building C object CMakeFiles/gp32emu.dir/src/audio/gp32_audio_resampler.c.o
+[ 13%] Building C object CMakeFiles/gp32emu.dir/src/media/gp32_media.c.o
+[ 13%] Building C object CMakeFiles/gp32emu.dir/src/media/gp32_video_effects.c.o
+[ 14%] Building C object CMakeFiles/gp32emu.dir/src/save_atomic.c.o
+[ 15%] Linking C static library libgp32emu.a
+[ 15%] Built target gp32emu
+[ 16%] Building C object CMakeFiles/arm_fetch_callback_test.dir/tests/arm_fetch_callback_test.c.o
+[ 17%] Linking C executable arm_read_window_test
+[ 17%] Built target arm_read_window_test
+[ 17%] Building C object CMakeFiles/arm_thumb_transfer_test.dir/tests/arm_thumb_transfer_test.c.o
+[ 18%] Linking C executable arm_thumb_transfer_test
+[ 18%] Built target arm_thumb_transfer_test
+[ 18%] Building C object CMakeFiles/arm_thumb_alu_test.dir/tests/arm_thumb_alu_test.c.o
+[ 19%] Linking C executable arm_thumb_alu_test
+[ 19%] Built target arm_thumb_alu_test
+[ 20%] Building C object CMakeFiles/arm_thumb_pc_test.dir/tests/arm_thumb_pc_test.c.o
+[ 21%] Linking C executable arm_thumb_pc_test
+[ 21%] Built target arm_thumb_pc_test
+[ 22%] Building C object CMakeFiles/s3c2400_dma_test.dir/tests/s3c2400_dma_test.c.o
+[ 22%] Linking C executable s3c2400_dma_test
+[ 22%] Built target s3c2400_dma_test
+[ 23%] Building C object CMakeFiles/s3c2400_priority_test.dir/tests/s3c2400_priority_test.c.o
+[ 24%] Linking C executable arm_fetch_callback_test
+[ 24%] Built target arm_fetch_callback_test
+[ 25%] Building C object CMakeFiles/gp32_hle_memory_test.dir/tests/gp32_hle_memory_test.c.o
+[ 26%] Linking C executable s3c2400_priority_test
+[ 26%] Built target s3c2400_priority_test
+[ 27%] Building C object CMakeFiles/gp32_state_speed_test.dir/tests/gp32_state_speed_test.c.o
+[ 28%] Linking C executable gp32_hle_memory_test
+[ 28%] Built target gp32_hle_memory_test
+[ 29%] Building C object CMakeFiles/arm_jit_recycle_test.dir/tests/arm_jit_recycle_test.c.o
+[ 30%] Linking C executable gp32_state_speed_test
+[ 30%] Built target gp32_state_speed_test
+[ 31%] Building C object CMakeFiles/arm_jit_policy_test.dir/tests/arm_jit_policy_test.c.o
+[ 32%] Linking C executable arm_jit_recycle_test
+[ 32%] Built target arm_jit_recycle_test
+[ 33%] Building C object CMakeFiles/arm_alu_differential_test.dir/tests/arm_alu_differential_test.c.o
+[ 33%] Linking C executable arm_jit_policy_test
+[ 33%] Built target arm_jit_policy_test
+[ 33%] Building C object CMakeFiles/gp32_headless.dir/src/headless_main.c.o
+[ 34%] Linking C executable gp32_headless
+[ 34%] Built target gp32_headless
+[ 35%] Building C object CMakeFiles/gp32emu_libretro.dir/src/libretro/libretro.c.o
+[ 35%] Linking C shared library gp32emu_libretro.so
+[ 35%] Built target gp32emu_libretro
+[ 36%] Building C object CMakeFiles/ios_bridge_test.dir/tests/ios_bridge_test.c.o
+In file included from /tmp/gp32-round4/tests/ios_bridge_test.c:3:
+/tmp/gp32-round4/tests/../ios/bridge/gp32_ios.c: In function ‘gp32_ios_emulator_load’:
+/tmp/gp32-round4/tests/../ios/bridge/gp32_ios.c:394:78: warning: ‘%s’ directive output may be truncated writing up to 1023 bytes into a region of size 327 [-Wformat-truncation=]
+  394 |                  "gp32emu ios: cannot open card progress (%s), load aborted: %s",
+      |                                                                              ^~
+In file included from /usr/include/stdio.h:980,
+                 from /tmp/gp32-round4/tests/../ios/bridge/gp32_ios.c:18:
+In function ‘snprintf’,
+    inlined from ‘restore_card_progress’ at /tmp/gp32-round4/tests/../ios/bridge/gp32_ios.c:393:9,
+    inlined from ‘load_smartmedia’ at /tmp/gp32-round4/tests/../ios/bridge/gp32_ios.c:430:20,
+    inlined from ‘gp32_ios_emulator_load’ at /tmp/gp32-round4/tests/../ios/bridge/gp32_ios.c:535:45:
+/usr/include/x86_64-linux-gnu/bits/stdio2.h:54:10: note: ‘__builtin___snprintf_chk’ output 58 or more bytes (assuming 1081) into a destination of size 384
+   54 |   return __builtin___snprintf_chk (__s, __n, __USE_FORTIFY_LEVEL - 1,
+      |          ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+   55 |                                    __glibc_objsize (__s), __fmt,
+      |                                    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+   56 |                                    __va_arg_pack ());
+      |                                    ~~~~~~~~~~~~~~~~~
+[ 37%] Linking C executable ios_bridge_test
+[ 37%] Built target ios_bridge_test
+[ 37%] Building C object CMakeFiles/libretro_audio_test.dir/tests/libretro_audio_test.c.o
+[ 38%] Linking C executable libretro_audio_test
+[ 38%] Built target libretro_audio_test
+[ 39%] Building C object CMakeFiles/audio_resampler_test.dir/tests/audio_resampler_test.c.o
+[ 39%] Linking C executable audio_resampler_test
+[ 39%] Built target audio_resampler_test
+[ 39%] Building C object CMakeFiles/libretro_persistence_test.dir/tests/libretro_persistence_test.c.o
+[ 40%] Linking C executable libretro_persistence_test
+[ 40%] Built target libretro_persistence_test
+[ 41%] Building C object CMakeFiles/libretro_input_test.dir/tests/libretro_input_test.c.o
+[ 42%] Linking C executable libretro_input_test
+[ 42%] Built target libretro_input_test
+[ 43%] Building C object CMakeFiles/libretro_runahead_test.dir/tests/libretro_runahead_test.c.o
+/tmp/gp32-round4/tests/libretro_runahead_test.c: In function ‘test_card_autosave_gate’:
+/tmp/gp32-round4/tests/libretro_runahead_test.c:275:75: warning: comparison of unsigned expression in ‘>= 0’ is always true [-Wtype-limits]
+  275 |         cycles_ok = retro_serialize(state, size) && run_scripted_frame(i) >= 0 &&
+      |                                                                           ^~
+[ 44%] Linking C executable libretro_runahead_test
+[ 44%] Built target libretro_runahead_test
+[ 45%] Building C object CMakeFiles/input_script_test.dir/tests/input_script_test.c.o
+[ 46%] Linking C executable input_script_test
+[ 46%] Built target input_script_test
+[ 47%] Building C object CMakeFiles/arm_poll_test.dir/tests/arm_poll_test.c.o
+[ 48%] Linking C executable arm_poll_test
+[ 48%] Built target arm_poll_test
+[ 49%] Building C object CMakeFiles/arm_jit_test.dir/tests/arm_jit_test.c.o
+In file included from /tmp/gp32-round4/tests/arm_jit_test.c:22:
+/tmp/gp32-round4/tests/../src/arm920t.c: In function ‘arm_jit_fold_const_step’:
+/tmp/gp32-round4/tests/../src/arm920t.c:3498:59: warning: comparison is always false due to limited range of data type [-Wtype-limits]
+ 3498 |         if (next->e != prev->c || next->g > 3u || next->h > 31u) return 0;
+      |                                                           ^
+/tmp/gp32-round4/tests/../src/arm920t.c: At top level:
+/tmp/gp32-round4/tests/../src/arm920t.c:3811:13: warning: ‘x64_fetch_guard’ defined but not used [-Wunused-function]
+ 3811 | static void x64_fetch_guard(arm920t_t *c, x64_emit_t *e, uint32_t pc, uint32_t done) {
+      |             ^~~~~~~~~~~~~~~
+[ 50%] Linking C executable arm_alu_differential_test
+[ 50%] Built target arm_alu_differential_test
+[ 51%] Building C object CMakeFiles/arm_translation_test.dir/tests/arm_translation_test.c.o
+In file included from /tmp/gp32-round4/tests/arm_translation_test.c:2:
+/tmp/gp32-round4/tests/../src/arm920t.c: In function ‘arm_jit_fold_const_step’:
+/tmp/gp32-round4/tests/../src/arm920t.c:3498:59: warning: comparison is always false due to limited range of data type [-Wtype-limits]
+ 3498 |         if (next->e != prev->c || next->g > 3u || next->h > 31u) return 0;
+      |                                                           ^
+/tmp/gp32-round4/tests/../src/arm920t.c: At top level:
+/tmp/gp32-round4/tests/../src/arm920t.c:3811:13: warning: ‘x64_fetch_guard’ defined but not used [-Wunused-function]
+ 3811 | static void x64_fetch_guard(arm920t_t *c, x64_emit_t *e, uint32_t pc, uint32_t done) {
+      |             ^~~~~~~~~~~~~~~
+In function ‘spsr_bank’,
+    inlined from ‘case_native_spsr_conditions’ at /tmp/gp32-round4/tests/arm_jit_test.c:3329:9,
+    inlined from ‘case_native_spsr’ at /tmp/gp32-round4/tests/arm_jit_test.c:3600:5:
+/tmp/gp32-round4/tests/arm_jit_test.c:3163:33: warning: ‘c.spsr_svc’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3163 |     case SPSR_MODE_SVC: return c.spsr_svc;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round4/tests/arm_jit_test.c: In function ‘case_native_spsr’:
+/tmp/gp32-round4/tests/arm_jit_test.c:3158:32: note: ‘c’ declared here
+ 3158 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘case_native_spsr_fields’ at /tmp/gp32-round4/tests/arm_jit_test.c:3291:9,
+    inlined from ‘case_native_spsr’ at /tmp/gp32-round4/tests/arm_jit_test.c:3599:5:
+/tmp/gp32-round4/tests/arm_jit_test.c:3163:33: warning: ‘c.spsr_svc’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3163 |     case SPSR_MODE_SVC: return c.spsr_svc;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round4/tests/arm_jit_test.c: In function ‘case_native_spsr’:
+/tmp/gp32-round4/tests/arm_jit_test.c:3158:32: note: ‘c’ declared here
+ 3158 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘case_native_psr_continuation’ at /tmp/gp32-round4/tests/arm_jit_test.c:3512:9:
+/tmp/gp32-round4/tests/arm_jit_test.c:3163:33: warning: ‘c.spsr_svc’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3163 |     case SPSR_MODE_SVC: return c.spsr_svc;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round4/tests/arm_jit_test.c: In function ‘case_native_psr_continuation’:
+/tmp/gp32-round4/tests/arm_jit_test.c:3158:32: note: ‘c’ declared here
+ 3158 |     arm920t_register_context_t c;
+      |                                ^
+[ 51%] Linking C executable arm_jit_test
+[ 51%] Built target arm_jit_test
+[ 51%] Building C object CMakeFiles/arm_accelerator_test.dir/tests/arm_accelerator_test.c.o
+[ 52%] Linking C executable arm_accelerator_test
+[ 52%] Built target arm_accelerator_test
+[ 52%] Building C object CMakeFiles/arm_exception_test.dir/tests/arm_exception_test.c.o
+[ 53%] Linking C executable arm_exception_test
+[ 53%] Built target arm_exception_test
+[ 53%] Building C object CMakeFiles/arm_code_write_test.dir/tests/arm_code_write_test.c.o
+In file included from /tmp/gp32-round4/tests/arm_translation_test.c:4:
+In function ‘spsr_bank’,
+    inlined from ‘case_native_spsr_bank_reuse’ at /tmp/gp32-round4/tests/arm_jit_test.c:3374:5:
+/tmp/gp32-round4/tests/arm_jit_test.c:3163:33: warning: ‘c.spsr_svc’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3163 |     case SPSR_MODE_SVC: return c.spsr_svc;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round4/tests/arm_jit_test.c: In function ‘case_native_spsr_bank_reuse’:
+/tmp/gp32-round4/tests/arm_jit_test.c:3158:32: note: ‘c’ declared here
+ 3158 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘case_native_spsr_bank_reuse’ at /tmp/gp32-round4/tests/arm_jit_test.c:3375:5:
+/tmp/gp32-round4/tests/arm_jit_test.c:3161:33: warning: ‘c.spsr_fiq’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3161 |     case SPSR_MODE_FIQ: return c.spsr_fiq;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round4/tests/arm_jit_test.c: In function ‘case_native_spsr_bank_reuse’:
+/tmp/gp32-round4/tests/arm_jit_test.c:3158:32: note: ‘c’ declared here
+ 3158 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘case_native_spsr_bank_reuse’ at /tmp/gp32-round4/tests/arm_jit_test.c:3372:5:
+/tmp/gp32-round4/tests/arm_jit_test.c:3161:33: warning: ‘c.spsr_fiq’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3161 |     case SPSR_MODE_FIQ: return c.spsr_fiq;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round4/tests/arm_jit_test.c: In function ‘case_native_spsr_bank_reuse’:
+/tmp/gp32-round4/tests/arm_jit_test.c:3158:32: note: ‘c’ declared here
+ 3158 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘case_native_spsr_bank_reuse’ at /tmp/gp32-round4/tests/arm_jit_test.c:3357:26:
+/tmp/gp32-round4/tests/arm_jit_test.c:3163:33: warning: ‘c.spsr_svc’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3163 |     case SPSR_MODE_SVC: return c.spsr_svc;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round4/tests/arm_jit_test.c: In function ‘case_native_spsr_bank_reuse’:
+/tmp/gp32-round4/tests/arm_jit_test.c:3158:32: note: ‘c’ declared here
+ 3158 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘case_native_spsr_conditions’ at /tmp/gp32-round4/tests/arm_jit_test.c:3329:9,
+    inlined from ‘case_native_spsr’ at /tmp/gp32-round4/tests/arm_jit_test.c:3600:5:
+/tmp/gp32-round4/tests/arm_jit_test.c:3163:33: warning: ‘c.spsr_svc’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3163 |     case SPSR_MODE_SVC: return c.spsr_svc;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round4/tests/arm_jit_test.c: In function ‘case_native_spsr’:
+/tmp/gp32-round4/tests/arm_jit_test.c:3158:32: note: ‘c’ declared here
+ 3158 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘case_native_spsr_fields’ at /tmp/gp32-round4/tests/arm_jit_test.c:3291:9,
+    inlined from ‘case_native_spsr’ at /tmp/gp32-round4/tests/arm_jit_test.c:3599:5:
+/tmp/gp32-round4/tests/arm_jit_test.c:3163:33: warning: ‘c.spsr_svc’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3163 |     case SPSR_MODE_SVC: return c.spsr_svc;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round4/tests/arm_jit_test.c: In function ‘case_native_spsr’:
+/tmp/gp32-round4/tests/arm_jit_test.c:3158:32: note: ‘c’ declared here
+ 3158 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘case_native_psr_continuation’ at /tmp/gp32-round4/tests/arm_jit_test.c:3512:9:
+/tmp/gp32-round4/tests/arm_jit_test.c:3163:33: warning: ‘c.spsr_svc’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3163 |     case SPSR_MODE_SVC: return c.spsr_svc;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round4/tests/arm_jit_test.c: In function ‘case_native_psr_continuation’:
+/tmp/gp32-round4/tests/arm_jit_test.c:3158:32: note: ‘c’ declared here
+ 3158 |     arm920t_register_context_t c;
+      |                                ^
+[ 54%] Linking C executable arm_code_write_test
+[ 54%] Built target arm_code_write_test
+[ 55%] Building C object CMakeFiles/arm_cpu_code_write_test.dir/tests/arm_cpu_code_write_test.c.o
+In file included from /tmp/gp32-round4/tests/arm_jit_test.c:22,
+                 from /tmp/gp32-round4/tests/arm_cpu_code_write_test.c:5:
+/tmp/gp32-round4/tests/../src/arm920t.c: In function ‘arm_jit_fold_const_step’:
+/tmp/gp32-round4/tests/../src/arm920t.c:3498:59: warning: comparison is always false due to limited range of data type [-Wtype-limits]
+ 3498 |         if (next->e != prev->c || next->g > 3u || next->h > 31u) return 0;
+      |                                                           ^
+/tmp/gp32-round4/tests/../src/arm920t.c: At top level:
+/tmp/gp32-round4/tests/../src/arm920t.c:3811:13: warning: ‘x64_fetch_guard’ defined but not used [-Wunused-function]
+ 3811 | static void x64_fetch_guard(arm920t_t *c, x64_emit_t *e, uint32_t pc, uint32_t done) {
+      |             ^~~~~~~~~~~~~~~
+[ 56%] Linking C executable arm_translation_test
+[ 56%] Built target arm_translation_test
+[ 57%] Building C object CMakeFiles/s3c2400_timing_test.dir/tests/s3c2400_timing_test.c.o
+[ 58%] Linking C executable s3c2400_timing_test
+[ 58%] Built target s3c2400_timing_test
+[ 59%] Building C object CMakeFiles/s3c2400_iis_irq_test.dir/tests/s3c2400_iis_irq_test.c.o
+[ 59%] Linking C executable s3c2400_iis_irq_test
+[ 59%] Built target s3c2400_iis_irq_test
+[ 59%] Building C object CMakeFiles/s3c2400_muted_dma_test.dir/tests/s3c2400_muted_dma_test.c.o
+In file included from /tmp/gp32-round4/tests/s3c2400_muted_dma_test.c:3:
+/tmp/gp32-round4/tests/../src/s3c2400.c: In function ‘audio_prepare_rate’:
+/tmp/gp32-round4/tests/../src/s3c2400.c:892:67: warning: comparison is always false due to limited range of data type [-Wtype-limits]
+  892 |                 if (cap <= s->audio_boundary_cap || (uint64_t)cap > SIZE_MAX / sizeof(*s->audio_boundaries)) return 0;
+      |                                                                   ^
+/tmp/gp32-round4/tests/../src/s3c2400.c: In function ‘s3c2400_state_load_image’:
+/tmp/gp32-round4/tests/../src/s3c2400.c:2847:67: warning: comparison is always false due to limited range of data type [-Wtype-limits]
+ 2847 |             span_count > st->audio_frames || (uint64_t)span_count > SIZE_MAX / sizeof(*new_spans)) goto bad_audio;
+      |                                                                   ^
+[ 60%] Linking C executable s3c2400_muted_dma_test
+[ 60%] Built target s3c2400_muted_dma_test
+[ 61%] Building C object CMakeFiles/s3c2400_irq_test.dir/tests/s3c2400_irq_test.c.o
+[ 62%] Linking C executable s3c2400_irq_test
+[ 62%] Built target s3c2400_irq_test
+[ 63%] Building C object CMakeFiles/s3c2400_lcd_test.dir/tests/s3c2400_lcd_test.c.o
+[ 64%] Linking C executable s3c2400_lcd_test
+[ 64%] Built target s3c2400_lcd_test
+[ 65%] Building C object CMakeFiles/s3c2400_scanout_test.dir/tests/s3c2400_scanout_test.c.o
+[ 66%] Linking C executable s3c2400_scanout_test
+[ 66%] Built target s3c2400_scanout_test
+[ 66%] Building C object CMakeFiles/s3c2400_pwm_test.dir/tests/s3c2400_pwm_test.c.o
+[ 67%] Linking C executable s3c2400_pwm_test
+[ 67%] Built target s3c2400_pwm_test
+[ 68%] Building C object CMakeFiles/s3c2400_gpio_test.dir/tests/s3c2400_gpio_test.c.o
+[ 69%] Linking C executable s3c2400_gpio_test
+[ 69%] Built target s3c2400_gpio_test
+[ 70%] Building C object CMakeFiles/s3c2400_state_test.dir/tests/s3c2400_state_test.c.o
+In file included from /tmp/gp32-round4/tests/s3c2400_state_test.c:3:
+/tmp/gp32-round4/tests/../src/s3c2400.c: In function ‘audio_prepare_rate’:
+/tmp/gp32-round4/tests/../src/s3c2400.c:892:67: warning: comparison is always false due to limited range of data type [-Wtype-limits]
+  892 |                 if (cap <= s->audio_boundary_cap || (uint64_t)cap > SIZE_MAX / sizeof(*s->audio_boundaries)) return 0;
+      |                                                                   ^
+/tmp/gp32-round4/tests/../src/s3c2400.c: In function ‘s3c2400_state_load_image’:
+/tmp/gp32-round4/tests/../src/s3c2400.c:2847:67: warning: comparison is always false due to limited range of data type [-Wtype-limits]
+ 2847 |             span_count > st->audio_frames || (uint64_t)span_count > SIZE_MAX / sizeof(*new_spans)) goto bad_audio;
+      |                                                                   ^
+[ 70%] Linking C executable s3c2400_state_test
+[ 70%] Built target s3c2400_state_test
+[ 71%] Building C object CMakeFiles/gp32_pcm_test.dir/tests/gp32_pcm_test.c.o
+In function ‘spsr_bank’,
+    inlined from ‘case_native_spsr_bank_reuse’ at /tmp/gp32-round4/tests/arm_jit_test.c:3374:5:
+/tmp/gp32-round4/tests/arm_jit_test.c:3163:33: warning: ‘c.spsr_svc’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3163 |     case SPSR_MODE_SVC: return c.spsr_svc;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round4/tests/arm_jit_test.c: In function ‘case_native_spsr_bank_reuse’:
+/tmp/gp32-round4/tests/arm_jit_test.c:3158:32: note: ‘c’ declared here
+ 3158 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘case_native_spsr_bank_reuse’ at /tmp/gp32-round4/tests/arm_jit_test.c:3375:5:
+/tmp/gp32-round4/tests/arm_jit_test.c:3161:33: warning: ‘c.spsr_fiq’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3161 |     case SPSR_MODE_FIQ: return c.spsr_fiq;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round4/tests/arm_jit_test.c: In function ‘case_native_spsr_bank_reuse’:
+/tmp/gp32-round4/tests/arm_jit_test.c:3158:32: note: ‘c’ declared here
+ 3158 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘case_native_spsr_bank_reuse’ at /tmp/gp32-round4/tests/arm_jit_test.c:3372:5:
+/tmp/gp32-round4/tests/arm_jit_test.c:3161:33: warning: ‘c.spsr_fiq’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3161 |     case SPSR_MODE_FIQ: return c.spsr_fiq;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round4/tests/arm_jit_test.c: In function ‘case_native_spsr_bank_reuse’:
+/tmp/gp32-round4/tests/arm_jit_test.c:3158:32: note: ‘c’ declared here
+ 3158 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘case_native_spsr_bank_reuse’ at /tmp/gp32-round4/tests/arm_jit_test.c:3357:26:
+/tmp/gp32-round4/tests/arm_jit_test.c:3163:33: warning: ‘c.spsr_svc’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3163 |     case SPSR_MODE_SVC: return c.spsr_svc;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round4/tests/arm_jit_test.c: In function ‘case_native_spsr_bank_reuse’:
+/tmp/gp32-round4/tests/arm_jit_test.c:3158:32: note: ‘c’ declared here
+ 3158 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘case_native_spsr_conditions’ at /tmp/gp32-round4/tests/arm_jit_test.c:3329:9,
+    inlined from ‘case_native_spsr’ at /tmp/gp32-round4/tests/arm_jit_test.c:3600:5:
+/tmp/gp32-round4/tests/arm_jit_test.c:3163:33: warning: ‘c.spsr_svc’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3163 |     case SPSR_MODE_SVC: return c.spsr_svc;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round4/tests/arm_jit_test.c: In function ‘case_native_spsr’:
+/tmp/gp32-round4/tests/arm_jit_test.c:3158:32: note: ‘c’ declared here
+ 3158 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘case_native_spsr_fields’ at /tmp/gp32-round4/tests/arm_jit_test.c:3291:9,
+    inlined from ‘case_native_spsr’ at /tmp/gp32-round4/tests/arm_jit_test.c:3599:5:
+/tmp/gp32-round4/tests/arm_jit_test.c:3163:33: warning: ‘c.spsr_svc’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3163 |     case SPSR_MODE_SVC: return c.spsr_svc;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round4/tests/arm_jit_test.c: In function ‘case_native_spsr’:
+/tmp/gp32-round4/tests/arm_jit_test.c:3158:32: note: ‘c’ declared here
+ 3158 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘case_native_psr_continuation’ at /tmp/gp32-round4/tests/arm_jit_test.c:3512:9:
+/tmp/gp32-round4/tests/arm_jit_test.c:3163:33: warning: ‘c.spsr_svc’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3163 |     case SPSR_MODE_SVC: return c.spsr_svc;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round4/tests/arm_jit_test.c: In function ‘case_native_psr_continuation’:
+/tmp/gp32-round4/tests/arm_jit_test.c:3158:32: note: ‘c’ declared here
+ 3158 |     arm920t_register_context_t c;
+      |                                ^
+[ 72%] Linking C executable gp32_pcm_test
+[ 72%] Built target gp32_pcm_test
+[ 72%] Building C object CMakeFiles/gp32_timer_test.dir/tests/gp32_timer_test.c.o
+In file included from /tmp/gp32-round4/tests/gp32_timer_test.c:10:
+/tmp/gp32-round4/tests/translation_fixture.h:4:15: warning: ‘fixture_v14’ defined but not used [-Wunused-function]
+    4 | static size_t fixture_v14(uint8_t *data, size_t size) {
+      |               ^~~~~~~~~~~
+[ 73%] Linking C executable arm_cpu_code_write_test
+[ 73%] Built target arm_cpu_code_write_test
+[ 74%] Building C object CMakeFiles/gp32_callback_test.dir/tests/gp32_callback_test.c.o
+[ 75%] Linking C executable gp32_timer_test
+[ 75%] Built target gp32_timer_test
+[ 76%] Building C object CMakeFiles/gp32_wait_test.dir/tests/gp32_wait_test.c.o
+In file included from /tmp/gp32-round4/tests/gp32_wait_test.c:6:
+/tmp/gp32-round4/tests/translation_fixture.h:15:12: warning: ‘fixture_cpu_prefix’ defined but not used [-Wunused-function]
+   15 | static int fixture_cpu_prefix(arm920t_t *cpu,arm920t_state_image_t *out) {
+      |            ^~~~~~~~~~~~~~~~~~
+[ 77%] Linking C executable gp32_callback_test
+[ 77%] Built target gp32_callback_test
+[ 78%] Building C object CMakeFiles/gp32_swi_1ff_test.dir/tests/gp32_swi_1ff_test.c.o
+[ 79%] Linking C executable gp32_wait_test
+[ 79%] Built target gp32_wait_test
+[ 79%] Building C object CMakeFiles/gp32_file_test.dir/tests/gp32_file_test.c.o
+[ 80%] Linking C executable gp32_swi_1ff_test
+[ 80%] Built target gp32_swi_1ff_test
+[ 81%] Building C object CMakeFiles/gp32_codec_test.dir/tests/gp32_codec_test.c.o
+[ 82%] Linking C executable gp32_file_test
+[ 83%] Linking C executable gp32_codec_test
+[ 83%] Built target gp32_file_test
+[ 83%] Building C object CMakeFiles/gp32_eeprom_test.dir/tests/gp32_eeprom_test.c.o
+[ 83%] Built target gp32_codec_test
+[ 84%] Building C object CMakeFiles/gp32_shadow_test.dir/tests/gp32_shadow_test.c.o
+[ 85%] Linking C executable gp32_shadow_test
+[ 86%] Linking C executable gp32_eeprom_test
+[ 86%] Built target gp32_shadow_test
+[ 87%] Building C object CMakeFiles/gp32_game_fix_test.dir/tests/gp32_game_fix_test.c.o
+[ 87%] Built target gp32_eeprom_test
+[ 88%] Building C object CMakeFiles/gp32_pinball_fix_test.dir/tests/gp32_pinball_fix_test.c.o
+[ 89%] Linking C executable gp32_game_fix_test
+[ 89%] Built target gp32_game_fix_test
+[ 90%] Building C object CMakeFiles/gp32_fast_load_test.dir/tests/gp32_fast_load_test.c.o
+[ 90%] Linking C executable gp32_pinball_fix_test
+[ 90%] Built target gp32_pinball_fix_test
+[ 90%] Building C object CMakeFiles/gp32_state_test.dir/tests/gp32_state_test.c.o
+In file included from /tmp/gp32-round4/tests/gp32_state_test.c:26:
+/tmp/gp32-round4/tests/translation_fixture.h:15:12: warning: ‘fixture_cpu_prefix’ defined but not used [-Wunused-function]
+   15 | static int fixture_cpu_prefix(arm920t_t *cpu,arm920t_state_image_t *out) {
+      |            ^~~~~~~~~~~~~~~~~~
+[ 91%] Linking C executable gp32_fast_load_test
+[ 91%] Built target gp32_fast_load_test
+[ 92%] Building C object CMakeFiles/gp32_media_png_test.dir/tests/gp32_media_png_test.c.o
+[ 92%] Linking C executable gp32_media_png_test
+[ 92%] Built target gp32_media_png_test
+[ 93%] Building C object CMakeFiles/smartmedia_test.dir/tests/smartmedia_test.c.o
+[ 94%] Linking C executable gp32_state_test
+[ 94%] Built target gp32_state_test
+[ 95%] Linking C executable smartmedia_test
+[ 96%] Building C object CMakeFiles/smartmedia_capacity_test.dir/tests/smartmedia_capacity_test.c.o
+[ 96%] Built target smartmedia_test
+[ 97%] Building C object CMakeFiles/savestate_session_test.dir/tests/savestate_session_test.c.o
+In file included from /tmp/gp32-round4/tests/savestate_session_test.c:23:
+/tmp/gp32-round4/tests/translation_fixture.h:15:12: warning: ‘fixture_cpu_prefix’ defined but not used [-Wunused-function]
+   15 | static int fixture_cpu_prefix(arm920t_t *cpu,arm920t_state_image_t *out) {
+      |            ^~~~~~~~~~~~~~~~~~
+[ 98%] Linking C executable smartmedia_capacity_test
+[ 98%] Built target smartmedia_capacity_test
+[ 99%] Building C object CMakeFiles/atomic_save_test.dir/tests/atomic_save_test.c.o
+/tmp/gp32-round4/tests/atomic_save_test.c: In function ‘check_gp32_state_atomic’:
+/tmp/gp32-round4/tests/atomic_save_test.c:124:47: warning: ‘.tmp’ directive output may be truncated writing 4 bytes into a region of size between 1 and 4096 [-Wformat-truncation=]
+  124 |     snprintf(unrelated, sizeof(unrelated), "%s.tmp", path);
+      |                                               ^~~~
+In file included from /usr/include/stdio.h:980,
+                 from /tmp/gp32-round4/src/common.h:13,
+                 from /tmp/gp32-round4/src/smartmedia.h:4,
+                 from /tmp/gp32-round4/tests/atomic_save_test.c:9:
+In function ‘snprintf’,
+    inlined from ‘check_gp32_state_atomic’ at /tmp/gp32-round4/tests/atomic_save_test.c:124:5:
+/usr/include/x86_64-linux-gnu/bits/stdio2.h:54:10: note: ‘__builtin___snprintf_chk’ output between 5 and 4100 bytes into a destination of size 4096
+   54 |   return __builtin___snprintf_chk (__s, __n, __USE_FORTIFY_LEVEL - 1,
+      |          ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+   55 |                                    __glibc_objsize (__s), __fmt,
+      |                                    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+   56 |                                    __va_arg_pack ());
+      |                                    ~~~~~~~~~~~~~~~~~
+/tmp/gp32-round4/tests/atomic_save_test.c: In function ‘check_smc_atomic’:
+/tmp/gp32-round4/tests/atomic_save_test.c:170:47: warning: ‘.tmp’ directive output may be truncated writing 4 bytes into a region of size between 1 and 4096 [-Wformat-truncation=]
+  170 |     snprintf(unrelated, sizeof(unrelated), "%s.tmp", path);
+      |                                               ^~~~
+In function ‘snprintf’,
+    inlined from ‘check_smc_atomic’ at /tmp/gp32-round4/tests/atomic_save_test.c:170:5:
+/usr/include/x86_64-linux-gnu/bits/stdio2.h:54:10: note: ‘__builtin___snprintf_chk’ output between 5 and 4100 bytes into a destination of size 4096
+   54 |   return __builtin___snprintf_chk (__s, __n, __USE_FORTIFY_LEVEL - 1,
+      |          ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+   55 |                                    __glibc_objsize (__s), __fmt,
+      |                                    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+   56 |                                    __va_arg_pack ());
+      |                                    ~~~~~~~~~~~~~~~~~
+[100%] Linking C executable atomic_save_test
+[100%] Built target atomic_save_test
+[100%] Linking C executable savestate_session_test
+[100%] Built target savestate_session_test

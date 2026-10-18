@@ -1,0 +1,17 @@
+FAIL[A64-second-way-chain]: one native entry covers the ready successor chain
+FAIL[A64-second-way-chain]: every ready successor chains inside the native frame
+FAIL[A64-second-way-chain]: one native entry covers the ready successor chain
+FAIL[A64-second-way-chain]: every ready successor chains inside the native frame
+FAIL[A64-second-way-chain]: one native entry covers the ready successor chain
+FAIL[A64-second-way-chain]: every ready successor chains inside the native frame
+FAIL[A64-second-way-chain]: one native entry covers the ready successor chain
+FAIL[A64-second-way-chain]: every ready successor chains inside the native frame
+A64 chain ways: 30 cases, 8 failures
+chain way=0 budget=4 calls=1 hops=1 native=4
+chain way=0 budget=8 calls=1 hops=3 native=8
+chain way=0 budget=64 calls=1 hops=31 native=64
+chain way=0 budget=1000 calls=1 hops=499 native=1000
+chain way=1 budget=4 calls=2 hops=0 native=4
+chain way=1 budget=8 calls=3 hops=1 native=8
+chain way=1 budget=64 calls=17 hops=15 native=64
+chain way=1 budget=1000 calls=251 hops=249 native=1000

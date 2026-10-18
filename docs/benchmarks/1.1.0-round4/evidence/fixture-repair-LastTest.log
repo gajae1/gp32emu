@@ -1,0 +1,63 @@
+Start testing: Oct 18 20:42 JST
+----------------------------------------------------------
+8/54 Testing: arm_poll
+8/54 Test: arm_poll
+Command: "/tmp/gp32-round4-build-ubsan/arm_poll_test"
+Directory: /tmp/gp32-round4-build-ubsan
+"arm_poll" start time: Oct 18 20:42 JST
+Output:
+----------------------------------------------------------
+poll-stable aligned_native=0 aligned_skipped=378
+poll-stable native=0 skipped=2808
+poll-stable-fastmem aligned_native=0 aligned_skipped=378
+poll-stable-fastmem native=12 skipped=2808
+zero-step native=0 skipped=2412
+rotated-zero-step native=0 skipped=2412
+conditional-step native=0 skipped=2384
+different-source native=0 skipped=2412
+reload-before-step native=0 skipped=2412
+reload-after-step native=0 skipped=2412
+reset-before-step native=0 skipped=2384
+reset-after-step native=0 skipped=2360
+cancelled-step native=0 skipped=2384
+bypassed-step native=0 skipped=2408
+two-backedges native=0 skipped=2430
+counted-portable reads=47/631 skipped=2336
+counted-native-enabled reads=47/631 skipped=2336
+observed-caller native=0 portable=17 skipped=496
+observed-reentry native=0 portable=16 skipped=496
+counted-mmu jit=0 variant=0 reads=49/633
+counted-mmu jit=0 variant=1 reads=634/634
+counted-mmu jit=0 variant=2 reads=1263/1263
+counted-mmu jit=0 variant=3 reads=633/633
+counted-mmu jit=1 variant=0 reads=49/633
+counted-mmu jit=1 variant=1 reads=634/634
+counted-mmu jit=1 variant=2 reads=1263/1263
+counted-mmu jit=1 variant=3 reads=633/633
+PASS: stable/countdown poll equivalence, reads, exit boundaries, refusal, callbacks, state, MMU, GPIO
+<end of output>
+Test time =   1.00 sec
+----------------------------------------------------------
+Test Passed.
+"arm_poll" end time: Oct 18 20:42 JST
+"arm_poll" time elapsed: 00:00:01
+----------------------------------------------------------
+
+15/54 Testing: arm_exception
+15/54 Test: arm_exception
+Command: "/tmp/gp32-round4-build-ubsan/arm_exception_test"
+Directory: /tmp/gp32-round4-build-ubsan
+"arm_exception" start time: Oct 18 20:42 JST
+Output:
+----------------------------------------------------------
+arm undefined control: 2700 cases
+arm_exception_test: all checks passed
+<end of output>
+Test time =   1.54 sec
+----------------------------------------------------------
+Test Passed.
+"arm_exception" end time: Oct 18 20:42 JST
+"arm_exception" time elapsed: 00:00:01
+----------------------------------------------------------
+
+End testing: Oct 18 20:42 JST

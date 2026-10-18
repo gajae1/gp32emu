@@ -1,0 +1,67 @@
+diff --git a/src/arm920t.c b/src/arm920t.c
+index 1e151e3..1d5099f 100644
+--- a/src/arm920t.c
++++ b/src/arm920t.c
+@@ -2660,10 +2660,10 @@ static ARM_NOINLINE arm_jit_block_t *arm_jit_translate(arm920t_t *c, uint32_t pc
+              * its in-place backedge instead of two dispatches per pass. */
+             if (!arm_jit_peek_fetch(c, cur, &insn)) break;
+             page_anchor = cur;
+-        } else if (!i || !(c->cp15[1] & 1u)) {
+-            /* Preserve callback-backed, same-page decoding without an MMU.
+-             * With translation enabled, future fetches must not refill the
+-             * shared TLB before the preceding guest instructions execute. */
++        } else if (!i) {
++            /* Dispatch proved this first word directly readable. Every
++             * future word still needs a side-effect-free peek: a read32
++             * callback belongs to its own instruction, even with MMU off. */
+             insn = arm_jit_fetch_word(c, cur);
+             if (c->jit_generation != collecting_generation) return NULL;
+         } else if (!arm_jit_peek_fetch(c, cur, &insn)) break;
+@@ -5324,9 +5324,20 @@ static uint32_t arm_counted_poll_repeats(arm920t_t *c, const arm_jit_block_t *b,
+  * perform the real fetch before lookup; an unmapped/tolerant fetch executes
+  * once on the raw path rather than certifying a nonexistent mapping. */
+ static ARM_NOINLINE int arm_jit_refill_fetch(arm920t_t *c, uint32_t pc) {
+-    uint32_t insn = fetch32(c, pc);
++    const uint32_t generation = c->jit_generation, run_limit = c->run_limit, status = c->cpsr;
++    const uint32_t entry_pc = c->r[15];
++    uint32_t pa = instruction_translate(c, pc);
++    uint8_t *p = fastmem(c, pa, 4u, 0);
++    uint32_t insn = p ? gp32_ld32le(p) : c->bus.read32(c->bus.user, pa);
+     const arm_tlb_entry_t *entry = &c->itlb_entry[arm_itlb_index(pc)];
+-    if (!entry->valid || (pc & ~entry->mask) != entry->va_base ||
++    /* A callback-backed opcode must execute exactly once, and a table-read
++     * callback can change control state even when the final opcode is direct.
++     * Finish that already-started ARM instruction before dispatch observes a
++     * new deadline, PC, mode, trace setting, interrupt or cache generation. */
++    if (!p || c->jit_generation != generation || c->run_limit != run_limit ||
++        c->r[15] != entry_pc || c->cpsr != status || c->halted || c->trace ||
++        (c->irq_line && !(c->cpsr & I_FLAG)) || (c->fiq_line && !(c->cpsr & F_FLAG)) ||
++        !entry->valid || (pc & ~entry->mask) != entry->va_base ||
+         (entry->mask & ARM_JIT_PAGE_MASK) != ARM_JIT_PAGE_MASK) {
+         ARM_PROF_INC(c, interp_arm_insns);
+         exec_arm_at(c, pc, insn);
+@@ -5351,10 +5362,10 @@ ARM_FORCE_INLINE int arm_jit_prepare_fetch(arm920t_t *c, uint32_t pc) {
+  * RAM/BIOS windows, so a PC that resolves to any other physical address has no
+  * usable cache entry: caching it would cost a translation (and, on a native
+  * backend, a compilation) on every execution, and runaway execution outside
+- * the code windows would re-translate once per instruction. The test is
+- * deliberately address-based rather than fastmem-based: a RAM/BIOS fetch
+- * stays cacheable even when a frontend refuses a direct pointer for the
+- * region. A PC without a usable TLB entry is reported cacheable so the normal
++ * the code windows would re-translate once per instruction. The test also
++ * requires a direct pointer: declining fastmem retains an observable fetch
++ * callback on every execution, even inside the RAM/BIOS address windows.
++ * A PC without a usable TLB entry is reported cacheable so the normal
+  * translation path performs the walk and its fault/attribution handling. The
+  * dispatcher passes its already-aligned PC. */
+ ARM_FORCE_INLINE int arm_jit_code_cacheable(arm920t_t *c, uint32_t pc) {
+@@ -5365,7 +5376,8 @@ ARM_FORCE_INLINE int arm_jit_code_cacheable(arm920t_t *c, uint32_t pc) {
+             (pc & e->mask) > e->mask - 3u) return 1;
+         pa = e->pa_base | (pc & e->mask);
+     }
+-    return arm_jit_addr_in_ram(pa, 4u) || arm_jit_addr_in_bios(pa, 4u);
++    return (arm_jit_addr_in_ram(pa, 4u) || arm_jit_addr_in_bios(pa, 4u)) &&
++           fastmem(c, pa, 4u, 0) != NULL;
+ }
+ 
+ /* Execute one instruction of a non-cacheable PC on the reference
