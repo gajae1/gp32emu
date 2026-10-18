@@ -9,8 +9,11 @@ device compatibility still require measurements on the intended hardware.
 
 The [Korean follow-up report](REVIEW-1.1.0-FOLLOWUP.ko.md) adds the GP32 audio
 hardware/ISA investigation, further core fixes, exact SSE2 FIR measurements,
-rejected experiments, and the expanded C23 validation. Counts and measurements
-below describe the original review snapshot; see that report for current results.
+rejected experiments, and the expanded C23 validation. The subsequent
+[Korean deep review](REVIEW-1.1.0-DEEP.ko.md) adds Thumb bus/IRQ/card fixes,
+guarded RAM DMA, independent Thumb oracles, optional JIT experiments and the
+final 49-test matrix. Counts below describe the original review snapshot;
+see the deep review for the latest results.
 
 ## Review scope
 

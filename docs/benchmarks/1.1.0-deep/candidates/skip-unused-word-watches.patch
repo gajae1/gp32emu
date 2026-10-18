@@ -1,0 +1,121 @@
+From c214d97dea4ee89eb783c86cf709f8404041a6d9 Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Sun, 18 Oct 2026 04:04:18 +0400
+Subject: [PATCH] Experiment: omit unused word watches while I-cache is enabled
+
+---
+ CMakeLists.txt                 |  4 ++
+ src/arm920t.c                  |  5 +++
+ tests/arm_code_tracking_test.c | 69 ++++++++++++++++++++++++++++++++++
+ 3 files changed, 78 insertions(+)
+ create mode 100644 tests/arm_code_tracking_test.c
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 904eb8d..1e07d81 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -101,6 +101,10 @@ if (GP32EMU_BUILD_TESTS)
+     target_include_directories(arm_write_permission_test PRIVATE src include)
+     target_compile_definitions(arm_write_permission_test PRIVATE _XOPEN_SOURCE=700)
+     add_test(NAME arm_write_permission COMMAND arm_write_permission_test)
++    add_executable(arm_code_tracking_test tests/arm_code_tracking_test.c)
++    target_include_directories(arm_code_tracking_test PRIVATE src include)
++    target_compile_definitions(arm_code_tracking_test PRIVATE _XOPEN_SOURCE=700)
++    add_test(NAME arm_code_tracking COMMAND arm_code_tracking_test)
+     add_test(NAME arm_translation COMMAND arm_translation_test)
+     add_test(NAME arm_accelerator COMMAND arm_accelerator_test)
+     add_test(NAME arm_exception COMMAND arm_exception_test)
+diff --git a/src/arm920t.c b/src/arm920t.c
+index 1adec50..ff7625f 100644
+--- a/src/arm920t.c
++++ b/src/arm920t.c
+@@ -1972,6 +1972,11 @@ ARM_FORCE_INLINE void arm_jit_track_code(arm920t_t *c, uint32_t pa, unsigned byt
+         for (unsigned page = off >> ARM_JIT_CODE_PAGE_SHIFT;
+              page <= (last >> ARM_JIT_CODE_PAGE_SHIFT); ++page)
+             c->jit_code_pages[page >> 5] |= 1u << (page & 31u);
++        /* Only I=0 CPU stores consult instruction-word watches. Changing
++         * c1.I always starts a new JIT generation, so I=1 blocks cannot be
++         * reused after disabling the cache. Keep page tracking above for
++         * external writes, which still need it in either cache mode. */
++        if (c->cp15[1] & (1u << 12)) return;
+         /* A revalidation span may cover many watches, unlike a CPU store. */
+         for (unsigned watch = off >> ARM_JIT_CODE_WATCH_SHIFT;
+              watch <= (last >> ARM_JIT_CODE_WATCH_SHIFT); ++watch)
+diff --git a/tests/arm_code_tracking_test.c b/tests/arm_code_tracking_test.c
+new file mode 100644
+index 0000000..3e0cd3d
+--- /dev/null
++++ b/tests/arm_code_tracking_test.c
+@@ -0,0 +1,69 @@
++/* A byte-range oracle for the derived code-page and instruction-word watches.
++ * Page watches apply in both cache modes; word watches are needed only when
++ * I=0. Keep the reference independent of the production bitmap operations. */
++#ifndef CORE_UNDER_TEST
++#define CORE_UNDER_TEST "../src/arm920t.c"
++#endif
++#include CORE_UNDER_TEST
++
++static uint32_t seed = 0xc65a49e1u;
++static uint32_t next_value(void) {
++    seed ^= seed << 13; seed ^= seed >> 17; seed ^= seed << 5;
++    return seed;
++}
++
++static int check_range(arm920t_t *c, arm920t_t *ref, uint32_t pa,
++                       unsigned bytes, unsigned iteration, unsigned icache) {
++    c->cp15[1] = 0x70u | (icache << 12);
++    for (unsigned i = 0; i < GP32_ARRAY_COUNT(c->jit_code_watches); ++i)
++        c->jit_code_watches[i] = next_value();
++    c->jit_code_watches[GP32_ARRAY_COUNT(c->jit_code_watches) - 1u] = 0u;
++    for (unsigned i = 0; i < GP32_ARRAY_COUNT(c->jit_code_pages); ++i)
++        c->jit_code_pages[i] = next_value();
++    memcpy(ref->jit_code_watches, c->jit_code_watches, sizeof(c->jit_code_watches));
++    memcpy(ref->jit_code_pages, c->jit_code_pages, sizeof(c->jit_code_pages));
++    arm_jit_track_code(c, pa, bytes);
++
++    uint32_t offset = pa - ARM_JIT_RAM_BASE_ADDR;
++    if (offset < ARM_JIT_RAM_SIZE_BYTES) {
++        uint64_t end = (uint64_t)offset + bytes;
++        if (end > ARM_JIT_RAM_SIZE_BYTES) end = ARM_JIT_RAM_SIZE_BYTES;
++        if (!icache)
++            for (uint64_t word = offset / 4u; word < (end + 3u) / 4u; ++word)
++                ref->jit_code_watches[word / 32u] |= UINT32_C(1) << (word % 32u);
++        for (uint64_t page = offset / 4096u; page < (end + 4095u) / 4096u; ++page)
++            ref->jit_code_pages[page / 32u] |= UINT32_C(1) << (page % 32u);
++    }
++    if (memcmp(c->jit_code_watches, ref->jit_code_watches, sizeof(c->jit_code_watches)) ||
++        memcmp(c->jit_code_pages, ref->jit_code_pages, sizeof(c->jit_code_pages))) {
++        fprintf(stderr, "watch range mismatch case=%u I=%u pa=%08x bytes=%u seed=%08x\n",
++                iteration, icache, pa, bytes, seed);
++        return 0;
++    }
++    return 1;
++}
++
++int main(void) {
++    arm920t_t *c = calloc(1u, sizeof(*c)), *ref = calloc(1u, sizeof(*ref));
++    if (!c || !ref) { free(c); free(ref); return 2; }
++    unsigned cases = 0, passed = 0;
++    const unsigned offsets[] = {0u, 1u, 3u, 4u, 120u, 124u, 125u, 127u, 128u,
++        252u, 4092u, 4095u, ARM_JIT_RAM_SIZE_BYTES - 384u,
++        ARM_JIT_RAM_SIZE_BYTES - 4u, ARM_JIT_RAM_SIZE_BYTES - 1u,
++        ARM_JIT_RAM_SIZE_BYTES, UINT32_MAX};
++    const unsigned lengths[] = {1u, 2u, 3u, 4u, 8u, 124u, 128u, 132u,
++        192u, 384u, 4096u, ARM_JIT_RAM_SIZE_BYTES, UINT32_MAX};
++    for (unsigned icache = 0; icache < 2u; ++icache) {
++        for (unsigned i = 0; i < GP32_ARRAY_COUNT(offsets); ++i)
++            for (unsigned j = 0; j < GP32_ARRAY_COUNT(lengths); ++j)
++                passed += check_range(c, ref, ARM_JIT_RAM_BASE_ADDR + offsets[i], lengths[j], cases++, icache);
++        for (unsigned i = 0; i < 256u; ++i) {
++            uint32_t off = next_value() % ARM_JIT_RAM_SIZE_BYTES;
++            unsigned len = 1u + next_value() % 512u;
++            passed += check_range(c, ref, ARM_JIT_RAM_BASE_ADDR + off, len, cases++, icache);
++        }
++    }
++    printf("watch ranges: %u/%u passed, final seed %08x\n", passed, cases, seed);
++    free(c); free(ref);
++    return passed != cases;
++}
+-- 
+2.51.1
+
