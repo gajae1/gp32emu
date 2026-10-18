@@ -1,0 +1,51 @@
+$ /tmp/gp32-round5-build-pwm/baseline-pwm-model
+FAIL: buffer/stop/manual timer=0 buffer alone does not load counter actual=100 expected=0
+FAIL: buffer/stop/manual timer=0 buffer write retains live count actual=190 expected=90
+FAIL: buffer/stop/manual timer=0 stop retains live count actual=200 expected=90
+FAIL: buffer/stop/manual timer=0 stopped clocks retain count actual=200 expected=90
+FAIL: buffer/stop/manual timer=0 restart retains fractional tick actual=200 expected=89
+FAIL: buffer/stop/manual timer=0 running loaded counter advances actual=48 expected=49
+FAIL: buffer/stop/manual timer=0 manual update retains sub-tick policy actual=15 expected=16
+FAIL: buffer/stop/manual timer=0 buffer alone does not load counter actual=100 expected=0
+FAIL: buffer/stop/manual timer=0 buffer write retains live count actual=190 expected=90
+FAIL: buffer/stop/manual timer=0 stop retains live count actual=200 expected=90
+FAIL: buffer/stop/manual timer=0 stopped clocks retain count actual=200 expected=90
+FAIL: buffer/stop/manual timer=0 restart retains fractional tick actual=200 expected=89
+FAIL: buffer/stop/manual timer=0 running loaded counter advances actual=48 expected=49
+FAIL: buffer/stop/manual timer=0 manual update retains sub-tick policy actual=15 expected=16
+FAIL: buffer/stop/manual timer=0 buffer alone does not load counter actual=100 expected=0
+FAIL: buffer/stop/manual timer=0 buffer write retains live count actual=190 expected=90
+FAIL: buffer/stop/manual timer=0 stop retains live count actual=200 expected=90
+FAIL: buffer/stop/manual timer=0 stopped clocks retain count actual=200 expected=90
+FAIL: buffer/stop/manual timer=0 restart retains fractional tick actual=200 expected=89
+FAIL: buffer/stop/manual timer=0 running loaded counter advances actual=48 expected=49
+FAIL: buffer/stop/manual timer=0 manual update retains sub-tick policy actual=15 expected=16
+FAIL: buffer/stop/manual timer=1 buffer alone does not load counter actual=100 expected=0
+FAIL: buffer/stop/manual timer=1 buffer write retains live count actual=190 expected=90
+FAIL: buffer/stop/manual timer=1 stop retains live count actual=200 expected=90
+FAIL: buffer/stop/manual timer=1 stopped clocks retain count actual=200 expected=90
+FAIL: buffer/stop/manual timer=1 restart retains fractional tick actual=200 expected=89
+FAIL: buffer/stop/manual timer=1 running loaded counter advances actual=48 expected=49
+FAIL: buffer/stop/manual timer=1 manual update retains sub-tick policy actual=15 expected=16
+FAIL: buffer/stop/manual timer=1 buffer alone does not load counter actual=100 expected=0
+FAIL: buffer/stop/manual timer=1 buffer write retains live count actual=190 expected=90
+FAIL: buffer/stop/manual timer=1 stop retains live count actual=200 expected=90
+FAIL: buffer/stop/manual timer=1 stopped clocks retain count actual=200 expected=90
+FAIL: buffer/stop/manual timer=1 restart retains fractional tick actual=200 expected=89
+FAIL: buffer/stop/manual timer=1 running loaded counter advances actual=48 expected=49
+FAIL: buffer/stop/manual timer=1 manual update retains sub-tick policy actual=15 expected=16
+FAIL: buffer/stop/manual timer=1 buffer alone does not load counter actual=100 expected=0
+FAIL: buffer/stop/manual timer=1 buffer write retains live count actual=190 expected=90
+FAIL: buffer/stop/manual timer=1 stop retains live count actual=200 expected=90
+FAIL: buffer/stop/manual timer=1 stopped clocks retain count actual=200 expected=90
+FAIL: buffer/stop/manual timer=1 restart retains fractional tick actual=200 expected=89
+FAIL: buffer/stop/manual timer=1 running loaded counter advances actual=48 expected=49
+FAIL: buffer/stop/manual timer=1 manual update retains sub-tick policy actual=15 expected=16
+FAIL: buffer/stop/manual timer=2 buffer alone does not load counter actual=100 expected=0
+FAIL: buffer/stop/manual timer=2 buffer write retains live count actual=190 expected=90
+FAIL: buffer/stop/manual timer=2 stop retains live count actual=200 expected=90
+FAIL: buffer/stop/manual timer=2 stopped clocks retain count actual=200 expected=90
+FAIL: buffer/stop/manual timer=2 restart retains fractional tick actual=200 expected=89
+FAIL: buffer/stop/manual timer=2 running loaded counter advances actual=48 expected=49
+PWM model scenarios=28 checks=3684 assertion_failures=2456
+exit=1

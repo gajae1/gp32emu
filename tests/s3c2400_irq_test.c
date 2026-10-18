@@ -32,6 +32,7 @@ static void check_routing(int jit) {
     s3c2400_write32(s, 0x14400004u, fiq);
     s3c2400_write32(s, 0x14400008u, UINT32_MAX);
     s3c2400_write32(s, 0x1510000cu, 9u);
+    s3c2400_write32(s, 0x15100008u, 2u); /* Load TCNTB before starting. */
     s3c2400_write32(s, 0x15100008u, 1u);
     s3c2400_tick(s, 20u);
     CHECK(s3c2400_read32(s, 0x14400000u) == fiq);
@@ -57,6 +58,7 @@ static void check_routing(int jit) {
     s3c2400_write32(s, 0x14400004u, fiq);
     s3c2400_write32(s, 0x14400008u, ~(fiq | irq));
     s3c2400_write32(s, 0x15100018u, 9u);
+    s3c2400_write32(s, 0x15100008u, 0x202u); /* Reload both one-shots. */
     s3c2400_write32(s, 0x15100008u, 0x101u);
     s3c2400_tick(s, 20u);
     CHECK(s3c2400_read32(s, 0x14400010u) == irq);
@@ -109,11 +111,13 @@ static void check_latched_selection(int jit) {
     const uint32_t first = 1u << 11, queued = 1u << 10;
     s3c2400_write32(s, 0x14400008u, ~first);
     s3c2400_write32(s, 0x15100018u, 9u);
+    s3c2400_write32(s, 0x15100008u, 0x200u);
     s3c2400_write32(s, 0x15100008u, 0x100u);
     s3c2400_tick(s, 20u);
     expect_selection(s, first, 11u, "first timer");
 
     s3c2400_write32(s, 0x1510000cu, 9u);
+    s3c2400_write32(s, 0x15100008u, 2u);
     s3c2400_write32(s, 0x15100008u, 1u);
     s3c2400_tick(s, 20u);
     CHECK(s3c2400_read32(s, 0x14400000u) == (first | queued));

@@ -1,0 +1,143 @@
+$ /tmp/gp32-round4-tools/cmake/data/bin/ctest --test-dir /tmp/gp32-round5-build-pwm/gcc --output-on-failure --parallel 2
+Test project /tmp/gp32-round5-build-pwm/gcc
+      Start  9: arm_jit
+      Start 51: smartmedia_capacity
+ 1/56 Test #51: smartmedia_capacity ..............   Passed    1.69 sec
+      Start 15: arm_exception
+ 2/56 Test #15: arm_exception ....................   Passed    1.60 sec
+      Start 56: arm_alu_differential
+ 3/56 Test #56: arm_alu_differential .............   Passed    0.88 sec
+      Start 38: gp32_wait
+ 4/56 Test #38: gp32_wait ........................   Passed    0.74 sec
+      Start  8: arm_poll
+ 5/56 Test  #9: arm_jit ..........................   Passed    5.71 sec
+      Start 18: arm_thumb_pc
+ 6/56 Test  #8: arm_poll .........................   Passed    0.87 sec
+      Start 36: gp32_callback
+ 7/56 Test #18: arm_thumb_pc .....................   Passed    0.45 sec
+      Start 17: arm_thumb_alu
+ 8/56 Test #36: gp32_callback ....................   Passed    0.41 sec
+      Start 35: gp32_timer
+ 9/56 Test #17: arm_thumb_alu ....................   Passed    0.34 sec
+      Start  3: audio_resampler
+10/56 Test #35: gp32_timer .......................   Passed    0.30 sec
+      Start 20: arm_cpu_code_write
+11/56 Test #20: arm_cpu_code_write ...............   Passed    0.20 sec
+      Start 12: arm_fetch_callback
+12/56 Test  #3: audio_resampler ..................   Passed    0.29 sec
+      Start  2: libretro_audio
+13/56 Test  #2: libretro_audio ...................   Passed    0.16 sec
+      Start  4: libretro_persistence
+14/56 Test #12: arm_fetch_callback ...............   Passed    0.26 sec
+      Start  6: libretro_runahead
+15/56 Test  #4: libretro_persistence .............   Passed    0.08 sec
+      Start 45: gp32_pinball_fix
+16/56 Test  #6: libretro_runahead ................   Passed    0.12 sec
+      Start 50: smartmedia
+17/56 Test #45: gp32_pinball_fix .................   Passed    0.12 sec
+      Start 10: arm_write_permission
+18/56 Test #50: smartmedia .......................   Passed    0.09 sec
+      Start 52: savestate_session
+19/56 Test #10: arm_write_permission .............   Passed    0.11 sec
+      Start 37: gp32_swi_1ff
+20/56 Test #52: savestate_session ................   Passed    0.11 sec
+      Start 34: gp32_pcm
+21/56 Test #37: gp32_swi_1ff .....................   Passed    0.08 sec
+      Start  1: ios_bridge
+22/56 Test #34: gp32_pcm .........................   Passed    0.09 sec
+      Start 55: arm_jit_policy
+23/56 Test  #1: ios_bridge .......................   Passed    0.04 sec
+      Start 44: gp32_game_fix
+24/56 Test #55: arm_jit_policy ...................   Passed    0.05 sec
+      Start 47: gp32_state
+25/56 Test #44: gp32_game_fix ....................   Passed    0.07 sec
+      Start  5: libretro_input
+26/56 Test  #5: libretro_input ...................   Passed    0.05 sec
+      Start 40: gp32_hle_memory
+27/56 Test #47: gp32_state .......................   Passed    0.15 sec
+      Start 19: arm_code_write
+28/56 Test #40: gp32_hle_memory ..................   Passed    0.08 sec
+      Start 48: gp32_state_speed
+29/56 Test #19: arm_code_write ...................   Passed    0.05 sec
+      Start 22: s3c2400_iis_irq
+30/56 Test #22: s3c2400_iis_irq ..................   Passed    0.09 sec
+      Start 42: gp32_eeprom
+31/56 Test #42: gp32_eeprom ......................   Passed    0.09 sec
+      Start 46: gp32_fast_load
+32/56 Test #48: gp32_state_speed .................***Failed    0.27 sec
+FAIL: v15 PWM migration at host speed 150: writer advertises explicit v16 trailer (220)
+FAIL: v15 PWM migration at host speed 150: v15 body migrates without a PWM trailer (227)
+FAIL: v15 PWM migration at host speed 150: v15 incoming CPU accepted (229)
+FAIL: v15 PWM migration at host speed 150: CPU, PWM, IRQ, LCD and PCM match after more guest cycles (114)
+FAIL: v15 PWM migration at host speed 150: CPU, PWM, IRQ, LCD and PCM match after more guest cycles (114)
+FAIL: v15 PWM migration at host speed 150: CPU, PWM, IRQ, LCD and PCM match after more guest cycles (114)
+FAIL: v15 PWM migration at host speed 150: CPU, PWM, IRQ, LCD and PCM match after more guest cycles (114)
+FAIL: v15 PWM migration at host speed 150: CPU, PWM, IRQ, LCD and PCM match after more guest cycles (114)
+FAIL: v15 PWM migration at host speed 150: full live state matches after execution (84)
+FAIL: reject v16 PWM trailer variant=0 speed=150: rejection preserves CPU, RAM and every peripheral phase (84)
+FAIL: reject v16 PWM trailer variant=1 speed=150: rejection preserves CPU, RAM and every peripheral phase (84)
+FAIL: reject v16 PWM trailer variant=2 speed=150: rejection preserves CPU, RAM and every peripheral phase (84)
+FAIL: reject v16 PWM trailer variant=2 speed=150: CPU, PWM, IRQ, LCD and PCM match after more guest cycles (114)
+FAIL: reject v16 PWM trailer variant=2 speed=150: CPU, PWM, IRQ, LCD and PCM match after more guest cycles (114)
+FAIL: reject v16 PWM trailer variant=2 speed=150: CPU, PWM, IRQ, LCD and PCM match after more guest cycles (114)
+FAIL: reject v16 PWM trailer variant=2 speed=150: CPU, PWM, IRQ, LCD and PCM match after more guest cycles (114)
+FAIL: reject v16 PWM trailer variant=2 speed=150: CPU, PWM, IRQ, LCD and PCM match after more guest cycles (114)
+FAIL: reject v16 PWM trailer variant=2 speed=150: full live state matches after execution (84)
+gp32_state_speed cases=56 failures=18
+
+      Start 11: arm_read_window
+33/56 Test #46: gp32_fast_load ...................   Passed    0.07 sec
+      Start 27: s3c2400_lcd
+34/56 Test #11: arm_read_window ..................   Passed    0.06 sec
+      Start 29: s3c2400_pwm
+35/56 Test #27: s3c2400_lcd ......................   Passed    0.05 sec
+      Start 13: arm_translation
+36/56 Test #13: arm_translation ..................   Passed    0.07 sec
+      Start 54: arm_jit_recycle
+37/56 Test #29: s3c2400_pwm ......................   Passed    0.10 sec
+      Start 41: gp32_codec
+38/56 Test #54: arm_jit_recycle ..................   Passed    0.03 sec
+      Start 53: atomic_save
+39/56 Test #41: gp32_codec .......................   Passed    0.03 sec
+      Start 24: s3c2400_muted_dma
+40/56 Test #53: atomic_save ......................   Passed    0.03 sec
+      Start 14: arm_accelerator
+41/56 Test #24: s3c2400_muted_dma ................   Passed    0.02 sec
+      Start 25: s3c2400_irq
+42/56 Test #25: s3c2400_irq ......................   Passed    0.02 sec
+      Start 49: gp32_media_png
+43/56 Test #14: arm_accelerator ..................   Passed    0.03 sec
+      Start 31: s3c2400_pwm_state
+44/56 Test #49: gp32_media_png ...................   Passed    0.02 sec
+      Start 21: s3c2400_timing
+45/56 Test #31: s3c2400_pwm_state ................   Passed    0.04 sec
+      Start 39: gp32_file
+46/56 Test #39: gp32_file ........................   Passed    0.02 sec
+      Start 32: s3c2400_gpio
+47/56 Test #21: s3c2400_timing ...................   Passed    0.05 sec
+      Start 28: s3c2400_scanout
+48/56 Test #32: s3c2400_gpio .....................   Passed    0.01 sec
+      Start 23: s3c2400_dma
+49/56 Test #28: s3c2400_scanout ..................   Passed    0.01 sec
+      Start 43: gp32_shadow
+50/56 Test #43: gp32_shadow ......................   Passed    0.01 sec
+      Start 26: s3c2400_priority
+51/56 Test #26: s3c2400_priority .................   Passed    0.00 sec
+      Start 16: arm_thumb_transfer
+52/56 Test #16: arm_thumb_transfer ...............   Passed    0.00 sec
+      Start 33: s3c2400_state
+53/56 Test #23: s3c2400_dma ......................   Passed    0.03 sec
+54/56 Test #33: s3c2400_state ....................   Passed    0.01 sec
+      Start  7: input_script
+      Start 30: s3c2400_pwm_model
+55/56 Test  #7: input_script .....................   Passed    0.00 sec
+56/56 Test #30: s3c2400_pwm_model ................   Passed    0.00 sec
+
+98% tests passed, 1 tests failed out of 56
+
+Total Test time (real) =   8.19 sec
+
+The following tests FAILED:
+	 48 - gp32_state_speed (Failed)
+Errors while running CTest
+exit=8

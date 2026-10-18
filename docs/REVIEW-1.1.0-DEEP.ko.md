@@ -292,6 +292,11 @@ OFF의 180개 표본과 합쳐 하나의 동일 조건 표본처럼 계산하지
 
 ### 후보 B: I=1 동안 CPU용 word watch 기록만 생략
 
+**Round5 이후에는 이 패치를 적용하면 안 된다.** 아래는 당시 기준 코드에 대한 역사적
+실험 기록이다. Round5의 외부 DMA/HLE 쓰기 알림은 I=1에서도 명령어 word bitmap을
+검사하므로, 이 후보처럼 I=1의 기록을 생략하면 실제 코드 변경을 놓친다. 원본 패치는
+과거 결과 재현용으로만 보관하며 현재 코드의 선택적 최적화 후보에서 철회한다.
+
 [skip-unused-word-watches.patch](benchmarks/1.1.0-deep/candidates/skip-unused-word-watches.patch)는
 page tracking을 남기고 word tracking만 조건부로 생략하는 좁은 실험이다.
 I=0 CPU store는 instruction-word watch를 사용하지만, I=1에서 컴파일한 native store는

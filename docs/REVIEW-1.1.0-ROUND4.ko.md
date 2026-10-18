@@ -6,6 +6,10 @@
 [버스·IRQ·저장 심층 검토](REVIEW-1.1.0-DEEP.ko.md)에 이어지는 **새 변경과 새 증거**를 기록한다.
 이전 문서의 40/44/49개 테스트 수와 성능 수치는 당시 코드의 기록으로 유지한다.
 
+후속 상태: [5차 검토](REVIEW-1.1.0-ROUND5.ko.md)에서 아래의 미해결 PWM live-counter
+문제를 수정하고 저장 형식을 v16으로 확장했다. HLE/비RAM 명령 일관성과 JIT 매핑 검토,
+새 비용 측정 및 64개 통합 검사도 그 문서에 있다. 이 4차 문서의 결과는 당시 snapshot이다.
+
 제품 소스는 로컬 `06c4d879543f90d1003d174718d738e27a8ed6b8`에서 확정했고, 같은 트리의
 공개 커밋은 [`aa54dfc`](https://github.com/gajae1/gp32emu/commit/aa54dfc0f2b63b7d81e8c68be249ecc7431304d6)다.
 두 기존 회귀 fixture의 bus 설정까지 바로잡아 최종 네 matrix를 실행한 기준은 로컬

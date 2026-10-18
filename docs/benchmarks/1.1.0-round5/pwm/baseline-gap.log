@@ -1,0 +1,28 @@
+$ /tmp/gp32-round5-build-pwm/baseline-pwm-gap
+timer=0 case=buffer-write-retains-count actual=190 expected=90 GAP
+timer=0 case=stop-retains-count actual=100 expected=90 GAP
+timer=0 case=stopped-count-stays-held actual=100 expected=90 GAP
+timer=0 case=restart-resumes-count actual=99 expected=89 GAP
+timer=0 case=manual-update-loads-new-count actual=40 expected=50 GAP
+timer=1 case=buffer-write-retains-count actual=190 expected=90 GAP
+timer=1 case=stop-retains-count actual=100 expected=90 GAP
+timer=1 case=stopped-count-stays-held actual=100 expected=90 GAP
+timer=1 case=restart-resumes-count actual=99 expected=89 GAP
+timer=1 case=manual-update-loads-new-count actual=40 expected=50 GAP
+timer=2 case=buffer-write-retains-count actual=190 expected=90 GAP
+timer=2 case=stop-retains-count actual=100 expected=90 GAP
+timer=2 case=stopped-count-stays-held actual=100 expected=90 GAP
+timer=2 case=restart-resumes-count actual=99 expected=89 GAP
+timer=2 case=manual-update-loads-new-count actual=40 expected=50 GAP
+timer=3 case=buffer-write-retains-count actual=190 expected=90 GAP
+timer=3 case=stop-retains-count actual=100 expected=90 GAP
+timer=3 case=stopped-count-stays-held actual=100 expected=90 GAP
+timer=3 case=restart-resumes-count actual=99 expected=89 GAP
+timer=3 case=manual-update-loads-new-count actual=40 expected=50 GAP
+timer=4 case=buffer-write-retains-count actual=190 expected=90 GAP
+timer=4 case=stop-retains-count actual=100 expected=90 GAP
+timer=4 case=stopped-count-stays-held actual=100 expected=90 GAP
+timer=4 case=restart-resumes-count actual=99 expected=89 GAP
+timer=4 case=manual-update-loads-new-count actual=40 expected=50 GAP
+PWM model-gap observations=25 mismatches=25
+exit=1

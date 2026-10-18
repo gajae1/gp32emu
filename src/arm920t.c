@@ -162,12 +162,14 @@ enum arm_jit_inv_cause {
 /* 4 KiB RAM pages that may hold translated code, one bit each. */
 #define ARM_JIT_CODE_PAGE_SHIFT 12u
 #define ARM_JIT_CODE_PAGES (ARM_JIT_RAM_SIZE_BYTES >> ARM_JIT_CODE_PAGE_SHIFT)
-/* Exact instruction-word CPU watches avoid invalidating for nearby data.
+/* Exact instruction-word watches avoid invalidating for nearby data.
  * Native STM guards inspect the complete 1..16-word bitmap range. */
 #define ARM_JIT_CODE_WATCH_SHIFT 2u
 #define ARM_JIT_CODE_WATCHES (ARM_JIT_RAM_SIZE_BYTES >> ARM_JIT_CODE_WATCH_SHIFT)
 _Static_assert(ARM_JIT_CODE_WATCH_SHIFT == 2u, "native STM masks require instruction-word watches");
 #define ARM_JIT_BIOS_SIZE_BYTES 0x00080000u
+#define ARM_JIT_NONRAM_BIOS 1u
+#define ARM_JIT_NONRAM_OTHER 2u
 
 #if defined(_MSC_VER)
 #define ARM_FORCE_INLINE static __forceinline
@@ -414,9 +416,9 @@ struct arm920t {
      * the writer reaches that chunk. Cleared with the whole arena. */
     int jit_arena_wrapped;
     /* Physical RAM pages fetched while collecting/revalidating code since
-     * the last full flush. External write notifications retain their
-     * conservative MMU policy via jit_code_pages_untracked; finer CPU-write
-     * watches are appended below. Cleared with the generation. */
+     * the last full flush. External writes refine page hits with the same
+     * instruction-word watches as CPU stores, in both I-cache settings.
+     * jit_code_pages_untracked retains the conservative MMU fallback. */
     uint32_t jit_code_pages[ARM_JIT_CODE_PAGES / 32u];
     int jit_code_pages_untracked;
     /* TLB indices used by translated MMU fetches. Data-only slot evictions
@@ -458,11 +460,17 @@ struct arm920t {
     /* Independent full-window write certificate; a read pointer is not one.
      * Appended to preserve the native backends' existing hot-field offsets. */
     uint8_t *jit_ram_write_base;
-    /* Runtime-only CPU store watches, 256 KiB for the 8 MiB RAM window.
+    /* Runtime-only instruction watches, 256 KiB for the 8 MiB RAM window.
+     * CPU stores use these with I=0; external writes use both I settings.
      * One zero padding word permits a native 64-bit bitmap window load when
      * an STM ends in RAM's last word. No guest address indexes the padding.
      * Appended so existing hot fields and wire-state layout are unchanged. */
     uint32_t jit_code_watches[ARM_JIT_CODE_WATCHES / 32u + 1u];
+    /* Generic buses can execute writable BIOS or other physical mappings.
+     * These rare regions have conservative watches separate from RAM and
+     * each other, so ordinary GP32 MMIO/data writes retain the RAM policy.
+     * Runtime-only; cleared with a full generation, not a sampling reset. */
+    uint8_t jit_code_nonram;
 };
 _Static_assert(offsetof(arm920t_t, jit_cache_epoch) == offsetof(arm920t_t, jit_generation) + 4u &&
                offsetof(arm_jit_block_t, tag_cache_epoch) == offsetof(arm_jit_block_t, generation) + 4u,
@@ -556,6 +564,10 @@ static void set_cpsr_full(arm920t_t *c, uint32_t value) {
 
 ARM_FORCE_INLINE uint8_t *fastmem(arm920t_t *c, uint32_t a, size_t bytes, int write) {
     return c->bus.fastmem ? c->bus.fastmem(c->bus.user, a, bytes, write) : NULL;
+}
+ARM_FORCE_INLINE int fastmem_excludes(arm920t_t *c, uint32_t a, size_t bytes, int write) {
+    return !c->bus.fastmem || (c->bus.fastmem_excludes &&
+           c->bus.fastmem_excludes(c->bus.user, a, bytes, write));
 }
 static int arm_jit_refresh_bus_windows(arm920t_t *c) {
     uint8_t *ram = fastmem(c, ARM_JIT_RAM_BASE_ADDR, ARM_JIT_RAM_SIZE_BYTES, 0);
@@ -955,6 +967,10 @@ const uint8_t *arm920t_peek_identity_code(arm920t_t *c, uint32_t a, size_t bytes
 ARM_FORCE_INLINE uint8_t rb8(arm920t_t *c, uint32_t a) { uint32_t paddr = mmu_translate(c, a); uint8_t *p = fastmem(c, paddr, 1u, 0); return p ? p[0] : c->bus.read8(c->bus.user, paddr); }
 ARM_FORCE_INLINE uint16_t rb16(arm920t_t *c, uint32_t a) { uint32_t paddr = mmu_translate(c, a); uint8_t *p = fastmem(c, paddr, 2u, 0); return p ? gp32_ld16le(p) : c->bus.read16(c->bus.user, paddr); }
 ARM_FORCE_INLINE uint32_t rb32(arm920t_t *c, uint32_t a) { uint32_t paddr = mmu_translate(c, a); uint8_t *p = fastmem(c, paddr, 4u, 0); return p ? gp32_ld32le(p) : c->bus.read32(c->bus.user, paddr); }
+ARM_FORCE_INLINE unsigned arm_jit_nonram_region(uint32_t pa) {
+    if (pa < ARM_JIT_BIOS_SIZE_BYTES) return ARM_JIT_NONRAM_BIOS;
+    return pa - ARM_JIT_RAM_BASE_ADDR >= ARM_JIT_RAM_SIZE_BYTES ? ARM_JIT_NONRAM_OTHER : 0u;
+}
 /* With CP15.I clear an instruction fetch reads memory, even when an emulator
  * has already decoded that address. Test physical watches, independently of
  * the I/D virtual aliases. The checked instruction finishes all transfers and
@@ -963,11 +979,23 @@ ARM_FORCE_INLINE void arm920t_cpu_code_write(arm920t_t *c, uint32_t pa, unsigned
     if (c->cp15[1] & (1u << 12)) return;
     uint32_t off = pa - ARM_JIT_RAM_BASE_ADDR;
     if (off >= ARM_JIT_RAM_SIZE_BYTES) {
+        /* Read permission and an executable address do not imply read-only
+         * memory. A callback can write these regions too. Each CPU accessor
+         * reports at most four bytes; its endpoints cover region crossings. */
+        if (c->jit_code_nonram && (c->jit_code_nonram &
+            (arm_jit_nonram_region(pa) | arm_jit_nonram_region(pa + bytes - 1u)))) {
+            arm920t_jit_invalidate_all(c, ARM_JIT_INV_CP15_CACHE);
+            return;
+        }
         /* An unaligned halfword callback can begin below RAM and write its
          * upper byte into the first RAM page (s3c2400_write16). */
         if (pa >= ARM_JIT_RAM_BASE_ADDR || ARM_JIT_RAM_BASE_ADDR - pa >= bytes) return;
         bytes -= ARM_JIT_RAM_BASE_ADDR - pa;
         off = 0u;
+    } else if (bytes > ARM_JIT_RAM_SIZE_BYTES - off &&
+               (c->jit_code_nonram & ARM_JIT_NONRAM_OTHER)) {
+        arm920t_jit_invalidate_all(c, ARM_JIT_INV_CP15_CACHE);
+        return;
     }
     uint32_t last = bytes > ARM_JIT_RAM_SIZE_BYTES - off ? ARM_JIT_RAM_SIZE_BYTES - 1u : off + bytes - 1u;
     /* Each accessor reports 1, 2 or 4 bytes; at most two watches are touched. */
@@ -1265,6 +1293,16 @@ int arm920t_get_jit_enabled(const arm920t_t *c) {
 }
 void arm920t_invalidate_icache_range(arm920t_t *c, uint32_t addr, uint32_t len) {
     if (!c || !len) return;
+    /* External writers can also modify generic-bus code outside the RAM
+     * bitmap. Keep BIOS independent of other regions: its normal fetches
+     * must not make unrelated RAM or device writes invalidate translations. */
+    if (c->jit_code_nonram) {
+        uint64_t end = (uint64_t)addr + len;
+        if (((c->jit_code_nonram & ARM_JIT_NONRAM_BIOS) && addr < ARM_JIT_BIOS_SIZE_BYTES) ||
+            ((c->jit_code_nonram & ARM_JIT_NONRAM_OTHER) &&
+             ((addr < ARM_JIT_RAM_BASE_ADDR && end > ARM_JIT_BIOS_SIZE_BYTES) ||
+              end > ARM_JIT_RAM_BASE_ADDR + ARM_JIT_RAM_SIZE_BYTES))) goto invalidate;
+    }
     if (!c->jit_code_pages_untracked) {
         /* DMA may start on an unmapped bus address and then enter RAM. */
         if (addr < ARM_JIT_RAM_BASE_ADDR) {
@@ -1274,12 +1312,32 @@ void arm920t_invalidate_icache_range(arm920t_t *c, uint32_t addr, uint32_t len) 
             len -= skip;
         }
         uint32_t off = addr - ARM_JIT_RAM_BASE_ADDR;
-        if (off >= ARM_JIT_RAM_SIZE_BYTES) return; /* only RAM code is tracked and writable */
+        if (off >= ARM_JIT_RAM_SIZE_BYTES) return; /* non-RAM regions were checked above */
         uint32_t end = len > ARM_JIT_RAM_SIZE_BYTES - off ? ARM_JIT_RAM_SIZE_BYTES : off + len;
         uint32_t page = off >> ARM_JIT_CODE_PAGE_SHIFT, last = (end - 1u) >> ARM_JIT_CODE_PAGE_SHIFT;
-        while (page <= last && !((c->jit_code_pages[page >> 5] >> (page & 31u)) & 1u)) ++page;
-        if (page > last) return; /* no translated block fetched from these pages */
+        uint32_t first_watch = off >> ARM_JIT_CODE_WATCH_SHIFT;
+        uint32_t last_watch = (end - 1u) >> ARM_JIT_CODE_WATCH_SHIFT;
+        const unsigned watches_per_page = 1u << (ARM_JIT_CODE_PAGE_SHIFT - ARM_JIT_CODE_WATCH_SHIFT);
+        for (; page <= last; ++page) {
+            if (!((c->jit_code_pages[page >> 5] >> (page & 31u)) & 1u)) continue;
+            /* Firmware tick mirrors and DMA buffers can share a page with
+             * code without changing any instruction. Skip empty pages first,
+             * then inspect only the notified words of a populated page.
+             * These watches are recorded for both CP15.I settings. */
+            uint32_t first = page * watches_per_page;
+            uint32_t final = first + watches_per_page - 1u;
+            if (first < first_watch) first = first_watch;
+            if (final > last_watch) final = last_watch;
+            for (uint32_t i = first >> 5; i <= (final >> 5); ++i) {
+                uint32_t mask = UINT32_MAX;
+                if (i == (first >> 5)) mask <<= first & 31u;
+                if (i == (final >> 5)) mask &= UINT32_MAX >> (31u - (final & 31u));
+                if (c->jit_code_watches[i] & mask) goto invalidate;
+            }
+        }
+        return;
     }
+invalidate:
     arm920t_jit_invalidate_all(c, ARM_JIT_INV_CP15_CACHE);
 }
 int arm920t_set_live_read32(arm920t_t *c, const arm_live_read32_t *reads, size_t count) {
@@ -1936,6 +1994,8 @@ ARM_FORCE_INLINE int arm_jit_peek_translate(arm920t_t *c, uint32_t va, uint32_t 
  * virtual PC again after collection. An I-TLB entry can be replaced later;
  * revalidation below also records newly mapped, byte-identical code spans. */
 ARM_FORCE_INLINE void arm_jit_track_code(arm920t_t *c, uint32_t pa, unsigned bytes) {
+    c->jit_code_nonram |= (uint8_t)(arm_jit_nonram_region(pa) |
+                                  arm_jit_nonram_region(pa + bytes - 1u));
     uint32_t off = pa - ARM_JIT_RAM_BASE_ADDR;
     if (off < ARM_JIT_RAM_SIZE_BYTES) {
         uint32_t last = bytes > ARM_JIT_RAM_SIZE_BYTES - off ? ARM_JIT_RAM_SIZE_BYTES - 1u : off + bytes - 1u;
@@ -2120,6 +2180,7 @@ static void arm920t_jit_invalidate_all(arm920t_t *c, unsigned cause) {
     c->jit_generation++;
     memset(c->jit_code_pages, 0, sizeof(c->jit_code_pages));
     memset(c->jit_code_watches, 0, sizeof(c->jit_code_watches));
+    c->jit_code_nonram = 0u;
     c->jit_code_pages_untracked = 0;
     memset(c->jit_code_tlb_slots, 0, sizeof(c->jit_code_tlb_slots));
     if (!c->jit_generation) {
@@ -2956,25 +3017,26 @@ ARM_FORCE_INLINE uint32_t arm_bc_ld_word_phys(arm920t_t *c, uint32_t addr) {
     uint32_t v;
     if (c->jit_ram_base && arm_jit_addr_in_ram(a, 4u)) v = gp32_ld32le(c->jit_ram_base + (a - ARM_JIT_RAM_BASE_ADDR));
     else if (c->jit_bios_base && arm_jit_addr_in_bios(a, 4u)) v = gp32_ld32le(c->jit_bios_base + a);
-    else if (arm_jit_addr_in_identity_io(a, 4u)) v = (c->bus.read32_io ? c->bus.read32_io : c->bus.read32)(c->bus.user, a);
     else {
-        /* This address is already physical, including outside direct windows. */
+        /* A generic bus may map direct memory inside the I/O window too.
+         * This address is already physical; prove the requested span before
+         * selecting either ordinary or specialized callback access. */
         uint8_t *p = fastmem(c, a, 4u, 0);
-        v = p ? gp32_ld32le(p) : c->bus.read32(c->bus.user, a);
+        v = p ? gp32_ld32le(p) :
+            (arm_jit_addr_in_identity_io(a, 4u) && c->bus.read32_io ?
+             c->bus.read32_io : c->bus.read32)(c->bus.user, a);
     }
     return (addr & 3u) ? gp32_ror32(v, (addr & 3u) * 8u) : v;
 }
 ARM_FORCE_INLINE uint32_t arm_bc_ld_byte_phys(arm920t_t *c, uint32_t addr) {
     if (c->jit_ram_base && arm_jit_addr_in_ram(addr, 1u)) return c->jit_ram_base[addr - ARM_JIT_RAM_BASE_ADDR];
     if (c->jit_bios_base && arm_jit_addr_in_bios(addr, 1u)) return c->jit_bios_base[addr];
-    if (arm_jit_addr_in_identity_io(addr, 1u)) return c->bus.read8(c->bus.user, addr);
     uint8_t *p = fastmem(c, addr, 1u, 0);
     return p ? p[0] : c->bus.read8(c->bus.user, addr);
 }
 ARM_FORCE_INLINE uint32_t arm_bc_ld_half_phys(arm920t_t *c, uint32_t addr) {
     if (c->jit_ram_base && arm_jit_addr_in_ram(addr, 2u)) return gp32_ld16le(c->jit_ram_base + (addr - ARM_JIT_RAM_BASE_ADDR));
     if (c->jit_bios_base && arm_jit_addr_in_bios(addr, 2u)) return gp32_ld16le(c->jit_bios_base + addr);
-    if (arm_jit_addr_in_identity_io(addr, 2u)) return c->bus.read16(c->bus.user, addr);
     /* arm_bc_ld_half already translated the VA. A failed direct-window
      * probe must read this PA, not translate it a second time as a VA. */
     uint8_t *p = fastmem(c, addr, 2u, 0);
@@ -2983,18 +3045,14 @@ ARM_FORCE_INLINE uint32_t arm_bc_ld_half_phys(arm920t_t *c, uint32_t addr) {
 ARM_FORCE_INLINE void arm_bc_st_word_phys(arm920t_t *c, uint32_t addr, uint32_t v) {
     uint32_t a = addr & ~3u;
     if (c->jit_ram_write_base && arm_jit_addr_in_ram(a, 4u)) { gp32_st32le(c->jit_ram_write_base + (a - ARM_JIT_RAM_BASE_ADDR), v); arm920t_cpu_code_write(c, a, 4u); return; }
-    if (arm_jit_addr_in_identity_io(a, 4u)) {
-        (c->bus.write32_io ? c->bus.write32_io : c->bus.write32)(c->bus.user, a, v);
-        return;
-    }
     uint8_t *p = fastmem(c, a, 4u, 1);
     if (p) gp32_st32le(p, v);
-    else c->bus.write32(c->bus.user, a, v);
+    else (arm_jit_addr_in_identity_io(a, 4u) && c->bus.write32_io ?
+          c->bus.write32_io : c->bus.write32)(c->bus.user, a, v);
     arm920t_cpu_code_write(c, a, 4u);
 }
 ARM_FORCE_INLINE void arm_bc_st_byte_phys(arm920t_t *c, uint32_t addr, uint32_t v) {
     if (c->jit_ram_write_base && arm_jit_addr_in_ram(addr, 1u)) { c->jit_ram_write_base[addr - ARM_JIT_RAM_BASE_ADDR] = (uint8_t)v; arm920t_cpu_code_write(c, addr, 1u); return; }
-    if (arm_jit_addr_in_identity_io(addr, 1u)) { c->bus.write8(c->bus.user, addr, (uint8_t)v); return; }
     uint8_t *p = fastmem(c, addr, 1u, 1);
     if (p) p[0] = (uint8_t)v;
     else c->bus.write8(c->bus.user, addr, (uint8_t)v);
@@ -3002,7 +3060,6 @@ ARM_FORCE_INLINE void arm_bc_st_byte_phys(arm920t_t *c, uint32_t addr, uint32_t 
 }
 ARM_FORCE_INLINE void arm_bc_st_half_phys(arm920t_t *c, uint32_t addr, uint32_t v) {
     if (c->jit_ram_write_base && arm_jit_addr_in_ram(addr, 2u)) { gp32_st16le(c->jit_ram_write_base + (addr - ARM_JIT_RAM_BASE_ADDR), (uint16_t)v); arm920t_cpu_code_write(c, addr, 2u); return; }
-    if (arm_jit_addr_in_identity_io(addr, 2u)) { c->bus.write16(c->bus.user, addr, (uint16_t)v); return; }
     /* addr is physical even when a halfword straddles the RAM window. */
     uint8_t *p = fastmem(c, addr, 2u, 1);
     if (p) gp32_st16le(p, (uint16_t)v);
@@ -3564,6 +3621,7 @@ typedef struct x64_emit {
     size_t cap;
     size_t pos;
     int fail, mmu, ram_read, ram_write, check_code_writes;
+    int io_read_callback, io_write_callback; /* proved no fastmem at device PAs */
     int count_skips; /* R15D holds the negative skipped-op count modulo 2^32. */
     int fwd_guest; /* guest register whose committed value is in EAX, or -1 */
     uint32_t expected_next, generation, done, guest_pc;
@@ -3615,15 +3673,18 @@ static int arm_x64_exec_checked(arm920t_t *c, const arm_jit_op_t *op,
  * arm_x64_exec_checked - the callback-visible PC, one bus access, destination
  * then writeback, then the same continuation snapshot - while skipping the
  * second mmu_translate, the transfer decode and the physical-window probes
- * that the emitter already performed.  Cycle and timing state stay untouched
+ * that the emitter already performed. Generic buses still probe their direct
+ * mapping for this complete physical word; certified buses elide that probe.
+ * Cycle and timing state stay untouched
  * exactly as there, and a store keeps the identical exit condition (interrupts,
  * timers, halt, trace, epoch/generation, RAM/BIOS rebase).  The proven operands
  * arrive in the CPU handover words: pa is 4-byte aligned and inside that window,
  * rotation is (VA & 3) * 8 and writeback is base +/- offset (committed only
  * when the decoded shape writes back).  No profiling counter is advanced: like
  * the RAM fast path this is a native fast path, not a checked-helper call. */
-static int arm_x64_io_word_checked(arm920t_t *c, const arm_jit_op_t *op,
-                                   uint32_t expected_next, uint32_t generation) {
+ARM_FORCE_INLINE int arm_x64_io_word_access(arm920t_t *c, const arm_jit_op_t *op,
+                                            uint32_t expected_next, uint32_t generation,
+                                            int probe_fastmem) {
     int stop = op->stop;
     unsigned rd = op->b, rn = op->a; /* callbacks can invalidate decoded-op storage */
     uint32_t pa = c->jit_io_word.pa, value = c->jit_io_word.value;
@@ -3634,14 +3695,19 @@ static int arm_x64_io_word_checked(arm920t_t *c, const arm_jit_op_t *op,
     uint32_t epoch = c->jit_cache_epoch, run_limit = c->run_limit;
     uint8_t *ram_base = c->jit_ram_base, *bios_base = c->jit_bios_base;
     c->r[15] = op->pc + 4u; /* callback-visible PC, exactly as classified */
+    uint8_t *direct = probe_fastmem ? fastmem(c, pa, 4u, !load) : NULL;
     if (load) {
-        /* Same callback selection as arm_bc_ld_word_phys' identity-I/O arm. */
-        uint32_t v = (c->bus.read32_io ? c->bus.read32_io : c->bus.read32)(c->bus.user, pa);
+        /* A device-window address alone does not reject a bus's independent
+         * direct mapping. The emitter elides this probe only with an explicit
+         * per-direction proof that no such mapping can exist. */
+        uint32_t v = direct ? gp32_ld32le(direct) :
+            (c->bus.read32_io ? c->bus.read32_io : c->bus.read32)(c->bus.user, pa);
         if (rotation) v = gp32_ror32(v, rotation);
         write_r(c, rd, v);
     } else {
-        /* Same callback selection as arm_bc_st_word_phys' identity-I/O arm. */
-        (c->bus.write32_io ? c->bus.write32_io : c->bus.write32)(c->bus.user, pa, value);
+        if (direct) gp32_st32le(direct, value);
+        else (c->bus.write32_io ? c->bus.write32_io : c->bus.write32)(c->bus.user, pa, value);
+        arm920t_cpu_code_write(c, pa, 4u);
     }
     if (wb) write_r(c, rn, writeback);
     return !stop && c->run_limit == run_limit && !c->halted && !thumb(c) && !c->trace && c->jit_enabled &&
@@ -3652,6 +3718,16 @@ static int arm_x64_io_word_checked(arm920t_t *c, const arm_jit_op_t *op,
            !(c->irq_line && !(c->cpsr & I_FLAG)) &&
            !(c->fiq_line && !(c->cpsr & F_FLAG)) &&
            (!(c->cp15[1] & 1u) || c->jit_fetch_page != UINT32_MAX);
+}
+
+static int arm_x64_io_word_checked(arm920t_t *c, const arm_jit_op_t *op,
+                                   uint32_t expected_next, uint32_t generation) {
+    return arm_x64_io_word_access(c, op, expected_next, generation, 0);
+}
+
+static int arm_x64_io_word_mapped_checked(arm920t_t *c, const arm_jit_op_t *op,
+                                          uint32_t expected_next, uint32_t generation) {
+    return arm_x64_io_word_access(c, op, expected_next, generation, 1);
 }
 
 static void x64_u8(x64_emit_t *e, uint8_t v) { if (e->pos < e->cap) e->b[e->pos++] = v; else e->fail = 1; }
@@ -4611,7 +4687,9 @@ static void x64_emit_io_word(x64_emit_t *e, const arm_jit_op_t *op, uint32_t don
     x64_emit_arg1_ptr_imm(e, (uintptr_t)op);
     x64_mov_r32_imm(e, X64_HOST_ARG2, e->expected_next);
     x64_mov_r32_imm(e, X64_HOST_ARG3, e->generation);
-    x64_call_abs(e, (uintptr_t)arm_x64_io_word_checked);
+    int callback_only = (op->d & ARM_BC_SD_L) ? e->io_read_callback : e->io_write_callback;
+    x64_call_abs(e, callback_only ? (uintptr_t)arm_x64_io_word_checked :
+                                   (uintptr_t)arm_x64_io_word_mapped_checked);
     x64_alu_r32_r32(e, 0x85, X64_EAX, X64_EAX);
     size_t cont = x64_jcc32(e, 0x5); /* can_continue: commit is complete */
     x64_emit_return_imm(e, done);
@@ -5038,6 +5116,10 @@ static void arm_jit_compile_host(arm920t_t *c, arm_jit_block_t *b) {
     /* A read pointer alone does not authorize stores or a complete window. */
     e.ram_read = c->jit_ram_base && fastmem(c, ARM_JIT_RAM_BASE_ADDR, ARM_JIT_RAM_SIZE_BYTES, 0) == c->jit_ram_base;
     e.ram_write = c->jit_ram_base && fastmem(c, ARM_JIT_RAM_BASE_ADDR, ARM_JIT_RAM_SIZE_BYTES, 1) == c->jit_ram_base;
+    /* A rejected byte cannot rule out later mappings or wider permissions.
+     * Only a complete-range certificate removes the per-word mapping probe. */
+    e.io_read_callback = fastmem_excludes(c, 0x14000000u, 0x02000000u, 0);
+    e.io_write_callback = fastmem_excludes(c, 0x14000000u, 0x02000000u, 1);
     x64_u8(&e, 0x53);                         /* push rbx */
     x64_u8(&e, 0x41); x64_u8(&e, 0x56);       /* push r14 */
     x64_u8(&e, 0x41); x64_u8(&e, 0x57);       /* push r15 */
@@ -5434,11 +5516,12 @@ ARM_FORCE_INLINE int arm_jit_prepare_fetch(arm920t_t *c, uint32_t pc) {
     return 0;
 }
 
-/* Code blocks are only fetched, revalidated and natively executed through the
- * RAM/BIOS windows, so a PC that resolves to any other physical address has no
- * usable cache entry: caching it would cost a translation (and, on a native
- * backend, a compilation) on every execution, and runaway execution outside
- * the code windows would re-translate once per instruction. The test also
+/* A cold dispatcher entry resolving outside RAM/BIOS executes raw. Caching
+ * that entry would cost a translation (and, on a native backend, a
+ * compilation) on every execution, and runaway execution outside the code
+ * windows would re-translate once per instruction. A stitched trace entered
+ * through RAM/BIOS can still contain code from other physical regions, so
+ * those fetched words must retain their write watches. The test also
  * requires a direct pointer: declining fastmem retains an observable fetch
  * callback on every execution, even inside the RAM/BIOS address windows.
  * A PC without a usable TLB entry is reported cacheable so the normal

@@ -81,6 +81,15 @@ typedef struct arm_bus {
      * such access. Appended so earlier bus entries keep their offsets. */
     int open_bus_valid;
     uint32_t open_bus_word32;
+    /* Optional side-effect-free negative mapping certificate. A nonzero
+     * result promises that fastmem rejects every nonempty subspan wholly
+     * inside [addr, addr + bytes), for this access permission. A rejected
+     * fastmem probe alone makes no such promise. Zero or NULL means unknown.
+     * Native compilation may cache this result until the same mapping flush
+     * boundaries as full RAM/BIOS pointers; implementations must query their
+     * current mapping, including changes made by state load. The CPU only
+     * requests nonempty ranges contained in the 32-bit physical space. */
+    int (*fastmem_excludes)(void *user, uint32_t addr, size_t bytes, int write);
 } arm_bus_t;
 
 typedef struct arm_live_read32 {
@@ -121,10 +130,13 @@ int arm920t_activate_ios_jit(arm920t_t *cpu);
 int arm920t_activate_ios_jit_universal(arm920t_t *cpu);
 void arm920t_flush_jit(arm920t_t *cpu);
 /* Call after a non-CPU writer (DMA, HLE file or asset copy) stores len bytes
- * at physical addr. When translated code may have been fetched from that
- * range this is the lazy invalidation of MCR p15 c7 c5: blocks are kept and
- * re-prove their fetched words on next dispatch. Writes to pages without
- * translated code cost nothing. Safe inside a run. */
+ * at physical addr. The span clips at the end of the 32-bit address space;
+ * callers must split a write that wraps to physical address zero. When
+ * translated code may have been fetched from that range this is the lazy
+ * invalidation of MCR p15 c7 c5: blocks are kept and
+ * re-prove their fetched words on next dispatch. Tracked RAM writes test
+ * instruction-word watches; MMU/untracked code and uncommon executable
+ * BIOS/other physical regions retain conservative checks. Safe inside a run. */
 void arm920t_invalidate_icache_range(arm920t_t *cpu, uint32_t addr, uint32_t len);
 void arm920t_set_irq(arm920t_t *cpu, int state);
 void arm920t_set_fiq(arm920t_t *cpu, int state);

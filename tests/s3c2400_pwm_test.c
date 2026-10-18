@@ -9,23 +9,26 @@ static int check_clock_phase(s3c2400_t *s, uint32_t control, uint32_t irq_mask) 
     s3c2400_write32(s, 0x14800004u, 0x3000u); /* FCLK 66 MHz. */
     s3c2400_write32(s, 0x14800014u, 0u);
     for (unsigned t = 0; t < 5u; ++t) s3c2400_write32(s, 0x1510000cu + t * 12u, 160u);
+    s3c2400_write32(s, 0x15100008u, (control & ~0x111101u) | 0x222202u);
     s3c2400_write32(s, 0x15100008u, control);
-    s3c2400_tick(s, 161u); /* Half of the 322-cycle period. */
+    s3c2400_tick(s, 161u); /* Count 80, half of the next decrement tick. */
     for (unsigned step = 0; step < 2u; ++step) {
         s3c2400_write32(s, 0x14800014u, step ? 0u : 3u);
-        /* Divider 3 doubles CPU cycles per PCLK timer tick. The counter
-         * must stay half-way through, in both directions of the switch. */
+        /* Divider 3 doubles CPU cycles per PCLK timer tick. Count 80 and
+         * the half-tick fraction survive in both directions of the switch. */
         for (unsigned t = 0; t < 5u; ++t) {
             uint32_t reg = t == 4u ? 0x15100040u : 0x15100014u + t * 12u;
             if (s3c2400_read32(s, reg) != 80u) goto fail;
         }
-        uint32_t remaining = step ? 161u : 322u;
+        /* The request is on 1->0; the reload is one tick later (Fig.10-2).
+         * Eighty decrements minus the retained half tick are 159/318 cycles. */
+        uint32_t remaining = step ? 159u : 318u;
         s3c2400_tick(s, remaining - 1u);
         if (s3c2400_read32(s, 0x14400000u) & irq_mask) goto fail;
         s3c2400_tick(s, 1u);
         if ((s3c2400_read32(s, 0x14400000u) & irq_mask) != irq_mask) goto fail;
         s3c2400_write32(s, 0x14400000u, irq_mask);
-        if (!step) s3c2400_tick(s, 322u);
+        if (!step) s3c2400_tick(s, 326u); /* Reload + 80.5 decrement ticks. */
     }
     return 1;
 fail:
@@ -78,6 +81,7 @@ static int run_timer_cpu(unsigned quantum, int jit, unsigned timer,
     s3c2400_write32(s, 0x14800004u, 0u);
     s3c2400_write32(s, 0x14800014u, 0u);
     s3c2400_write32(s, 0x1510000cu + timer*12u, 499u);
+    s3c2400_write32(s, 0x15100008u, timer ? 0x200000u : 2u); /* Required manual load. */
     if (!delayed) s3c2400_write32(s, 0x15100008u, control);
     s3c2400_write32(s, 0x14400008u, ~(1u << (10u + timer)));
     arm920t_set_cpsr(c, 0x53u);
@@ -132,6 +136,7 @@ int main(void) {
         if (t < 4) s3c2400_write32(s, 0x15100010u + t * 12u, compare[t]);
         control |= start[t] | reload[t];
     }
+    s3c2400_write32(s, 0x15100008u, (control & ~0x111101u) | 0x222202u);
     s3c2400_write32(s, 0x15100008u, control);
     unsigned events = 0;
     for (unsigned cycle = 0; cycle < 1200; ++cycle) {

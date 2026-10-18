@@ -1,0 +1,193 @@
+{
+  "construction": "Apply nonram-isolated-before.patch to final combined source 8e390d7. It removes the common rare-region changes and one native I/O store notification per backend, retaining root watched-word external refinement and native fastmem_excludes proof. Result is the exact before source tested; 3abe682 and 8e390d7 differ only in the cold-dispatch explanatory comment.",
+  "common_hunks": [
+    {
+      "tag": "insert",
+      "old_line": 171,
+      "new_line": 171,
+      "state": "reverted"
+    },
+    {
+      "tag": "insert",
+      "old_line": 467,
+      "new_line": 469,
+      "state": "reverted"
+    },
+    {
+      "tag": "insert",
+      "old_line": 959,
+      "new_line": 966,
+      "state": "reverted"
+    },
+    {
+      "tag": "insert",
+      "old_line": 967,
+      "new_line": 978,
+      "state": "reverted"
+    },
+    {
+      "tag": "insert",
+      "old_line": 972,
+      "new_line": 991,
+      "state": "reverted"
+    },
+    {
+      "tag": "insert",
+      "old_line": 1269,
+      "new_line": 1292,
+      "state": "reverted"
+    },
+    {
+      "tag": "replace",
+      "old_line": 1278,
+      "new_line": 1311,
+      "state": "reverted"
+    },
+    {
+      "tag": "insert",
+      "old_line": 1960,
+      "new_line": 1993,
+      "state": "reverted"
+    },
+    {
+      "tag": "insert",
+      "old_line": 2144,
+      "new_line": 2179,
+      "state": "reverted"
+    },
+    {
+      "tag": "replace",
+      "old_line": 5454,
+      "new_line": 5490,
+      "state": "already_before_comment"
+    }
+  ],
+  "files": [
+    {
+      "path": "/tmp/gp32-round5-jit-nonram-combined/src/arm920t.c",
+      "sha256": "3abe682e4c56d391fd3f3eb4361e05f495bf11e4edc1d7a0a06e446fc5ef5496"
+    },
+    {
+      "path": "/tmp/gp32-round5-jit-nonram-combined/src/arm920t.h",
+      "sha256": "55a000dd757d09d25bb4f28412146c677a89e6d02c148785e82849a98b1aa764"
+    },
+    {
+      "path": "/tmp/gp32-round5-jit-nonram-combined/src/arm920t_jit_a64.inc",
+      "sha256": "1137c007812c8f8acef85b3f88290032e2dd843459a9658f944f5bedfb3d1e01"
+    },
+    {
+      "path": "/tmp/gp32-round5-jit-nonram-combined/src/arm920t_jit_ios.inc",
+      "sha256": "f4881a64e62d3805035780696079398cbc967c59f61695b8eee1c12042c36765"
+    },
+    {
+      "path": "/tmp/gp32-round5-build-interpreter/nonram-isolated-before/src/arm920t.c",
+      "sha256": "4759b2bccead27334aff3be1e26b42479b7986703706b9dd219eb0aeb5df549b"
+    },
+    {
+      "path": "/tmp/gp32-round5-build-interpreter/nonram-isolated-before/src/arm920t.h",
+      "sha256": "55a000dd757d09d25bb4f28412146c677a89e6d02c148785e82849a98b1aa764"
+    },
+    {
+      "path": "/tmp/gp32-round5-build-interpreter/nonram-isolated-before/src/arm920t_jit_a64.inc",
+      "sha256": "74d8485043034663678300231228b2d8a6a00ede86964898a27d364046e29cb6"
+    },
+    {
+      "path": "/tmp/gp32-round5-build-interpreter/nonram-isolated-before/src/arm920t_jit_ios.inc",
+      "sha256": "f4881a64e62d3805035780696079398cbc967c59f61695b8eee1c12042c36765"
+    }
+  ],
+  "final_combined": [
+    {
+      "path": "/tmp/gp32-round5-jit-nonram-final-combined/src/arm920t.c",
+      "sha256": "8e390d734ecd6195a40044341ed841af092492104c3267e53831907b3bd7440c"
+    },
+    {
+      "path": "/tmp/gp32-round5-jit-nonram-final-combined/src/arm920t.h",
+      "sha256": "55a000dd757d09d25bb4f28412146c677a89e6d02c148785e82849a98b1aa764"
+    },
+    {
+      "path": "/tmp/gp32-round5-jit-nonram-final-combined/src/arm920t_jit_a64.inc",
+      "sha256": "1137c007812c8f8acef85b3f88290032e2dd843459a9658f944f5bedfb3d1e01"
+    },
+    {
+      "path": "/tmp/gp32-round5-jit-nonram-final-combined/src/arm920t_jit_ios.inc",
+      "sha256": "f4881a64e62d3805035780696079398cbc967c59f61695b8eee1c12042c36765"
+    }
+  ],
+  "local_sources": [
+    {
+      "path": "/tmp/gp32-round5-interpreter/src/arm920t.c",
+      "sha256": "7438796c34eab2a39a4bffb2c31274e214950d5e29789e43de10dda38a64a733"
+    },
+    {
+      "path": "/tmp/gp32-round5-interpreter/src/arm920t.h",
+      "sha256": "2087a183f4b4b09561b9668b010e060208b524675af4b9e8a71509f6e96310c4"
+    },
+    {
+      "path": "/tmp/gp32-round5-interpreter/tests/arm_nonram_code_write_test.c",
+      "sha256": "3a349fc9945851c39928ac011316753154847080ad58bc0f2e909daa28a8cff9"
+    },
+    {
+      "path": "/tmp/gp32-round5-interpreter/tests/arm_external_write_test.c",
+      "sha256": "2d61e4494c862e093ec1c63929d6c934f85a1b3ecb92d73660c5a7041804d464"
+    }
+  ],
+  "native_companion_commit": "10e30b1b863e6007e28f3bdd4293e3ae573892c7",
+  "root_external_refinement_commit": "e7c5192",
+  "local_root_cherry_pick": "6d34a42",
+  "binaries": [
+    {
+      "path": "/tmp/gp32-round5-build-interpreter/arm_nonram_code_write_bc_after",
+      "sha256": "06a9fba842b1089630a6a5909b5ccd8469686d554335d8566a0e38a353b9f4f2"
+    },
+    {
+      "path": "/tmp/gp32-round5-build-interpreter/arm_nonram_code_write_before",
+      "sha256": "39d07fbfe457756daa1669ff2c48e82a2ba4ab8145fe809d66633ebe80685c51"
+    },
+    {
+      "path": "/tmp/gp32-round5-build-interpreter/arm_nonram_code_write_before_combined",
+      "sha256": "cebe80e7c2407e592bfad5de9a12afeafb7afaedbf0031b7e98045d49eaaccbf"
+    },
+    {
+      "path": "/tmp/gp32-round5-build-interpreter/arm_nonram_code_write_before_final",
+      "sha256": "0c66dd0a2ce3dd46a42e58d0a2e1bc3dfa6b626a36c00122dd009981455d199d"
+    },
+    {
+      "path": "/tmp/gp32-round5-build-interpreter/arm_nonram_code_write_combined_clang",
+      "sha256": "c6be7e6bc7263aa1e246e903d170925d745866f284d71c80e7db1861662464ad"
+    },
+    {
+      "path": "/tmp/gp32-round5-build-interpreter/arm_nonram_code_write_combined_final",
+      "sha256": "e548d0db8a3b6c27b9a470ba8f4b29f421e3eabff4240bbd0160ed774afdc25e"
+    },
+    {
+      "path": "/tmp/gp32-round5-build-interpreter/arm_nonram_code_write_combined_ubsan",
+      "sha256": "cfc18b45cfa362e235994bcee4a379be5203db723a6660b20a30abaee9755542"
+    },
+    {
+      "path": "/tmp/gp32-round5-build-interpreter/arm_nonram_code_write_common_only",
+      "sha256": "c26ab9958a48e0be0a1147b18992f4e30e33a3e9acd0f7ed78745255b612998f"
+    },
+    {
+      "path": "/tmp/gp32-round5-build-interpreter/arm_nonram_code_write_isolated_before",
+      "sha256": "b22f2f9092c2592e1a8c0e75fe067c4c1879b5d7d7686c04184e5ee42c8039ef"
+    },
+    {
+      "path": "/tmp/gp32-round5-build-interpreter/arm_nonram_code_write_portable",
+      "sha256": "890edbdfbce9a6cb54c278a681d00abd7aced8e38f5af8b486c82256152a6031"
+    }
+  ],
+  "common_fix_commit": "89184ed82f5982d075420e1b0b5a81be444d0c35",
+  "fixture_history": {
+    "frozen_initial_1308": {
+      "path": "docs/benchmarks/1.1.0-round5/interpreter/nonram-code-fixture-before.c",
+      "sha256": "4a254061e7202423f4f1c53b14d477112fbbede2ac156c4e906e7071db7965b4",
+      "limitation": "96 cached-I1 assertions incorrectly assumed a cold extra-region PC entered a derived cache; frozen only as failed-fixture evidence."
+    },
+    "final_fixture": {
+      "path": "tests/arm_nonram_code_write_test.c",
+      "sha256": "3a349fc9945851c39928ac011316753154847080ad58bc0f2e909daa28a8cff9",
+      "coverage": "10596 cases; independent expected instruction values unchanged; explicit derived-cache preparation, public BL dispatch, and direct wb16 defensive boundary controls."
+    }
+  }
+}

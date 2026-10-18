@@ -154,7 +154,7 @@ int main(int argc, char **argv) {
     if (!state) return 2;
     /* The delta section must stand in for most of the 4.1 MiB image. */
     CHECK(state_size + CARD_BYTES / 2u < full_expected, "state carries only the differing pages");
-    CHECK(!memcmp(state, "GP32STATEv0015", 14u), "v15 writer");
+    CHECK(!memcmp(state, "GP32STATEv0016", 14u), "v16 writer");
     /* A state saved before any guest write is the same size: one mounted card
      * always serializes to one size. */
     gp32_t *probe = machine_with_card(content, CARD_BYTES);

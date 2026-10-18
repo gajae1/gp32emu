@@ -1,0 +1,9 @@
+FAIL: public reload revokes old BIOS instruction
+FAIL: public reload revokes old BIOS instruction
+FAIL: public reload revokes old BIOS instruction
+FAIL: public reload revokes old BIOS instruction
+FAIL: public reload revokes old BIOS instruction
+FAIL: public reload revokes old BIOS instruction
+FAIL: public reload revokes old BIOS instruction
+FAIL: public reload revokes old BIOS instruction
+gp32_bios_reload_test: 12 cases, 8 failures

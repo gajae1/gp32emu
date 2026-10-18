@@ -97,7 +97,7 @@ static void check_callback_wait(int jit, uint64_t origin, int change_clock, cons
     }
     size_t size = 0; uint8_t *image = save(g, &size);
     if (image) {
-        CHECK(!memcmp(image, "GP32STATEv0015", 14u), "v15 combined state writer");
+        CHECK(!memcmp(image, "GP32STATEv0016", 14u), "v16 combined state writer");
         CHECK(gp32_load_state_data(clone, image, size) == GP32_OK, "restore pending display/callback");
         CHECK(gp32_save_state(g, path) == GP32_OK && gp32_load_state(clone, path) == GP32_OK, "file wait continuation roundtrip");
         CHECK(gp32_get_pc(g) == gp32_get_pc(clone) && call_deadline(clone) == deadline, "restore live guest deadline without rearming");
@@ -211,7 +211,9 @@ static void check_interrupt_wait(int jit, int fiq) {
     s3c2400_write32(g->soc, 0x14400004u, fiq ? mask : 0u);
     s3c2400_write32(g->soc, 0x14400008u, ~mask);
     s3c2400_write32(g->soc, 0x15100000u, 0u); s3c2400_write32(g->soc, 0x15100004u, 0u);
-    s3c2400_write32(g->soc, 0x1510000cu, 9u); s3c2400_write32(g->soc, 0x15100008u, 1u);
+    s3c2400_write32(g->soc, 0x1510000cu, 9u);
+    s3c2400_write32(g->soc, 0x15100008u, 2u); /* Explicit one-shot counter load. */
+    s3c2400_write32(g->soc, 0x15100008u, 1u);
     for (unsigned i = 0; i < 1000u && !(gp32_get_pc(g) == direct_stub_addr(g) + 0x30u &&
          (gp32_get_cpsr(g) & 31u) == (fiq ? 0x11u : 0x12u)); ++i)
         CHECK(gp32_run_cycles(g, 1u) == GP32_OK, "normal PWM boundary enters guest exception handler");

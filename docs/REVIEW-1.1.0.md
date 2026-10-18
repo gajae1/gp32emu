@@ -13,8 +13,10 @@ rejected experiments, and the expanded C23 validation. The subsequent
 [Korean deep review](REVIEW-1.1.0-DEEP.ko.md) adds Thumb bus/IRQ/card fixes,
 guarded RAM DMA, independent Thumb oracles, optional JIT experiments and the
 final 49-test matrix. Counts below describe the original review snapshot;
-see the [fourth Korean review](REVIEW-1.1.0-ROUND4.ko.md) for the latest
-JIT/interpreter changes, peripheral and state fixes, and integrated results.
+see the [fourth Korean review](REVIEW-1.1.0-ROUND4.ko.md) for its JIT/interpreter
+changes and the [fifth Korean review](REVIEW-1.1.0-ROUND5.ko.md) for the latest
+code-write coherence, direct-mapping, BIOS and PWM/state corrections, measured
+costs, rejected JIT experiments and fresh integrated 64-test results.
 
 ## Review scope
 

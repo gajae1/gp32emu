@@ -1,0 +1,54 @@
+["/tmp/gp32-round4-tools/cmake/data/bin/cmake", "-S", "/tmp/gp32-round4", "-B", "/tmp/gp32-round5-bench-after/gcc-profile0", "-DCMAKE_C_COMPILER=/usr/bin/gcc", "-DCMAKE_BUILD_TYPE=Release", "-DGP32EMU_REQUIRE_C23=ON", "-DGP32EMU_ENABLE_IPO=OFF", "-DGP32EMU_CPU_PROFILE=OFF", "-DGP32EMU_BUILD_TESTS=OFF", "-DGP32EMU_BUILD_HEADLESS=OFF", "-DGP32EMU_BUILD_LIBRETRO=OFF", "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON"]
+-- The C compiler identification is GNU 13.3.0
+-- Detecting C compiler ABI info
+-- Detecting C compiler ABI info - done
+-- Check for working C compiler: /usr/bin/gcc - skipped
+-- Detecting C compile features
+-- Detecting C compile features - done
+-- Requesting C23 dialect (GNU 13.3.0)
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD - Success
+-- Found Threads: TRUE
+-- Configuring done (0.3s)
+-- Generating done (0.0s)
+-- Build files have been written to: /tmp/gp32-round5-bench-after/gcc-profile0
+["/tmp/gp32-round4-tools/cmake/data/bin/cmake", "--build", "/tmp/gp32-round5-bench-after/gcc-profile0", "--target", "gp32emu", "-j", "2"]
+[  5%] Building C object CMakeFiles/gp32emu.dir/src/arm920t.c.o
+[ 11%] Building C object CMakeFiles/gp32emu.dir/src/gp32.c.o
+/tmp/gp32-round4/src/arm920t.c: In function ‘arm_jit_fold_const_step’:
+/tmp/gp32-round4/src/arm920t.c:3555:59: warning: comparison is always false due to limited range of data type [-Wtype-limits]
+ 3555 |         if (next->e != prev->c || next->g > 3u || next->h > 31u) return 0;
+      |                                                           ^
+/tmp/gp32-round4/src/arm920t.c: At top level:
+/tmp/gp32-round4/src/arm920t.c:3887:13: warning: ‘x64_fetch_guard’ defined but not used [-Wunused-function]
+ 3887 | static void x64_fetch_guard(arm920t_t *c, x64_emit_t *e, uint32_t pc, uint32_t done) {
+      |             ^~~~~~~~~~~~~~~
+/tmp/gp32-round4/src/arm920t.c:849:13: warning: ‘itlb_store’ defined but not used [-Wunused-function]
+  849 | static void itlb_store(arm920t_t *c,uint32_t va,uint32_t pa,uint32_t mask) {
+      |             ^~~~~~~~~~
+[ 17%] Building C object CMakeFiles/gp32emu.dir/src/s3c2400.c.o
+/tmp/gp32-round4/src/s3c2400.c: In function ‘audio_prepare_rate’:
+/tmp/gp32-round4/src/s3c2400.c:922:67: warning: comparison is always false due to limited range of data type [-Wtype-limits]
+  922 |                 if (cap <= s->audio_boundary_cap || (uint64_t)cap > SIZE_MAX / sizeof(*s->audio_boundaries)) return 0;
+      |                                                                   ^
+/tmp/gp32-round4/src/s3c2400.c: In function ‘s3c2400_state_load_image’:
+/tmp/gp32-round4/src/s3c2400.c:3067:67: warning: comparison is always false due to limited range of data type [-Wtype-limits]
+ 3067 |             span_count > st->audio_frames || (uint64_t)span_count > SIZE_MAX / sizeof(*new_spans)) goto bad_audio;
+      |                                                                   ^
+[ 23%] Building C object CMakeFiles/gp32emu.dir/src/gp32_codec.c.o
+[ 29%] Building C object CMakeFiles/gp32emu.dir/src/smartmedia.c.o
+[ 35%] Building C object CMakeFiles/gp32emu.dir/src/smc_direct.c.o
+[ 41%] Building C object CMakeFiles/gp32emu.dir/src/fxe.c.o
+[ 47%] Building C object CMakeFiles/gp32emu.dir/src/fpk.c.o
+[ 52%] Building C object CMakeFiles/gp32emu.dir/src/gp32_zip.c.o
+[ 58%] Building C object CMakeFiles/gp32emu.dir/src/third_party/zip/zip.c.o
+[ 64%] Building C object CMakeFiles/gp32emu.dir/src/input_script.c.o
+[ 70%] Building C object CMakeFiles/gp32emu.dir/src/platform/platform.c.o
+[ 76%] Building C object CMakeFiles/gp32emu.dir/src/audio/gp32_audio_resampler.c.o
+[ 82%] Building C object CMakeFiles/gp32emu.dir/src/media/gp32_media.c.o
+[ 88%] Building C object CMakeFiles/gp32emu.dir/src/media/gp32_video_effects.c.o
+[ 94%] Building C object CMakeFiles/gp32emu.dir/src/save_atomic.c.o
+[100%] Linking C static library libgp32emu.a
+[100%] Built target gp32emu
+["/usr/bin/gcc", "-O3", "-DNDEBUG", "-std=c2x", "-fno-lto", "-D_XOPEN_SOURCE=700", "-D_FILE_OFFSET_BITS=64", "-DGP32EMU_ENABLE_THREADS=1", "-DGP32EMU_CPU_PROFILE=0", "-I", "/tmp/gp32-round4/src", "-I", "/tmp/gp32-round4/include", "-DARM_SOURCE=\"/tmp/gp32-round4/src/arm920t.c\"", "/tmp/gp32-round4/scripts/bench_external_writes.c", "-lm", "-o", "/tmp/gp32-round5-bench-after/gcc-profile0/external-writes"]
+["/usr/bin/gcc", "-O3", "-DNDEBUG", "-std=c2x", "-fno-lto", "-D_XOPEN_SOURCE=700", "-D_FILE_OFFSET_BITS=64", "-DGP32EMU_ENABLE_THREADS=1", "-DGP32EMU_CPU_PROFILE=0", "-I", "/tmp/gp32-round4/src", "-I", "/tmp/gp32-round4/include", "-DGP32_CORE_UNDER_TEST=\"/tmp/gp32-round4/src/gp32.c\"", "/tmp/gp32-round4/scripts/bench_hle_outputs.c", "/tmp/gp32-round5-bench-after/gcc-profile0/libgp32emu.a", "-lm", "-pthread", "-o", "/tmp/gp32-round5-bench-after/gcc-profile0/hle-outputs"]

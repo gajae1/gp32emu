@@ -1,0 +1,33 @@
+{
+  "baseline_commit": "a456739d4236586c60567c15505f40600da1b284",
+  "candidate_delta": "predicate-candidate.patch",
+  "files": {
+    "before": {
+      "arm920t.c": "f539bc4bbb8f362cdc1c99bd653a6ec106192c3f7493a1b578ebe81e012af295",
+      "arm920t.h": "55a000dd757d09d25bb4f28412146c677a89e6d02c148785e82849a98b1aa764",
+      "arm920t_jit_a64.inc": "74d8485043034663678300231228b2d8a6a00ede86964898a27d364046e29cb6",
+      "arm920t_jit_ios.inc": "f4881a64e62d3805035780696079398cbc967c59f61695b8eee1c12042c36765"
+    },
+    "after": {
+      "arm920t.c": "cf95da97c3c828f976a07734eaa892eb516119b2fa5b9d59da1e70f41eef4d5b",
+      "arm920t.h": "55a000dd757d09d25bb4f28412146c677a89e6d02c148785e82849a98b1aa764",
+      "arm920t_jit_a64.inc": "74d8485043034663678300231228b2d8a6a00ede86964898a27d364046e29cb6",
+      "arm920t_jit_ios.inc": "f4881a64e62d3805035780696079398cbc967c59f61695b8eee1c12042c36765"
+    }
+  },
+  "compiler_flags": [
+    "-O3",
+    "-DNDEBUG",
+    "-D_XOPEN_SOURCE=700",
+    "-DGP32EMU_CPU_PROFILE=0",
+    "-Isrc",
+    "-Iinclude"
+  ],
+  "gcc_standard": "-std=c2x",
+  "clang_standard": "-std=c23",
+  "functional_profile_flag": "-DGP32EMU_CPU_PROFILE=1",
+  "driver_sha256": {
+    "scripts/bench_native_predicates.c": "6471d5a84c35fe53c4f4fa08d7672e8ca3ec13893b3848b63fc885ac27caeb79",
+    "scripts/bench_native_predicates.py": "01801ff3a78df961008f1dedff85d2103ab763c19e69c584a849c26a56ddc874"
+  }
+}

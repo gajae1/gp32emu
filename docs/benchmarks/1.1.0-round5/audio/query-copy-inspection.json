@@ -1,0 +1,31 @@
+{
+  "candidate": "Avoid copying the full gp32_audio_resampler_t in the exact-count query",
+  "status": "Rejected as a new Release optimization: both inspected compilers already eliminate that source-level copy. No product changes or timings for this candidate.",
+  "callsite": "src/libretro/libretro.c submit_audio_resampled: only requests the exact count near queue capacity, after the conservative bound.",
+  "source_sha256": "913b01cd38cf1ade9ce0be4cd456782a7eb2518f615058887dff551be7199a4e",
+  "header_sha256": "002a78b438627b9d1446e33911ec4825d61996256b5884db8101cfeb0c5c1a15",
+  "inspection": [
+    {
+      "compiler": "gcc13-x64",
+      "command": [
+        "objdump",
+        "-d",
+        "--disassemble=gp32_audio_resampler_output_frames",
+        "/tmp/gp32-round4-build-gcc-final/CMakeFiles/gp32emu.dir/src/audio/gp32_audio_resampler.c.o"
+      ],
+      "object_sha256": "ee3caae68d3d9efef6097f09cc1018042187fd055b371ceb7dd1ee51d80a0663",
+      "finding": "No full-structure memcpy, large stack allocation, or coefficient/history array loads; the optimized query uses scalar rate, phase and carry fields only."
+    },
+    {
+      "compiler": "clang18-x64",
+      "command": [
+        "objdump",
+        "-d",
+        "--disassemble=gp32_audio_resampler_output_frames",
+        "/tmp/gp32-round4-build-clang/CMakeFiles/gp32emu.dir/src/audio/gp32_audio_resampler.c.o"
+      ],
+      "object_sha256": "30cef875f4795d7bf912624db516e53255a80da59e81062cd453fbd4a407cff3",
+      "finding": "No full-structure memcpy, large stack allocation, or coefficient/history array loads; the optimized query uses scalar rate, phase and carry fields only."
+    }
+  ]
+}

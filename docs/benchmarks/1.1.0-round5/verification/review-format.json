@@ -1,0 +1,39 @@
+{
+  "check": "Staged code/docs/other evidence whitespace check",
+  "returncode": 0,
+  "command": [
+    "git",
+    "diff",
+    "--cached",
+    "--check",
+    "--",
+    ".",
+    ":(exclude)docs/benchmarks/1.1.0-round5/verification/aarch64/inventory.log",
+    ":(exclude)docs/benchmarks/1.1.0-round5/verification/clang/inventory.log",
+    ":(exclude)docs/benchmarks/1.1.0-round5/verification/gcc/inventory.log",
+    ":(exclude)docs/benchmarks/1.1.0-round5/verification/ubsan/inventory.log"
+  ],
+  "raw_ctest_inventory_exceptions": [
+    {
+      "path": "docs/benchmarks/1.1.0-round5/verification/aarch64/inventory.log",
+      "sha256": "457bdedc256e9d234c38205c26b1faee468bbbaf19a830165887603fbaa7905e",
+      "trailing_whitespace_diagnostics": 134
+    },
+    {
+      "path": "docs/benchmarks/1.1.0-round5/verification/clang/inventory.log",
+      "sha256": "cf3711bc0b6e8f0d005dc1ca084347c6e916460b6fde95630cac0f95ff481866",
+      "trailing_whitespace_diagnostics": 70
+    },
+    {
+      "path": "docs/benchmarks/1.1.0-round5/verification/gcc/inventory.log",
+      "sha256": "6338f458efbfe7c4d1f2de04322ed85c74445ce3eb42b539424df3ff74f5bc38",
+      "trailing_whitespace_diagnostics": 70
+    },
+    {
+      "path": "docs/benchmarks/1.1.0-round5/verification/ubsan/inventory.log",
+      "sha256": "fa6f6a4ea58f179230c984fbe115d1d8c71036ab6e7932f5b0e337742844272e",
+      "trailing_whitespace_diagnostics": 70
+    }
+  ],
+  "reason": "CTest --show-only=json-v1 emits legal JSON with spaces before newlines. Preserve exact raw stdout and its recorded hashes instead of normalizing it. No source, Markdown, or other evidence whitespace issue remains."
+}

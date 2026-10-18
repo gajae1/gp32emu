@@ -1,0 +1,9 @@
+In file included from /usr/include/features.h:394,
+                 from /usr/include/assert.h:35,
+                 from src/common.h:4,
+                 from src/arm920t.h:4,
+                 from src/arm920t.c:11:
+/usr/include/features-time64.h:20:10: fatal error: bits/wordsize.h: No such file or directory
+   20 | #include <bits/wordsize.h>
+      |          ^~~~~~~~~~~~~~~~~
+compilation terminated.

@@ -1,0 +1,18 @@
+{
+  "baseline_local_commit": "85d36d55a47fc6da191e2ad6fd2e5079a4e91e4f",
+  "baseline_public_commit": "2bace9afd9c3d1e5e7cac9d23379e2f60d167fec",
+  "files": {
+    "src/arm920t.c": "decf0d2f925058f00391a46d335245b06ada19152e35a817415e17873e844cf3",
+    "src/gp32.c": "179e72a993ac86222c70b87ace3ed583a6e7032dc36528e7fa5856c0235e1a08",
+    "tests/gp32_hle_memory_test.c": "1c4ccba45f5822b719d893d3c1bc4e40407aabbca02a184252288ceda2f66c76",
+    "tests/arm_external_write_test.c": "039116d2c37b65c567136188ec3ac4621845e1328d407e1a7422484a40101a27"
+  },
+  "hle_before": {
+    "cases": 155,
+    "failed_assertions": 60,
+    "scalar_writers": 14,
+    "engines": 3,
+    "cache_settings": 2,
+    "note": "Raw controls passed. Cached/native engines failed all 14 scalar writers in both I-cache settings; palette also failed PC (56 stale-value failures + 4 stale-PC failures)."
+  }
+}
