@@ -3857,6 +3857,8 @@ static int direct_fxe_swi(void *user, arm920t_t *cpu, uint32_t imm, uint32_t pc,
         for (uint32_t i = 0; i < 16u; ++i)
             s3c2400_write8(g->soc, buffer + i,
                            (uint8_t)(s3c2400_eeprom_read8(g->soc, 0x10u + i) ^ key[i & 7u]));
+        /* Like an HLE file read, the caller's output buffer may contain code. */
+        arm920t_invalidate_icache_range(cpu, buffer, 16u);
         arm920t_set_reg(cpu, 0, 0u);
         return 1;
     }
@@ -3879,6 +3881,7 @@ static int direct_fxe_swi(void *user, arm920t_t *cpu, uint32_t imm, uint32_t pc,
             else
                 s3c2400_write8(g->soc, buffer + i, s3c2400_eeprom_read8(g->soc, offset + i));
         }
+        if (!write) arm920t_invalidate_icache_range(cpu, buffer, count);
         arm920t_set_reg(cpu, 0, 0u);
         return 1;
     }
