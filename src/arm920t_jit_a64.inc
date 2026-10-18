@@ -2178,25 +2178,6 @@ static int a64_emit_runtime(arm920t_t *c) {
     return a64_publish(c, 0, A64_RT_BYTES, 0, 0);
 }
 
-/* A conditional B whose target is a later op of the same straight-line trace
- * can jump there inside the block instead of leaving it. Every op between the
- * two must be a plain, non-terminating op at consecutive addresses, so the
- * target is reached by the same emission on both paths. The self backedge
- * keeps its own path. Returns the target op index, or 0. */
-static unsigned a64_fwd_target(const arm_jit_op_t *ops, unsigned count, unsigned i, uint32_t loop_done) {
-    const arm_jit_op_t *op = &ops[i];
-    if (op->kind != ARM_JIT_OP_BRANCH || op->cond >= 14u || op->stop || op->reserved ||
-        (op->insn & (1u << 24)) || loop_done == i + 1u) return 0;
-    uint32_t target = arm_jit_branch_target(op->pc, op->insn);
-    for (unsigned k = i + 1u; k < count; ++k) {
-        const arm_jit_op_t *o = &ops[k];
-        if (o->pc != op->pc + 4u * (k - i)) return 0;
-        if (o->pc == target) return k;
-        if (o->stop || o->reserved) return 0;
-    }
-    return 0;
-}
-
 static void arm_jit_compile_host(arm920t_t *c, arm_jit_block_t *b) {
     if (!c || !b || !b->count) return;
 #if defined(__SWITCH__)
@@ -2220,7 +2201,7 @@ static void arm_jit_compile_host(arm920t_t *c, arm_jit_block_t *b) {
     e.live_read32_count = c->live_read32_count;
     e.loop_done = a64_selfloop_prefix(c, b);
 #if ARM920T_PROFILING
-    c->profile_native_loop[b - c->jit_blocks] = e.loop_done != 0;
+    c->profile_native_variable_count[b - c->jit_blocks] = e.loop_done != 0;
 #endif
     e.block_count = b->count;
     e.counted = (b->poll_backedge >> 1) != 0;
@@ -2322,7 +2303,7 @@ static void arm_jit_compile_host(arm920t_t *c, arm_jit_block_t *b) {
         /* A self move preserves the guest value and flags; any preceding
          * forwarded result remains valid. Counts and exit PC commits stay. */
         if (arm_jit_is_side_effect_free_nop(op->insn)) continue;
-        unsigned fwd = fwd_ok ? a64_fwd_target(arm_jit_ops(c, b), b->count, i, e.loop_done) : 0u;
+        unsigned fwd = fwd_ok ? arm_jit_fwd_target(arm_jit_ops(c, b), b->count, i, e.loop_done) : 0u;
         if (fwd) {
             /* The skipped ops never run. The taken path returns them to the
              * entry budget (w22) and the completed count (w23), so every later
@@ -2334,6 +2315,9 @@ static void arm_jit_compile_host(arm920t_t *c, arm_jit_block_t *b) {
              * early; dispatch then resumes with the real remaining budget. */
             unsigned skipped = fwd - i - 1u;
             if (!skipped) continue; /* a branch to the next op changes nothing */
+#if ARM920T_PROFILING
+            c->profile_native_variable_count[b - c->jit_blocks] = 1u;
+#endif
             if (!e.nzcv_valid) {
                 a64_load(&e, 3, offsetof(arm920t_t, cpsr));
                 a64_u32(&e, 0xd51b4203u);
