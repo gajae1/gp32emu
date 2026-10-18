@@ -21,7 +21,8 @@ jobs:
           grep -q '^PASS:' /tmp/recycle.log
           SWITCH_JIT_PERMISSION_MODE=1 /tmp/switch-recycle | tee /tmp/recycle-permissions.log
           grep -q '^PASS:' /tmp/recycle-permissions.log
-          cc -std=c2x -O2 -D__SWITCH__ -D_XOPEN_SOURCE=700 -DGP32EMU_CPU_PROFILE=1 -Itests/switch_jit -Iinclude -Isrc tests/arm_jit_test.c src/arm920t.c tests/switch_jit/mock.c -lm -o /tmp/switch-differential
+          # The differential fixture includes arm920t.c to access native internals.
+          cc -std=c2x -O2 -D__SWITCH__ -D_XOPEN_SOURCE=700 -DGP32EMU_CPU_PROFILE=1 -Itests/switch_jit -Iinclude -Isrc tests/arm_jit_test.c tests/switch_jit/mock.c -lm -o /tmp/switch-differential
           /tmp/switch-differential
           SWITCH_JIT_PERMISSION_MODE=1 /tmp/switch-differential
           cc -std=c2x -O2 -D__SWITCH__ -D_XOPEN_SOURCE=700 -Itests/switch_jit -Iinclude -Isrc tests/switch_jit/failure_test.c tests/switch_jit/mock.c -lm -o /tmp/switch-failures

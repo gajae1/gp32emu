@@ -1,0 +1,1169 @@
+Test project /tmp/gp32-round4-build-clang
+      Start  1: ios_bridge
+      Start  2: libretro_audio
+ 1/54 Test  #1: ios_bridge .......................   Passed    0.04 sec
+      Start  3: audio_resampler
+ 2/54 Test  #2: libretro_audio ...................   Passed    0.18 sec
+      Start  4: libretro_persistence
+ 3/54 Test  #4: libretro_persistence .............   Passed    0.11 sec
+      Start  5: libretro_input
+ 4/54 Test  #5: libretro_input ...................   Passed    0.04 sec
+      Start  6: libretro_runahead
+ 5/54 Test  #6: libretro_runahead ................   Passed    0.08 sec
+      Start  7: input_script
+ 6/54 Test  #7: input_script .....................   Passed    0.00 sec
+      Start  8: arm_poll
+ 7/54 Test  #3: audio_resampler ..................   Passed    0.38 sec
+      Start  9: arm_jit
+ 8/54 Test  #8: arm_poll .........................***Failed    0.66 sec
+FAIL[literal]: literal-load poll did not reduce reads (line 397)
+FAIL[deadline-native-late-callback]: native path exercised (line 787)
+FAIL[counted-rejected-native-and-reselection]: rejected counted loop needs native execution after one real observation (line 1102)
+FAIL[counted-rejected-native-and-reselection]: rejected counted loop needs native execution after one real observation (line 1102)
+FAIL[counted-rejected-native-and-reselection]: rejected counted loop needs native execution after one real observation (line 1102)
+FAIL[counted-native-exit]: exit test must first compile rejected loop (line 1134)
+FAIL[counted-native-exit]: eligible counted exit must execute exactly native CMP/BLE (line 1152)
+FAIL[counted-native-exit]: eligible counted exit must execute exactly native CMP/BLE (line 1152)
+FAIL[counted-native-exit]: eligible counted exit must execute exactly native CMP/BLE (line 1152)
+FAIL[counted-accelerator-is-not-an-observer]: counted accelerator must be cached before observation (line 1210)
+FAIL[counted-callback-invalidation-and-deadline]: callback must exercise native fallback (line 1330)
+FAIL[counted-callback-invalidation-and-deadline]: callback must exercise native fallback (line 1330)
+FAIL[counted-callback-invalidation-and-deadline]: callback must exercise native fallback (line 1330)
+FAIL[counted-callback-invalidation-and-deadline]: callback must exercise native fallback (line 1330)
+FAIL[counted-callback-invalidation-and-deadline]: callback must exercise native fallback (line 1330)
+FAIL[counted-callback-invalidation-and-deadline]: callback must exercise native fallback (line 1330)
+FAIL[counted-callback-invalidation-and-deadline]: callback must exercise native fallback (line 1330)
+FAIL[counted-callback-invalidation-and-deadline]: callback must exercise native fallback (line 1330)
+FAIL[counted-callback-invalidation-and-deadline]: callback must exercise native fallback (line 1330)
+FAIL[counted-callback-invalidation-and-deadline]: callback must exercise native fallback (line 1330)
+FAIL[counted-callback-invalidation-and-deadline]: callback must exercise native fallback (line 1330)
+FAIL[counted-callback-invalidation-and-deadline]: observed callbacks need a compiled loop (line 1290)
+FAIL[counted-callback-invalidation-and-deadline]: observed callbacks need a compiled loop (line 1290)
+FAIL[counted-callback-invalidation-and-deadline]: observed callbacks need a compiled loop (line 1290)
+FAIL[counted-callback-invalidation-and-deadline]: observed callbacks need a compiled loop (line 1290)
+FAIL[counted-callback-invalidation-and-deadline]: observed callbacks need a compiled loop (line 1290)
+FAIL[counted-callback-invalidation-and-deadline]: observed callbacks need a compiled loop (line 1290)
+FAIL[counted-callback-invalidation-and-deadline]: observed callbacks need a compiled loop (line 1290)
+FAIL[counted-callback-invalidation-and-deadline]: observed callbacks need a compiled loop (line 1290)
+FAIL[counted-callback-invalidation-and-deadline]: observed callbacks need a compiled loop (line 1290)
+FAIL[counted-callback-invalidation-and-deadline]: observed callbacks need a compiled loop (line 1290)
+FAIL[counted-callback-invalidation-and-deadline]: observed callbacks need a compiled loop (line 1290)
+FAIL[counted-mmu-mapping-proof]: rejected MMU mapping must retain native execution (line 1490)
+FAIL[counted-mmu-mapping-proof]: rejected MMU mapping must retain native execution (line 1490)
+FAIL[counted-mmu-mapping-proof]: rejected MMU mapping must retain native execution (line 1490)
+arm poll: 35 failures
+poll-stable aligned_native=0 aligned_skipped=378
+poll-stable native=0 skipped=2808
+poll-stable-fastmem aligned_native=0 aligned_skipped=378
+poll-stable-fastmem native=0 skipped=2808
+zero-step native=0 skipped=2412
+rotated-zero-step native=0 skipped=2412
+conditional-step native=0 skipped=2384
+different-source native=0 skipped=2412
+reload-before-step native=0 skipped=2412
+reload-after-step native=0 skipped=2412
+reset-before-step native=0 skipped=2384
+reset-after-step native=0 skipped=2360
+cancelled-step native=0 skipped=2384
+bypassed-step native=0 skipped=2408
+two-backedges native=0 skipped=2430
+counted-portable reads=47/631 skipped=2336
+counted-native-enabled reads=47/631 skipped=2336
+observed-caller native=0 portable=17 skipped=496
+observed-reentry native=0 portable=16 skipped=496
+counted-mmu jit=0 variant=0 reads=49/633
+counted-mmu jit=0 variant=1 reads=634/634
+counted-mmu jit=0 variant=2 reads=1263/1263
+counted-mmu jit=0 variant=3 reads=633/633
+counted-mmu jit=1 variant=0 reads=49/633
+counted-mmu jit=1 variant=1 reads=634/634
+counted-mmu jit=1 variant=2 reads=1263/1263
+counted-mmu jit=1 variant=3 reads=633/633
+
+      Start 10: arm_write_permission
+ 9/54 Test #10: arm_write_permission .............   Passed    0.11 sec
+      Start 11: arm_read_window
+10/54 Test #11: arm_read_window ..................   Passed    0.05 sec
+      Start 12: arm_fetch_callback
+11/54 Test #12: arm_fetch_callback ...............   Passed    0.18 sec
+      Start 13: arm_translation
+12/54 Test #13: arm_translation ..................   Passed    0.03 sec
+      Start 14: arm_accelerator
+13/54 Test #14: arm_accelerator ..................   Passed    0.02 sec
+      Start 15: arm_exception
+14/54 Test #15: arm_exception ....................***Failed    1.21 sec
+FAIL[CP15-live-privilege]: CP15 exercised native blocks got=0x00000000 want=0x00000001
+FAIL[CP15-live-privilege]: CP15 exercised native blocks got=0x00000000 want=0x00000001
+FAIL[CP15-live-privilege]: CP15 exercised native blocks got=0x00000000 want=0x00000001
+FAIL[CP15-live-privilege]: CP15 exercised native blocks got=0x00000000 want=0x00000001
+FAIL[CP15-live-privilege]: CP15 exercised native blocks got=0x00000000 want=0x00000001
+FAIL[CP15-live-privilege]: CP15 exercised native blocks got=0x00000000 want=0x00000001
+FAIL[CP15-live-privilege]: CP15 exercised native blocks got=0x00000000 want=0x00000001
+FAIL[CP15-live-privilege]: CP15 exercised native blocks got=0x00000000 want=0x00000001
+FAIL[SMLABB-engine2-skip-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[SMLABB-engine2-skip-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[SMLABB-engine2-trap-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[SMLABB-engine2-trap-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[SMLABT-engine2-skip-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[SMLABT-engine2-skip-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[SMLABT-engine2-trap-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[SMLABT-engine2-trap-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[SMLATB-engine2-skip-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[SMLATB-engine2-skip-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[SMLATB-engine2-trap-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[SMLATB-engine2-trap-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[SMLATT-engine2-skip-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[SMLATT-engine2-skip-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[SMLATT-engine2-trap-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[SMLATT-engine2-trap-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[SMLAWB-engine2-skip-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[SMLAWB-engine2-skip-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[SMLAWB-engine2-trap-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[SMLAWB-engine2-trap-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[SMLAWT-engine2-skip-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[SMLAWT-engine2-skip-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[SMLAWT-engine2-trap-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[SMLAWT-engine2-trap-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[SMULWB-engine2-skip-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[SMULWB-engine2-skip-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[SMULWB-engine2-trap-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[SMULWB-engine2-trap-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[SMULWT-engine2-skip-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[SMULWT-engine2-skip-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[SMULWT-engine2-trap-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[SMULWT-engine2-trap-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[SMLALBB-engine2-skip-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[SMLALBB-engine2-skip-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[SMLALBB-engine2-trap-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[SMLALBB-engine2-trap-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[SMLALBT-engine2-skip-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[SMLALBT-engine2-skip-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[SMLALBT-engine2-trap-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[SMLALBT-engine2-trap-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[SMLALTB-engine2-skip-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[SMLALTB-engine2-skip-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[SMLALTB-engine2-trap-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[SMLALTB-engine2-trap-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[SMLALTT-engine2-skip-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[SMLALTT-engine2-skip-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[SMLALTT-engine2-trap-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[SMLALTT-engine2-trap-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[SMULBB-engine2-skip-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[SMULBB-engine2-skip-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[SMULBB-engine2-trap-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[SMULBB-engine2-trap-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[SMULBT-engine2-skip-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[SMULBT-engine2-skip-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[SMULBT-engine2-trap-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[SMULBT-engine2-trap-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[SMULTB-engine2-skip-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[SMULTB-engine2-skip-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[SMULTB-engine2-trap-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[SMULTB-engine2-trap-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[SMULTT-engine2-skip-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[SMULTT-engine2-skip-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[SMULTT-engine2-trap-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[SMULTT-engine2-trap-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01012314-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01012314-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01012314-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01012314-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-010fff10-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-010fff10-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-010fff10-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-010fff10-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01045617-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01045617-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01045617-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01045617-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01012324-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01012324-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01012324-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01012324-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-010fff20-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-010fff20-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-010fff20-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-010fff20-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01045627-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01045627-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01045627-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01045627-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01012334-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01012334-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01012334-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01012334-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-010fff30-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-010fff30-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-010fff30-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-010fff30-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01045637-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01045637-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01045637-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01045637-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01012344-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01012344-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01012344-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01012344-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-010fff40-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-010fff40-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-010fff40-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-010fff40-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01045647-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01045647-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01045647-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01045647-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01012354-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01012354-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01012354-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01012354-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-010fff50-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-010fff50-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-010fff50-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-010fff50-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01045657-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01045657-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01045657-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01045657-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01012364-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01012364-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01012364-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01012364-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-010fff60-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-010fff60-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-010fff60-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-010fff60-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01045667-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01045667-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01045667-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01045667-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01012374-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01012374-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01012374-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01012374-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-010fff70-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-010fff70-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-010fff70-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-010fff70-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01045677-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01045677-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01045677-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01045677-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01012384-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01012384-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01012384-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01012384-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-010fff80-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-010fff80-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-010fff80-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-010fff80-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01045687-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01045687-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01045687-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01045687-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-010123a4-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-010123a4-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-010123a4-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-010123a4-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-010fffa0-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-010fffa0-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-010fffa0-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-010fffa0-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-010456a7-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-010456a7-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-010456a7-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-010456a7-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-010123c4-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-010123c4-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-010123c4-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-010123c4-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-010fffc0-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-010fffc0-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-010fffc0-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-010fffc0-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-010456c7-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-010456c7-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-010456c7-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-010456c7-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-010123e4-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-010123e4-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-010123e4-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-010123e4-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-010fffe0-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-010fffe0-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-010fffe0-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-010fffe0-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-010456e7-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-010456e7-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-010456e7-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-010456e7-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01212324-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01212324-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01212324-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01212324-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-012fff20-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-012fff20-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-012fff20-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-012fff20-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01245627-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01245627-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01245627-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01245627-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01212334-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01212334-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01212334-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01212334-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-012fff30-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-012fff30-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-012fff30-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-012fff30-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01245637-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01245637-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01245637-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01245637-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01212344-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01212344-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01212344-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01212344-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-012fff40-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-012fff40-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-012fff40-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-012fff40-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01245647-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01245647-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01245647-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01245647-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01212354-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01212354-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01212354-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01212354-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-012fff50-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-012fff50-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-012fff50-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-012fff50-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01245657-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01245657-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01245657-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01245657-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01212364-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01212364-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01212364-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01212364-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-012fff60-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-012fff60-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-012fff60-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-012fff60-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01245667-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01245667-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01245667-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01245667-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01212374-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01212374-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01212374-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01212374-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-012fff70-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-012fff70-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-012fff70-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-012fff70-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01245677-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01245677-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01245677-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01245677-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01212384-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01212384-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01212384-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01212384-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-012fff80-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-012fff80-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-012fff80-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-012fff80-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01245687-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01245687-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01245687-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01245687-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-012123a4-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-012123a4-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-012123a4-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-012123a4-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-012fffa0-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-012fffa0-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-012fffa0-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-012fffa0-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-012456a7-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-012456a7-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-012456a7-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-012456a7-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-012123c4-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-012123c4-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-012123c4-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-012123c4-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-012fffc0-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-012fffc0-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-012fffc0-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-012fffc0-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-012456c7-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-012456c7-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-012456c7-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-012456c7-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-012123e4-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-012123e4-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-012123e4-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-012123e4-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-012fffe0-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-012fffe0-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-012fffe0-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-012fffe0-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-012456e7-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-012456e7-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-012456e7-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-012456e7-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01412314-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01412314-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01412314-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01412314-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-014fff10-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-014fff10-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-014fff10-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-014fff10-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01445617-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01445617-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01445617-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01445617-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01412324-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01412324-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01412324-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01412324-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-014fff20-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-014fff20-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-014fff20-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-014fff20-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01445627-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01445627-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01445627-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01445627-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01412334-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01412334-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01412334-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01412334-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-014fff30-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-014fff30-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-014fff30-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-014fff30-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01445637-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01445637-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01445637-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01445637-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01412344-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01412344-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01412344-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01412344-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-014fff40-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-014fff40-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-014fff40-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-014fff40-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01445647-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01445647-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01445647-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01445647-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01412354-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01412354-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01412354-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01412354-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-014fff50-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-014fff50-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-014fff50-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-014fff50-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01445657-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01445657-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01445657-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01445657-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01412364-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01412364-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01412364-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01412364-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-014fff60-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-014fff60-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-014fff60-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-014fff60-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01445667-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01445667-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01445667-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01445667-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01412374-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01412374-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01412374-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01412374-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-014fff70-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-014fff70-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-014fff70-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-014fff70-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01445677-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01445677-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01445677-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01445677-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01412384-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01412384-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01412384-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01412384-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-014fff80-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-014fff80-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-014fff80-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-014fff80-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01445687-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01445687-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01445687-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01445687-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-014123a4-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-014123a4-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-014123a4-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-014123a4-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-014fffa0-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-014fffa0-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-014fffa0-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-014fffa0-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-014456a7-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-014456a7-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-014456a7-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-014456a7-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-014123c4-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-014123c4-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-014123c4-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-014123c4-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-014fffc0-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-014fffc0-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-014fffc0-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-014fffc0-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-014456c7-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-014456c7-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-014456c7-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-014456c7-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-014123e4-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-014123e4-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-014123e4-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-014123e4-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-014fffe0-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-014fffe0-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-014fffe0-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-014fffe0-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-014456e7-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-014456e7-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-014456e7-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-014456e7-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01612314-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01612314-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01612314-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01612314-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-016fff10-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-016fff10-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-016fff10-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-016fff10-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01645617-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01645617-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01645617-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01645617-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01612324-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01612324-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01612324-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01612324-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-016fff20-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-016fff20-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-016fff20-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-016fff20-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01645627-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01645627-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01645627-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01645627-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01612334-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01612334-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01612334-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01612334-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-016fff30-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-016fff30-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-016fff30-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-016fff30-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01645637-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01645637-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01645637-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01645637-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01612344-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01612344-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01612344-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01612344-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-016fff40-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-016fff40-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-016fff40-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-016fff40-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01645647-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01645647-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01645647-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01645647-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01612354-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01612354-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01612354-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01612354-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-016fff50-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-016fff50-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-016fff50-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-016fff50-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01645657-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01645657-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01645657-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01645657-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01612364-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01612364-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01612364-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01612364-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-016fff60-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-016fff60-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-016fff60-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-016fff60-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01645667-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01645667-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01645667-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01645667-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01612374-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01612374-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01612374-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01612374-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-016fff70-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-016fff70-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-016fff70-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-016fff70-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01645677-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01645677-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01645677-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01645677-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01612384-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01612384-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01612384-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01612384-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-016fff80-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-016fff80-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-016fff80-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-016fff80-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01645687-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01645687-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-01645687-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-01645687-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-016123a4-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-016123a4-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-016123a4-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-016123a4-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-016fffa0-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-016fffa0-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-016fffa0-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-016fffa0-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-016456a7-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-016456a7-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-016456a7-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-016456a7-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-016123c4-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-016123c4-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-016123c4-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-016123c4-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-016fffc0-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-016fffc0-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-016fffc0-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-016fffc0-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-016456c7-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-016456c7-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-016456c7-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-016456c7-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-016123e4-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-016123e4-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-016123e4-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-016123e4-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-016fffe0-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-016fffe0-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-016fffe0-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-016fffe0-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-016456e7-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-016456e7-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-016456e7-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-016456e7-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-03012304-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-03012304-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-03012304-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-03012304-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-030fff00-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-030fff00-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-030fff00-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-030fff00-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-03045607-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-03045607-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-03045607-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-03045607-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-03012314-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-03012314-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-03012314-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-03012314-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-030fff10-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-030fff10-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-030fff10-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-030fff10-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-03045617-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-03045617-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-03045617-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-03045617-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-03012324-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-03012324-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-03012324-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-03012324-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-030fff20-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-030fff20-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-030fff20-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-030fff20-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-03045627-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-03045627-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-03045627-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-03045627-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-03012334-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-03012334-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-03012334-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-03012334-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-030fff30-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-030fff30-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-030fff30-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-030fff30-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-03045637-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-03045637-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-03045637-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-03045637-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-03012344-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-03012344-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-03012344-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-03012344-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-030fff40-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-030fff40-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-030fff40-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-030fff40-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-03045647-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-03045647-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-03045647-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-03045647-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-03012354-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-03012354-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-03012354-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-03012354-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-030fff50-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-030fff50-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-030fff50-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-030fff50-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-03045657-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-03045657-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-03045657-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-03045657-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-03012364-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-03012364-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-03012364-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-03012364-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-030fff60-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-030fff60-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-030fff60-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-030fff60-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-03045667-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-03045667-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-03045667-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-03045667-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-03012374-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-03012374-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-03012374-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-03012374-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-030fff70-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-030fff70-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-030fff70-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-030fff70-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-03045677-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-03045677-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-03045677-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-03045677-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-03012384-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-03012384-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-03012384-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-03012384-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-030fff80-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-030fff80-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-030fff80-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-030fff80-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-03045687-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-03045687-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-03045687-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-03045687-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-03012394-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-03012394-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-03012394-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-03012394-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-030fff90-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-030fff90-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-030fff90-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-030fff90-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-03045697-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-03045697-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-03045697-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-03045697-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-030123a4-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-030123a4-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-030123a4-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-030123a4-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-030fffa0-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-030fffa0-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-030fffa0-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-030fffa0-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-030456a7-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-030456a7-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-030456a7-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-030456a7-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-030123b4-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-030123b4-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-030123b4-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-030123b4-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-030fffb0-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-030fffb0-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-030fffb0-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-030fffb0-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-030456b7-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-030456b7-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-030456b7-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-030456b7-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-030123c4-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-030123c4-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-030123c4-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-030123c4-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-030fffc0-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-030fffc0-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-030fffc0-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-030fffc0-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-030456c7-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-030456c7-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-030456c7-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-030456c7-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-030123d4-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-030123d4-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-030123d4-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-030123d4-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-030fffd0-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-030fffd0-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-030fffd0-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-030fffd0-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-030456d7-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-030456d7-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-030456d7-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-030456d7-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-030123e4-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-030123e4-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-030123e4-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-030123e4-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-030fffe0-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-030fffe0-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-030fffe0-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-030fffe0-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-030456e7-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-030456e7-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-030456e7-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-030456e7-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-030123f4-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-030123f4-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-030123f4-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-030123f4-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-030ffff0-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-030ffff0-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-030ffff0-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-030ffff0-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-030456f7-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-030456f7-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-030456f7-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-030456f7-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-03412304-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-03412304-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-03412304-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-03412304-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-034fff00-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-034fff00-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-034fff00-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-034fff00-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-03445607-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-03445607-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-03445607-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-03445607-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-03412314-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-03412314-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-03412314-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-03412314-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-034fff10-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-034fff10-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-034fff10-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-034fff10-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-03445617-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-03445617-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-03445617-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-03445617-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-03412324-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-03412324-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-03412324-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-03412324-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-034fff20-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-034fff20-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-034fff20-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-034fff20-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-03445627-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-03445627-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-03445627-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-03445627-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-03412334-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-03412334-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-03412334-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-03412334-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-034fff30-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-034fff30-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-034fff30-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-034fff30-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-03445637-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-03445637-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-03445637-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-03445637-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-03412344-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-03412344-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-03412344-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-03412344-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-034fff40-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-034fff40-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-034fff40-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-034fff40-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-03445647-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-03445647-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-03445647-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-03445647-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-03412354-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-03412354-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-03412354-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-03412354-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-034fff50-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-034fff50-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-034fff50-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-034fff50-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-03445657-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-03445657-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-03445657-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-03445657-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-03412364-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-03412364-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-03412364-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-03412364-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-034fff60-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-034fff60-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-034fff60-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-034fff60-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-03445667-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-03445667-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-03445667-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-03445667-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-03412374-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-03412374-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-03412374-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-03412374-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-034fff70-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-034fff70-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-034fff70-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-034fff70-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-03445677-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-03445677-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-03445677-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-03445677-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-03412384-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-03412384-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-03412384-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-03412384-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-034fff80-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-034fff80-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-034fff80-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-034fff80-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-03445687-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-03445687-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-03445687-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-03445687-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-03412394-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-03412394-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-03412394-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-03412394-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-034fff90-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-034fff90-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-034fff90-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-034fff90-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-03445697-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-03445697-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-03445697-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-03445697-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-034123a4-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-034123a4-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-034123a4-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-034123a4-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-034fffa0-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-034fffa0-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-034fffa0-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-034fffa0-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-034456a7-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-034456a7-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-034456a7-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-034456a7-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-034123b4-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-034123b4-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-034123b4-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-034123b4-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-034fffb0-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-034fffb0-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-034fffb0-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-034fffb0-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-034456b7-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-034456b7-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-034456b7-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-034456b7-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-034123c4-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-034123c4-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-034123c4-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-034123c4-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-034fffc0-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-034fffc0-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-034fffc0-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-034fffc0-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-034456c7-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-034456c7-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-034456c7-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-034456c7-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-034123d4-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-034123d4-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-034123d4-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-034123d4-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-034fffd0-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-034fffd0-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-034fffd0-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-034fffd0-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-034456d7-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-034456d7-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-034456d7-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-034456d7-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-034123e4-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-034123e4-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-034123e4-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-034123e4-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-034fffe0-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-034fffe0-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-034fffe0-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-034fffe0-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-034456e7-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-034456e7-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-034456e7-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-034456e7-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-034123f4-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-034123f4-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-034123f4-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-034123f4-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-034ffff0-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-034ffff0-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-034ffff0-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-034ffff0-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-034456f7-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-034456f7-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[control-034456f7-engine2-phase3]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[control-034456f7-engine2-phase3]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[MUL-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[MUL-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[MLA-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[MLA-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[UMULL-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[UMULL-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[UMLAL-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[UMLAL-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[SMULL-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[SMULL-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+FAIL[SMLAL-engine2-phase2]: source block executes natively got=0x00000000 want=0x00000002
+FAIL[SMLAL-engine2-phase2]: source block enters native code got=0x00000000 want=0x00000001
+984 failure(s)
+arm undefined control: 2700 cases
+
+      Start 16: arm_thumb_transfer
+15/54 Test #16: arm_thumb_transfer ...............   Passed    0.00 sec
+      Start 17: arm_thumb_alu
+16/54 Test #17: arm_thumb_alu ....................   Passed    0.35 sec
+      Start 18: arm_thumb_pc
+17/54 Test #18: arm_thumb_pc .....................   Passed    0.40 sec
+      Start 19: arm_code_write
+18/54 Test #19: arm_code_write ...................   Passed    0.04 sec
+      Start 20: arm_cpu_code_write
+19/54 Test #20: arm_cpu_code_write ...............   Passed    0.18 sec
+      Start 21: s3c2400_timing
+20/54 Test #21: s3c2400_timing ...................   Passed    0.04 sec
+      Start 22: s3c2400_iis_irq
+21/54 Test #22: s3c2400_iis_irq ..................   Passed    0.04 sec
+      Start 23: s3c2400_dma
+22/54 Test #23: s3c2400_dma ......................   Passed    0.03 sec
+      Start 24: s3c2400_muted_dma
+23/54 Test #24: s3c2400_muted_dma ................   Passed    0.02 sec
+      Start 25: s3c2400_irq
+24/54 Test #25: s3c2400_irq ......................   Passed    0.02 sec
+      Start 26: s3c2400_priority
+25/54 Test #26: s3c2400_priority .................   Passed    0.00 sec
+      Start 27: s3c2400_lcd
+26/54 Test #27: s3c2400_lcd ......................   Passed    0.04 sec
+      Start 28: s3c2400_scanout
+27/54 Test #28: s3c2400_scanout ..................   Passed    0.01 sec
+      Start 29: s3c2400_pwm
+28/54 Test #29: s3c2400_pwm ......................   Passed    0.06 sec
+      Start 30: s3c2400_gpio
+29/54 Test #30: s3c2400_gpio .....................   Passed    0.01 sec
+      Start 31: s3c2400_state
+30/54 Test #31: s3c2400_state ....................   Passed    0.01 sec
+      Start 32: gp32_pcm
+31/54 Test #32: gp32_pcm .........................   Passed    0.06 sec
+      Start 33: gp32_timer
+32/54 Test #33: gp32_timer .......................   Passed    0.32 sec
+      Start 34: gp32_callback
+33/54 Test #34: gp32_callback ....................   Passed    0.36 sec
+      Start 35: gp32_swi_1ff
+34/54 Test #35: gp32_swi_1ff .....................   Passed    0.07 sec
+      Start 36: gp32_wait
+35/54 Test  #9: arm_jit ..........................   Passed    4.59 sec
+      Start 37: gp32_file
+36/54 Test #37: gp32_file ........................   Passed    0.01 sec
+      Start 38: gp32_hle_memory
+37/54 Test #38: gp32_hle_memory ..................   Passed    0.05 sec
+      Start 39: gp32_codec
+38/54 Test #39: gp32_codec .......................   Passed    0.03 sec
+      Start 40: gp32_eeprom
+39/54 Test #40: gp32_eeprom ......................   Passed    0.04 sec
+      Start 41: gp32_shadow
+40/54 Test #41: gp32_shadow ......................   Passed    0.01 sec
+      Start 42: gp32_game_fix
+41/54 Test #42: gp32_game_fix ....................   Passed    0.05 sec
+      Start 43: gp32_pinball_fix
+42/54 Test #43: gp32_pinball_fix .................   Passed    0.09 sec
+      Start 44: gp32_fast_load
+43/54 Test #44: gp32_fast_load ...................   Passed    0.04 sec
+      Start 45: gp32_state
+44/54 Test #36: gp32_wait ........................   Passed    0.70 sec
+      Start 46: gp32_state_speed
+45/54 Test #45: gp32_state .......................   Passed    0.13 sec
+      Start 47: gp32_media_png
+46/54 Test #47: gp32_media_png ...................   Passed    0.02 sec
+      Start 48: smartmedia
+47/54 Test #48: smartmedia .......................   Passed    0.10 sec
+      Start 49: smartmedia_capacity
+48/54 Test #46: gp32_state_speed .................   Passed    0.16 sec
+      Start 50: savestate_session
+49/54 Test #50: savestate_session ................   Passed    0.08 sec
+      Start 51: atomic_save
+50/54 Test #51: atomic_save ......................   Passed    0.03 sec
+      Start 52: arm_jit_recycle
+51/54 Test #52: arm_jit_recycle ..................   Passed    0.03 sec
+      Start 53: arm_jit_policy
+52/54 Test #53: arm_jit_policy ...................   Passed    0.05 sec
+      Start 54: arm_alu_differential
+53/54 Test #49: smartmedia_capacity ..............   Passed    0.88 sec
+54/54 Test #54: arm_alu_differential .............   Passed    0.95 sec
+
+96% tests passed, 2 tests failed out of 54
+
+Total Test time (real) =   6.76 sec
+
+The following tests FAILED:
+	  8 - arm_poll (Failed)
+	 15 - arm_exception (Failed)
+Errors while running CTest

@@ -1,0 +1,17 @@
+{
+  "base_local_commit": "eebb337b7133fa19b330fe82fd9f002fa215b8b4",
+  "base_public_commit": "af387eaeb0687b250e8815a1795cb88b709195ee",
+  "base_tree": "dd3b0d94445c3053d95faba2d59fd71fd7d9df65",
+  "candidate_tree_after_patch": "46cddce18a5073035469b3ccb5917549719a5faf",
+  "patch_sha256": "e0070d1271f4979b7dfa8547c0cb53197e219531ca3943055fbdb6860a3a5a11",
+  "applies_cleanly": true,
+  "compared_to_tested_optional_commit": "e80f8348cdd913159a5d26ae8dea9f04f0ded12e",
+  "tested_production_and_optional_test_bytes_equal": true,
+  "sha256": {
+    "src/arm920t.c": "decf0d2f925058f00391a46d335245b06ada19152e35a817415e17873e844cf3",
+    "src/arm920t_jit_a64.inc": "519e323ca86bac8a6880b293b9ac9d2b00b472fc38d0f7d0d1852a5b4137b67f",
+    "tests/arm_jit_test.c": "35e1f78440ad239f3de76fbb446c7624408d6e03043645cb44779f059429b7bf",
+    "tests/arm_chain_way_test.c": "cac58caf328d4c9685995e7edc36e13a1b1efd432d3cb92ca61ca6736d96feee"
+  },
+  "note": "Only unrelated arm_poll/arm_exception fixtures changed after optional execution. No optional product or JIT-test bytes changed; no repeated performance claim."
+}

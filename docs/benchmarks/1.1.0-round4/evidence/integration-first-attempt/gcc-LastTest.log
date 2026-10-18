@@ -1,0 +1,1075 @@
+Start testing: Oct 18 20:29 JST
+----------------------------------------------------------
+44/49 Testing: smartmedia_capacity
+44/49 Test: smartmedia_capacity
+Command: "/tmp/gp32-round4-build-gcc/smartmedia_capacity_test"
+Directory: /tmp/gp32-round4-build-gcc
+"smartmedia_capacity" start time: Oct 18 20:29 JST
+Output:
+----------------------------------------------------------
+SmartMedia capacity: PASS (0 failures)
+<end of output>
+Test time =   1.19 sec
+----------------------------------------------------------
+Test Passed.
+"smartmedia_capacity" end time: Oct 18 20:30 JST
+"smartmedia_capacity" time elapsed: 00:00:01
+----------------------------------------------------------
+
+33/49 Testing: gp32_wait
+33/49 Test: gp32_wait
+Command: "/tmp/gp32-round4-build-gcc/gp32_wait_test" "/tmp/gp32-round4-build-gcc/wait-state.tmp"
+Directory: /tmp/gp32-round4-build-gcc
+"gp32_wait" start time: Oct 18 20:30 JST
+Output:
+----------------------------------------------------------
+callback-wait jit=0 origin=0 clock=66000000 elapsed=17688454 cycles=1167438
+callback-wait jit=0 origin=4293967295 clock=48000000 elapsed=17688613 cycles=849078
+callback-wait jit=0 origin=18446744073701551615 clock=66000000 elapsed=17688454 cycles=1167438
+foreground jit=0 invalid=0 pc=0c020000 sp=0c01f000 cpsr=a00000d3 elapsed=17749546
+foreground jit=0 invalid=1 pc=0c020000 sp=0c01f000 cpsr=a00000d3 elapsed=212
+legacy-return jit=0 pc=0c020000 cpsr=a00000d3 sp=0c01f000 r0=11110000 r12=1111000c
+legacy-wait jit=0
+nested-display jit=0 fiq=0 elapsed=35376545 cycles=2334852
+nested-display jit=0 fiq=1 elapsed=35376545 cycles=2334852
+refill-audio jit=0 frames=1 other=1 first=10000 last=10000 buffer=a710a710
+refill-display jit=0 ack=1
+wait-reset-watchdog jit=0 cycles=66002960
+wrapped-frame jit=0 elapsed=33333333
+display-cadence jit=0 target=53063256
+panel-rate jit=0 base=17687727.285975 slow=35375454.571950 delta=35375454
+coherent-mirror jit=0 old-high=12 new-high=13
+legacy-request jit=0 clock=48000000
+callback-wait jit=1 origin=0 clock=66000000 elapsed=17688454 cycles=1167438
+callback-wait jit=1 origin=4293967295 clock=48000000 elapsed=17688613 cycles=849078
+callback-wait jit=1 origin=18446744073701551615 clock=66000000 elapsed=17688454 cycles=1167438
+foreground jit=1 invalid=0 pc=0c020000 sp=0c01f000 cpsr=a00000d3 elapsed=17749546
+foreground jit=1 invalid=1 pc=0c020000 sp=0c01f000 cpsr=a00000d3 elapsed=212
+legacy-return jit=1 pc=0c020000 cpsr=a00000d3 sp=0c01f000 r0=11110000 r12=1111000c
+legacy-wait jit=1
+nested-display jit=1 fiq=0 elapsed=35376545 cycles=2334852
+nested-display jit=1 fiq=1 elapsed=35376545 cycles=2334852
+refill-audio jit=1 frames=1 other=1 first=10000 last=10000 buffer=a710a710
+refill-display jit=1 ack=1
+wait-reset-watchdog jit=1 cycles=66002960
+wrapped-frame jit=1 elapsed=33333333
+display-cadence jit=1 target=53063256
+panel-rate jit=1 base=17687727.285975 slow=35375454.571950 delta=35375454
+coherent-mirror jit=1 old-high=12 new-high=13
+legacy-request jit=1 clock=48000000
+guest wait regression: PASS (0 failures)
+<end of output>
+Test time =   0.94 sec
+----------------------------------------------------------
+Test Passed.
+"gp32_wait" end time: Oct 18 20:30 JST
+"gp32_wait" time elapsed: 00:00:00
+----------------------------------------------------------
+
+49/49 Testing: arm_alu_differential
+49/49 Test: arm_alu_differential
+Command: "/tmp/gp32-round4-build-gcc/arm_alu_differential_test"
+Directory: /tmp/gp32-round4-build-gcc
+"arm_alu_differential" start time: Oct 18 20:30 JST
+Output:
+----------------------------------------------------------
+PASS: 4000 seeded ALU programs, native_insns=79657 final_seed=5d389f66
+<end of output>
+Test time =   1.04 sec
+----------------------------------------------------------
+Test Passed.
+"arm_alu_differential" end time: Oct 18 20:30 JST
+"arm_alu_differential" time elapsed: 00:00:01
+----------------------------------------------------------
+
+8/49 Testing: arm_poll
+8/49 Test: arm_poll
+Command: "/tmp/gp32-round4-build-gcc/arm_poll_test"
+Directory: /tmp/gp32-round4-build-gcc
+"arm_poll" start time: Oct 18 20:30 JST
+Output:
+----------------------------------------------------------
+poll-stable aligned_native=0 aligned_skipped=378
+poll-stable native=0 skipped=2808
+poll-stable-fastmem aligned_native=0 aligned_skipped=378
+poll-stable-fastmem native=12 skipped=2808
+zero-step native=0 skipped=2412
+rotated-zero-step native=0 skipped=2412
+conditional-step native=0 skipped=2384
+different-source native=0 skipped=2412
+reload-before-step native=0 skipped=2412
+reload-after-step native=0 skipped=2412
+reset-before-step native=0 skipped=2384
+reset-after-step native=0 skipped=2360
+cancelled-step native=0 skipped=2384
+bypassed-step native=0 skipped=2408
+two-backedges native=0 skipped=2430
+counted-portable reads=47/631 skipped=2336
+counted-native-enabled reads=47/631 skipped=2336
+observed-caller native=0 portable=17 skipped=496
+observed-reentry native=0 portable=16 skipped=496
+counted-mmu jit=0 variant=0 reads=49/633
+counted-mmu jit=0 variant=1 reads=634/634
+counted-mmu jit=0 variant=2 reads=1263/1263
+counted-mmu jit=0 variant=3 reads=633/633
+counted-mmu jit=1 variant=0 reads=49/633
+counted-mmu jit=1 variant=1 reads=634/634
+counted-mmu jit=1 variant=2 reads=1263/1263
+counted-mmu jit=1 variant=3 reads=633/633
+PASS: stable/countdown poll equivalence, reads, exit boundaries, refusal, callbacks, state, MMU, GPIO
+<end of output>
+Test time =   0.66 sec
+----------------------------------------------------------
+Test Passed.
+"arm_poll" end time: Oct 18 20:30 JST
+"arm_poll" time elapsed: 00:00:00
+----------------------------------------------------------
+
+9/49 Testing: arm_jit
+9/49 Test: arm_jit
+Command: "/tmp/gp32-round4-build-gcc/arm_jit_test"
+Directory: /tmp/gp32-round4-build-gcc
+"arm_jit" start time: Oct 18 20:29 JST
+Output:
+----------------------------------------------------------
+conditional coverage op=0 calls=4 hops=0 native=10
+conditional coverage op=1 calls=4 hops=0 native=10
+conditional coverage op=2 calls=4 hops=0 native=10
+conditional coverage op=3 calls=4 hops=0 native=10
+conditional coverage op=4 calls=4 hops=0 native=10
+conditional coverage op=5 calls=4 hops=0 native=10
+predicated-stop cases=60
+io-direct identity ldr insn=e5942000 addr=14000000 wb=12345678 r2=8877ff80
+io-direct identity ldr-wb insn=e5b42004 addr=14000004 wb=14000004 r2=8877ff80
+io-direct identity ldr-wb insn=e4942004 addr=14000000 wb=14000004 r2=8877ff80
+io-direct identity str insn=e5842000 addr=14000000 wb=12345678 r2=abcdef01
+io-direct identity str-wb insn=e5a42004 addr=14000004 wb=14000004 r2=abcdef01
+io-direct identity str-wb insn=e4842004 addr=14000000 wb=14000004 r2=abcdef01
+io-direct identity str insn=e7842081 addr=14000004 wb=12345678 r2=abcdef01
+io-direct mapped ldr insn=e5942000 addr=14000000 wb=12345678 r2=8877ff80
+io-direct mapped ldr-wb insn=e5b42004 addr=14000004 wb=10008004 r2=8877ff80
+io-direct mapped ldr-wb insn=e4942004 addr=14000000 wb=10008004 r2=8877ff80
+io-direct mapped str insn=e5842000 addr=14000000 wb=12345678 r2=abcdef01
+io-direct mapped str-wb insn=e5a42004 addr=14000004 wb=10008004 r2=abcdef01
+io-direct mapped str-wb insn=e4842004 addr=14000000 wb=10008004 r2=abcdef01
+io-direct mapped str insn=e7842081 addr=14000004 wb=12345678 r2=abcdef01
+io-direct tiny ldr insn=e5942000 addr=14000000 wb=12345678 r2=8877ff80
+io-direct tiny ldr-wb insn=e5b42004 addr=14000004 wb=10008004 r2=8877ff80
+io-direct tiny ldr-wb insn=e4942004 addr=14000000 wb=10008004 r2=8877ff80
+io-direct tiny str insn=e5842000 addr=14000000 wb=12345678 r2=abcdef01
+io-direct tiny str-wb insn=e5a42004 addr=14000004 wb=10008004 r2=abcdef01
+io-direct tiny str-wb insn=e4842004 addr=14000000 wb=10008004 r2=abcdef01
+io-direct tiny str insn=e7842081 addr=14000004 wb=12345678 r2=abcdef01
+io-direct cold-tlb addr=10008000 r2=8877ff80
+io-direct mapped non-IO ldr insn=e5942000 addr=13000000 r2=8877ff80
+io-direct mapped non-IO str insn=e5842000 addr=13000000 r2=abcdef01
+io-direct irq-write pc=00000404 wb=14000004 captured=00000000
+poll-countdown native=0 portable=16 skipped=496
+poll-add-wrap native=512 portable=0 skipped=0
+poll-sub-wrap native=512 portable=0 skipped=0
+poll-adds native=512 portable=0 skipped=0
+poll-subs native=512 portable=0 skipped=0
+poll-rotated-step native=512 portable=0 skipped=0
+poll-load-alias native=512 portable=0 skipped=0
+poll-conditional-backedge native=504 portable=8 skipped=0
+callback-irq transfer=e4942004 captured=00000000 pc=00000404 wb=14000004 native_calls=12
+callback-irq transfer=e4d42004 captured=00000000 pc=00000404 wb=14000004 native_calls=12
+callback-irq transfer=e0d420b4 captured=00000000 pc=00000404 wb=14000004 native_calls=12
+callback-irq transfer=e0d420d4 captured=00000000 pc=00000404 wb=14000004 native_calls=12
+callback-irq transfer=e0d420f4 captured=00000000 pc=00000404 wb=14000004 native_calls=12
+callback-irq transfer=e4842004 captured=00000000 pc=00000404 wb=14000004 native_calls=12
+callback-irq transfer=e4c42004 captured=00000000 pc=00000404 wb=14000004 native_calls=12
+callback-irq transfer=e0c420b4 captured=00000000 pc=00000404 wb=14000004 native_calls=12
+block-exit effect=1 insn=e8240007 lane=1 count=3 r6=1 wb=13fffffc native_calls=12
+block-exit effect=1 insn=e8240007 lane=3 count=3 r6=1 wb=13fffffc native_calls=12
+block-exit effect=1 insn=e9240007 lane=1 count=3 r6=1 wb=14000000 native_calls=12
+block-exit effect=1 insn=e9240007 lane=3 count=3 r6=1 wb=14000000 native_calls=12
+block-exit effect=1 insn=e8a40007 lane=1 count=3 r6=1 wb=1400000c native_calls=12
+block-exit effect=1 insn=e8a40007 lane=3 count=3 r6=1 wb=1400000c native_calls=12
+block-exit effect=1 insn=e9a40007 lane=1 count=3 r6=1 wb=14000008 native_calls=12
+block-exit effect=1 insn=e9a40007 lane=3 count=3 r6=1 wb=14000008 native_calls=12
+block-exit effect=1 insn=e8340007 lane=1 count=3 r6=1 wb=13fffffc native_calls=12
+block-exit effect=1 insn=e8340007 lane=3 count=3 r6=1 wb=13fffffc native_calls=12
+block-exit effect=1 insn=e9340007 lane=1 count=3 r6=1 wb=14000000 native_calls=12
+block-exit effect=1 insn=e9340007 lane=3 count=3 r6=1 wb=14000000 native_calls=12
+block-exit effect=1 insn=e8b40007 lane=1 count=3 r6=1 wb=1400000c native_calls=12
+block-exit effect=1 insn=e8b40007 lane=3 count=3 r6=1 wb=1400000c native_calls=12
+block-exit effect=1 insn=e9b40007 lane=1 count=3 r6=1 wb=14000008 native_calls=12
+block-exit effect=1 insn=e9b40007 lane=3 count=3 r6=1 wb=14000008 native_calls=12
+block-exit effect=2 insn=e8240007 lane=1 count=3 r6=119 wb=13fffffc native_calls=15
+block-exit effect=2 insn=e8240007 lane=3 count=3 r6=119 wb=13fffffc native_calls=15
+block-exit effect=2 insn=e9240007 lane=1 count=3 r6=119 wb=14000000 native_calls=15
+block-exit effect=2 insn=e9240007 lane=3 count=3 r6=119 wb=14000000 native_calls=15
+block-exit effect=2 insn=e8a40007 lane=1 count=3 r6=119 wb=1400000c native_calls=15
+block-exit effect=2 insn=e8a40007 lane=3 count=3 r6=119 wb=1400000c native_calls=15
+block-exit effect=2 insn=e9a40007 lane=1 count=3 r6=119 wb=14000008 native_calls=15
+block-exit effect=2 insn=e9a40007 lane=3 count=3 r6=119 wb=14000008 native_calls=15
+block-exit effect=2 insn=e8340007 lane=1 count=3 r6=119 wb=13fffffc native_calls=15
+block-exit effect=2 insn=e8340007 lane=3 count=3 r6=119 wb=13fffffc native_calls=15
+block-exit effect=2 insn=e9340007 lane=1 count=3 r6=119 wb=14000000 native_calls=15
+block-exit effect=2 insn=e9340007 lane=3 count=3 r6=119 wb=14000000 native_calls=15
+block-exit effect=2 insn=e8b40007 lane=1 count=3 r6=119 wb=1400000c native_calls=15
+block-exit effect=2 insn=e8b40007 lane=3 count=3 r6=119 wb=1400000c native_calls=15
+block-exit effect=2 insn=e9b40007 lane=1 count=3 r6=119 wb=14000008 native_calls=15
+block-exit effect=2 insn=e9b40007 lane=3 count=3 r6=119 wb=14000008 native_calls=15
+block-exit effect=3 insn=e8240007 lane=1 count=3 r6=119 wb=13fffffc native_calls=1
+block-exit effect=3 insn=e8240007 lane=3 count=3 r6=119 wb=13fffffc native_calls=1
+block-exit effect=3 insn=e9240007 lane=1 count=3 r6=119 wb=14000000 native_calls=1
+block-exit effect=3 insn=e9240007 lane=3 count=3 r6=119 wb=14000000 native_calls=1
+block-exit effect=3 insn=e8a40007 lane=1 count=3 r6=119 wb=1400000c native_calls=1
+block-exit effect=3 insn=e8a40007 lane=3 count=3 r6=119 wb=1400000c native_calls=1
+block-exit effect=3 insn=e9a40007 lane=1 count=3 r6=119 wb=14000008 native_calls=1
+block-exit effect=3 insn=e9a40007 lane=3 count=3 r6=119 wb=14000008 native_calls=1
+block-exit effect=3 insn=e8340007 lane=1 count=3 r6=119 wb=13fffffc native_calls=1
+block-exit effect=3 insn=e8340007 lane=3 count=3 r6=119 wb=13fffffc native_calls=1
+block-exit effect=3 insn=e9340007 lane=1 count=3 r6=119 wb=14000000 native_calls=1
+block-exit effect=3 insn=e9340007 lane=3 count=3 r6=119 wb=14000000 native_calls=1
+block-exit effect=3 insn=e8b40007 lane=1 count=3 r6=119 wb=1400000c native_calls=1
+block-exit effect=3 insn=e8b40007 lane=3 count=3 r6=119 wb=1400000c native_calls=1
+block-exit effect=3 insn=e9b40007 lane=1 count=3 r6=119 wb=14000008 native_calls=1
+block-exit effect=3 insn=e9b40007 lane=3 count=3 r6=119 wb=14000008 native_calls=1
+block callback cases=48
+checked-access 0 insn=e4942004 effect=1 cycles=1
+checked-access 1 insn=e4d42004 effect=2 cycles=32
+checked-access 2 insn=e0d420f4 effect=3 cycles=32
+checked-access 3 insn=e5d42000 effect=4 cycles=32
+checked-access 4 insn=e7a42081 effect=5 cycles=32
+checked-access 5 insn=e5642001 effect=6 cycles=32
+checked-access 6 insn=e0c420b4 effect=7 cycles=32
+checked-access 7 insn=e13440b1 effect=8 cycles=32
+checked-access 8 insn=e1d420d0 effect=9 cycles=32
+checked-access 9 insn=e5942000 effect=0 cycles=32
+checked-access 10 insn=e0d420b4 effect=1 cycles=1
+checked-access 11 insn=e4842004 effect=1 cycles=1
+callback-irq transfer=e4942004 captured=00000000 pc=00000404 wb=14000004 native_calls=0
+callback-irq transfer=e4d42004 captured=00000000 pc=00000404 wb=14000004 native_calls=0
+callback-irq transfer=e0d420b4 captured=00000000 pc=00000404 wb=14000004 native_calls=0
+callback-irq transfer=e0d420d4 captured=00000000 pc=00000404 wb=14000004 native_calls=0
+callback-irq transfer=e0d420f4 captured=00000000 pc=00000404 wb=14000004 native_calls=0
+callback-irq transfer=e4842004 captured=00000000 pc=00000404 wb=14000004 native_calls=0
+callback-irq transfer=e4c42004 captured=00000000 pc=00000404 wb=14000004 native_calls=0
+callback-irq transfer=e0c420b4 captured=00000000 pc=00000404 wb=14000004 native_calls=0
+block-exit effect=1 insn=e8240007 lane=1 count=3 r6=1 wb=13fffffc native_calls=0
+block-exit effect=1 insn=e8240007 lane=3 count=3 r6=1 wb=13fffffc native_calls=0
+block-exit effect=1 insn=e9240007 lane=1 count=3 r6=1 wb=14000000 native_calls=0
+block-exit effect=1 insn=e9240007 lane=3 count=3 r6=1 wb=14000000 native_calls=0
+block-exit effect=1 insn=e8a40007 lane=1 count=3 r6=1 wb=1400000c native_calls=0
+block-exit effect=1 insn=e8a40007 lane=3 count=3 r6=1 wb=1400000c native_calls=0
+block-exit effect=1 insn=e9a40007 lane=1 count=3 r6=1 wb=14000008 native_calls=0
+block-exit effect=1 insn=e9a40007 lane=3 count=3 r6=1 wb=14000008 native_calls=0
+block-exit effect=1 insn=e8340007 lane=1 count=3 r6=1 wb=13fffffc native_calls=0
+block-exit effect=1 insn=e8340007 lane=3 count=3 r6=1 wb=13fffffc native_calls=0
+block-exit effect=1 insn=e9340007 lane=1 count=3 r6=1 wb=14000000 native_calls=0
+block-exit effect=1 insn=e9340007 lane=3 count=3 r6=1 wb=14000000 native_calls=0
+block-exit effect=1 insn=e8b40007 lane=1 count=3 r6=1 wb=1400000c native_calls=0
+block-exit effect=1 insn=e8b40007 lane=3 count=3 r6=1 wb=1400000c native_calls=0
+block-exit effect=1 insn=e9b40007 lane=1 count=3 r6=1 wb=14000008 native_calls=0
+block-exit effect=1 insn=e9b40007 lane=3 count=3 r6=1 wb=14000008 native_calls=0
+block-exit effect=2 insn=e8240007 lane=1 count=3 r6=119 wb=13fffffc native_calls=0
+block-exit effect=2 insn=e8240007 lane=3 count=3 r6=119 wb=13fffffc native_calls=0
+block-exit effect=2 insn=e9240007 lane=1 count=3 r6=119 wb=14000000 native_calls=0
+block-exit effect=2 insn=e9240007 lane=3 count=3 r6=119 wb=14000000 native_calls=0
+block-exit effect=2 insn=e8a40007 lane=1 count=3 r6=119 wb=1400000c native_calls=0
+block-exit effect=2 insn=e8a40007 lane=3 count=3 r6=119 wb=1400000c native_calls=0
+block-exit effect=2 insn=e9a40007 lane=1 count=3 r6=119 wb=14000008 native_calls=0
+block-exit effect=2 insn=e9a40007 lane=3 count=3 r6=119 wb=14000008 native_calls=0
+block-exit effect=2 insn=e8340007 lane=1 count=3 r6=119 wb=13fffffc native_calls=0
+block-exit effect=2 insn=e8340007 lane=3 count=3 r6=119 wb=13fffffc native_calls=0
+block-exit effect=2 insn=e9340007 lane=1 count=3 r6=119 wb=14000000 native_calls=0
+block-exit effect=2 insn=e9340007 lane=3 count=3 r6=119 wb=14000000 native_calls=0
+block-exit effect=2 insn=e8b40007 lane=1 count=3 r6=119 wb=1400000c native_calls=0
+block-exit effect=2 insn=e8b40007 lane=3 count=3 r6=119 wb=1400000c native_calls=0
+block-exit effect=2 insn=e9b40007 lane=1 count=3 r6=119 wb=14000008 native_calls=0
+block-exit effect=2 insn=e9b40007 lane=3 count=3 r6=119 wb=14000008 native_calls=0
+block-exit effect=3 insn=e8240007 lane=1 count=3 r6=119 wb=13fffffc native_calls=0
+block-exit effect=3 insn=e8240007 lane=3 count=3 r6=119 wb=13fffffc native_calls=0
+block-exit effect=3 insn=e9240007 lane=1 count=3 r6=119 wb=14000000 native_calls=0
+block-exit effect=3 insn=e9240007 lane=3 count=3 r6=119 wb=14000000 native_calls=0
+block-exit effect=3 insn=e8a40007 lane=1 count=3 r6=119 wb=1400000c native_calls=0
+block-exit effect=3 insn=e8a40007 lane=3 count=3 r6=119 wb=1400000c native_calls=0
+block-exit effect=3 insn=e9a40007 lane=1 count=3 r6=119 wb=14000008 native_calls=0
+block-exit effect=3 insn=e9a40007 lane=3 count=3 r6=119 wb=14000008 native_calls=0
+block-exit effect=3 insn=e8340007 lane=1 count=3 r6=119 wb=13fffffc native_calls=0
+block-exit effect=3 insn=e8340007 lane=3 count=3 r6=119 wb=13fffffc native_calls=0
+block-exit effect=3 insn=e9340007 lane=1 count=3 r6=119 wb=14000000 native_calls=0
+block-exit effect=3 insn=e9340007 lane=3 count=3 r6=119 wb=14000000 native_calls=0
+block-exit effect=3 insn=e8b40007 lane=1 count=3 r6=119 wb=1400000c native_calls=0
+block-exit effect=3 insn=e8b40007 lane=3 count=3 r6=119 wb=1400000c native_calls=0
+block-exit effect=3 insn=e9b40007 lane=1 count=3 r6=119 wb=14000008 native_calls=0
+block-exit effect=3 insn=e9b40007 lane=3 count=3 r6=119 wb=14000008 native_calls=0
+block callback cases=48
+loop-flush native_calls=197 native_insns=786
+loop-framed native_calls=197 native_insns=1182
+PASS: arm jit differential (flags/shift/branch/mem/half/block/mul/seeded/budget/loop-fences), jit events=715946 fallbacks=0
+<end of output>
+Test time =   3.98 sec
+----------------------------------------------------------
+Test Passed.
+"arm_jit" end time: Oct 18 20:30 JST
+"arm_jit" time elapsed: 00:00:03
+----------------------------------------------------------
+
+30/49 Testing: gp32_timer
+30/49 Test: gp32_timer
+Command: "/tmp/gp32-round4-build-gcc/gp32_timer_test"
+Directory: /tmp/gp32-round4-build-gcc
+"gp32_timer" start time: Oct 18 20:30 JST
+Output:
+----------------------------------------------------------
+frame-callback jit=0 ns=16666666 pending=1
+frame-callback jit=1 ns=16666666 pending=1
+PASS: direct GPOS consumer intervals, disabled timer, split budget and CPU context
+<end of output>
+Test time =   0.38 sec
+----------------------------------------------------------
+Test Passed.
+"gp32_timer" end time: Oct 18 20:30 JST
+"gp32_timer" time elapsed: 00:00:00
+----------------------------------------------------------
+
+31/49 Testing: gp32_callback
+31/49 Test: gp32_callback
+Command: "/tmp/gp32-round4-build-gcc/gp32_callback_test" "/tmp/gp32-round4-build-gcc/callback-state.tmp"
+Directory: /tmp/gp32-round4-build-gcc
+"gp32_callback" start time: Oct 18 20:30 JST
+Output:
+----------------------------------------------------------
+refill jit=0 final=0 ack=1
+refill jit=0 final=1 ack=1
+state-validation jit=0
+clock-volume jit=0 clock=48000000 fraction=36363636
+timer-epoch jit=0 count=1
+remaining-timer-calls jit=0 count=8
+fault jit=0 case=0 cycles=66002960 error=HLE callback fault: emulated-time watchdog; owner=2 fn=0c002000 pc=0c002000 sp=0c7d1f00 ns=1000044848
+fault jit=0 case=1 cycles=16 error=HLE callback fault: halted or zero-progress CPU; owner=2 fn=0c002000 pc=0c002000 sp=0c7d1f00 ns=242
+exception-bank-state jit=0
+task-switch jit=0 status=0 error=
+refill jit=1 final=0 ack=1
+refill jit=1 final=1 ack=1
+state-validation jit=1
+clock-volume jit=1 clock=48000000 fraction=36363636
+timer-epoch jit=1 count=1
+remaining-timer-calls jit=1 count=8
+fault jit=1 case=0 cycles=66002960 error=HLE callback fault: emulated-time watchdog; owner=2 fn=0c002000 pc=0c002000 sp=0c7d1f00 ns=1000044848
+fault jit=1 case=1 cycles=16 error=HLE callback fault: halted or zero-progress CPU; owner=2 fn=0c002000 pc=0c002000 sp=0c7d1f00 ns=242
+exception-bank-state jit=1
+task-switch jit=1 status=0 error=
+callback regression: PASS (0 failures)
+<end of output>
+Test time =   0.44 sec
+----------------------------------------------------------
+Test Passed.
+"gp32_callback" end time: Oct 18 20:30 JST
+"gp32_callback" time elapsed: 00:00:00
+----------------------------------------------------------
+
+16/49 Testing: arm_thumb_pc
+16/49 Test: arm_thumb_pc
+Command: "/tmp/gp32-round4-build-gcc/arm_thumb_pc_test"
+Directory: /tmp/gp32-round4-build-gcc
+"arm_thumb_pc" start time: Oct 18 20:30 JST
+Output:
+----------------------------------------------------------
+arm_thumb_pc_test: 6573424 instruction cases, 0 failures
+<end of output>
+Test time =   0.41 sec
+----------------------------------------------------------
+Test Passed.
+"arm_thumb_pc" end time: Oct 18 20:30 JST
+"arm_thumb_pc" time elapsed: 00:00:00
+----------------------------------------------------------
+
+15/49 Testing: arm_thumb_alu
+15/49 Test: arm_thumb_alu
+Command: "/tmp/gp32-round4-build-gcc/arm_thumb_alu_test"
+Directory: /tmp/gp32-round4-build-gcc
+"arm_thumb_alu" start time: Oct 18 20:30 JST
+Output:
+----------------------------------------------------------
+arm_thumb_alu_test: 598800 cases, 0 failures
+<end of output>
+Test time =   0.38 sec
+----------------------------------------------------------
+Test Passed.
+"arm_thumb_alu" end time: Oct 18 20:30 JST
+"arm_thumb_alu" time elapsed: 00:00:00
+----------------------------------------------------------
+
+13/49 Testing: arm_exception
+13/49 Test: arm_exception
+Command: "/tmp/gp32-round4-build-gcc/arm_exception_test"
+Directory: /tmp/gp32-round4-build-gcc
+"arm_exception" start time: Oct 18 20:30 JST
+Output:
+----------------------------------------------------------
+arm_exception_test: all checks passed
+<end of output>
+Test time =   0.32 sec
+----------------------------------------------------------
+Test Passed.
+"arm_exception" end time: Oct 18 20:30 JST
+"arm_exception" time elapsed: 00:00:00
+----------------------------------------------------------
+
+3/49 Testing: audio_resampler
+3/49 Test: audio_resampler
+Command: "/tmp/gp32-round4-build-gcc/audio_resampler_test"
+Directory: /tmp/gp32-round4-build-gcc
+"audio_resampler" start time: Oct 18 20:30 JST
+Output:
+----------------------------------------------------------
+PASS: 2752512 FIR sums match independent signed-64-bit reference
+<end of output>
+Test time =   0.31 sec
+----------------------------------------------------------
+Test Passed.
+"audio_resampler" end time: Oct 18 20:30 JST
+"audio_resampler" time elapsed: 00:00:00
+----------------------------------------------------------
+
+18/49 Testing: arm_cpu_code_write
+18/49 Test: arm_cpu_code_write
+Command: "/tmp/gp32-round4-build-gcc/arm_cpu_code_write_test"
+Directory: /tmp/gp32-round4-build-gcc
+"arm_cpu_code_write" start time: Oct 18 20:30 JST
+Output:
+----------------------------------------------------------
+CPU code write cases=90 failures=0
+<end of output>
+Test time =   0.20 sec
+----------------------------------------------------------
+Test Passed.
+"arm_cpu_code_write" end time: Oct 18 20:30 JST
+"arm_cpu_code_write" time elapsed: 00:00:00
+----------------------------------------------------------
+
+2/49 Testing: libretro_audio
+2/49 Test: libretro_audio
+Command: "/tmp/gp32-round4-build-gcc/libretro_audio_test" "/tmp/gp32-round4-build-gcc/audio-state.tmp"
+Directory: /tmp/gp32-round4-build-gcc
+"libretro_audio" start time: Oct 18 20:30 JST
+Output:
+----------------------------------------------------------
+frontend-clock panel_ns=20000000 advertised=60.000 audio=0.200000 wall=0.200000
+frontend-clock panel_ns=16891892 advertised=60.000 audio=0.200000 wall=0.200000
+frontend-clock panel_ns=11261261 advertised=60.000 audio=0.200000 wall=0.200000
+PASS: partial/zero acceptance, exact PCM/resampling, silence, fallback, lifecycle
+<end of output>
+Test time =   0.24 sec
+----------------------------------------------------------
+Test Passed.
+"libretro_audio" end time: Oct 18 20:30 JST
+"libretro_audio" time elapsed: 00:00:00
+----------------------------------------------------------
+
+41/49 Testing: gp32_state
+41/49 Test: gp32_state
+Command: "/tmp/gp32-round4-build-gcc/gp32_state_test" "/tmp/gp32-round4-build-gcc/gp32-state.tmp"
+Directory: /tmp/gp32-round4-build-gcc
+"gp32_state" start time: Oct 18 20:30 JST
+Output:
+----------------------------------------------------------
+gp32_state: PASS
+<end of output>
+Test time =   0.26 sec
+----------------------------------------------------------
+Test Passed.
+"gp32_state" end time: Oct 18 20:30 JST
+"gp32_state" time elapsed: 00:00:00
+----------------------------------------------------------
+
+43/49 Testing: smartmedia
+43/49 Test: smartmedia
+Command: "/tmp/gp32-round4-build-gcc/smartmedia_test"
+Directory: /tmp/gp32-round4-build-gcc
+"smartmedia" start time: Oct 18 20:30 JST
+Output:
+----------------------------------------------------------
+SmartMedia geometry: PASS (0 failures)
+<end of output>
+Test time =   0.13 sec
+----------------------------------------------------------
+Test Passed.
+"smartmedia" end time: Oct 18 20:30 JST
+"smartmedia" time elapsed: 00:00:00
+----------------------------------------------------------
+
+26/49 Testing: s3c2400_pwm
+26/49 Test: s3c2400_pwm
+Command: "/tmp/gp32-round4-build-gcc/s3c2400_pwm_test"
+Directory: /tmp/gp32-round4-build-gcc
+"s3c2400_pwm" start time: Oct 18 20:30 JST
+Output:
+----------------------------------------------------------
+PASS: PWM duty changes preserve countdown and repeated IRQ timing across all timers
+<end of output>
+Test time =   0.06 sec
+----------------------------------------------------------
+Test Passed.
+"s3c2400_pwm" end time: Oct 18 20:30 JST
+"s3c2400_pwm" time elapsed: 00:00:00
+----------------------------------------------------------
+
+4/49 Testing: libretro_persistence
+4/49 Test: libretro_persistence
+Command: "/tmp/gp32-round4-build-gcc/libretro_persistence_test" "/tmp/gp32-round4-build-gcc/persistence"
+Directory: /tmp/gp32-round4-build-gcc
+"libretro_persistence" start time: Oct 18 20:30 JST
+Output:
+----------------------------------------------------------
+Persistent page saves: PASS (0 failures), 4325376-byte card -> 596-byte save
+<end of output>
+Test time =   0.18 sec
+----------------------------------------------------------
+Test Passed.
+"libretro_persistence" end time: Oct 18 20:30 JST
+"libretro_persistence" time elapsed: 00:00:00
+----------------------------------------------------------
+
+45/49 Testing: savestate_session
+45/49 Test: savestate_session
+Command: "/tmp/gp32-round4-build-gcc/savestate_session_test"
+Directory: /tmp/gp32-round4-build-gcc
+"savestate_session" start time: Oct 18 20:30 JST
+Output:
+----------------------------------------------------------
+PASS: cross-session SmartMedia savestates
+<end of output>
+Test time =   0.08 sec
+----------------------------------------------------------
+Test Passed.
+"savestate_session" end time: Oct 18 20:30 JST
+"savestate_session" time elapsed: 00:00:00
+----------------------------------------------------------
+
+39/49 Testing: gp32_pinball_fix
+39/49 Test: gp32_pinball_fix
+Command: "/tmp/gp32-round4-build-gcc/gp32_pinball_fix_test"
+Directory: /tmp/gp32-round4-build-gcc
+"gp32_pinball_fix" start time: Oct 18 20:30 JST
+Output:
+----------------------------------------------------------
+gp32 pinball codec-volume fix tests passed (jit=0,1)
+<end of output>
+Test time =   0.09 sec
+----------------------------------------------------------
+Test Passed.
+"gp32_pinball_fix" end time: Oct 18 20:30 JST
+"gp32_pinball_fix" time elapsed: 00:00:00
+----------------------------------------------------------
+
+6/49 Testing: libretro_runahead
+6/49 Test: libretro_runahead
+Command: "/tmp/gp32-round4-build-gcc/libretro_runahead_test" "/tmp/gp32-round4-build-gcc/runahead"
+Directory: /tmp/gp32-round4-build-gcc
+"libretro_runahead" start time: Oct 18 20:30 JST
+Output:
+----------------------------------------------------------
+rollback replay: PASS (0/24 frames differ, 9949942-byte state, 19 video dupes, 150 audio calls)
+Run-ahead replay: PASS (0 failures)
+<end of output>
+Test time =   0.09 sec
+----------------------------------------------------------
+Test Passed.
+"libretro_runahead" end time: Oct 18 20:30 JST
+"libretro_runahead" time elapsed: 00:00:00
+----------------------------------------------------------
+
+29/49 Testing: gp32_pcm
+29/49 Test: gp32_pcm
+Command: "/tmp/gp32-round4-build-gcc/gp32_pcm_test"
+Directory: /tmp/gp32-round4-build-gcc
+"gp32_pcm" start time: Oct 18 20:30 JST
+Output:
+----------------------------------------------------------
+PASS: U8 PCM endpoints, midpoint and channel polarity (SoC/SEF/mono/stereo)
+<end of output>
+Test time =   0.07 sec
+----------------------------------------------------------
+Test Passed.
+"gp32_pcm" end time: Oct 18 20:30 JST
+"gp32_pcm" time elapsed: 00:00:00
+----------------------------------------------------------
+
+32/49 Testing: gp32_swi_1ff
+32/49 Test: gp32_swi_1ff
+Command: "/tmp/gp32-round4-build-gcc/gp32_swi_1ff_test"
+Directory: /tmp/gp32-round4-build-gcc
+"gp32_swi_1ff" start time: Oct 18 20:30 JST
+Output:
+----------------------------------------------------------
+swi-1ff jit=0 pc=0c020000 cpsr=900000d3 spsr=90000013
+swi-1ff-declined jit=0 pc=000001e8 cpsr=90000093
+swi-1ff jit=1 pc=0c020000 cpsr=900000d3 spsr=90000013
+swi-1ff-declined jit=1 pc=000001e8 cpsr=90000093
+gp32_swi_1ff: all checks passed
+<end of output>
+Test time =   0.05 sec
+----------------------------------------------------------
+Test Passed.
+"gp32_swi_1ff" end time: Oct 18 20:30 JST
+"gp32_swi_1ff" time elapsed: 00:00:00
+----------------------------------------------------------
+
+40/49 Testing: gp32_fast_load
+40/49 Test: gp32_fast_load
+Command: "/tmp/gp32-round4-build-gcc/gp32_fast_load_test"
+Directory: /tmp/gp32-round4-build-gcc
+"gp32_fast_load" start time: Oct 18 20:30 JST
+Output:
+----------------------------------------------------------
+gp32_fast_load: PASS
+<end of output>
+Test time =   0.04 sec
+----------------------------------------------------------
+Test Passed.
+"gp32_fast_load" end time: Oct 18 20:30 JST
+"gp32_fast_load" time elapsed: 00:00:00
+----------------------------------------------------------
+
+10/49 Testing: arm_write_permission
+10/49 Test: arm_write_permission
+Command: "/tmp/gp32-round4-build-gcc/arm_write_permission_test"
+Directory: /tmp/gp32-round4-build-gcc
+"arm_write_permission" start time: Oct 18 20:30 JST
+Output:
+----------------------------------------------------------
+PASS: ARM cached/native writes honor permission, views and mapping refresh
+<end of output>
+Test time =   0.09 sec
+----------------------------------------------------------
+Test Passed.
+"arm_write_permission" end time: Oct 18 20:30 JST
+"arm_write_permission" time elapsed: 00:00:00
+----------------------------------------------------------
+
+38/49 Testing: gp32_game_fix
+38/49 Test: gp32_game_fix
+Command: "/tmp/gp32-round4-build-gcc/gp32_game_fix_test"
+Directory: /tmp/gp32-round4-build-gcc
+"gp32_game_fix" start time: Oct 18 20:30 JST
+Output:
+----------------------------------------------------------
+gp32 game-fix tests passed (jit=0,1)
+<end of output>
+Test time =   0.06 sec
+----------------------------------------------------------
+Test Passed.
+"gp32_game_fix" end time: Oct 18 20:30 JST
+"gp32_game_fix" time elapsed: 00:00:00
+----------------------------------------------------------
+
+48/49 Testing: arm_jit_policy
+48/49 Test: arm_jit_policy
+Command: "/tmp/gp32-round4-build-gcc/arm_jit_policy_test"
+Directory: /tmp/gp32-round4-build-gcc
+"arm_jit_policy" start time: Oct 18 20:30 JST
+Output:
+----------------------------------------------------------
+PASS: JIT promotion lifecycle and cache maintenance
+<end of output>
+Test time =   0.05 sec
+----------------------------------------------------------
+Test Passed.
+"arm_jit_policy" end time: Oct 18 20:30 JST
+"arm_jit_policy" time elapsed: 00:00:00
+----------------------------------------------------------
+
+5/49 Testing: libretro_input
+5/49 Test: libretro_input
+Command: "/tmp/gp32-round4-build-gcc/libretro_input_test"
+Directory: /tmp/gp32-round4-build-gcc
+"libretro_input" start time: Oct 18 20:30 JST
+Output:
+----------------------------------------------------------
+PASS: input press/release observed by ARM GPIO program before same-run video callback (jit off/on)
+PASS: joypad bitmask negotiation (1 mask query when supported, 10 per-button queries otherwise) keeps GPIO identical
+<end of output>
+Test time =   0.05 sec
+----------------------------------------------------------
+Test Passed.
+"libretro_input" end time: Oct 18 20:30 JST
+"libretro_input" time elapsed: 00:00:00
+----------------------------------------------------------
+
+24/49 Testing: s3c2400_lcd
+24/49 Test: s3c2400_lcd
+Command: "/tmp/gp32-round4-build-gcc/s3c2400_lcd_test"
+Directory: /tmp/gp32-round4-build-gcc
+"s3c2400_lcd" start time: Oct 18 20:30 JST
+Output:
+----------------------------------------------------------
+PASS: CV=5 three active LINECNT reloads, period=896304 HCLK/RUN
+PASS: CV=11 three active LINECNT reloads, period=1792608 HCLK/RUN
+PASS: exact TFT status edges, read-only status and ENVID origin
+PASS: HCLK66/RUN48 whole/split ticks and fractional save/load phase
+PASS: clock writes preserve integral and fractional HCLK scan phase
+PASS: interpreter/JIT VSTATUS poll fast-forward is equivalent
+PASS: interpreter/JIT mixed LINECNT and HSTATUS polling
+<end of output>
+Test time =   0.05 sec
+----------------------------------------------------------
+Test Passed.
+"s3c2400_lcd" end time: Oct 18 20:30 JST
+"s3c2400_lcd" time elapsed: 00:00:00
+----------------------------------------------------------
+
+1/49 Testing: ios_bridge
+1/49 Test: ios_bridge
+Command: "/tmp/gp32-round4-build-gcc/ios_bridge_test" "/tmp/gp32-round4-build-gcc/ios-bridge-state.tmp"
+Directory: /tmp/gp32-round4-build-gcc
+"ios_bridge" start time: Oct 18 20:30 JST
+Output:
+----------------------------------------------------------
+PASS: iOS audio continuity, reset input release and failed-save preservation
+<end of output>
+Test time =   0.03 sec
+----------------------------------------------------------
+Test Passed.
+"ios_bridge" end time: Oct 18 20:30 JST
+"ios_bridge" time elapsed: 00:00:00
+----------------------------------------------------------
+
+19/49 Testing: s3c2400_timing
+19/49 Test: s3c2400_timing
+Command: "/tmp/gp32-round4-build-gcc/s3c2400_timing_test"
+Directory: /tmp/gp32-round4-build-gcc
+"s3c2400_timing" start time: Oct 18 20:30 JST
+Output:
+----------------------------------------------------------
+iis_one_second split=0 frames=42968 rate=42968
+iis_one_second split=1 frames=42968 rate=42968
+iis_one_second split=2 frames=42968 rate=42968
+cpu_speed frames=42968 rate=42968 timer_irqs=1000
+lcd_timing_trace=db468039216226ad
+<end of output>
+Test time =   0.04 sec
+----------------------------------------------------------
+Test Passed.
+"s3c2400_timing" end time: Oct 18 20:30 JST
+"s3c2400_timing" time elapsed: 00:00:00
+----------------------------------------------------------
+
+17/49 Testing: arm_code_write
+17/49 Test: arm_code_write
+Command: "/tmp/gp32-round4-build-gcc/arm_code_write_test"
+Directory: /tmp/gp32-round4-build-gcc
+"arm_code_write" start time: Oct 18 20:30 JST
+Output:
+----------------------------------------------------------
+cases=20 failures=0
+<end of output>
+Test time =   0.05 sec
+----------------------------------------------------------
+Test Passed.
+"arm_code_write" end time: Oct 18 20:30 JST
+"arm_code_write" time elapsed: 00:00:00
+----------------------------------------------------------
+
+20/49 Testing: s3c2400_iis_irq
+20/49 Test: s3c2400_iis_irq
+Command: "/tmp/gp32-round4-build-gcc/s3c2400_iis_irq_test"
+Directory: /tmp/gp32-round4-build-gcc
+"s3c2400_iis_irq" start time: Oct 18 20:30 JST
+Output:
+----------------------------------------------------------
+PASS: IIS DMA refill IRQ independent of CPU slice size
+<end of output>
+Test time =   0.05 sec
+----------------------------------------------------------
+Test Passed.
+"s3c2400_iis_irq" end time: Oct 18 20:30 JST
+"s3c2400_iis_irq" time elapsed: 00:00:00
+----------------------------------------------------------
+
+46/49 Testing: atomic_save
+46/49 Test: atomic_save
+Command: "/tmp/gp32-round4-build-gcc/atomic_save_test" "/tmp/gp32-round4-build-gcc/atomic-save"
+Directory: /tmp/gp32-round4-build-gcc
+"atomic_save" start time: Oct 18 20:30 JST
+Output:
+----------------------------------------------------------
+Atomic save replacement: PASS (0 failures)
+<end of output>
+Test time =   0.04 sec
+----------------------------------------------------------
+Test Passed.
+"atomic_save" end time: Oct 18 20:30 JST
+"atomic_save" time elapsed: 00:00:00
+----------------------------------------------------------
+
+35/49 Testing: gp32_codec
+35/49 Test: gp32_codec
+Command: "/tmp/gp32-round4-build-gcc/gp32_codec_test"
+Directory: /tmp/gp32-round4-build-gcc
+"gp32_codec" start time: Oct 18 20:30 JST
+Output:
+----------------------------------------------------------
+PASS: GPIO L3 volume/mute, queued PCM, DMA and partial-byte restore
+<end of output>
+Test time =   0.03 sec
+----------------------------------------------------------
+Test Passed.
+"gp32_codec" end time: Oct 18 20:30 JST
+"gp32_codec" time elapsed: 00:00:00
+----------------------------------------------------------
+
+11/49 Testing: arm_translation
+11/49 Test: arm_translation
+Command: "/tmp/gp32-round4-build-gcc/arm_translation_test"
+Directory: /tmp/gp32-round4-build-gcc
+"arm_translation" start time: Oct 18 20:30 JST
+Output:
+----------------------------------------------------------
+conflicting refill instruction=0 preserved=0 failures=0
+conflicting refill instruction=1 preserved=0 failures=0
+conflicting refill instruction=0 preserved=1 failures=0
+conflicting refill instruction=1 preserved=1 failures=0
+callback side=0 reads=1 failures=0
+callback side=1 reads=1 failures=0
+legacy shape=fffff failures=0
+legacy shape=ffff failures=0
+legacy shape=fff failures=0
+legacy shape=3ff failures=0
+translation regression failures=0
+<end of output>
+Test time =   0.03 sec
+----------------------------------------------------------
+Test Passed.
+"arm_translation" end time: Oct 18 20:30 JST
+"arm_translation" time elapsed: 00:00:00
+----------------------------------------------------------
+
+12/49 Testing: arm_accelerator
+12/49 Test: arm_accelerator
+Command: "/tmp/gp32-round4-build-gcc/arm_accelerator_test"
+Directory: /tmp/gp32-round4-build-gcc
+"arm_accelerator" start time: Oct 18 20:30 JST
+Output:
+----------------------------------------------------------
+PASS: arm accelerator registry differential (oracle=interpreter), ragged loop calls=10 retired=66 zero-retires=6
+<end of output>
+Test time =   0.02 sec
+----------------------------------------------------------
+Test Passed.
+"arm_accelerator" end time: Oct 18 20:30 JST
+"arm_accelerator" time elapsed: 00:00:00
+----------------------------------------------------------
+
+47/49 Testing: arm_jit_recycle
+47/49 Test: arm_jit_recycle
+Command: "/tmp/gp32-round4-build-gcc/arm_jit_recycle_test"
+Directory: /tmp/gp32-round4-build-gcc
+"arm_jit_recycle" start time: Oct 18 20:30 JST
+Output:
+----------------------------------------------------------
+cold_passes=2009 native_calls=3000
+PASS: native arena churn and generation wrap match interpreter
+<end of output>
+Test time =   0.03 sec
+----------------------------------------------------------
+Test Passed.
+"arm_jit_recycle" end time: Oct 18 20:30 JST
+"arm_jit_recycle" time elapsed: 00:00:00
+----------------------------------------------------------
+
+42/49 Testing: gp32_media_png
+42/49 Test: gp32_media_png
+Command: "/tmp/gp32-round4-build-gcc/gp32_media_png_test" "/tmp/gp32-round4-build-gcc"
+Directory: /tmp/gp32-round4-build-gcc
+"gp32_media_png" start time: Oct 18 20:30 JST
+Output:
+----------------------------------------------------------
+gp32_media_png: ok
+<end of output>
+Test time =   0.02 sec
+----------------------------------------------------------
+Test Passed.
+"gp32_media_png" end time: Oct 18 20:30 JST
+"gp32_media_png" time elapsed: 00:00:00
+----------------------------------------------------------
+
+36/49 Testing: gp32_eeprom
+36/49 Test: gp32_eeprom
+Command: "/tmp/gp32-round4-build-gcc/gp32_eeprom_test"
+Directory: /tmp/gp32-round4-build-gcc
+"gp32_eeprom" start time: Oct 18 20:30 JST
+Output:
+----------------------------------------------------------
+PASS: SDK EEPROM / IIC / state, interpreter and JIT
+<end of output>
+Test time =   0.02 sec
+----------------------------------------------------------
+Test Passed.
+"gp32_eeprom" end time: Oct 18 20:30 JST
+"gp32_eeprom" time elapsed: 00:00:00
+----------------------------------------------------------
+
+23/49 Testing: s3c2400_irq
+23/49 Test: s3c2400_irq
+Command: "/tmp/gp32-round4-build-gcc/s3c2400_irq_test"
+Directory: /tmp/gp32-round4-build-gcc
+"s3c2400_irq" start time: Oct 18 20:30 JST
+Output:
+----------------------------------------------------------
+PASS: peripheral IRQ/FIQ routing, selected IRQ latch, masks, acknowledgement and restore
+<end of output>
+Test time =   0.02 sec
+----------------------------------------------------------
+Test Passed.
+"s3c2400_irq" end time: Oct 18 20:30 JST
+"s3c2400_irq" time elapsed: 00:00:00
+----------------------------------------------------------
+
+21/49 Testing: s3c2400_dma
+21/49 Test: s3c2400_dma
+Command: "/tmp/gp32-round4-build-gcc/s3c2400_dma_test"
+Directory: /tmp/gp32-round4-build-gcc
+"s3c2400_dma" start time: Oct 18 20:30 JST
+Output:
+----------------------------------------------------------
+DMA oracle cases=4160 failures=0
+<end of output>
+Test time =   0.02 sec
+----------------------------------------------------------
+Test Passed.
+"s3c2400_dma" end time: Oct 18 20:30 JST
+"s3c2400_dma" time elapsed: 00:00:00
+----------------------------------------------------------
+
+22/49 Testing: s3c2400_muted_dma
+22/49 Test: s3c2400_muted_dma
+Command: "/tmp/gp32-round4-build-gcc/s3c2400_muted_dma_test"
+Directory: /tmp/gp32-round4-build-gcc
+"s3c2400_muted_dma" start time: Oct 18 20:30 JST
+Output:
+----------------------------------------------------------
+cases=48 failures=0
+<end of output>
+Test time =   0.02 sec
+----------------------------------------------------------
+Test Passed.
+"s3c2400_muted_dma" end time: Oct 18 20:30 JST
+"s3c2400_muted_dma" time elapsed: 00:00:00
+----------------------------------------------------------
+
+34/49 Testing: gp32_file
+34/49 Test: gp32_file
+Command: "/tmp/gp32-round4-build-gcc/gp32_file_test" "/tmp/gp32-round4/tests/data/dotted-entry.zip"
+Directory: /tmp/gp32-round4-build-gcc
+"gp32_file" start time: Oct 18 20:30 JST
+Output:
+----------------------------------------------------------
+PASS: relocated SDK file open/read and EOF
+<end of output>
+Test time =   0.01 sec
+----------------------------------------------------------
+Test Passed.
+"gp32_file" end time: Oct 18 20:30 JST
+"gp32_file" time elapsed: 00:00:00
+----------------------------------------------------------
+
+27/49 Testing: s3c2400_gpio
+27/49 Test: s3c2400_gpio
+Command: "/tmp/gp32-round4-build-gcc/s3c2400_gpio_test"
+Directory: /tmp/gp32-round4-build-gcc
+"s3c2400_gpio" start time: Oct 18 20:30 JST
+Output:
+----------------------------------------------------------
+PASS: GPIO NAND ID, program/read, latched reads, halfword/word control writes, button parity+state, live readback mirrors
+<end of output>
+Test time =   0.01 sec
+----------------------------------------------------------
+Test Passed.
+"s3c2400_gpio" end time: Oct 18 20:30 JST
+"s3c2400_gpio" time elapsed: 00:00:00
+----------------------------------------------------------
+
+37/49 Testing: gp32_shadow
+37/49 Test: gp32_shadow
+Command: "/tmp/gp32-round4-build-gcc/gp32_shadow_test"
+Directory: /tmp/gp32-round4-build-gcc
+"gp32_shadow" start time: Oct 18 20:30 JST
+Output:
+----------------------------------------------------------
+gp32_shadow: PASS
+<end of output>
+Test time =   0.01 sec
+----------------------------------------------------------
+Test Passed.
+"gp32_shadow" end time: Oct 18 20:30 JST
+"gp32_shadow" time elapsed: 00:00:00
+----------------------------------------------------------
+
+25/49 Testing: s3c2400_scanout
+25/49 Test: s3c2400_scanout
+Command: "/tmp/gp32-round4-build-gcc/s3c2400_scanout_test"
+Directory: /tmp/gp32-round4-build-gcc
+"s3c2400_scanout" start time: Oct 18 20:30 JST
+Output:
+----------------------------------------------------------
+PASS: 16bpp mode 0 scanout matches the DMA/colour model
+PASS: 16bpp mode 1 scanout matches the DMA/colour model
+PASS: 16bpp mode 2 scanout matches the DMA/colour model
+PASS: 16bpp mode 3 scanout matches the DMA/colour model
+PASS:  8bpp mode 0 scanout matches the DMA/colour model
+PASS:  8bpp mode 1 scanout matches the DMA/colour model
+PASS:  8bpp mode 2 scanout matches the DMA/colour model
+PASS:  8bpp mode 3 scanout matches the DMA/colour model
+<end of output>
+Test time =   0.01 sec
+----------------------------------------------------------
+Test Passed.
+"s3c2400_scanout" end time: Oct 18 20:30 JST
+"s3c2400_scanout" time elapsed: 00:00:00
+----------------------------------------------------------
+
+14/49 Testing: arm_thumb_transfer
+14/49 Test: arm_thumb_transfer
+Command: "/tmp/gp32-round4-build-gcc/arm_thumb_transfer_test"
+Directory: /tmp/gp32-round4-build-gcc
+"arm_thumb_transfer" start time: Oct 18 20:30 JST
+Output:
+----------------------------------------------------------
+arm_thumb_transfer_test: 1030 cases, 0 failures
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"arm_thumb_transfer" end time: Oct 18 20:30 JST
+"arm_thumb_transfer" time elapsed: 00:00:00
+----------------------------------------------------------
+
+7/49 Testing: input_script
+7/49 Test: input_script
+Command: "/tmp/gp32-round4-build-gcc/input_script_test" "/tmp/gp32-round4/tests/input_script_order.txt"
+Directory: /tmp/gp32-round4-build-gcc
+"input_script" start time: Oct 18 20:30 JST
+Output:
+----------------------------------------------------------
+PASS: input replay preserves authored SET order
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"input_script" end time: Oct 18 20:30 JST
+"input_script" time elapsed: 00:00:00
+----------------------------------------------------------
+
+28/49 Testing: s3c2400_state
+28/49 Test: s3c2400_state
+Command: "/tmp/gp32-round4-build-gcc/s3c2400_state_test"
+Directory: /tmp/gp32-round4-build-gcc
+"s3c2400_state" start time: Oct 18 20:30 JST
+Output:
+----------------------------------------------------------
+PASS: state index validation, legacy IRQ normalization and IIC transaction continuation
+<end of output>
+Test time =   0.01 sec
+----------------------------------------------------------
+Test Passed.
+"s3c2400_state" end time: Oct 18 20:30 JST
+"s3c2400_state" time elapsed: 00:00:00
+----------------------------------------------------------
+
+End testing: Oct 18 20:30 JST

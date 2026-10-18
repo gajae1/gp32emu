@@ -1,0 +1,21 @@
+FAIL[fetch mmu=0 native-request=0 policy=0 effect=0 budget=1 walk=0] callback count: got=0x3 want=0x1
+FAIL[fetch mmu=0 native-request=0 policy=0 effect=0 budget=1 walk=0] r1: got=0x2 want=0x3
+FAIL[fetch mmu=0 native-request=0 policy=0 effect=0 budget=1 walk=0] callback count: got=0x8 want=0x6
+FAIL[fetch mmu=0 native-request=0 policy=0 effect=0 budget=1 walk=0] callback PC: got=0x400 want=0x404
+FAIL[fetch mmu=0 native-request=0 policy=0 effect=0 budget=1 walk=0] callback r0: got=0 want=0x1
+FAIL[fetch mmu=0 native-request=0 policy=0 effect=0 budget=1 walk=0] callback PC: got=0x400 want=0x408
+FAIL[fetch mmu=0 native-request=0 policy=0 effect=0 budget=1 walk=0] callback r0: got=0 want=0x1
+FAIL[fetch mmu=0 native-request=0 policy=0 effect=0 budget=1 walk=0] callback address: got=0x404 want=0x400
+FAIL[fetch mmu=0 native-request=0 policy=0 effect=0 budget=1 walk=0] callback PC: got=0x404 want=0x400
+FAIL[fetch mmu=0 native-request=0 policy=0 effect=0 budget=1 walk=0] callback address: got=0x408 want=0x404
+FAIL[fetch mmu=0 native-request=0 policy=0 effect=0 budget=1 walk=0] callback r0: got=0x1 want=0x2
+FAIL[fetch mmu=0 native-request=0 policy=0 effect=0 budget=1 walk=0] callback address: got=0x400 want=0x408
+FAIL[fetch mmu=0 native-request=0 policy=0 effect=0 budget=1 walk=0] callback PC: got=0x404 want=0x408
+FAIL[fetch mmu=0 native-request=0 policy=0 effect=0 budget=1 walk=0] callback r0: got=0x1 want=0x2
+FAIL[fetch mmu=0 native-request=0 policy=0 effect=0 budget=2 walk=0] r1: got=0 want=0x1
+FAIL[fetch mmu=0 native-request=0 policy=0 effect=0 budget=2 walk=0] callback count: got=0x3 want=0x2
+FAIL[fetch mmu=0 native-request=0 policy=0 effect=0 budget=2 walk=0] callback PC: got=0x400 want=0x404
+FAIL[fetch mmu=0 native-request=0 policy=0 effect=0 budget=2 walk=0] callback r0: got=0 want=0x1
+FAIL[fetch mmu=0 native-request=0 policy=0 effect=0 budget=2 walk=0] r1: got=0x1 want=0x3
+FAIL[fetch mmu=0 native-request=0 policy=0 effect=0 budget=2 walk=0] callback PC: got=0x400 want=0x404
+arm_fetch_callback: 4281 failures

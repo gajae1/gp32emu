@@ -1,0 +1,102 @@
+{
+  "compiler": "aarch64-linux-gnu-gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0",
+  "qemu": "qemu-aarch64 8.2.2 (Debian 1:8.2.2+ds-0ubuntu1.18)",
+  "working_directory": "/tmp/gp32-round4",
+  "before_build_command": "aarch64-linux-gnu-gcc -std=c2x -O2 -D__SWITCH__ -D_XOPEN_SOURCE=700 -DGP32EMU_CPU_PROFILE=1 -Itests/switch_jit -Iinclude -Isrc tests/arm_jit_test.c src/arm920t.c tests/switch_jit/mock.c -lm -o /tmp/gp32-round4-switch-differential-before",
+  "before_build_exit_code": 1,
+  "multiple_definition_diagnostics": 45,
+  "before_workflow_sha256": "8e28f8336ffabfa17eb351631bc84ec96963a843837b650bfb30986da3cbac5b",
+  "source_sha256": {
+    "src/arm920t.c": "decf0d2f925058f00391a46d335245b06ada19152e35a817415e17873e844cf3",
+    "src/arm920t_jit_a64.inc": "482aa799a352baa57e7d437159738a2c33da6a78e187739e8de82a8b044d8140",
+    "src/arm920t.h": "5a2e08df13e1ea5e6e06f7b66e5e66cb0fba52a8f6f22056a5a9e1fc719fe426",
+    "src/common.h": "24eda7b5c5a164a46139e16544d4e14b4a5af98a4a6a016e2cc75ef9590d6d3e",
+    "src/state_io.h": "a56eb30bff329bac402f184c8cfd498bf0685afc8cb9a7689614e1dbc84bc41f",
+    "include/gp32emu/gp32.h": "b5964763c69b972decc2598676285da5d72695e266050e12c74f4b7a44102525",
+    "tests/arm_jit_test.c": "35e1f78440ad239f3de76fbb446c7624408d6e03043645cb44779f059429b7bf",
+    "tests/switch_jit/mock.c": "6e9fd3297144d24d7752a4c08077f95474d64b632ccb867004e0f64f2ea93589",
+    "tests/switch_jit/switch.h": "96af281d27876c034087117594ee171a54b60ed27fc9a94b80fdb58789aecde3"
+  },
+  "after_build_command": "aarch64-linux-gnu-gcc -std=c2x -O2 -D__SWITCH__ -D_XOPEN_SOURCE=700 -DGP32EMU_CPU_PROFILE=1 -Itests/switch_jit -Iinclude -Isrc tests/arm_jit_test.c tests/switch_jit/mock.c -lm -o /tmp/gp32-round4-switch-differential-after",
+  "after_build_exit_code": 0,
+  "after_workflow_sha256": "bb369c6db07beaf22b34d03e8c3f2ba07d352d3082b97371f1b1302d96c8518e",
+  "binary": {
+    "path": "/tmp/gp32-round4-switch-differential-after",
+    "sha256": "cb122e6db903c454deaa8d2f82ae20648ec623c51c9dc92a5fe0551002bfc5f7"
+  },
+  "runs": [
+    {
+      "mode": "CodeMemory",
+      "command": "env -u SWITCH_JIT_PERMISSION_MODE qemu-aarch64 -L /usr/aarch64-linux-gnu /tmp/gp32-round4-switch-differential-after",
+      "exit_code": 0,
+      "jit_events": 115386,
+      "fallbacks": 0,
+      "log": "code-memory.log",
+      "log_creation_time": "2026-10-18 21:44:57.979759737 +0900",
+      "log_creation_unix_ns": 1792327497979759737,
+      "last_log_write_unix_ns": 1792327546939510246,
+      "redirect_to_last_log_write_seconds": 48.959750509,
+      "status": "passed",
+      "original_log_path": "/tmp/gp32-round4-switch-differential-code-memory.log"
+    },
+    {
+      "mode": "SetProcessMemoryPermission",
+      "command": "SWITCH_JIT_PERMISSION_MODE=1 qemu-aarch64 -L /usr/aarch64-linux-gnu /tmp/gp32-round4-switch-differential-after",
+      "status": "passed",
+      "log": "permission.log",
+      "log_creation_time": "2026-10-18 21:44:57.971759778 +0900",
+      "log_creation_unix_ns": 1792327497971759778,
+      "exit_code": 0,
+      "jit_events": 115386,
+      "fallbacks": 0,
+      "last_log_write_unix_ns": 1792328467334886491,
+      "redirect_to_last_log_write_seconds": 969.363126713,
+      "original_log_path": "/tmp/gp32-round4-switch-differential-permission.log"
+    }
+  ],
+  "scope": {
+    "source_and_tests_unchanged": true,
+    "real_libnx_sdk": false,
+    "nro_build": false,
+    "physical_switch": false,
+    "remote_workflow_execution": false,
+    "full_differential_without_test_selector": true
+  },
+  "elapsed_time_method": "File creation immediately before exec to final stdout write; filesystem wall timestamps, not a monotonic timer or performance comparison. Process completion is verified independently by the exec session exit status.",
+  "all_requested_full_differential_gates_passed": true,
+  "run_scheduling": "The two functional QEMU gates were launched concurrently. Their durations are test provenance only and are not performance measurements.",
+  "exit_status_provenance": {
+    "before_build": "exec_command returned exit_code 1",
+    "after_build": "exec_command returned exit_code 0",
+    "CodeMemory": "write_stdin session 5109 returned exit_code 0",
+    "SetProcessMemoryPermission": "write_stdin session 8088 returned exit_code 0"
+  },
+  "duplicate_invocation_search": {
+    "command": "rg -n 'arm_jit_test\\.c|switch_jit/mock\\.c' --hidden -g '!.git' -g '!*.json' -g '!*.log' -g '!*.patch'",
+    "result": "No other duplicate-core invocation found in the repository; other matching compile recipes already compiled the fixture once."
+  },
+  "schema_version": 1,
+  "original_log_sha256": {
+    "/tmp/gp32-round4-switch-differential-before-build.log": "b78d5348e454281a47dfaca1d66c36ce070c36e601d26438da58d2c01d88c9e0",
+    "/tmp/gp32-round4-switch-differential-before-summary.log": "6a08c4b5916bab34910066afdd438b96649fa99c89af32b2e2e0093057581e8b",
+    "/tmp/gp32-round4-switch-differential-after-build.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "/tmp/gp32-round4-switch-differential-code-memory.log": "8d162529b082eadc863dae3d2900036e36318ffecee8d4f4e96791db07cd8cb9",
+    "/tmp/gp32-round4-switch-differential-permission.log": "8d162529b082eadc863dae3d2900036e36318ffecee8d4f4e96791db07cd8cb9"
+  },
+  "artifact_directory": "docs/benchmarks/1.1.0-round4/evidence/switch-ci",
+  "before_build_log": "before-build.log",
+  "before_build_summary": "before-summary.log",
+  "after_build_log": "after-build.log",
+  "commands_file": "commands.txt",
+  "workflow_patch": "workflow.patch",
+  "artifact_sha256": {
+    "before-build.log": "b78d5348e454281a47dfaca1d66c36ce070c36e601d26438da58d2c01d88c9e0",
+    "before-summary.log": "6a08c4b5916bab34910066afdd438b96649fa99c89af32b2e2e0093057581e8b",
+    "after-build.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "code-memory.log": "8d162529b082eadc863dae3d2900036e36318ffecee8d4f4e96791db07cd8cb9",
+    "permission.log": "8d162529b082eadc863dae3d2900036e36318ffecee8d4f4e96791db07cd8cb9",
+    "commands.txt": "d5056545a732a88d8c3015ded4c9cdaf1ad8b9836e928cdd4973a3e6c1412e24",
+    "workflow.patch": "d8ddcfdc142001423c3e5370b2aec58938e3f0d766185b013d438e50f1fd3c80",
+    "README.md": "62c4ce9331b0b533db2a0f034cd427fd9a1a2bcb227bf44542d32ca93a913059"
+  }
+}

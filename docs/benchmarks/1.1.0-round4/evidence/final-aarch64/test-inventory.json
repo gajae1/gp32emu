@@ -1,0 +1,1495 @@
+{
+  "backtraceGraph" : 
+  {
+    "commands" : 
+    [
+      "add_test"
+    ],
+    "files" : 
+    [
+      "/tmp/gp32-round4/CMakeLists.txt"
+    ],
+    "nodes" : 
+    [
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 91,
+        "parent" : 0
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 92,
+        "parent" : 2
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 93,
+        "parent" : 4
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 94,
+        "parent" : 6
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 95,
+        "parent" : 8
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 96,
+        "parent" : 10
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 97,
+        "parent" : 12
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 98,
+        "parent" : 14
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 99,
+        "parent" : 16
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 103,
+        "parent" : 18
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 107,
+        "parent" : 20
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 111,
+        "parent" : 22
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 112,
+        "parent" : 24
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 113,
+        "parent" : 26
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 114,
+        "parent" : 28
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 118,
+        "parent" : 30
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 122,
+        "parent" : 32
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 126,
+        "parent" : 34
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 127,
+        "parent" : 36
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 128,
+        "parent" : 38
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 129,
+        "parent" : 40
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 130,
+        "parent" : 42
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 137,
+        "parent" : 44
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 138,
+        "parent" : 46
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 139,
+        "parent" : 48
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 143,
+        "parent" : 50
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 144,
+        "parent" : 52
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 145,
+        "parent" : 54
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 146,
+        "parent" : 56
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 147,
+        "parent" : 58
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 148,
+        "parent" : 60
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 149,
+        "parent" : 62
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 150,
+        "parent" : 64
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 151,
+        "parent" : 66
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 152,
+        "parent" : 68
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 153,
+        "parent" : 70
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 154,
+        "parent" : 72
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 158,
+        "parent" : 74
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 159,
+        "parent" : 76
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 160,
+        "parent" : 78
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 161,
+        "parent" : 80
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 162,
+        "parent" : 82
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 163,
+        "parent" : 84
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 164,
+        "parent" : 86
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 165,
+        "parent" : 88
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 169,
+        "parent" : 90
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 170,
+        "parent" : 92
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 171,
+        "parent" : 94
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 172,
+        "parent" : 96
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 173,
+        "parent" : 98
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 174,
+        "parent" : 100
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 178,
+        "parent" : 102
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 182,
+        "parent" : 104
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 186,
+        "parent" : 106
+      }
+    ]
+  },
+  "kind" : "ctestInfo",
+  "tests" : 
+  [
+    {
+      "backtrace" : 1,
+      "command" : 
+      [
+        "/usr/bin/qemu-aarch64",
+        "-L",
+        "/usr/aarch64-linux-gnu",
+        "/tmp/gp32-round4-build-aarch64/ios_bridge_test",
+        "/tmp/gp32-round4-build-aarch64/ios-bridge-state.tmp"
+      ],
+      "name" : "ios_bridge",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round4-build-aarch64"
+        }
+      ]
+    },
+    {
+      "backtrace" : 3,
+      "command" : 
+      [
+        "/usr/bin/qemu-aarch64",
+        "-L",
+        "/usr/aarch64-linux-gnu",
+        "/tmp/gp32-round4-build-aarch64/libretro_audio_test",
+        "/tmp/gp32-round4-build-aarch64/audio-state.tmp"
+      ],
+      "name" : "libretro_audio",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round4-build-aarch64"
+        }
+      ]
+    },
+    {
+      "backtrace" : 5,
+      "command" : 
+      [
+        "/usr/bin/qemu-aarch64",
+        "-L",
+        "/usr/aarch64-linux-gnu",
+        "/tmp/gp32-round4-build-aarch64/audio_resampler_test"
+      ],
+      "name" : "audio_resampler",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round4-build-aarch64"
+        }
+      ]
+    },
+    {
+      "backtrace" : 7,
+      "command" : 
+      [
+        "/usr/bin/qemu-aarch64",
+        "-L",
+        "/usr/aarch64-linux-gnu",
+        "/tmp/gp32-round4-build-aarch64/libretro_persistence_test",
+        "/tmp/gp32-round4-build-aarch64/persistence"
+      ],
+      "name" : "libretro_persistence",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round4-build-aarch64"
+        }
+      ]
+    },
+    {
+      "backtrace" : 9,
+      "command" : 
+      [
+        "/usr/bin/qemu-aarch64",
+        "-L",
+        "/usr/aarch64-linux-gnu",
+        "/tmp/gp32-round4-build-aarch64/libretro_input_test"
+      ],
+      "name" : "libretro_input",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round4-build-aarch64"
+        }
+      ]
+    },
+    {
+      "backtrace" : 11,
+      "command" : 
+      [
+        "/usr/bin/qemu-aarch64",
+        "-L",
+        "/usr/aarch64-linux-gnu",
+        "/tmp/gp32-round4-build-aarch64/libretro_runahead_test",
+        "/tmp/gp32-round4-build-aarch64/runahead"
+      ],
+      "name" : "libretro_runahead",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round4-build-aarch64"
+        }
+      ]
+    },
+    {
+      "backtrace" : 13,
+      "command" : 
+      [
+        "/usr/bin/qemu-aarch64",
+        "-L",
+        "/usr/aarch64-linux-gnu",
+        "/tmp/gp32-round4-build-aarch64/input_script_test",
+        "/tmp/gp32-round4/tests/input_script_order.txt"
+      ],
+      "name" : "input_script",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round4-build-aarch64"
+        }
+      ]
+    },
+    {
+      "backtrace" : 15,
+      "command" : 
+      [
+        "/usr/bin/qemu-aarch64",
+        "-L",
+        "/usr/aarch64-linux-gnu",
+        "/tmp/gp32-round4-build-aarch64/arm_poll_test"
+      ],
+      "name" : "arm_poll",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round4-build-aarch64"
+        }
+      ]
+    },
+    {
+      "backtrace" : 17,
+      "command" : 
+      [
+        "/usr/bin/qemu-aarch64",
+        "-L",
+        "/usr/aarch64-linux-gnu",
+        "/tmp/gp32-round4-build-aarch64/arm_jit_test"
+      ],
+      "name" : "arm_jit",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round4-build-aarch64"
+        }
+      ]
+    },
+    {
+      "backtrace" : 19,
+      "command" : 
+      [
+        "/usr/bin/qemu-aarch64",
+        "-L",
+        "/usr/aarch64-linux-gnu",
+        "/tmp/gp32-round4-build-aarch64/arm_write_permission_test"
+      ],
+      "name" : "arm_write_permission",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round4-build-aarch64"
+        }
+      ]
+    },
+    {
+      "backtrace" : 21,
+      "command" : 
+      [
+        "/usr/bin/qemu-aarch64",
+        "-L",
+        "/usr/aarch64-linux-gnu",
+        "/tmp/gp32-round4-build-aarch64/arm_read_window_test"
+      ],
+      "name" : "arm_read_window",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round4-build-aarch64"
+        }
+      ]
+    },
+    {
+      "backtrace" : 23,
+      "command" : 
+      [
+        "/usr/bin/qemu-aarch64",
+        "-L",
+        "/usr/aarch64-linux-gnu",
+        "/tmp/gp32-round4-build-aarch64/arm_fetch_callback_test"
+      ],
+      "name" : "arm_fetch_callback",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round4-build-aarch64"
+        }
+      ]
+    },
+    {
+      "backtrace" : 25,
+      "command" : 
+      [
+        "/usr/bin/qemu-aarch64",
+        "-L",
+        "/usr/aarch64-linux-gnu",
+        "/tmp/gp32-round4-build-aarch64/arm_translation_test"
+      ],
+      "name" : "arm_translation",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round4-build-aarch64"
+        }
+      ]
+    },
+    {
+      "backtrace" : 27,
+      "command" : 
+      [
+        "/usr/bin/qemu-aarch64",
+        "-L",
+        "/usr/aarch64-linux-gnu",
+        "/tmp/gp32-round4-build-aarch64/arm_accelerator_test"
+      ],
+      "name" : "arm_accelerator",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round4-build-aarch64"
+        }
+      ]
+    },
+    {
+      "backtrace" : 29,
+      "command" : 
+      [
+        "/usr/bin/qemu-aarch64",
+        "-L",
+        "/usr/aarch64-linux-gnu",
+        "/tmp/gp32-round4-build-aarch64/arm_exception_test"
+      ],
+      "name" : "arm_exception",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round4-build-aarch64"
+        }
+      ]
+    },
+    {
+      "backtrace" : 31,
+      "command" : 
+      [
+        "/usr/bin/qemu-aarch64",
+        "-L",
+        "/usr/aarch64-linux-gnu",
+        "/tmp/gp32-round4-build-aarch64/arm_thumb_transfer_test"
+      ],
+      "name" : "arm_thumb_transfer",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round4-build-aarch64"
+        }
+      ]
+    },
+    {
+      "backtrace" : 33,
+      "command" : 
+      [
+        "/usr/bin/qemu-aarch64",
+        "-L",
+        "/usr/aarch64-linux-gnu",
+        "/tmp/gp32-round4-build-aarch64/arm_thumb_alu_test"
+      ],
+      "name" : "arm_thumb_alu",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round4-build-aarch64"
+        }
+      ]
+    },
+    {
+      "backtrace" : 35,
+      "command" : 
+      [
+        "/usr/bin/qemu-aarch64",
+        "-L",
+        "/usr/aarch64-linux-gnu",
+        "/tmp/gp32-round4-build-aarch64/arm_thumb_pc_test"
+      ],
+      "name" : "arm_thumb_pc",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round4-build-aarch64"
+        }
+      ]
+    },
+    {
+      "backtrace" : 37,
+      "command" : 
+      [
+        "/usr/bin/qemu-aarch64",
+        "-L",
+        "/usr/aarch64-linux-gnu",
+        "/tmp/gp32-round4-build-aarch64/arm_code_write_test"
+      ],
+      "name" : "arm_code_write",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round4-build-aarch64"
+        }
+      ]
+    },
+    {
+      "backtrace" : 39,
+      "command" : 
+      [
+        "/usr/bin/qemu-aarch64",
+        "-L",
+        "/usr/aarch64-linux-gnu",
+        "/tmp/gp32-round4-build-aarch64/arm_cpu_code_write_test"
+      ],
+      "name" : "arm_cpu_code_write",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round4-build-aarch64"
+        }
+      ]
+    },
+    {
+      "backtrace" : 41,
+      "command" : 
+      [
+        "/usr/bin/qemu-aarch64",
+        "-L",
+        "/usr/aarch64-linux-gnu",
+        "/tmp/gp32-round4-build-aarch64/s3c2400_timing_test"
+      ],
+      "name" : "s3c2400_timing",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round4-build-aarch64"
+        }
+      ]
+    },
+    {
+      "backtrace" : 43,
+      "command" : 
+      [
+        "/usr/bin/qemu-aarch64",
+        "-L",
+        "/usr/aarch64-linux-gnu",
+        "/tmp/gp32-round4-build-aarch64/s3c2400_iis_irq_test"
+      ],
+      "name" : "s3c2400_iis_irq",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round4-build-aarch64"
+        }
+      ]
+    },
+    {
+      "backtrace" : 45,
+      "command" : 
+      [
+        "/usr/bin/qemu-aarch64",
+        "-L",
+        "/usr/aarch64-linux-gnu",
+        "/tmp/gp32-round4-build-aarch64/s3c2400_dma_test"
+      ],
+      "name" : "s3c2400_dma",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round4-build-aarch64"
+        }
+      ]
+    },
+    {
+      "backtrace" : 47,
+      "command" : 
+      [
+        "/usr/bin/qemu-aarch64",
+        "-L",
+        "/usr/aarch64-linux-gnu",
+        "/tmp/gp32-round4-build-aarch64/s3c2400_muted_dma_test"
+      ],
+      "name" : "s3c2400_muted_dma",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round4-build-aarch64"
+        }
+      ]
+    },
+    {
+      "backtrace" : 49,
+      "command" : 
+      [
+        "/usr/bin/qemu-aarch64",
+        "-L",
+        "/usr/aarch64-linux-gnu",
+        "/tmp/gp32-round4-build-aarch64/s3c2400_irq_test"
+      ],
+      "name" : "s3c2400_irq",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round4-build-aarch64"
+        }
+      ]
+    },
+    {
+      "backtrace" : 51,
+      "command" : 
+      [
+        "/usr/bin/qemu-aarch64",
+        "-L",
+        "/usr/aarch64-linux-gnu",
+        "/tmp/gp32-round4-build-aarch64/s3c2400_priority_test"
+      ],
+      "name" : "s3c2400_priority",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round4-build-aarch64"
+        }
+      ]
+    },
+    {
+      "backtrace" : 53,
+      "command" : 
+      [
+        "/usr/bin/qemu-aarch64",
+        "-L",
+        "/usr/aarch64-linux-gnu",
+        "/tmp/gp32-round4-build-aarch64/s3c2400_lcd_test"
+      ],
+      "name" : "s3c2400_lcd",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round4-build-aarch64"
+        }
+      ]
+    },
+    {
+      "backtrace" : 55,
+      "command" : 
+      [
+        "/usr/bin/qemu-aarch64",
+        "-L",
+        "/usr/aarch64-linux-gnu",
+        "/tmp/gp32-round4-build-aarch64/s3c2400_scanout_test"
+      ],
+      "name" : "s3c2400_scanout",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round4-build-aarch64"
+        }
+      ]
+    },
+    {
+      "backtrace" : 57,
+      "command" : 
+      [
+        "/usr/bin/qemu-aarch64",
+        "-L",
+        "/usr/aarch64-linux-gnu",
+        "/tmp/gp32-round4-build-aarch64/s3c2400_pwm_test"
+      ],
+      "name" : "s3c2400_pwm",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round4-build-aarch64"
+        }
+      ]
+    },
+    {
+      "backtrace" : 59,
+      "command" : 
+      [
+        "/usr/bin/qemu-aarch64",
+        "-L",
+        "/usr/aarch64-linux-gnu",
+        "/tmp/gp32-round4-build-aarch64/s3c2400_gpio_test"
+      ],
+      "name" : "s3c2400_gpio",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round4-build-aarch64"
+        }
+      ]
+    },
+    {
+      "backtrace" : 61,
+      "command" : 
+      [
+        "/usr/bin/qemu-aarch64",
+        "-L",
+        "/usr/aarch64-linux-gnu",
+        "/tmp/gp32-round4-build-aarch64/s3c2400_state_test"
+      ],
+      "name" : "s3c2400_state",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round4-build-aarch64"
+        }
+      ]
+    },
+    {
+      "backtrace" : 63,
+      "command" : 
+      [
+        "/usr/bin/qemu-aarch64",
+        "-L",
+        "/usr/aarch64-linux-gnu",
+        "/tmp/gp32-round4-build-aarch64/gp32_pcm_test"
+      ],
+      "name" : "gp32_pcm",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round4-build-aarch64"
+        }
+      ]
+    },
+    {
+      "backtrace" : 65,
+      "command" : 
+      [
+        "/usr/bin/qemu-aarch64",
+        "-L",
+        "/usr/aarch64-linux-gnu",
+        "/tmp/gp32-round4-build-aarch64/gp32_timer_test"
+      ],
+      "name" : "gp32_timer",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round4-build-aarch64"
+        }
+      ]
+    },
+    {
+      "backtrace" : 67,
+      "command" : 
+      [
+        "/usr/bin/qemu-aarch64",
+        "-L",
+        "/usr/aarch64-linux-gnu",
+        "/tmp/gp32-round4-build-aarch64/gp32_callback_test",
+        "/tmp/gp32-round4-build-aarch64/callback-state.tmp"
+      ],
+      "name" : "gp32_callback",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round4-build-aarch64"
+        }
+      ]
+    },
+    {
+      "backtrace" : 69,
+      "command" : 
+      [
+        "/usr/bin/qemu-aarch64",
+        "-L",
+        "/usr/aarch64-linux-gnu",
+        "/tmp/gp32-round4-build-aarch64/gp32_swi_1ff_test"
+      ],
+      "name" : "gp32_swi_1ff",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round4-build-aarch64"
+        }
+      ]
+    },
+    {
+      "backtrace" : 71,
+      "command" : 
+      [
+        "/usr/bin/qemu-aarch64",
+        "-L",
+        "/usr/aarch64-linux-gnu",
+        "/tmp/gp32-round4-build-aarch64/gp32_wait_test",
+        "/tmp/gp32-round4-build-aarch64/wait-state.tmp"
+      ],
+      "name" : "gp32_wait",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round4-build-aarch64"
+        }
+      ]
+    },
+    {
+      "backtrace" : 73,
+      "command" : 
+      [
+        "/usr/bin/qemu-aarch64",
+        "-L",
+        "/usr/aarch64-linux-gnu",
+        "/tmp/gp32-round4-build-aarch64/gp32_file_test",
+        "/tmp/gp32-round4/tests/data/dotted-entry.zip"
+      ],
+      "name" : "gp32_file",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round4-build-aarch64"
+        }
+      ]
+    },
+    {
+      "backtrace" : 75,
+      "command" : 
+      [
+        "/usr/bin/qemu-aarch64",
+        "-L",
+        "/usr/aarch64-linux-gnu",
+        "/tmp/gp32-round4-build-aarch64/gp32_hle_memory_test"
+      ],
+      "name" : "gp32_hle_memory",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round4-build-aarch64"
+        }
+      ]
+    },
+    {
+      "backtrace" : 77,
+      "command" : 
+      [
+        "/usr/bin/qemu-aarch64",
+        "-L",
+        "/usr/aarch64-linux-gnu",
+        "/tmp/gp32-round4-build-aarch64/gp32_codec_test"
+      ],
+      "name" : "gp32_codec",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round4-build-aarch64"
+        }
+      ]
+    },
+    {
+      "backtrace" : 79,
+      "command" : 
+      [
+        "/usr/bin/qemu-aarch64",
+        "-L",
+        "/usr/aarch64-linux-gnu",
+        "/tmp/gp32-round4-build-aarch64/gp32_eeprom_test"
+      ],
+      "name" : "gp32_eeprom",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round4-build-aarch64"
+        }
+      ]
+    },
+    {
+      "backtrace" : 81,
+      "command" : 
+      [
+        "/usr/bin/qemu-aarch64",
+        "-L",
+        "/usr/aarch64-linux-gnu",
+        "/tmp/gp32-round4-build-aarch64/gp32_shadow_test"
+      ],
+      "name" : "gp32_shadow",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round4-build-aarch64"
+        }
+      ]
+    },
+    {
+      "backtrace" : 83,
+      "command" : 
+      [
+        "/usr/bin/qemu-aarch64",
+        "-L",
+        "/usr/aarch64-linux-gnu",
+        "/tmp/gp32-round4-build-aarch64/gp32_game_fix_test"
+      ],
+      "name" : "gp32_game_fix",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round4-build-aarch64"
+        }
+      ]
+    },
+    {
+      "backtrace" : 85,
+      "command" : 
+      [
+        "/usr/bin/qemu-aarch64",
+        "-L",
+        "/usr/aarch64-linux-gnu",
+        "/tmp/gp32-round4-build-aarch64/gp32_pinball_fix_test"
+      ],
+      "name" : "gp32_pinball_fix",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round4-build-aarch64"
+        }
+      ]
+    },
+    {
+      "backtrace" : 87,
+      "command" : 
+      [
+        "/usr/bin/qemu-aarch64",
+        "-L",
+        "/usr/aarch64-linux-gnu",
+        "/tmp/gp32-round4-build-aarch64/gp32_fast_load_test"
+      ],
+      "name" : "gp32_fast_load",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round4-build-aarch64"
+        }
+      ]
+    },
+    {
+      "backtrace" : 89,
+      "command" : 
+      [
+        "/usr/bin/qemu-aarch64",
+        "-L",
+        "/usr/aarch64-linux-gnu",
+        "/tmp/gp32-round4-build-aarch64/gp32_state_test",
+        "/tmp/gp32-round4-build-aarch64/gp32-state.tmp"
+      ],
+      "name" : "gp32_state",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round4-build-aarch64"
+        }
+      ]
+    },
+    {
+      "backtrace" : 91,
+      "command" : 
+      [
+        "/usr/bin/qemu-aarch64",
+        "-L",
+        "/usr/aarch64-linux-gnu",
+        "/tmp/gp32-round4-build-aarch64/gp32_state_speed_test",
+        "/tmp/gp32-round4-build-aarch64/gp32-state-speed.tmp"
+      ],
+      "name" : "gp32_state_speed",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round4-build-aarch64"
+        }
+      ]
+    },
+    {
+      "backtrace" : 93,
+      "command" : 
+      [
+        "/usr/bin/qemu-aarch64",
+        "-L",
+        "/usr/aarch64-linux-gnu",
+        "/tmp/gp32-round4-build-aarch64/gp32_media_png_test",
+        "/tmp/gp32-round4-build-aarch64"
+      ],
+      "name" : "gp32_media_png",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round4-build-aarch64"
+        }
+      ]
+    },
+    {
+      "backtrace" : 95,
+      "command" : 
+      [
+        "/usr/bin/qemu-aarch64",
+        "-L",
+        "/usr/aarch64-linux-gnu",
+        "/tmp/gp32-round4-build-aarch64/smartmedia_test"
+      ],
+      "name" : "smartmedia",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round4-build-aarch64"
+        }
+      ]
+    },
+    {
+      "backtrace" : 97,
+      "command" : 
+      [
+        "/usr/bin/qemu-aarch64",
+        "-L",
+        "/usr/aarch64-linux-gnu",
+        "/tmp/gp32-round4-build-aarch64/smartmedia_capacity_test"
+      ],
+      "name" : "smartmedia_capacity",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round4-build-aarch64"
+        }
+      ]
+    },
+    {
+      "backtrace" : 99,
+      "command" : 
+      [
+        "/usr/bin/qemu-aarch64",
+        "-L",
+        "/usr/aarch64-linux-gnu",
+        "/tmp/gp32-round4-build-aarch64/savestate_session_test"
+      ],
+      "name" : "savestate_session",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round4-build-aarch64"
+        }
+      ]
+    },
+    {
+      "backtrace" : 101,
+      "command" : 
+      [
+        "/usr/bin/qemu-aarch64",
+        "-L",
+        "/usr/aarch64-linux-gnu",
+        "/tmp/gp32-round4-build-aarch64/atomic_save_test",
+        "/tmp/gp32-round4-build-aarch64/atomic-save"
+      ],
+      "name" : "atomic_save",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round4-build-aarch64"
+        }
+      ]
+    },
+    {
+      "backtrace" : 103,
+      "command" : 
+      [
+        "/usr/bin/qemu-aarch64",
+        "-L",
+        "/usr/aarch64-linux-gnu",
+        "/tmp/gp32-round4-build-aarch64/arm_jit_recycle_test"
+      ],
+      "name" : "arm_jit_recycle",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round4-build-aarch64"
+        }
+      ]
+    },
+    {
+      "backtrace" : 105,
+      "command" : 
+      [
+        "/usr/bin/qemu-aarch64",
+        "-L",
+        "/usr/aarch64-linux-gnu",
+        "/tmp/gp32-round4-build-aarch64/arm_jit_policy_test"
+      ],
+      "name" : "arm_jit_policy",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round4-build-aarch64"
+        }
+      ]
+    },
+    {
+      "backtrace" : 107,
+      "command" : 
+      [
+        "/usr/bin/qemu-aarch64",
+        "-L",
+        "/usr/aarch64-linux-gnu",
+        "/tmp/gp32-round4-build-aarch64/arm_alu_differential_test"
+      ],
+      "name" : "arm_alu_differential",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round4-build-aarch64"
+        }
+      ]
+    }
+  ],
+  "version" : 
+  {
+    "major" : 1,
+    "minor" : 0
+  }
+}

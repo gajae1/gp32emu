@@ -1,0 +1,102 @@
+{
+  "baseline_public_commit": "b141220cd5fd9d628305133fc963ed86a30f7e41",
+  "baseline_tree": "4aa7e7db55a749eadad7a4a5f423f62de32afb68",
+  "source_freeze_local_commit": "eebb337b7133fa19b330fe82fd9f002fa215b8b4",
+  "source_freeze_public_commit": "af387eaeb0687b250e8815a1795cb88b709195ee",
+  "source_freeze_tree": "dd3b0d94445c3053d95faba2d59fd71fd7d9df65",
+  "created_via": "GitHub connector; each tree verified equal to the local tree before commit creation",
+  "commits": [
+    {
+      "local_commit": "667ee0b5786673f432ab8fbbe6ca5a9a72d4008e",
+      "public_commit": "5a5dbe2572bf70c3a36c9accf0724e5513660d67",
+      "tree": "edce3713f9c969667115b88c1c2594a437e92040",
+      "tree_equal": true,
+      "message": "Require a complete BIOS mapping for cached direct reads"
+    },
+    {
+      "local_commit": "f74df53452ebc828d47023037d7a4a5d50edfab8",
+      "public_commit": "161b0e868487feb263f7394d0a24b6b4a12b5ea3",
+      "tree": "0981626b08d60bb99d5b5544422e1976bc3d05ce",
+      "tree_equal": true,
+      "message": "Fix software DMA request gating and retriggering"
+    },
+    {
+      "local_commit": "fa11e03529042b982fe33fc53c925a4d4ad14488",
+      "public_commit": "366d75f8c295424008e58055239b5965653103fa",
+      "tree": "7f5bbadb7768429364c56430335c91729889ad80",
+      "tree_equal": true,
+      "message": "Bulk clear HLE RAM and revoke overwritten decoded code"
+    },
+    {
+      "local_commit": "3a01eb82cafc9a772457fd8731cdc9536e31aefc",
+      "public_commit": "757ca74234cc013e2600ccba849996f181e3b633",
+      "tree": "65eb538470e0a804b12c1479cff94a1fa2cae614",
+      "tree_equal": true,
+      "message": "fix(cpu): reject unallocated ARMv4T control encodings"
+    },
+    {
+      "local_commit": "ae54d2714f1f2c09bc85c1eff9752914ffe0ccfb",
+      "public_commit": "49e87b675ee89a6a2c857c49f246cf11af43832d",
+      "tree": "3c752b27b26b9613e560199e3a0f4fc67b8f2a9e",
+      "tree_equal": true,
+      "message": "Implement S3C2400 IRQ priority arbitration and rotation"
+    },
+    {
+      "local_commit": "618e6600aa201ac182498c22a301b8ec6c03f1ae",
+      "public_commit": "9bacbbc09ec6f6ff0f90888ae4b6d5dfa4213288",
+      "tree": "c623ed3151b080aaae4089a002534cbb74175a9f",
+      "tree_equal": true,
+      "message": "Preserve callback-backed instruction fetch order and in-flight state"
+    },
+    {
+      "local_commit": "636a0a820822361ff492376402e4f3a21d1a65b7",
+      "public_commit": "58fc99345618271b5c51413224f3856b4240a1c6",
+      "tree": "4c00957116079ec3e8d4243c97414409480e9e5c",
+      "tree_equal": true,
+      "message": "Invalidate decoded code after HLE EEPROM reads"
+    },
+    {
+      "local_commit": "cf9a0ce67e763d0bea8e047a89de0ac7383af6b3",
+      "public_commit": "9379c5e0e5afa37e45237f45f2b65984029fa634",
+      "tree": "bfca3ea3b879cc2cb2de999cf4b5dd613aeb1c7c",
+      "tree_equal": true,
+      "message": "Reject saved framebuffer dimensions outside fixed storage"
+    },
+    {
+      "local_commit": "7dfd102bcb15c95771de0a850bb298701059e8f1",
+      "public_commit": "aab97fdb3cfe97db9fc13128fc3958293fa4cfdc",
+      "tree": "3ea1c4a45dad168c42b1f151b41b759964aba669",
+      "tree_equal": true,
+      "message": "perf(cpu): iterate selected Thumb transfer registers"
+    },
+    {
+      "local_commit": "f52b1e05ef6ad9cdfa874d80556d4e44a003cad8",
+      "public_commit": "219ec97138ee363ac9017f10e28cec98b6d98712",
+      "tree": "b9ac0beccde7112eee447692e3cb39e3719c92df",
+      "tree_equal": true,
+      "message": "Validate HLE application-query outputs with bounded RAM spans"
+    },
+    {
+      "local_commit": "860d5e7bf8e6e156487789f851caa761234c76d4",
+      "public_commit": "08ac41a83867cb00f512686232a28bb8f21c9b0e",
+      "tree": "cdc372b13bcad5c28cac900116b69bc7008fab43",
+      "tree_equal": true,
+      "message": "Preserve exact live clock phases around state operations"
+    },
+    {
+      "local_commit": "06c4d879543f90d1003d174718d738e27a8ed6b8",
+      "public_commit": "aa54dfc0f2b63b7d81e8c68be249ecc7431304d6",
+      "tree": "1fd43d466c20f9dd3e470a6a1f065f3ca283f70e",
+      "tree_equal": true,
+      "message": "Keep eligible x64 forward branches inside native blocks\n\nReuse the existing A64 straight-line target proof and count skipped operations in the saved R15 register. Preserve exact retirement on every helper and terminal exit, invalidate forwarded values at joins, and keep poll and short-budget handling intact.\n\nAdd predicate, join, callback and budget coverage, plus checked profiling and timing drivers with untaken, no-forward and cold-translation controls. GCC/Clang native timings show taken-path gains while retaining the measured translation and untaken costs for documentation."
+    },
+    {
+      "local_commit": "eebb337b7133fa19b330fe82fd9f002fa215b8b4",
+      "public_commit": "af387eaeb0687b250e8815a1795cb88b709195ee",
+      "tree": "dd3b0d94445c3053d95faba2d59fd71fd7d9df65",
+      "tree_equal": true,
+      "message": "test(arm): honor complete native BIOS mappings in fixtures\n\nAllocate the complete BIOS window for native coverage. Keep literal data callback-backed without disabling instruction fetch, and move observable MMU tables outside the complete BIOS and RAM mappings. Preserve every native and architectural assertion."
+    }
+  ],
+  "publication_policy": "Advance the existing draft branch once, using expected baseline SHA and force=false, after final verification and documentation; source objects are prepared without moving the branch."
+}
