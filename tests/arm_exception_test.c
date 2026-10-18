@@ -8,7 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define BIOS_SIZE 0x10000u
+#define BIOS_SIZE 0x80000u /* native JIT requires the complete BIOS window */
 #define RAM_BASE  0x0c000000u
 #define RAM_SIZE  0x800000u
 #define CODE_ADDR 0x00000400u

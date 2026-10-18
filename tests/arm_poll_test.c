@@ -15,7 +15,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define BIOS_SIZE 0x10000u            /* mapped at physical 0x00000000 */
+#define BIOS_SIZE 0x80000u            /* native JIT requires the complete BIOS window */
 #define RAM_BASE  0x0c000000u         /* GP32 SDRAM window */
 #define RAM_SIZE  0x800000u           /* native JIT requires the full GP32 window */
 #define CODE_ADDR 0x00000400u         /* program base inside the BIOS region */
@@ -25,6 +25,8 @@
 #define STORE_ADDR (RAM_BASE + 0x2000u)
 #define STACK_TOP (RAM_BASE + 0x8000u)
 #define MMIO_BASE 0x14000000u         /* S3C2400-style register window, no memory */
+#define PAGE_TABLE_BASE 0x12000000u   /* callback-backed memory outside BIOS/RAM */
+#define PAGE_TABLE_SIZE 0x4000u
 #define IRQ_VECTOR 0x18u
 #define CPSR_MODE_MASK 0x1fu
 #define CPSR_I_FLAG 0x80u
@@ -35,6 +37,7 @@ typedef struct {
     arm_bus_t bus;
     uint8_t bios[BIOS_SIZE];
     uint8_t ram[RAM_SIZE];
+    uint8_t page_table[PAGE_TABLE_SIZE];
     int fastmem_bios;
     int fastmem_ram;
     int reject_fastmem_writes;             /* reads still expose backing RAM */
@@ -75,6 +78,9 @@ static uint8_t *bus_ptr(test_bus_t *b, uint32_t a, size_t bytes) {
     if (a < BIOS_SIZE && bytes <= BIOS_SIZE - a) return b->bios + a;
     if (a >= RAM_BASE && a - RAM_BASE <= RAM_SIZE && bytes <= RAM_SIZE - (a - RAM_BASE))
         return b->ram + (a - RAM_BASE);
+    if (a >= PAGE_TABLE_BASE && a - PAGE_TABLE_BASE <= PAGE_TABLE_SIZE &&
+        bytes <= PAGE_TABLE_SIZE - (a - PAGE_TABLE_BASE))
+        return b->page_table + (a - PAGE_TABLE_BASE);
     return NULL;
 }
 
@@ -378,15 +384,16 @@ static void case_poll_exits(void) {
 }
 
 /* PC-relative literal load marked stable: supported form, identical state and
- * far fewer bus reads. BIOS fastmem is disabled entirely: the core caches a
- * whole-region base pointer from a single probe, so only disabling the region
- * keeps fetches and the literal observable on read32. */
+ * far fewer data reads. Only the literal uses callbacks; direct code fetches
+ * permit acceleration without skipping observable instruction callbacks.
+ * The hole also declines the whole-BIOS mapping, keeping the literal visible. */
 static void case_literal(void) {
     current_case = "literal";
     setup_pair(0);
     load_prog(PROG_LIT, sizeof(PROG_LIT) / sizeof(PROG_LIT[0]));
     for (test_bus_t *b = &bus_fast; b; b = (b == &bus_fast) ? &bus_ref : NULL) {
-        b->fastmem_bios = 0;
+        b->no_fast_lo = LIT_ADDR;
+        b->no_fast_hi = LIT_ADDR + 4u;
     }
     store_both(LIT_ADDR, 0u);
     add_stable(&bus_fast, LIT_ADDR);
@@ -1443,11 +1450,11 @@ static void case_counted_mmu(void) {
         load_words(&bus_fast, code, PROG_COUNTED, sizeof(PROG_COUNTED) / sizeof(PROG_COUNTED[0]));
         load_words(&bus_ref, code, PROG_COUNTED, sizeof(PROG_COUNTED) / sizeof(PROG_COUNTED[0]));
         set_reg_both(15, code);
-        /* Page-table callbacks stay observable outside the full direct RAM
-         * window required by the native backend. */
-        const uint32_t table = 0xc000u;
+        /* Page-table callbacks stay observable outside the full direct BIOS
+         * and RAM windows required by the native backend. */
+        const uint32_t table = PAGE_TABLE_BASE;
         bus_fast.no_fast_lo = bus_ref.no_fast_lo = table;
-        bus_fast.no_fast_hi = bus_ref.no_fast_hi = table + 0x4000u;
+        bus_fast.no_fast_hi = bus_ref.no_fast_hi = table + PAGE_TABLE_SIZE;
         if (jit) bus_fast.fastmem_ram = bus_ref.fastmem_ram = 1;
         set_reg_both(0, 0x10000000u);
         set_reg_both(1, variant == 1 ? 0x11000000u : 0x10001000u);
