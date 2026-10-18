@@ -573,51 +573,6 @@ ARM_FORCE_INLINE uint32_t raw32(arm920t_t *c, uint32_t a) {
     return p ? gp32_ld32le(p) : c->bus.read32(c->bus.user, a);
 }
 
-/* Read a mapping without a TLB refill, fault state or MMIO access. */
-static int arm_peek_table_mapping(arm920t_t *c, uint32_t va, uint32_t *pa, uint32_t *mask_out) {
-    uint32_t mask, base;
-    const uint8_t *p = fastmem(c, (c->cp15[2] & 0xffffc000u) | ((va >> 18) & 0x3ffcu), 4u, 0);
-    if (!p) return 0;
-    uint32_t d1 = gp32_ld32le(p);
-    if ((d1 & 3u) == 2u) {
-        mask = 0x000fffffu;
-        base = d1 & 0xfff00000u;
-    } else if ((d1 & 3u) == 1u) {
-        p = fastmem(c, (d1 & 0xfffffc00u) | ((va >> 10) & 0x3fcu), 4u, 0);
-        if (!p) return 0;
-        uint32_t d2 = gp32_ld32le(p);
-        switch (d2 & 3u) {
-        case 1: mask = 0x0000ffffu; base = d2 & 0xffff0000u; break;
-        case 2: mask = 0x00000fffu; base = d2 & 0xfffff000u; break;
-        case 3: mask = 0x000003ffu; base = d2 & 0xfffffc00u; break;
-        default: return 0;
-        }
-    } else return 0;
-    *pa = base | (va & mask);
-    *mask_out = mask;
-    return 1;
-}
-
-/* An entry covers only its indexed 4KiB slot (or a tiny subpage) in this
- * direct-mapped TLB. Check that entire span, including a large mapping which
- * the current tables have split into smaller pages. */
-static int tlb_evicted_mapping_unchanged(arm920t_t *c, unsigned idx) {
-    const arm_tlb_entry_t *e = &c->itlb_entry[idx];
-    if ((e->mask != 0x3ffu && e->mask != 0xfffu &&
-         e->mask != 0xffffu && e->mask != 0xfffffu) ||
-        (e->va_base & e->mask) || (e->pa_base & e->mask)) return 0;
-    uint32_t cur = e->va_base | (((uint32_t)idx << 12) & e->mask);
-    uint32_t end = cur | (e->mask & 0xfffu);
-    for (;;) {
-        uint32_t pa, mask;
-        if (!arm_peek_table_mapping(c, cur, &pa, &mask) ||
-            pa != (e->pa_base | (cur & e->mask))) return 0;
-        uint32_t stop = cur | mask;
-        if (stop >= end) return 1;
-        cur = stop + 1u;
-    }
-}
-
 #if defined(ARM_JIT_NATIVE_A64)
 static void tlb_rebuild_jit_page(arm920t_t *c, unsigned idx) {
     const arm_tlb_entry_t *e = &c->tlb_entry[idx];
@@ -1954,14 +1909,11 @@ static void exec_thumb(arm920t_t *c) {
     exception_enter(c, MODE_UND, 0x04, pc + 2, 0);
 }
 
-/* The fetch translation the interpreter would use for va right now, with no
- * side effect: a matching TLB entry wins exactly as in mmu_translate; on a
- * miss the current tables are read through fastmem only. Nothing refills the
- * TLB, records fault state or reads an MMIO callback. A descriptor outside
- * fastmem, a fault/identity fallback, or a mapping too small for the word is
- * unprovable. The TLB indexes VA bits 12..23, so the BIOS pages and the first
- * RAM pages share slots; without the walk, every guest I-cache invalidation
- * forced recompilation of whichever side had just been evicted. */
+/* Prove a currently resident instruction mapping without changing TLB state,
+ * recording a fault or reading device callbacks. Search the fast lookup and
+ * resident I-TLB bank, but never consult current page tables on a miss: an
+ * unresident mapping must first go through the ordinary instruction fetch.
+ * The mapped span must contain the complete instruction word. */
 ARM_FORCE_INLINE int arm_jit_peek_translate(arm920t_t *c, uint32_t va, uint32_t *pa, uint32_t *mask_out) {
     const arm_tlb_entry_t *e = itlb_find(c, va);
     uint32_t mask, base;
@@ -2000,10 +1952,10 @@ static uint32_t arm_jit_fetch_word(arm920t_t *c, uint32_t pc) {
     return insn;
 }
 
-/* Speculative collection requires a resident mapping. A table walk could
- * admit a cold callee whose subsequent ordinary decode fetch refills the TLB
- * before an earlier guest data access executes. Cache revalidation may walk
- * tables, but collecting future instructions must not cause that early refill. */
+/* Speculative collection requires a resident fast I-TLB entry. A table walk
+ * could admit a cold callee whose subsequent ordinary decode fetch refills
+ * the TLB before an earlier guest data access executes. Revalidation can
+ * also search the resident bank, but neither proof path walks page tables. */
 ARM_FORCE_INLINE int arm_jit_peek_fetch(arm920t_t *c, uint32_t pc, uint32_t *insn) {
     uint32_t pa = pc;
     if (pa & 3u) return 0;
@@ -2021,10 +1973,10 @@ ARM_FORCE_INLINE int arm_jit_peek_fetch(arm920t_t *c, uint32_t pc, uint32_t *ins
 }
 
 /* Prove len consecutive fetches from pc against want (or the decoded ops when
- * want is NULL), allowing fastmem table walks on a missing TLB entry. A chunk
- * stays inside one 4 KiB TLB slot and one mapping, where every word passes the
- * same entry checks as the first and maps to consecutive physical addresses;
- * a fastmem span succeeds only when each word in it would. */
+ * want is NULL), using resident instruction mappings when the MMU is enabled.
+ * A chunk stays inside one 4 KiB TLB slot and one mapping, where every word
+ * passes the same entry checks as the first and maps to consecutive physical
+ * addresses; a fastmem span succeeds only when each word in it would. */
 static int arm_jit_prove_run(arm920t_t *c, uint32_t pc, unsigned len,
                              const uint32_t *want, const arm_jit_op_t *ops,
                              unsigned tlb_alias) {
