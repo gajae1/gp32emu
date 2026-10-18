@@ -1899,7 +1899,20 @@ static void exec_thumb(arm920t_t *c) {
         uint32_t list=op&0xffu; int pop=!!(op&0x0800), pc_lr=!!(op&0x0100);
         /* Multiple transfers ignore address bits 1:0 at the bus, not in SP. */
         if(pop){ for(unsigned r=0;r<8;r++) if(list&(1u<<r)){c->r[r]=rb32(c,c->r[13]&~3u); c->r[13]+=4;} if(pc_lr){uint32_t v=rb32(c,c->r[13]&~3u); c->r[13]+=4; write_r(c,15u,v);} }
-        else { if(pc_lr){c->r[13]-=4; wb32(c,c->r[13]&~3u,c->r[14]);} for(int r=7;r>=0;r--) if(list&(1u<<r)){c->r[13]-=4; wb32(c,c->r[13]&~3u,c->r[r]);} }
+        else {
+            /* PUSH is STMDB SP!: the lowest register/address transfers
+             * first, including on the device bus (S3C2400 manual 3-41,
+             * 4-31). Calculate the full range before the first callback. */
+            unsigned count = (unsigned)pc_lr;
+            for (unsigned r = 0; r < 8u; ++r) count += (list >> r) & 1u;
+            uint32_t final_sp = c->r[13] - 4u * count, addr = final_sp & ~3u;
+            for (unsigned r = 0; r < 8u; ++r) if (list & (1u << r)) {
+                wb32(c, addr, c->r[r]);
+                addr += 4u;
+            }
+            if (pc_lr) wb32(c, addr, c->r[14]);
+            c->r[13] = final_sp;
+        }
         return;
     }
     if ((op & 0xf000u) == 0xc000u) { /* multiple load/store */

@@ -389,7 +389,7 @@ static void case_thumb_multiple_alignment(int jit) {
             }
             if (callbacks) {
                 CHECK(data_accesses, kind < 2u ? 2u : 3u, "one callback per transferred word");
-                CHECK(data_addresses[0], kind == 2u ? TADDR + 8u : TADDR, "aligned first bus access");
+                CHECK(data_addresses[0], TADDR, "aligned first bus access");
                 CHECK(data_addresses[1], TADDR + 4u, "aligned second bus access");
             }
             arm920t_destroy(c);
