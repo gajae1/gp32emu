@@ -1105,13 +1105,6 @@ static void dma_trigger(s3c2400_t *s, int ch) {
     }
 }
 
-static void dma_start(s3c2400_t *s, int ch) {
-    uint32_t *r = &s->dma[ch << 3];
-    dma_reload(s, ch);
-    if (!GP32_BIT(r[2], 23)) dma_trigger(s, ch); /* software request only */
-}
-
-
 static void pwm_refresh_clock_cache(s3c2400_t *s) {
     static const uint32_t mux_table[4] = { 2u, 4u, 8u, 16u };
     static const unsigned prescaler_shift[5] = { 0, 0, 8, 8, 8 };
@@ -1440,9 +1433,16 @@ static void io_write32(s3c2400_t *s, uint32_t addr, uint32_t value, uint32_t mas
                 dr[4] = 0;
                 dr[5] = 0;
                 dr[6] &= ~2u;
-            } else if (((old ^ now) & 2u) && (now & 2u)) {
-                if (!GP32_BIT(dr[2], 23)) dr[6] &= ~1u; /* SW_TRIG is self-clearing when accepted. */
-                dma_start(s, ch);
+            } else {
+                if (((old ^ now) & 2u) && (now & 2u)) dma_reload(s, ch);
+                /* ON enables requests; it does not itself request a transfer.
+                 * Single-service S/W DMA accepts another SW_TRIG while ON
+                 * stays set, preserving its current count and cursors
+                 * (S3C2400 manual pp.8-10, 8-13). */
+                if ((now & 3u) == 3u && !GP32_BIT(dr[2], 23)) {
+                    dr[6] &= ~1u; /* Clear the accepted software request. */
+                    dma_trigger(s, ch);
+                }
             }
         }
         return;
