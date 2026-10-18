@@ -4079,7 +4079,7 @@ static int direct_fxe_swi(void *user, arm920t_t *cpu, uint32_t imm, uint32_t pc,
             arm920t_set_reg(cpu, 0, dst);
             return 1;
         }
-        if (argp >= GP32_RAM_BASE && argp + 4u < GP32_RAM_BASE + s3c2400_ram_size(g->soc)) {
+        if (direct_ram_range(g, argp, 4u)) {
             s3c2400_write32(g->soc, argp, 0u);
             arm920t_set_reg(cpu, 0, argp);
         } else {
