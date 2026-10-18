@@ -90,6 +90,20 @@ uint32_t s3c2400_run_clock_hz(const s3c2400_t *soc);
  * Peripheral time is preserved. Call only between CPU runs. */
 int s3c2400_set_cpu_speed_percent(s3c2400_t *soc, uint32_t percent);
 uint32_t s3c2400_cpu_speed_percent(const s3c2400_t *soc);
+/* Runtime-only checkpoint for undoing a temporary speed conversion around a
+ * save or rejected load. No guest execution or accepted state load may occur
+ * between capture and restore. Restoring refreshes derived clock caches, then
+ * replaces the phases exactly: integer rescaling is not reversible. */
+typedef struct s3c2400_clock_snapshot {
+    uint64_t pwm_accum[5];
+    uint64_t iis_accum;
+    uint64_t audio_idle_phase;
+    uint64_t lcd_line_accum;
+    uint32_t lcd_hclk_remainder;
+    uint32_t cpu_speed_percent;
+} s3c2400_clock_snapshot_t;
+void s3c2400_clock_snapshot_capture(const s3c2400_t *soc, s3c2400_clock_snapshot_t *snapshot);
+void s3c2400_clock_snapshot_restore(s3c2400_t *soc, const s3c2400_clock_snapshot_t *snapshot);
 uint64_t s3c2400_smc_bytes_read(const s3c2400_t *soc);
 int s3c2400_iis_running(const s3c2400_t *soc);
 int s3c2400_state_save(const s3c2400_t *soc, FILE *f);
