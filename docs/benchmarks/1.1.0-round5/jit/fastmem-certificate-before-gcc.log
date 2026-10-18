@@ -1,0 +1,31 @@
+variant=0 mmu=0: native mapping probe uses an independent per-direction certificate
+variant=0 mmu=1: native mapping probe uses an independent per-direction certificate
+variant=2 mmu=0: architectural register result
+variant=2 mmu=0: exact callback selection
+variant=2 mmu=0: native mapping probe uses an independent per-direction certificate
+variant=2 mmu=1: architectural register result
+variant=2 mmu=1: exact callback selection
+variant=2 mmu=1: native mapping probe uses an independent per-direction certificate
+variant=3 mmu=0: exact callback selection
+variant=3 mmu=0: native mapping probe uses an independent per-direction certificate
+variant=3 mmu=0: direct word store reaches extended RAM
+variant=3 mmu=1: exact callback selection
+variant=3 mmu=1: native mapping probe uses an independent per-direction certificate
+variant=3 mmu=1: direct word store reaches extended RAM
+variant=4 mmu=0: architectural register result
+variant=4 mmu=0: exact callback selection
+variant=4 mmu=0: native mapping probe uses an independent per-direction certificate
+variant=4 mmu=0: direct word store reaches extended RAM
+variant=4 mmu=1: architectural register result
+variant=4 mmu=1: exact callback selection
+variant=4 mmu=1: native mapping probe uses an independent per-direction certificate
+variant=4 mmu=1: direct word store reaches extended RAM
+variant=5 mmu=0: architectural register result
+variant=5 mmu=0: exact callback selection
+variant=5 mmu=0: native mapping probe uses an independent per-direction certificate
+variant=5 mmu=0: direct word store reaches extended RAM
+variant=5 mmu=1: architectural register result
+variant=5 mmu=1: exact callback selection
+variant=5 mmu=1: native mapping probe uses an independent per-direction certificate
+variant=5 mmu=1: direct word store reaches extended RAM
+arm_jit_io_mapping_test: 12 cases, 30 failures, native-insns=36

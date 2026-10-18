@@ -1897,6 +1897,77 @@ static void case_native_forward_predicates(void) {
     printf("forward-predicates cases=%u\n", cases);
 }
 
+/* Compute predicates from their architectural Boolean definitions, without
+ * calling cond_pass or the decoder. Both ALU joins must preserve the previous
+ * committed source. The intervening callback changes Z and two registers, so
+ * the second predicate and cached register reads must observe the new state. */
+static int native_predicate_expected(unsigned cond, unsigned flags) {
+    int n = !!(flags & 8u), z = !!(flags & 4u);
+    int c = !!(flags & 2u), v = !!(flags & 1u);
+    const int pass[16] = {z, !z, c, !c, n, !n, v, !v,
+        c && !z, !c || z, n == v, n != v, !z && n == v, z || n != v, 1, 0};
+    return pass[cond];
+}
+
+static void case_native_predicate_joins(void) {
+    unsigned cases = 0;
+    uint64_t native_insns = 0;
+    for (unsigned cond = 0; cond < 16u; ++cond) {
+        for (unsigned flags = 0; flags < 16u; ++flags) {
+            current_case = "native-predicate-joins";
+            setup_pair();
+            const uint32_t program[] = {
+                0xe2834001u,                   /* ADD r4,r3,#1 */
+                (cond << 28) | 0x02845002u,    /* ADD<cond> r5,r4,#2 */
+                0xe2846003u,                   /* ADD r6,r4,#3 */
+                0xe5917000u,                   /* LDR r7,[r1]: callback */
+                (cond << 28) | 0x00858006u,    /* ADD<cond> r8,r5,r6 */
+                0xe2849001u,                   /* ADD r9,r4,#1 */
+                0xef000042u, 0xeafffffeu
+            };
+            load_both(program, GP32_ARRAY_COUNT(program));
+            set_reg_both(1u, IO_ADDR);
+            set_reg_both(3u, 0x4567u);
+            set_reg_both(5u, 0x1234u);
+            set_reg_both(8u, 0x89abu);
+            arm920t_set_cpsr(cpu_jit, (flags << 28) | 0xd3u);
+            arm920t_set_cpsr(cpu_ref, (flags << 28) | 0xd3u);
+            arm920t_set_trace(cpu_ref, 1, NULL, NULL);
+            bus_jit.observe_cpu = cpu_jit; bus_ref.observe_cpu = cpu_ref;
+            bus_jit.mem_probe = bus_ref.mem_probe = 1u;
+            bus_jit.mem_effect = bus_ref.mem_effect = 3u; /* toggle Z */
+            unsigned swi_jit = 0, swi_ref = 0;
+            arm920t_set_swi_handler(cpu_jit, forward_swi_stop, &swi_jit);
+            arm920t_set_swi_handler(cpu_ref, forward_swi_stop, &swi_ref);
+            uint32_t j = prepared_native_run(cpu_jit, 64u), r = arm920t_run(cpu_ref, 64u);
+            CHECK(j == 7u && r == 7u, "predicate joins retire the complete native prefix");
+            compare_state();
+            uint32_t expected5 = native_predicate_expected(cond, flags) ? 0x456au : 0x1234u;
+            uint32_t expected8 = native_predicate_expected(cond, flags ^ 4u) ? expected5 + 0x456bu : 0x89abu;
+            CHECK(ref_reg(5u) == expected5 && ref_reg(6u) == 0x456bu && ref_reg(8u) == expected8,
+                  "predicates match the independent NZCV truth table");
+            CHECK(ref_reg(4u) == 0x12345678u && ref_reg(9u) == 0x12345679u &&
+                  ref_reg(7u) == 0x8877ff80u && ref_reg(2u) == 0xabcdef01u,
+                  "native helper continuation observes callback register changes");
+            CHECK(arm920t_get_cpsr(cpu_ref) == (((flags ^ 4u) << 28) | 0xd3u),
+                  "conditional ALU operations preserve the callback's flags");
+            CHECK(bus_jit.mem_calls == 1u && bus_ref.mem_calls == 1u &&
+                  bus_jit.mem_pc == CODE_ADDR + 16u && bus_ref.mem_pc == CODE_ADDR + 16u &&
+                  swi_jit == 1u && swi_ref == 1u, "predicate joins preserve callback order and PC");
+            gp32_cpu_profile_t profile;
+            arm920t_get_cpu_profile(cpu_jit, &profile);
+            if (profile.supported && profile.native_backend) {
+                CHECK(profile.native_block_calls == 1u && profile.native_arm_insns == 7u,
+                      "all predicate joins execute in one native entry");
+                native_insns += profile.native_arm_insns;
+            }
+            teardown_pair();
+            ++cases;
+        }
+    }
+    printf("predicate-joins cases=%u native-insns=%" PRIu64 "\n", cases, native_insns);
+}
+
 /* Bus callbacks observe the current instruction's PC+4, even after an inlined
  * return. Cover each MMU-off native bus helper in one caller sequence. */
 static void case_callback_pc(void) {
@@ -5851,7 +5922,9 @@ int main(int argc, char **argv) {
     int psr_only = argc == 2 && !strcmp(argv[1], "--psr");
     int terminal_coproc_only = argc == 2 && !strcmp(argv[1], "--terminal-coproc");
     int selfmove_only = argc == 2 && !strcmp(argv[1], "--self-move-nop");
-    if (argc == 2 && !strcmp(argv[1], "--internal-forward")) {
+    if (argc == 2 && !strcmp(argv[1], "--predicate-joins")) {
+        case_native_predicate_joins();
+    } else if (argc == 2 && !strcmp(argv[1], "--internal-forward")) {
         case_native_internal_forward();
         case_native_forward_callback();
         case_native_forward_joins();
@@ -6096,6 +6169,7 @@ int main(int argc, char **argv) {
     case_native_forward_callback();
     case_native_forward_joins();
     case_native_forward_predicates();
+    case_native_predicate_joins();
     case_loop_irq_fence();
     case_loop_smc_epoch();
     case_loop_callback_flush();

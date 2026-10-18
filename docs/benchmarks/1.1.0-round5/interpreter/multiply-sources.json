@@ -1,0 +1,14 @@
+{
+  "baseline_commit": "eae2f78",
+  "cpu_changes_from_original_baseline": "Six physical BC accessors only; multiply implementation unchanged",
+  "sha256": {
+    "src/arm920t.c": "d2190e368518d39ce6eb9f46848f9efed045aeb8f5652e64c35d1f80a526ce53",
+    "src/arm920t_jit_a64.inc": "482aa799a352baa57e7d437159738a2c33da6a78e187739e8de82a8b044d8140",
+    "tests/arm_multiply_test.c": "84f2e3122d675fde43623486b572a55217e41c78b6aed0307ead964065b1e044"
+  },
+  "expected_cases": 872064,
+  "expected_cases_per_mode": 290688,
+  "expected_native_instructions": 581376,
+  "expected_multiply_helpers": 0,
+  "a64_expected_bx_helpers": 290688
+}

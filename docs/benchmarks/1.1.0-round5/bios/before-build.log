@@ -1,0 +1,12 @@
+-- Requesting C23 dialect (GNU 13.3.0)
+-- Configuring done (0.0s)
+-- Generating done (0.1s)
+-- Build files have been written to: /tmp/gp32-round5-build-root
+[ 85%] Built target gp32emu
+[ 92%] Building C object CMakeFiles/gp32_bios_reload_test.dir/tests/gp32_bios_reload_test.c.o
+[100%] Linking C executable gp32_bios_reload_test
+[100%] Built target gp32_bios_reload_test
+[ 85%] Built target gp32emu
+[ 92%] Building C object CMakeFiles/s3c2400_bios_load_test.dir/tests/s3c2400_bios_load_test.c.o
+[100%] Linking C executable s3c2400_bios_load_test
+[100%] Built target s3c2400_bios_load_test

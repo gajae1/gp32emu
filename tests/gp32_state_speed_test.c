@@ -43,6 +43,8 @@ static gp32_t *fixture(uint32_t percent, int tft, uint32_t tag) {
     for (unsigned timer = 0; timer < 5u; ++timer) {
         s3c2400_write32(g->soc, 0x1510000cu + timer * 12u, 100u + timer * 17u + tag);
         control |= timer == 4u ? 0x500000u : 9u << (timer ? timer * 4u + 4u : 0u);
+        uint32_t manual = timer == 4u ? 0x200000u : 2u << (timer ? timer * 4u + 4u : 0u);
+        s3c2400_write32(g->soc, 0x15100008u, control | manual);
         s3c2400_write32(g->soc, 0x15100008u, control);
         CHECK(gp32_run_cycles(g, timer == 4u ? 2u : 3u) == GP32_OK, "prime PWM and idle audio");
     }
@@ -180,12 +182,28 @@ static void check_loaded(uint32_t source_speed, uint32_t target_speed, int tft, 
     saved = malloc(size);
     CHECK(saved && gp32_save_state_data(source, saved, size) == GP32_OK, "save cross-speed source");
     if (!saved) goto done;
-    /* Reference: accept the incoming nominal phases at 100%, then perform a
-     * normal user speed change. Its pristine old phases deliberately differ
-     * from the target's, catching accidental restoration of either machine's
-     * pre-load phases after successful parsing. */
+    /* The older sections still use the incoming nominal phases and a normal
+     * user speed change. Their pristine old phases deliberately differ from
+     * the target's, catching restoration of the wrong pre-load checkpoint. */
     CHECK(gp32_load_state_data(control, saved, size) == GP32_OK, "load nominal reference");
     CHECK(gp32_set_cpu_speed_percent(control, target_speed) == GP32_OK, "scale reference to target speed");
+    /* PWM now carries its original denominator, so its independent reference
+     * uses one mathematical conversion, never the two floored conversions
+     * above. These fixture numerators fit a direct uint64_t product; the core
+     * uses a split product for its much larger permitted divider range. */
+    const uint8_t *tail = saved + size - S3C2400_PWM_STATE_BYTES;
+    uint32_t phase_clock = gp32_ld32le(tail + 4u);
+    s3c2400_pwm_phase_t phase = {{0}, s3c2400_run_clock_hz(control->soc)};
+    CHECK(phase_clock != 0u, "source PWM denominator");
+    for (unsigned timer = 0u; timer < 5u; ++timer) {
+        const uint8_t *p = tail + 20u + timer * 16u;
+        uint64_t numerator = gp32_ld32le(p) | (uint64_t)gp32_ld32le(p + 4u) << 32u;
+        CHECK(numerator <= UINT64_MAX / phase.clock_hz, "reference product fits");
+        if (phase_clock) phase.accum[timer] = numerator * phase.clock_hz / phase_clock;
+    }
+    /* Equal source/target clocks make this a plain assignment, with no
+     * production rescaling used to compute the reference numerator. */
+    s3c2400_pwm_phase_restore(control->soc, &phase);
     if (file) {
         CHECK(write_file(path, saved, size), "write cross-speed state");
         CHECK(gp32_load_state(g, path) == GP32_OK, "accept cross-speed file");
@@ -198,6 +216,96 @@ static void check_loaded(uint32_t source_speed, uint32_t target_speed, int tft, 
     compare_execution(g, control);
 done:
     free(saved); free(expected); gp32_destroy(source); gp32_destroy(g); gp32_destroy(control);
+}
+
+static void check_same_speed_pwm(uint32_t percent, int file, const char *path) {
+    snprintf(scenario, sizeof(scenario), "same-speed PWM continuation speed=%u %s", percent, file ? "file" : "buffer");
+    ++cases;
+    gp32_t *source = fixture(percent, 1, 17u), *target = fixture(percent, 1, 0u);
+    uint8_t *saved = NULL, *live = NULL, *loaded = NULL;
+    if (!source || !target) goto done;
+    size_t size = gp32_state_size(source), live_size = 0u, loaded_size = 0u;
+    saved = malloc(size);
+    live = capture_live(source, &live_size);
+    CHECK(saved && live && size == live_size && size >= S3C2400_PWM_STATE_BYTES, "allocate exact-phase fixture");
+    if (!saved || !live || size != live_size || size < S3C2400_PWM_STATE_BYTES) goto done;
+    CHECK(gp32_save_state_data(source, saved, size) == GP32_OK, "save exact source phase");
+    size_t tail = size - S3C2400_PWM_STATE_BYTES;
+    CHECK(!memcmp(saved + tail, live + tail, S3C2400_PWM_STATE_BYTES),
+          "saved PWM numerator, denominator, live and latched counts are exact");
+    if (file) {
+        CHECK(gp32_save_state(source, path) == GP32_OK, "save exact phase file");
+        CHECK(gp32_load_state(target, path) == GP32_OK, "load exact phase file");
+    } else CHECK(gp32_load_state_data(target, saved, size) == GP32_OK, "load exact phase buffer");
+    loaded = capture_live(target, &loaded_size);
+    CHECK(loaded && loaded_size == size && !memcmp(loaded + tail, live + tail, S3C2400_PWM_STATE_BYTES),
+          "same-speed restore matches original PWM phase exactly");
+    /* The independent continuation observes every CPU cycle, including the
+     * common 133% timer boundaries hidden by coarser sampling. Other legacy
+     * peripheral sections keep their existing nominal-save conversion policy. */
+    for (unsigned cycle = 0u; cycle < 400u; ++cycle) {
+        CHECK(gp32_run_cycles(source, 1u) == GP32_OK && gp32_run_cycles(target, 1u) == GP32_OK,
+              "advance both machines one CPU cycle");
+        for (unsigned timer = 0u; timer < 5u; ++timer)
+            CHECK(timer_count(source->soc, timer) == timer_count(target->soc, timer),
+                  "restored timer reaches each edge with uninterrupted source");
+        CHECK((s3c2400_read32(source->soc, 0x14400000u) & (0x1fu << 10u)) ==
+              (s3c2400_read32(target->soc, 0x14400000u) & (0x1fu << 10u)), "restored PWM requests match source");
+    }
+done:
+    free(saved); free(live); free(loaded); gp32_destroy(source); gp32_destroy(target);
+}
+
+static void check_pwm_versions(void) {
+    snprintf(scenario, sizeof(scenario), "v15 PWM migration at host speed 150");
+    ++cases;
+    gp32_t *source = fixture(100u, 1, 17u);
+    gp32_t *g = fixture(150u, 0, 0u), *control = fixture(150u, 0, 0u);
+    uint8_t *saved = NULL, *legacy = NULL, *bad = NULL, *before = NULL;
+    if (!source || !g || !control) goto done;
+    size_t size = gp32_state_size(source), before_size = 0u;
+    CHECK(size > S3C2400_PWM_STATE_BYTES, "state includes PWM trailer");
+    if (size <= S3C2400_PWM_STATE_BYTES) goto done;
+    size_t legacy_size = size - S3C2400_PWM_STATE_BYTES;
+    saved = malloc(size); legacy = malloc(legacy_size); bad = malloc(size);
+    CHECK(saved && legacy && bad, "allocate version fixtures");
+    if (!saved || !legacy || !bad) goto done;
+    CHECK(gp32_save_state_data(source, saved, size) == GP32_OK, "save nominal v16 source");
+    CHECK(memcmp(saved, "GP32STATEv0016", 14u) == 0 && !saved[14] && !saved[15] &&
+          memcmp(saved + legacy_size, "PWM1", 4u) == 0, "writer advertises explicit v16 trailer");
+    /* This exercises the complete v15 decode path, including its existing CPU
+     * translation extension. The separate SoC regression uses bytes produced
+     * by the actual pre-change GP32SOC9 writer, not this projected fixture. */
+    memcpy(legacy, saved, legacy_size);
+    memcpy(legacy, "GP32STATEv0015", 14u);
+    CHECK(gp32_load_state_data(g, legacy, legacy_size) == GP32_OK, "v15 body migrates without a PWM trailer");
+    CHECK(gp32_load_state_data(control, saved, size) == GP32_OK, "v16 comparison load");
+    CHECK(arm920t_get_reg(g->cpu, 4u) == 17u, "v15 incoming CPU accepted");
+    compare_execution(g, control);
+
+    /* Normalize the old wire image's derived-cache flag exactly as fixture()
+     * does. Rewriting the same clock changes no architectural phase. */
+    s3c2400_write32(g->soc, 0x14800004u, 0x3000u);
+    s3c2400_write32(control->soc, 0x14800004u, 0x3000u);
+    before = capture_live(g, &before_size);
+    CHECK(before != NULL, "capture advanced machine before malformed load");
+    if (!before) goto done;
+    for (unsigned variant = 0u; variant < 3u; ++variant) {
+        snprintf(scenario, sizeof(scenario), "reject v16 PWM trailer variant=%u speed=150", variant);
+        ++cases;
+        memcpy(bad, saved, size);
+        size_t bad_size = size;
+        if (variant == 0u) gp32_st32le(bad + legacy_size + 4u, 0u); /* Invalid phase clock. */
+        else if (variant == 1u) gp32_st32le(bad + legacy_size + 12u, 65536u); /* Count exceeds sixteen bits. */
+        else bad_size = legacy_size; /* v16 must not silently migrate a missing trailer. */
+        CHECK(gp32_load_state_data(g, bad, bad_size) == GP32_ERR_IO, "malformed extension rejected");
+        CHECK(gp32_get_cpu_speed_percent(g) == 150u, "rejection retains host speed");
+        expect_live(g, before, before_size, "rejection preserves CPU, RAM and every peripheral phase");
+    }
+    compare_execution(g, control);
+done:
+    free(saved); free(legacy); free(bad); free(before);
+    gp32_destroy(source); gp32_destroy(g); gp32_destroy(control);
 }
 
 int main(int argc, char **argv) {
@@ -220,6 +328,9 @@ int main(int argc, char **argv) {
             for (int file = 0; file < 2; ++file)
                 check_loaded(loads[pair][0], loads[pair][1], tft, file, argv[1]);
     }
+    for (unsigned speed = 0u; speed < GP32_ARRAY_COUNT(speeds); ++speed)
+        for (int file = 0; file < 2; ++file) check_same_speed_pwm(speeds[speed], file, argv[1]);
+    check_pwm_versions();
     (void)remove(argv[1]);
     printf("gp32_state_speed cases=%u failures=%u\n", cases, failures);
     return failures ? 1 : 0;

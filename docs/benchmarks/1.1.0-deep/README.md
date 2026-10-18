@@ -17,7 +17,7 @@ checks. [Commit mapping](evidence/commit-map.json) and
 |---|---|---|
 | Disjoint, whole-service, incrementing RAM-to-RAM DMA | **Adopted** | `dma-release-gcc.json`, production code, independent oracle, benchmark drivers |
 | Replace the instruction-word watch loop with bitmap range masks | **Not adopted** | `watch-range-exploratory-{gcc,clang}.json`, `candidates/watch-range-loop.patch` |
-| Omit unused instruction-word watches while guest I-cache is enabled | **Not adopted; optional patch** | `watch-skip-release-{gcc,clang}-i{0,1}.json`, `candidates/skip-unused-word-watches.patch` |
+| Omit unused instruction-word watches while guest I-cache is enabled | **Historical only; incompatible with Round5 external-write refinement** | `watch-skip-release-{gcc,clang}-i{0,1}.json`, `candidates/skip-unused-word-watches.patch` |
 
 The default `arm_jit_track_code` still records page and instruction-word watches
 with either value of guest `c1.I`. Neither candidate is silently included in the
@@ -176,6 +176,12 @@ candidate; it is not a demonstrated device-level regression or a reason to
 restore an old optimization automatically.
 
 ## 3. Optional I-cache-enabled word-watch omission
+
+**Withdrawn for Round5 and later.** This section describes the older experiment,
+not a supported optional change to the current core. Round5 external DMA/HLE
+notifications consult instruction-word watches with I=1 as well as I=0. Omitting
+those watches would miss executable RAM changes. The original patch bytes and
+measurements remain here only to reproduce the historical baseline experiment.
 
 The [optional mail patch](candidates/skip-unused-word-watches.patch) retains
 unconditional page tracking, then returns before the word-watch loop when guest

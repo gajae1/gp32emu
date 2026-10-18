@@ -1,0 +1,17 @@
+$ /tmp/gp32-round4-tools/cmake/data/bin/ctest --test-dir /tmp/gp32-round5-build-pwm/gcc -R ^(s3c2400_(pwm|state|timing|dma)|gp32_state_speed)$ --output-on-failure
+Test project /tmp/gp32-round5-build-pwm/gcc
+    Start 21: s3c2400_timing
+1/5 Test #21: s3c2400_timing ...................   Passed    0.05 sec
+    Start 23: s3c2400_dma
+2/5 Test #23: s3c2400_dma ......................   Passed    0.03 sec
+    Start 29: s3c2400_pwm
+3/5 Test #29: s3c2400_pwm ......................   Passed    0.07 sec
+    Start 31: s3c2400_state
+4/5 Test #31: s3c2400_state ....................   Passed    0.01 sec
+    Start 46: gp32_state_speed
+5/5 Test #46: gp32_state_speed .................   Passed    0.16 sec
+
+100% tests passed out of 5
+
+Total Test time (real) =   0.32 sec
+exit=0

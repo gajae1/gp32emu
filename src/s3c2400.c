@@ -119,9 +119,11 @@ struct s3c2400 {
     uint32_t uart0[0x2c/4];
     uint32_t uart1[0x2c/4];
     uint32_t pwm[0x44/4];
-    uint64_t pwm_accum[5];
-    uint64_t pwm_dec_cycles[5];
-    uint64_t pwm_period_cycles[5];
+    uint32_t pwm_count[5], pwm_reload[5], pwm_reload_pending;
+    /* Fraction of a timer edge: CPU cycles * PCLK, denominator RUN * divider.
+     * Unlike the old elapsed-period count, this never depends on TCNTB. */
+    uint64_t pwm_accum[5], pwm_tick_period[5];
+    uint32_t pwm_pclk_hz;
     uint8_t pwm_clock_dirty;
     uint32_t usb_dev[0xbc/4];
     uint32_t watchdog[0x0c/4];
@@ -180,6 +182,7 @@ struct s3c2400 {
 #endif
 
 static uint8_t *s3c2400_fastmem(void *user, uint32_t addr, size_t bytes, int write);
+static int s3c2400_fastmem_excludes(void *user, uint32_t addr, size_t bytes, int write);
 static uint32_t s3c2400_read32_io(void *user, uint32_t addr);
 static void s3c2400_write32_io(void *user, uint32_t addr, uint32_t value);
 static void io_write32(s3c2400_t *s, uint32_t addr, uint32_t value, uint32_t mask);
@@ -195,6 +198,7 @@ static uint32_t clk_run(const s3c2400_t *s, int reg);
 static uint32_t clk_pclk(const s3c2400_t *s, int reg);
 static void clock_refresh_values(s3c2400_t *s);
 static void clock_write(s3c2400_t *s, uint32_t addr, uint32_t value, uint32_t mask);
+static uint64_t rescale_period_progress(uint64_t progress, uint64_t old_period, uint64_t new_period);
 static void check_irq(s3c2400_t *s);
 static void color16_lut_build(void);
 
@@ -374,6 +378,9 @@ void s3c2400_reset(s3c2400_t *s) {
     memset(s->uart0, 0, sizeof(s->uart0));
     memset(s->uart1, 0, sizeof(s->uart1));
     memset(s->pwm, 0, sizeof(s->pwm));
+    memset(s->pwm_count, 0, sizeof(s->pwm_count));
+    memset(s->pwm_reload, 0, sizeof(s->pwm_reload));
+    s->pwm_reload_pending = 0u;
     memset(s->pwm_accum, 0, sizeof(s->pwm_accum));
     memset(s->usb_dev, 0, sizeof(s->usb_dev));
     memset(s->watchdog, 0, sizeof(s->watchdog));
@@ -434,6 +441,7 @@ arm_bus_t s3c2400_get_bus(s3c2400_t *s) {
      * data windows. */
     b.open_bus_valid = 1;
     b.open_bus_word32 = 0xffffffffu;
+    b.fastmem_excludes = s3c2400_fastmem_excludes;
     return b;
 }
 
@@ -462,16 +470,27 @@ static int load_file_exact_or_less(uint8_t *dst, size_t cap, const char *path, c
     if (fseek(f, 0, SEEK_END) != 0) { fclose(f); return 0; }
     long n = ftell(f); rewind(f);
     if (n < 0 || (size_t)n > cap) { if (err && err_len) snprintf(err, err_len, "%s is too large", path); fclose(f); return 0; }
+    /* Stage the cold file load: a short read must not leave live firmware
+     * partly erased/replaced while the caller reports that loading failed. */
+    uint8_t *buf = n ? malloc((size_t)n) : NULL;
+    if (n && !buf) { if (err && err_len) snprintf(err, err_len, "out of memory loading %s", path); fclose(f); return 0; }
+    if (n && fread(buf, 1, (size_t)n, f) != (size_t)n) {
+        if (err && err_len) snprintf(err, err_len, "read %s failed", path);
+        free(buf); fclose(f); return 0;
+    }
+    fclose(f);
     memset(dst, 0xff, cap);
-    if (fread(dst, 1, (size_t)n, f) != (size_t)n) { if (err && err_len) snprintf(err, err_len, "read %s failed", path); fclose(f); return 0; }
-    fclose(f); return 1;
+    if (n) memcpy(dst, buf, (size_t)n);
+    free(buf);
+    return 1;
 }
 int s3c2400_load_bios(s3c2400_t *s, const char *path, char *err, size_t err_len) { return s && path && load_file_exact_or_less(s->bios, BIOS_SIZE, path, err, err_len); }
 int s3c2400_load_bios_buffer(s3c2400_t *s, const uint8_t *data, size_t size, char *err, size_t err_len) {
     if (!s || !data || !size) { if (err && err_len) snprintf(err, err_len, "invalid BIOS buffer"); return 0; }
     if (size > BIOS_SIZE) { if (err && err_len) snprintf(err, err_len, "BIOS buffer is too large"); return 0; }
-    memset(s->bios, 0xff, BIOS_SIZE);
-    memcpy(s->bios, data, size);
+    /* A caller may supply a slice of the current read-only BIOS mapping. */
+    memmove(s->bios, data, size);
+    memset(s->bios + size, 0xff, BIOS_SIZE - size);
     return 1;
 }
 void s3c2400_install_hle_bios(s3c2400_t *s) {
@@ -665,15 +684,26 @@ static void color16_lut_build(void) {
 static uint8_t *ram_ptr(s3c2400_t *s, uint32_t addr, size_t bytes) {
     if (addr < RAM_BASE) return NULL;
     uint32_t off = addr - RAM_BASE;
-    if ((size_t)off + bytes > s->ram_size) return NULL;
+    if ((size_t)off > s->ram_size || bytes > s->ram_size - off) return NULL;
     return &s->ram[off];
 }
 
 static uint8_t *s3c2400_fastmem(void *user, uint32_t addr, size_t bytes, int write) {
     s3c2400_t *s = (s3c2400_t *)user;
     if (!s) return NULL;
-    if (!write && (uint64_t)addr + bytes <= BIOS_SIZE) return &s->bios[addr];
+    if (!write && addr <= BIOS_SIZE && bytes <= BIOS_SIZE - addr) return &s->bios[addr];
     return ram_ptr(s, addr, bytes);
+}
+
+static int s3c2400_fastmem_excludes(void *user, uint32_t addr, size_t bytes, int write) {
+    const s3c2400_t *s = user;
+    if (!s || !bytes || bytes > UINT64_C(0x100000000) - addr) return 0;
+    uint64_t end = (uint64_t)addr + bytes;
+    if (!write && addr < BIOS_SIZE) return 0;
+    /* Read the live size: a copied arm_bus_t must still answer correctly
+     * after a state load replaces or grows the RAM allocation. */
+    return end <= RAM_BASE || (addr >= RAM_BASE &&
+           (uint64_t)(addr - RAM_BASE) >= s->ram_size);
 }
 
 static uint32_t reg_array_read(uint32_t *a, size_t bytes, uint32_t off) {
@@ -1139,44 +1169,57 @@ static void dma_trigger(s3c2400_t *s, int ch) {
     }
 }
 
-static void pwm_refresh_clock_cache(s3c2400_t *s) {
+static const uint32_t pwm_start_mask[5] = {1u, 0x100u, 0x1000u, 0x10000u, 0x100000u};
+static const uint32_t pwm_auto_mask[5] = {8u, 0x800u, 0x8000u, 0x80000u, 0x400000u};
+
+static uint32_t pwm_clock_divisor(const uint32_t *regs, unsigned t) {
     static const uint32_t mux_table[4] = { 2u, 4u, 8u, 16u };
     static const unsigned prescaler_shift[5] = { 0, 0, 8, 8, 8 };
-    static const unsigned mux_shift[5] = { 0, 4, 8, 12, 16 };
+    uint32_t prescaler = GP32_BITS(regs[0], prescaler_shift[t] + 7u, prescaler_shift[t]);
+    uint32_t mux = GP32_BITS(regs[1], t * 4u + 3u, t * 4u);
+    /* The board model has no external TCLK input. Keep its existing /16
+     * fallback for those mux selections; this does not model an external pin. */
+    return (prescaler + 1u) * mux_table[mux < 4u ? mux : 3u];
+}
+
+static void pwm_refresh_clock_cache(s3c2400_t *s) {
     if (!s || !s->pwm_clock_dirty) return;
     uint32_t runclk = clk_run(s, MPLLCON);
     uint32_t pclk = clk_pclk(s, MPLLCON);
     if (!runclk) runclk = 40000000u;
     if (!pclk) pclk = runclk;
-    for (unsigned t = 0; t < 5u; ++t) {
-        uint32_t prescaler = GP32_BITS(s->pwm[0], prescaler_shift[t] + 7u, prescaler_shift[t]);
-        uint32_t mux = GP32_BITS(s->pwm[1], mux_shift[t] + 3u, mux_shift[t]);
-        uint32_t div = mux < 4u ? mux_table[mux] : mux_table[3];
-        uint32_t cnt = s->pwm[3u + t * 3u] & 0xffffu;
-        if (cnt == 0u) cnt = 0x10000u;
-        /* TCMPB sets the PWM output transition, not the counter reload/IRQ
-         * period (S3C2400 manual ch.10). Keep the existing count convention. */
-        uint32_t interval = cnt + 1u;
-        uint64_t base_num = (uint64_t)runclk * (uint64_t)(prescaler + 1u) * (uint64_t)div;
-        uint64_t dec_cycles = (base_num + (uint64_t)pclk - 1u) / (uint64_t)pclk;
-        uint64_t period = (base_num * (uint64_t)interval) / (uint64_t)pclk;
-        s->pwm_dec_cycles[t] = dec_cycles ? dec_cycles : 1u;
-        s->pwm_period_cycles[t] = period ? period : 1u;
-    }
+    s->pwm_pclk_hz = pclk;
+    for (unsigned t = 0; t < 5u; ++t)
+        s->pwm_tick_period[t] = (uint64_t)runclk * pwm_clock_divisor(s->pwm, t);
     s->pwm_clock_dirty = 0;
 }
 
-static uint32_t pwm_current_count(s3c2400_t *s, unsigned t) {
-    static const unsigned start_mask[5] = { 0x000001u, 0x000100u, 0x001000u, 0x010000u, 0x100000u };
-    if (!s || t >= 5u) return 0u;
-    uint32_t cnt = s->pwm[3u + t * 3u] & 0xffffu;
-    if (cnt == 0u) cnt = 0x10000u;
-    if (!(s->pwm[2] & start_mask[t])) return cnt;
-    pwm_refresh_clock_cache(s);
-    uint64_t dec_cycles = s->pwm_dec_cycles[t] ? s->pwm_dec_cycles[t] : 1u;
-    uint64_t elapsed = s->pwm_accum[t] / dec_cycles;
-    if (elapsed >= cnt) return 0u;
-    return (uint32_t)(cnt - elapsed);
+static uint32_t pwm_current_count(const s3c2400_t *s, unsigned t) {
+    return s && t < 5u ? s->pwm_count[t] : 0u;
+}
+
+static void pwm_write(s3c2400_t *s, uint32_t off, uint32_t value, uint32_t mask) {
+    uint32_t old_divisor[5];
+    if (off < 8u)
+        for (unsigned t = 0; t < 5u; ++t) old_divisor[t] = pwm_clock_divisor(s->pwm, t);
+    reg_array_write(s->pwm, sizeof(s->pwm), off, value, mask);
+    if (off < 8u) {
+        /* Divider-phase alignment is an emulator policy: preserve the fraction
+         * of the current timer tick, including when the timer is stopped. */
+        for (unsigned t = 0; t < 5u; ++t)
+            s->pwm_accum[t] = rescale_period_progress(s->pwm_accum[t], old_divisor[t],
+                                                     pwm_clock_divisor(s->pwm, t));
+        s->pwm_clock_dirty = 1;
+    } else if (off == 8u) {
+        for (unsigned t = 0; t < 5u; ++t) {
+            /* Only a written manual-update bit strobes the load. An unrelated
+             * byte lane must not repeat another timer's still-set bit. */
+            if (!(value & mask & (pwm_start_mask[t] << 1u))) continue;
+            s->pwm_count[t] = s->pwm[3u + t * 3u] & 0xffffu;
+            s->pwm_reload[t] = 0u;
+            s->pwm_reload_pending &= ~(1u << t);
+        }
+    }
 }
 
 static uint32_t io_read32(s3c2400_t *s, uint32_t addr) {
@@ -1535,7 +1578,7 @@ static GP32_IO_COLD void io_write32_rare(s3c2400_t *s, uint32_t addr, uint32_t v
     }
     if (addr >= 0x15000000u && addr <= 0x1500002bu) { reg_array_write(s->uart0,sizeof(s->uart0),addr-0x15000000u,value,mask); return; }
     if (addr >= 0x15004000u && addr <= 0x1500402bu) { reg_array_write(s->uart1,sizeof(s->uart1),addr-0x15004000u,value,mask); return; }
-    if (addr >= 0x15100000u && addr <= 0x15100043u) { reg_array_write(s->pwm,sizeof(s->pwm),addr-0x15100000u,value,mask); s->pwm_clock_dirty = 1; return; }
+    if (addr >= 0x15100000u && addr <= 0x15100043u) { pwm_write(s, addr - 0x15100000u, value, mask); return; }
     if (addr >= 0x15200140u && addr <= 0x152001fbu) { reg_array_write(s->usb_dev,sizeof(s->usb_dev),addr-0x15200140u,value,mask); return; }
     if (addr >= 0x15300000u && addr <= 0x1530000bu) { reg_array_write(s->watchdog,sizeof(s->watchdog),addr-0x15300000u,value,mask); return; }
     if (addr >= 0x15400000u && addr <= 0x1540000fu) {
@@ -2351,14 +2394,11 @@ static void clock_invalidate(s3c2400_t *s) {
 static void clock_apply(s3c2400_t *s, const uint32_t *registers) {
     uint64_t old_lcd_period = lcd_panel_frame_cycles(s);
     uint64_t old_iis_clock = s3c2400_run_clock_hz(s);
-    uint64_t old_pwm_period[5];
-    pwm_refresh_clock_cache(s);
-    memcpy(old_pwm_period, s->pwm_period_cycles, sizeof(old_pwm_period));
     memcpy(s->clkpow, registers, sizeof(s->clkpow));
     clock_invalidate(s);
     pwm_refresh_clock_cache(s);
     for (unsigned t = 0; t < 5u; ++t)
-        s->pwm_accum[t] = rescale_period_progress(s->pwm_accum[t], old_pwm_period[t], s->pwm_period_cycles[t]);
+        s->pwm_accum[t] = rescale_period_progress(s->pwm_accum[t], old_iis_clock, s3c2400_run_clock_hz(s));
     s->iis_accum = rescale_period_progress(s->iis_accum, old_iis_clock, s3c2400_run_clock_hz(s));
     s->audio_idle_phase = rescale_period_progress(s->audio_idle_phase, old_iis_clock, s3c2400_run_clock_hz(s));
     uint64_t new_lcd_period = lcd_panel_frame_cycles(s);
@@ -2411,7 +2451,8 @@ int s3c2400_set_cpu_speed_percent(s3c2400_t *s, uint32_t percent) {
 
 void s3c2400_clock_snapshot_capture(const s3c2400_t *s, s3c2400_clock_snapshot_t *snapshot) {
     if (!s || !snapshot) return;
-    memcpy(snapshot->pwm_accum, s->pwm_accum, sizeof(snapshot->pwm_accum));
+    memcpy(snapshot->pwm.accum, s->pwm_accum, sizeof(snapshot->pwm.accum));
+    snapshot->pwm.clock_hz = s3c2400_run_clock_hz(s);
     snapshot->iis_accum = s->iis_accum;
     snapshot->audio_idle_phase = s->audio_idle_phase;
     snapshot->lcd_line_accum = s->lcd_line_accum;
@@ -2423,11 +2464,20 @@ void s3c2400_clock_snapshot_restore(s3c2400_t *s, const s3c2400_clock_snapshot_t
     /* Use the ordinary setter first so no derived timing cache retains the
      * temporary nominal rate. Only its lossy phase rescaling is undone. */
     if (!snapshot || !s3c2400_set_cpu_speed_percent(s, snapshot->cpu_speed_percent)) return;
-    memcpy(s->pwm_accum, snapshot->pwm_accum, sizeof(s->pwm_accum));
+    memcpy(s->pwm_accum, snapshot->pwm.accum, sizeof(s->pwm_accum));
     s->iis_accum = snapshot->iis_accum;
     s->audio_idle_phase = snapshot->audio_idle_phase;
     s->lcd_line_accum = snapshot->lcd_line_accum;
     s->lcd_hclk_remainder = snapshot->lcd_hclk_remainder;
+}
+
+void s3c2400_pwm_phase_restore(s3c2400_t *s, const s3c2400_pwm_phase_t *phase) {
+    if (!s || !phase || !phase->clock_hz) return;
+    /* Captured/validated fractions are below clock*divider. Split at the
+     * 32-bit clock denominator; multiplying entire timer periods can overflow. */
+    for (unsigned t = 0u; t < 5u; ++t)
+        s->pwm_accum[t] = rescale_period_progress(phase->accum[t], phase->clock_hz,
+                                                 s3c2400_run_clock_hz(s));
 }
 
 static uint32_t iis_dma_transfers_per_frame(const s3c2400_t *s) {
@@ -2455,12 +2505,6 @@ static void iis_refresh_clock_cache(s3c2400_t *s) {
     s->iis_clock_dirty = 0;
 }
 
-static uint64_t pwm_period_cpu_cycles(s3c2400_t *s, unsigned t) {
-    if (!s || t >= 5u) return 1u;
-    pwm_refresh_clock_cache(s);
-    return s->pwm_period_cycles[t] ? s->pwm_period_cycles[t] : 1u;
-}
-
 static void dma_request_iis(s3c2400_t *s) {
     uint32_t *r = &s->dma[2 << 3];
     if ((r[6] & 2u) && GP32_BIT(r[2], 23) && GP32_BITS(r[2], 25, 24) == 0u) dma_trigger(s, 2);
@@ -2471,6 +2515,110 @@ static void dma_request_pwm(s3c2400_t *s) {
         if (ch == 1) continue;
         uint32_t *r = &s->dma[ch << 3];
         if ((r[6] & 2u) && GP32_BIT(r[2], 23) && GP32_BITS(r[2], 25, 24) == 3u) dma_trigger(s, ch);
+    }
+}
+
+static int pwm_dma_enabled(const s3c2400_t *s) {
+    for (unsigned ch = 0u; ch < 4u; ++ch) {
+        if (ch == 1u) continue;
+        const uint32_t *r = &s->dma[ch << 3u];
+        if ((r[6] & 2u) && GP32_BIT(r[2], 23) && GP32_BITS(r[2], 25, 24) == 3u) return 1;
+    }
+    return 0;
+}
+
+/* Distance in CPU-cycle * PCLK units, so two edges inside one CPU cycle are
+ * still ordered. A loaded zero is quiescent until another manual load. */
+static uint64_t pwm_next_event(const s3c2400_t *s, unsigned t) {
+    if (!(s->pwm[2] & pwm_start_mask[t])) return UINT64_MAX;
+    uint32_t ticks = s->pwm_count[t];
+    if (s->pwm_reload_pending & (1u << t))
+        ticks = s->pwm_reload[t] ? s->pwm_reload[t] + 1u : 0u;
+    if (!ticks) return UINT64_MAX;
+    return (uint64_t)ticks * s->pwm_tick_period[t] - s->pwm_accum[t];
+}
+
+/* Advance a register-stable interval. Report a terminal only at its final
+ * instant: earlier repetitions of an already pending IRQ were coalesced and
+ * must not be replayed after a later DMA acknowledgement. The scheduler below
+ * splits at every first observable IRQ and every accepted PWM DMA request. */
+static int pwm_advance(s3c2400_t *s, unsigned t, uint64_t progress) {
+    uint32_t bit = 1u << t;
+    if (!(s->pwm[2] & pwm_start_mask[t]) ||
+        (!s->pwm_count[t] && !(s->pwm_reload_pending & bit))) return 0;
+    progress += s->pwm_accum[t];
+    uint64_t ticks = progress / s->pwm_tick_period[t];
+    s->pwm_accum[t] = progress % s->pwm_tick_period[t];
+    if (!ticks) return 0;
+    if (s->pwm_reload_pending & bit) {
+        s->pwm_count[t] = s->pwm_reload[t];
+        s->pwm_reload[t] = 0u;
+        s->pwm_reload_pending &= ~bit;
+        --ticks;
+        if (!s->pwm_count[t]) { s->pwm_accum[t] = 0u; return 0; }
+    }
+    if (ticks < s->pwm_count[t]) { s->pwm_count[t] -= (uint32_t)ticks; return 0; }
+    ticks -= s->pwm_count[t];
+    s->pwm_count[t] = 0u;
+    if (!(s->pwm[2] & pwm_auto_mask[t])) {
+        int terminal = !ticks && !s->pwm_accum[t];
+        s->pwm[2] &= ~pwm_start_mask[t];
+        s->pwm_accum[t] = 0u;
+        return terminal;
+    }
+    /* Fig.10-2 and p.10-6 step 4: capture at zero/request, then load on the
+     * following timer edge. A request's DMA/ISR buffer write affects a later
+     * interval, never this already captured value. */
+    uint32_t next = s->pwm[3u + t * 3u] & 0xffffu;
+    s->pwm_reload[t] = next;
+    s->pwm_reload_pending |= bit;
+    if (!ticks) return !s->pwm_accum[t];
+    --ticks;
+    s->pwm_reload[t] = 0u;
+    s->pwm_reload_pending &= ~bit;
+    if (!next) { s->pwm_accum[t] = 0u; return 0; }
+    uint32_t position = (uint32_t)(ticks % (next + 1u));
+    s->pwm_count[t] = next - position;
+    if (!s->pwm_count[t]) {
+        s->pwm_reload[t] = next;
+        s->pwm_reload_pending |= bit;
+    }
+    return !s->pwm_count[t] && !s->pwm_accum[t];
+}
+
+static void pwm_tick(s3c2400_t *s, uint32_t cpu_cycles) {
+    if (!(s->pwm[2] & 0x111101u)) return;
+    pwm_refresh_clock_cache(s);
+    /* PCLK <= 1,578 MHz from the PLL register widths, so even UINT32_MAX
+     * cycles plus one RUN*4096 fraction fits in uint64_t. */
+    uint64_t remaining = (uint64_t)cpu_cycles * s->pwm_pclk_hz;
+    while (remaining) {
+        uint64_t step = remaining;
+        unsigned dma_timer = GP32_BITS(s->pwm[1], 23, 20);
+        int dma_enabled = pwm_dma_enabled(s);
+        for (unsigned t = 0; t < 5u; ++t) {
+            /* Repeating an already pending source cannot change arbitration
+             * without a bus action. Skip those repetitions in large raw ticks. */
+            if (dma_timer == t + 1u ? !dma_enabled : !!(s->irq[0] & (1u << (INT_TIMER0 + t)))) continue;
+            uint64_t until = pwm_next_event(s, t);
+            if (until < step) step = until;
+        }
+        unsigned due = 0u;
+        for (unsigned t = 0; t < 5u; ++t)
+            if (pwm_advance(s, t, step)) due |= 1u << t;
+        remaining -= step;
+        uint32_t old_pclk = s->pwm_pclk_hz;
+        /* All same-instant latches are captured before any request can write
+         * their buffers. Timer index, then DMA channel index, breaks ties;
+         * this is deterministic bus-model ordering, not silicon arbitration. */
+        for (unsigned t = 0; t < 5u; ++t) {
+            if (!(due & (1u << t))) continue;
+            if (dma_timer == t + 1u) dma_request_pwm(s);
+            else request_irq(s, INT_TIMER0 + t);
+        }
+        pwm_refresh_clock_cache(s);
+        if (s->pwm_pclk_hz != old_pclk)
+            remaining = rescale_period_progress(remaining, old_pclk, s->pwm_pclk_hz);
     }
 }
 
@@ -2547,31 +2695,16 @@ void s3c2400_tick(s3c2400_t *s, uint32_t cpu_cycles) {
         s->iis_accum = 0;
         audio_tick_idle(s, cpu_cycles);
     }
-    static const unsigned start_mask[5] = { 0x000001u, 0x000100u, 0x001000u, 0x010000u, 0x100000u };
-    static const unsigned auto_mask[5]  = { 0x000008u, 0x000800u, 0x008000u, 0x080000u, 0x400000u };
-    static const unsigned irq_no[5] = { INT_TIMER0, INT_TIMER1, INT_TIMER2, INT_TIMER3, INT_TIMER4 };
-    unsigned pwm_dma_timer = GP32_BITS(s->pwm[1], 23, 20);
-    for (unsigned t = 0; t < 5; ++t) {
-        if (!(s->pwm[2] & start_mask[t])) { s->pwm_accum[t] = 0; continue; }
-        uint64_t period = pwm_period_cpu_cycles(s, t);
-        s->pwm_accum[t] += cpu_cycles;
-        while (s->pwm_accum[t] >= period) {
-            s->pwm_accum[t] -= period;
-            if (pwm_dma_timer == t + 1u) dma_request_pwm(s);
-            else request_irq(s, irq_no[t]);
-            if (!(s->pwm[2] & auto_mask[t])) { s->pwm[2] &= ~start_mask[t]; s->pwm_accum[t] = 0; break; }
-        }
-    }
+    pwm_tick(s, cpu_cycles);
 }
 
 static uint32_t pwm_event_budget(s3c2400_t *s, uint32_t budget) {
-    static const uint32_t start_mask[5] = {1u, 0x100u, 0x1000u, 0x10000u, 0x100000u};
     if (!(s->pwm[2] & 0x111101u)) return budget;
     pwm_refresh_clock_cache(s);
     for (unsigned t = 0; t < 5u; ++t) {
-        if (!(s->pwm[2] & start_mask[t])) continue;
-        uint64_t period = s->pwm_period_cycles[t];
-        uint64_t remaining = period > s->pwm_accum[t] ? period - s->pwm_accum[t] : 1u;
+        uint64_t phase = pwm_next_event(s, t);
+        if (phase == UINT64_MAX) continue;
+        uint64_t remaining = (phase + s->pwm_pclk_hz - 1u) / s->pwm_pclk_hz;
         if (remaining < budget) budget = (uint32_t)remaining;
     }
     return budget;
@@ -2723,7 +2856,78 @@ typedef struct s3c2400_state_image {
     gp32_smc_lines_t smc_lines;
 } s3c2400_state_image_t;
 
-static int s3c2400_state_save_image(const s3c2400_t *s, state_io_t *io, s3c2400_state_image_t *st) {
+typedef struct pwm_state_image {
+    uint32_t count[5], reload[5], pending;
+    s3c2400_pwm_phase_t phase;
+} pwm_state_image_t;
+
+static int pwm_state_write(const s3c2400_t *s, state_io_t *io, const s3c2400_pwm_phase_t *phase) {
+    uint8_t tail[S3C2400_PWM_STATE_BYTES];
+    memcpy(tail, "PWM1", 4u);
+    gp32_st32le(tail + 4u, phase ? phase->clock_hz : s3c2400_run_clock_hz(s));
+    gp32_st32le(tail + 8u, s->pwm_reload_pending);
+    for (unsigned t = 0; t < 5u; ++t) {
+        uint8_t *p = tail + 12u + t * 16u;
+        gp32_st32le(p, s->pwm_count[t]);
+        gp32_st32le(p + 4u, s->pwm_reload[t]);
+        uint64_t accum = phase ? phase->accum[t] : s->pwm_accum[t];
+        gp32_st32le(p + 8u, (uint32_t)accum);
+        gp32_st32le(p + 12u, (uint32_t)(accum >> 32u));
+    }
+    return state_io_write(io, tail, sizeof(tail));
+}
+
+static int pwm_state_read(state_io_t *io, const s3c2400_state_image_t *st, pwm_state_image_t *pwm) {
+    uint8_t tail[S3C2400_PWM_STATE_BYTES];
+    if (!state_io_read(io, tail, sizeof(tail)) || memcmp(tail, "PWM1", 4u)) return 0;
+    pwm->phase.clock_hz = gp32_ld32le(tail + 4u);
+    pwm->pending = gp32_ld32le(tail + 8u);
+    if (!pwm->phase.clock_hz || (pwm->pending & ~0x1fu)) return 0;
+    for (unsigned t = 0; t < 5u; ++t) {
+        const uint8_t *p = tail + 12u + t * 16u;
+        pwm->count[t] = gp32_ld32le(p);
+        pwm->reload[t] = gp32_ld32le(p + 4u);
+        pwm->phase.accum[t] = gp32_ld32le(p + 8u) | (uint64_t)gp32_ld32le(p + 12u) << 32u;
+        if (pwm->count[t] > 0xffffu || pwm->reload[t] > 0xffffu ||
+            (pwm->pending & (1u << t) ? pwm->count[t] != 0u : pwm->reload[t] != 0u) ||
+            pwm->phase.accum[t] >= (uint64_t)pwm->phase.clock_hz * pwm_clock_divisor(st->pwm, t)) return 0;
+    }
+    return 1;
+}
+
+static void pwm_state_migrate(const s3c2400_state_image_t *st, uint32_t old_clock,
+                              uint32_t pclk, pwm_state_image_t *pwm) {
+    memset(pwm, 0, sizeof(*pwm));
+    pwm->phase.clock_hz = old_clock;
+    for (unsigned t = 0; t < 5u; ++t) {
+        uint32_t buffer = st->pwm[3u + t * 3u] & 0xffffu;
+        if (!(st->pwm[2] & pwm_start_mask[t])) {
+            /* The old stopped readback exposed TCNTB, and its next tick
+             * discarded the phase. No retained live count exists to recover. */
+            pwm->count[t] = buffer;
+            continue;
+        }
+        uint64_t period = (uint64_t)old_clock * pwm_clock_divisor(st->pwm, t);
+        uint64_t decrement = (period + pclk - 1u) / pclk;
+        uint32_t old_count = buffer ? buffer : 0x10000u;
+        uint64_t elapsed = st->pwm_accum[t] / decrement;
+        pwm->count[t] = elapsed >= old_count ? 0u : old_count - (uint32_t)elapsed;
+        /* 65536 was an old undocumented substitute for a zero buffer. All
+         * representable observed values survive; that one value becomes zero. */
+        if (pwm->count[t] == 0x10000u) pwm->count[t] = 0u;
+        pwm->phase.accum[t] = (st->pwm_accum[t] % decrement) * pclk;
+        if (!pwm->count[t] && (st->pwm[2] & pwm_auto_mask[t])) {
+            /* Old images cannot say whether a zero-state reload was already
+             * captured. Treat it as pending, preserve IRQ bits, and do not
+             * invent an interrupt at load time. This migration is approximate. */
+            pwm->pending |= 1u << t;
+            pwm->reload[t] = buffer;
+        }
+    }
+}
+
+static int s3c2400_state_save_image(const s3c2400_t *s, state_io_t *io, s3c2400_state_image_t *st,
+                                   const s3c2400_pwm_phase_t *pwm_phase) {
     memset(st, 0, sizeof(*st));
     memcpy(st->bios, s->bios, sizeof(st->bios));
     st->ram_size = s->ram_size;
@@ -2753,7 +2957,18 @@ static int s3c2400_state_save_image(const s3c2400_t *s, state_io_t *io, s3c2400_
     memcpy(st->uart0, s->uart0, sizeof(st->uart0));
     memcpy(st->uart1, s->uart1, sizeof(st->uart1));
     memcpy(st->pwm, s->pwm, sizeof(st->pwm));
-    memcpy(st->pwm_accum, s->pwm_accum, sizeof(st->pwm_accum));
+    /* Leave cycle-unit projections in the old body. Its format cannot express
+     * an independently changed buffer or a retained stopped counter; v16's
+     * explicit trailer is authoritative for every new-format load. */
+    uint32_t pwm_clock = s3c2400_run_clock_hz(s), pwm_pclk = clk_pclk(s, MPLLCON);
+    for (unsigned t = 0; t < 5u; ++t) {
+        uint32_t buffer = s->pwm[3u + t * 3u] & 0xffffu;
+        if (!buffer) buffer = 0x10000u;
+        uint64_t period = (uint64_t)pwm_clock * pwm_clock_divisor(s->pwm, t);
+        uint64_t decrement = (period + pwm_pclk - 1u) / pwm_pclk;
+        uint32_t elapsed = buffer > s->pwm_count[t] ? buffer - s->pwm_count[t] : 0u;
+        st->pwm_accum[t] = (uint64_t)elapsed * decrement + s->pwm_accum[t] / pwm_pclk;
+    }
     memcpy(st->usb_dev, s->usb_dev, sizeof(st->usb_dev));
     memcpy(st->watchdog, s->watchdog, sizeof(st->watchdog));
     memcpy(st->iic, s->iic, sizeof(st->iic));
@@ -2792,24 +3007,29 @@ static int s3c2400_state_save_image(const s3c2400_t *s, state_io_t *io, s3c2400_
     return state_io_write(io, &s->iis_accum, sizeof(s->iis_accum)) &&
            state_io_write(io, lcd_phase, sizeof(lcd_phase)) &&
            state_io_write(io, &s->audio_idle_phase, sizeof(s->audio_idle_phase)) &&
-           state_io_write(io, codec, sizeof(codec));
+           state_io_write(io, codec, sizeof(codec)) && pwm_state_write(s, io, pwm_phase);
 }
 
-int s3c2400_state_save_io(const s3c2400_t *s, state_io_t *io) {
+int s3c2400_state_save_io_with_pwm_phase(const s3c2400_t *s, state_io_t *io,
+                                       const s3c2400_pwm_phase_t *phase) {
     if (!s || !io || s->audio_frames > SIZE_MAX / (2u * sizeof(int16_t))) return 0;
     /* The wire image includes BIOS and pixels (~840 KB), exceeding small
      * frontend worker stacks. Per-call storage also keeps instances separate. */
     s3c2400_state_image_t *st = malloc(sizeof(*st));
     if (!st) return 0;
-    int ok = s3c2400_state_save_image(s, io, st);
+    int ok = s3c2400_state_save_image(s, io, st, phase);
     free(st);
     return ok;
 }
 
+int s3c2400_state_save_io(const s3c2400_t *s, state_io_t *io) {
+    return s3c2400_state_save_io_with_pwm_phase(s, io, NULL);
+}
+
 static int s3c2400_state_load_image(s3c2400_t *s, state_io_t *io, s3c2400_state_image_t *st,
-                                int has_audio_spans, int has_iis_phase, int has_lcd_phase, int has_idle_phase, int has_codec,
+                                int has_audio_spans, int has_iis_phase, int has_lcd_phase, int has_idle_phase, int has_codec, int has_pwm_state,
                                 uint32_t expected_ram_size, uint32_t expected_run_clock, uint32_t required_ram_size,
-                                smc_state_format_t card_format) {
+                                smc_state_format_t card_format, s3c2400_pwm_phase_t *loaded_pwm) {
     if (!state_io_read(io, st, sizeof(*st))) return 0;
     if (st->ram_size == 0u || st->ram_size > (size_t)64u * 1024u * 1024u || st->audio_frames > (uint64_t)10u * 60u * 44100u) return 0;
     if ((expected_ram_size && st->ram_size != expected_ram_size) || st->ram_size < required_ram_size) return 0;
@@ -2884,6 +3104,13 @@ static int s3c2400_state_load_image(s3c2400_t *s, state_io_t *io, s3c2400_state_
     if (has_idle_phase && (!state_io_read(io, &idle_phase, sizeof(idle_phase)) || idle_phase >= runclk)) goto bad_audio;
     uint8_t codec[6] = {0};
     if (has_codec && (!state_io_read(io, codec, sizeof(codec)) || codec[2] > 8u || codec[3] > 63u)) goto bad_audio;
+    pwm_state_image_t pwm;
+    if (has_pwm_state) {
+        if (!pwm_state_read(io, st, &pwm)) goto bad_audio;
+    } else {
+        uint32_t pclk = (st->clkpow[5] & 1u) ? hclk / 2u : hclk;
+        pwm_state_migrate(st, runclk, pclk, &pwm);
+    }
     smc_state_stage_commit(s->smc, card);
     free(s->ram);
     free(s->audio);
@@ -2937,7 +3164,10 @@ static int s3c2400_state_load_image(s3c2400_t *s, state_io_t *io, s3c2400_state_
     memcpy(s->uart0, st->uart0, sizeof(s->uart0));
     memcpy(s->uart1, st->uart1, sizeof(s->uart1));
     memcpy(s->pwm, st->pwm, sizeof(s->pwm));
-    memcpy(s->pwm_accum, st->pwm_accum, sizeof(s->pwm_accum));
+    memcpy(s->pwm_count, pwm.count, sizeof(s->pwm_count));
+    memcpy(s->pwm_reload, pwm.reload, sizeof(s->pwm_reload));
+    s->pwm_reload_pending = pwm.pending;
+    s3c2400_pwm_phase_restore(s, &pwm.phase);
     s->pwm_clock_dirty = 1;
     memcpy(s->usb_dev, st->usb_dev, sizeof(s->usb_dev));
     memcpy(s->watchdog, st->watchdog, sizeof(s->watchdog));
@@ -2963,6 +3193,7 @@ static int s3c2400_state_load_image(s3c2400_t *s, state_io_t *io, s3c2400_state_
      * to the live mirrors before any IRQ can resume the CPU. */
     live_read32_refresh(s);
     check_irq(s);
+    if (loaded_pwm) *loaded_pwm = pwm.phase;
     return 1;
 bad_audio:
     free(new_spans);
@@ -2972,37 +3203,38 @@ bad_audio:
     return 0;
 }
 
-int s3c2400_state_load_io_checked(s3c2400_t *s, state_io_t *io, int has_audio_spans, int has_iis_phase, int has_lcd_phase, int has_idle_phase, int has_codec,
+int s3c2400_state_load_io_checked(s3c2400_t *s, state_io_t *io, int has_audio_spans, int has_iis_phase, int has_lcd_phase, int has_idle_phase, int has_codec, int has_pwm_state,
                                 uint32_t expected_ram_size, uint32_t expected_run_clock, uint32_t required_ram_size,
-                                smc_state_format_t card_format) {
+                                smc_state_format_t card_format, s3c2400_pwm_phase_t *loaded_pwm) {
     if (!s || !io) return 0;
     s3c2400_state_image_t *st = malloc(sizeof(*st));
     if (!st) return 0;
     int ok = s3c2400_state_load_image(s, io, st, has_audio_spans, has_iis_phase, has_lcd_phase,
-                                    has_idle_phase, has_codec, expected_ram_size, expected_run_clock,
-                                    required_ram_size, card_format);
+                                    has_idle_phase, has_codec, has_pwm_state, expected_ram_size, expected_run_clock,
+                                    required_ram_size, card_format, loaded_pwm);
     free(st);
     return ok;
 }
 
-int s3c2400_state_load_io(s3c2400_t *s, state_io_t *io, int has_audio_spans, int has_iis_phase, int has_lcd_phase, int has_idle_phase, int has_codec) {
-    return s3c2400_state_load_io_checked(s, io, has_audio_spans, has_iis_phase, has_lcd_phase, has_idle_phase, has_codec, 0u, 0u, 0u,
-                                         SMC_STATE_FORMAT_V14);
+int s3c2400_state_load_io(s3c2400_t *s, state_io_t *io, int has_audio_spans, int has_iis_phase, int has_lcd_phase, int has_idle_phase, int has_codec, int has_pwm_state) {
+    return s3c2400_state_load_io_checked(s, io, has_audio_spans, has_iis_phase, has_lcd_phase, has_idle_phase, has_codec, has_pwm_state, 0u, 0u, 0u,
+                                         SMC_STATE_FORMAT_V14, NULL);
 }
 
 int s3c2400_state_save(const s3c2400_t *s, FILE *f) {
     state_io_t io = state_io_file(f);
-    return state_io_write(&io, "GP32SOC9", 8u) && s3c2400_state_save_io(s, &io);
+    return state_io_write(&io, "GP32SO10", 8u) && s3c2400_state_save_io(s, &io);
 }
 
 int s3c2400_state_load(s3c2400_t *s, FILE *f) {
     uint8_t magic[8];
     if (!f || fread(magic, 1, sizeof(magic), f) != sizeof(magic)) return 0;
-    int has_codec = !memcmp(magic, "GP32SOC9", sizeof(magic));
+    int has_pwm = !memcmp(magic, "GP32SO10", sizeof(magic));
+    int has_codec = has_pwm || !memcmp(magic, "GP32SOC9", sizeof(magic));
     int has_idle = has_codec || !memcmp(magic, "GP32SOC8", sizeof(magic));
     int has_lcd = has_idle || !memcmp(magic, "GP32SOC7", sizeof(magic));
     int has_phase = has_lcd || !memcmp(magic, "GP32SOC6", sizeof(magic));
     if (!has_phase && fseek(f, -(long)sizeof(magic), SEEK_CUR)) return 0;
     state_io_t io = state_io_file(f);
-    return s3c2400_state_load_io(s, &io, 1, has_phase, has_lcd, has_idle, has_codec);
+    return s3c2400_state_load_io(s, &io, 1, has_phase, has_lcd, has_idle, has_codec, has_pwm);
 }

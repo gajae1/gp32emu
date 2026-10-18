@@ -97,6 +97,7 @@ typedef struct a64_emit {
     uint8_t cache_host[16];
     int bios_read;   /* jit_bios_base probes the whole read-only BIOS window */
     int open_bus;    /* bus promises open_bus_word32 outside every window */
+    int io_read_callback, io_write_callback; /* proved no fastmem at device PAs */
     int nzcv_valid; /* host NZCV equals the committed guest flags */
     int fwd_guest;  /* guest register whose committed value is still in w2, -1 = none.
                      * A plain data op publishes it for the next data op or a
@@ -247,17 +248,18 @@ static int arm_a64_ldword_checked(arm920t_t *c, const arm_jit_op_t *op,
  * callback-visible PC, one bus access, destination then writeback, then the
  * same continuation snapshot - while skipping the second mmu_translate, the
  * transfer decode and the physical-window probes that the emitter already
- * performed.  Cycle and timing state stay untouched exactly as there, and an
+ * performed. Generic buses retain their complete physical fastmem probe;
+ * certified buses skip it. Cycle and timing state stay untouched exactly as there, and an
  * I/O write keeps the identical exit condition (interrupts, timers, halt,
  * trace, epoch/generation, RAM rebase).  Address and value are handed over
  * already computed: pa is 4-byte aligned and inside that window, rotation is
  * (VA & 3) * 8, writeback is base +/- offset (used only when the decoded
  * shape writes back).  No profiling counter is advanced: like the RAM
  * fast path this is a native fast path, not a checked-helper invocation. */
-static int arm_a64_io_word_checked(arm920t_t *c, const arm_jit_op_t *op,
-                                   uint32_t pa, uint32_t value, uint32_t writeback,
-                                   uint32_t rotation, uint32_t expected_next,
-                                   uint32_t generation) {
+ARM_FORCE_INLINE int arm_a64_io_word_access(arm920t_t *c, const arm_jit_op_t *op,
+                                            uint32_t pa, uint32_t value, uint32_t writeback,
+                                            uint32_t rotation, uint32_t expected_next,
+                                            uint32_t generation, int probe_fastmem) {
     int stop = op->stop;
     unsigned rd = op->b, rn = op->a; /* callbacks can invalidate decoded-op storage */
     int load = !!(op->d & ARM_BC_SD_L);
@@ -265,17 +267,37 @@ static int arm_a64_io_word_checked(arm920t_t *c, const arm_jit_op_t *op,
     uint32_t status = c->cpsr & 0xffu, epoch = c->jit_cache_epoch, run_limit = c->run_limit;
     uint8_t *ram_base = c->jit_ram_base;
     c->r[15] = op->pc + 4u; /* callback-visible PC, exactly as classified */
+    uint8_t *direct = probe_fastmem ? fastmem(c, pa, 4u, !load) : NULL;
     if (load) {
-        /* Same callback selection as arm_bc_ld_word_phys' identity-I/O arm. */
-        uint32_t v = (c->bus.read32_io ? c->bus.read32_io : c->bus.read32)(c->bus.user, pa);
+        /* A generic bus may approve direct memory inside the device window.
+         * Preserve the complete span and independent read/write permission. */
+        uint32_t v = direct ? gp32_ld32le(direct) :
+            (c->bus.read32_io ? c->bus.read32_io : c->bus.read32)(c->bus.user, pa);
         if (rotation) v = gp32_ror32(v, rotation);
         write_r(c, rd, v);
     } else {
-        /* Same callback selection as arm_bc_st_word_phys' identity-I/O arm. */
-        (c->bus.write32_io ? c->bus.write32_io : c->bus.write32)(c->bus.user, pa, value);
+        if (direct) gp32_st32le(direct, value);
+        else (c->bus.write32_io ? c->bus.write32_io : c->bus.write32)(c->bus.user, pa, value);
+        arm920t_cpu_code_write(c, pa, 4u);
     }
     if (wb) write_r(c, rn, writeback);
     return arm_a64_can_continue(c, stop, expected_next, generation, status, epoch, run_limit, ram_base);
+}
+
+static int arm_a64_io_word_checked(arm920t_t *c, const arm_jit_op_t *op,
+                                   uint32_t pa, uint32_t value, uint32_t writeback,
+                                   uint32_t rotation, uint32_t expected_next,
+                                   uint32_t generation) {
+    return arm_a64_io_word_access(c, op, pa, value, writeback, rotation,
+                                 expected_next, generation, 0);
+}
+
+static int arm_a64_io_word_mapped_checked(arm920t_t *c, const arm_jit_op_t *op,
+                                          uint32_t pa, uint32_t value, uint32_t writeback,
+                                          uint32_t rotation, uint32_t expected_next,
+                                          uint32_t generation) {
+    return arm_a64_io_word_access(c, op, pa, value, writeback, rotation,
+                                 expected_next, generation, 1);
 }
 
 static void a64_u32(a64_emit_t *e, uint32_t v) {
@@ -787,7 +809,9 @@ static void a64_io_word_pa(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done,
     a64_imm(e, 7, e->generation);
     a64_rr(e, 0xaa000000u, 0, 31, 19);
     a64_ptr(e, 1, (uintptr_t)op);
-    a64_ptr(e, 16, (uintptr_t)arm_a64_io_word_checked);
+    int callback_only = load ? e->io_read_callback : e->io_write_callback;
+    a64_ptr(e, 16, callback_only ? (uintptr_t)arm_a64_io_word_checked :
+                                  (uintptr_t)arm_a64_io_word_mapped_checked);
     a64_u32(e, 0xd63f0200u); /* blr x16 */
     size_t keep = e->pos;
     a64_branch_word(e, 0x35000000u); /* cbnz w0: commits are done, may continue */
@@ -2209,15 +2233,16 @@ static void arm_jit_compile_host(arm920t_t *c, arm_jit_block_t *b) {
      * Tiny or discontinuous test buses must retain their callback path. */
     e.ram_read = c->jit_ram_base && fastmem(c, ARM_JIT_RAM_BASE_ADDR, ARM_JIT_RAM_SIZE_BYTES, 0) == c->jit_ram_base;
     e.ram_write = c->jit_ram_base && fastmem(c, ARM_JIT_RAM_BASE_ADDR, ARM_JIT_RAM_SIZE_BYTES, 1) == c->jit_ram_base;
-    /* The read-only probes inline a physical word only when its whole window
-     * is backed exactly as the checked helpers will find it.  The open-bus
-     * contract additionally needs no fastmem mapping outside the windows: the
-     * only map s3c2400-style buses extend is RAM itself, so probe one byte past
-     * the window.  ram_size changes happen through state load, which kills
-     * every block, so the check cannot go stale inside compiled code. */
+    /* A whole-window read probe authorizes BIOS loads. Open-bus inlining also
+     * needs every possible RAM extension excluded: one rejected byte cannot
+     * prove the absence of mappings at later addresses or for wider reads.
+     * Requery the certificate whenever mapping flushes force compilation. */
     e.bios_read = c->jit_bios_base && fastmem(c, 0, ARM_JIT_BIOS_SIZE_BYTES, 0) == c->jit_bios_base;
     e.open_bus = c->bus.open_bus_valid &&
-                 !fastmem(c, ARM_JIT_RAM_BASE_ADDR + ARM_JIT_RAM_SIZE_BYTES, 1u, 0);
+        fastmem_excludes(c, ARM_JIT_RAM_BASE_ADDR + ARM_JIT_RAM_SIZE_BYTES,
+            (size_t)UINT32_MAX - (ARM_JIT_RAM_BASE_ADDR + ARM_JIT_RAM_SIZE_BYTES) + 1u, 0);
+    e.io_read_callback = fastmem_excludes(c, 0x14000000u, 0x02000000u, 0);
+    e.io_write_callback = fastmem_excludes(c, 0x14000000u, 0x02000000u, 1);
     /* Counted and plain poll sources keep returning to the dispatcher, whose
      * general path owns their observation and skip bookkeeping. */
     e.hop = ARM_JIT_A64_LINK && !b->poll_backedge;

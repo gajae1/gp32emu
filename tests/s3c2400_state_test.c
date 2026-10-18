@@ -33,7 +33,7 @@ static int run_state_tests(void) {
         if (bad) image->iic_data_index = -1;
         else image->iis_fifo_index = 2u;
         io = state_io_reader(input, size);
-        CHECK(!s3c2400_state_load_io(s, &io, 1, 1, 1, 1, 1),
+        CHECK(!s3c2400_state_load_io(s, &io, 1, 1, 1, 1, 1, 1),
               "invalid peripheral index rejected");
         io = state_io_writer(after, size);
         CHECK(s3c2400_state_save_io(s, &io) && io.pos == size &&
@@ -41,7 +41,7 @@ static int run_state_tests(void) {
               "rejected image leaves complete live state unchanged");
         /* Restore the fixture even on a failing baseline. */
         io = state_io_reader(saved, size);
-        CHECK(s3c2400_state_load_io(s, &io, 1, 1, 1, 1, 1), "restore valid state");
+        CHECK(s3c2400_state_load_io(s, &io, 1, 1, 1, 1, 1, 1), "restore valid state");
     }
 
     /* This is a fixed 240-stride, 240*320-pixel allocation. Publishing an
@@ -58,14 +58,14 @@ static int run_state_tests(void) {
         image->fb_w = bad_framebuffers[i][0];
         image->fb_h = bad_framebuffers[i][1];
         io = state_io_reader(input, size);
-        CHECK(!s3c2400_state_load_io(s, &io, 1, 1, 1, 1, 1),
+        CHECK(!s3c2400_state_load_io(s, &io, 1, 1, 1, 1, 1, 1),
               "invalid framebuffer dimensions rejected");
         io = state_io_writer(after, size);
         CHECK(s3c2400_state_save_io(s, &io) && io.pos == size &&
               memcmp(saved, after, size) == 0,
               "rejected framebuffer leaves complete live state unchanged");
         io = state_io_reader(saved, size);
-        CHECK(s3c2400_state_load_io(s, &io, 1, 1, 1, 1, 1), "restore framebuffer fixture");
+        CHECK(s3c2400_state_load_io(s, &io, 1, 1, 1, 1, 1, 1), "restore framebuffer fixture");
     }
     const uint32_t valid_framebuffers[][2] = {{1u, 1u}, {37u, 209u}, {240u, 320u}};
     for (unsigned i = 0; i < GP32_ARRAY_COUNT(valid_framebuffers); ++i) {
@@ -76,7 +76,7 @@ static int run_state_tests(void) {
         uint32_t last = (image->fb_h - 1u) * 240u + image->fb_w - 1u;
         image->fb[last] = 0x12345678u;
         io = state_io_reader(input, size);
-        CHECK(s3c2400_state_load_io(s, &io, 1, 1, 1, 1, 1),
+        CHECK(s3c2400_state_load_io(s, &io, 1, 1, 1, 1, 1, 1),
               "bounded framebuffer state accepted");
         uint32_t width, height, stride;
         const uint32_t *pixels = s3c2400_framebuffer(s, &width, &height, &stride, NULL);
@@ -104,7 +104,7 @@ static int run_state_tests(void) {
         const uint32_t selected = legacy_irqs[i][1] == 11u || legacy_irqs[i][0] == 0x800u ? 11u : 10u;
         const uint32_t queued = selected == 10u ? 11u : 10u;
         io = state_io_reader(input, size);
-        CHECK(s3c2400_state_load_io(s, &io, 1, 1, 1, 1, 1), "legacy IRQ bitmap accepted");
+        CHECK(s3c2400_state_load_io(s, &io, 1, 1, 1, 1, 1, 1), "legacy IRQ bitmap accepted");
         CHECK(s3c2400_read32(s, 0x14400010u) == (1u << selected) &&
               s3c2400_read32(s, 0x14400014u) == selected,
               "legacy state restores one IRQ with a matching offset");
@@ -135,7 +135,7 @@ static int run_state_tests(void) {
         image->iic[1] = 0xe0u; /* master transmit, transfer active */
         image->iic[3] = 0x5au;
         io = state_io_reader(input, size);
-        CHECK(s3c2400_state_load_io(s, &io, 1, 1, 1, 1, 1),
+        CHECK(s3c2400_state_load_io(s, &io, 1, 1, 1, 1, 1, 1),
               "legacy IIC data-phase count accepted");
         s3c2400_write32(s, 0x15400000u, 0u);
         CHECK(s3c2400_eeprom_read8(s, 0x34u) == 0x5au,

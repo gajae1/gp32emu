@@ -242,10 +242,15 @@ static int direct_ram_range(const gp32_t *g, uint32_t addr, uint32_t len) {
     return len <= end - addr;
 }
 static void direct_write32_if_ram(gp32_t *g, uint32_t addr, uint32_t value) {
-    if (direct_ram_range(g, addr, 4u)) s3c2400_write32(g->soc, addr, value);
+    if (!direct_ram_range(g, addr, 4u)) return;
+    s3c2400_write32(g->soc, addr, value);
+    /* Service output pointers belong to the guest and may name old code. */
+    arm920t_invalidate_icache_range(g->cpu, addr, 4u);
 }
 static void direct_write8_if_ram(gp32_t *g, uint32_t addr, uint8_t value) {
-    if (direct_ram_range(g, addr, 1u)) s3c2400_write8(g->soc, addr, value);
+    if (!direct_ram_range(g, addr, 1u)) return;
+    s3c2400_write8(g->soc, addr, value);
+    arm920t_invalidate_icache_range(g->cpu, addr, 1u);
 }
 static void direct_write_fw_arg(gp32_t *g, uint32_t addr, uint32_t value) {
     if ((addr & 3u) == 0u) direct_write32_if_ram(g, addr, value);
@@ -329,6 +334,7 @@ static void direct_install_stubs(gp32_t *g) {
     };
     for (unsigned i = 0; i < GP32_ARRAY_COUNT(legacy_wait); ++i)
         s3c2400_write32(g->soc, a + 0x80u + i * 4u, legacy_wait[i]);
+    arm920t_invalidate_icache_range(g->cpu, a, 0xacu);
 }
 /* The firmware clock service (retail ROM 0x200c) as the launch path (ROM
  * 0x20ec-0x210c), the reinit service (0x6b3c-0x6b5c) and SWI 0x0d (ROM 0x1398)
@@ -465,6 +471,7 @@ static void direct_install_smc_callbacks(gp32_t *g) {
     uint32_t base = direct_smc_cb_base_addr(g);
     if (!direct_ram_range(g, base, (uint32_t)sizeof(code))) return;
     for (size_t i = 0; i < sizeof(code) / sizeof(code[0]); ++i) s3c2400_write32(g->soc, base + (uint32_t)i * 4u, code[i]);
+    arm920t_invalidate_icache_range(g->cpu, base, (uint32_t)sizeof(code));
 }
 
 static uint32_t direct_fwinfo_addr(const gp32_t *g) {
@@ -690,8 +697,7 @@ static void direct_write_cstr_if_ram(gp32_t *g, uint32_t dst, const char *s) {
     if (!g || !s) return;
     size_t n = strlen(s) + 1u;
     if (n > 512u) n = 512u;
-    if (!direct_ram_range(g, dst, (uint32_t)n)) return;
-    for (size_t i = 0; i < n; ++i) s3c2400_write8(g->soc, dst + (uint32_t)i, (uint8_t)s[i]);
+    direct_copy_bytes_if_ram(g, dst, (const uint8_t *)s, (uint32_t)n);
 }
 
 static void direct_apply_gxb_scatterload(gp32_t *g, const fxe_image_t *img) {
@@ -756,7 +762,7 @@ static void direct_write_palette_entry(gp32_t *g, uint32_t index, uint32_t value
     uint32_t lcd = direct_sdk_palette_to_lcd(value);
     s3c2400_write16(g->soc, 0x14a00400u + index * 4u, (uint16_t)lcd);
     uint32_t hw = direct_palette_hw_mirror_addr(g);
-    if (direct_ram_range(g, hw + index * 4u, 4u)) s3c2400_write32(g->soc, hw + index * 4u, lcd);
+    direct_write32_if_ram(g, hw + index * 4u, lcd);
 }
 
 static void direct_copy_palette32_to_lcd(gp32_t *g, uint32_t src_addr) {
@@ -791,7 +797,7 @@ static void direct_copy_logpal_to_lcd(gp32_t *g, uint32_t pal_addr) {
         uint32_t raw = s3c2400_debug_read32(g->soc, pal_addr + i * 4u);
         uint32_t v = direct_pack_logpal_entry(raw & 0xffu, (raw >> 8) & 0xffu, (raw >> 16) & 0xffu, (raw >> 24) & 0xffu);
         direct_write_palette_entry(g, i, v);
-        if (direct_ram_range(g, sw + i * 4u, 4u)) s3c2400_write32(g->soc, sw + i * 4u, v);
+        direct_write32_if_ram(g, sw + i * 4u, v);
     }
     g->direct_fxe_palette_addr = sw;
     g->direct_fxe_palette_initialized = 1u;
@@ -803,6 +809,7 @@ static void direct_copy_lcd_palette_to_ram(gp32_t *g, uint32_t dst_addr) {
         uint32_t v = s3c2400_debug_read32(g->soc, 0x14a00400u + i * 4u) & 0xffffu;
         s3c2400_write32(g->soc, dst_addr + i * 4u, direct_lcd_palette_to_sdk(v));
     }
+    arm920t_invalidate_icache_range(g->cpu, dst_addr, 256u * 4u);
 }
 
 static int direct_packed_palette_plausible(gp32_t *g, uint32_t pal_addr) {
@@ -856,7 +863,7 @@ static void direct_fill_default_palette(gp32_t *g) {
         uint32_t b5 = (b2 << 3) | (b2 << 1) | (b2 >> 1);
         uint32_t v = (r5 << 11) | (g5 << 6) | (b5 << 1);
         direct_write_palette_entry(g, i, v);
-        if (direct_ram_range(g, sw + i * 4u, 4u)) s3c2400_write32(g->soc, sw + i * 4u, v);
+        direct_write32_if_ram(g, sw + i * 4u, v);
     }
     g->direct_fxe_palette_addr = sw;
     g->direct_fxe_palette_initialized = 1u;
@@ -1099,7 +1106,7 @@ static void direct_set_lcd_8bpp(gp32_t *g, uint32_t fb_addr, uint32_t pal_addr, 
             for (uint32_t i = 0; i < 256u; ++i) {
                 uint32_t v = s3c2400_debug_read32(g->soc, pal_addr + i * 4u) & 0xffffu;
                 direct_write_palette_entry(g, i, v);
-                if (direct_ram_range(g, sw + i * 4u, 4u)) s3c2400_write32(g->soc, sw + i * 4u, v);
+                direct_write32_if_ram(g, sw + i * 4u, v);
             }
             g->direct_fxe_palette_initialized = 1u;
         }
@@ -1111,7 +1118,7 @@ static void direct_set_lcd_8bpp(gp32_t *g, uint32_t fb_addr, uint32_t pal_addr, 
             uint32_t raw = s3c2400_debug_read32(g->soc, a & ~3u);
             uint32_t v = ((a & 2u) ? (raw >> 16) : raw) & 0xffffu;
             direct_write_palette_entry(g, i, v);
-            if (direct_ram_range(g, sw + i * 4u, 4u)) s3c2400_write32(g->soc, sw + i * 4u, v);
+            direct_write32_if_ram(g, sw + i * 4u, v);
         }
         g->direct_fxe_palette_initialized = 1u;
     } else if (!g->direct_fxe_palette_initialized) {
@@ -2904,7 +2911,7 @@ static void direct_scan_file_hle_range(gp32_t *g, uint32_t start, uint32_t end) 
                     uint32_t lit = a + 0x14u + 8u - (after_bl & 0xfffu);
                     if (direct_ram_range(g, lit, 4u)) g->direct_hle_pathbuf_addr = s3c2400_debug_read32(g->soc, lit);
                 }
-                s3c2400_write32(g->soc, a, 0xef070001u);
+                direct_write32_if_ram(g, a, 0xef070001u);
             }
         }
         if ((w0 == 0xe92d40f0u && w1 == 0xe1a07000u && w2 == 0xe1a06001u && w3 == 0xe1a05002u && w4 == 0xe1a04003u)) {
@@ -2920,14 +2927,14 @@ static void direct_scan_file_hle_range(gp32_t *g, uint32_t start, uint32_t end) 
             int retail_read_like = direct_file_helper_looks_read(g, body_target);
             if (retail_seek_like) {
                 g->direct_hle_file_seek_addr = a;
-                s3c2400_write32(g->soc, a, 0xef070005u);
+                direct_write32_if_ram(g, a, 0xef070005u);
             } else if (!retail_write_like && (retail_read_like || body_target == 0u || g->direct_hle_file_read_addr[0] == body_target || g->direct_hle_file_read_addr[1] == body_target)) {
                 if (!g->direct_hle_file_read_addr[0]) {
                     g->direct_hle_file_read_addr[0] = a;
                 } else if (g->direct_hle_file_read_addr[0] != a && !g->direct_hle_file_read_addr[1]) {
                     g->direct_hle_file_read_addr[1] = a;
                 }
-                s3c2400_write32(g->soc, a, 0xef070002u);
+                direct_write32_if_ram(g, a, 0xef070002u);
             }
         }
         /* Retail BIOS file layer.  Commercial GXE/GXC titles such as Princess Maker 2 often call the lower
@@ -2936,7 +2943,7 @@ static void direct_scan_file_hle_range(gp32_t *g, uint32_t start, uint32_t end) 
            entry points to the same asset-backed HLE used by the higher GPSDK wrappers. */
         if (w0 == 0xe92d4ff0u && w1 == 0xe24dd060u && w2 == 0xe1a05001u && w3 == 0xe1a06002u && w4 == 0xe1a07000u) {
             g->direct_hle_file_open_addr = a;
-            s3c2400_write32(g->soc, a, 0xef070001u);
+            direct_write32_if_ram(g, a, 0xef070001u);
         }
         /* The SDK also has a separate existing-file open entry, with a smaller
            stack frame and swapped saved mode/output registers. Both entries
@@ -2948,7 +2955,7 @@ static void direct_scan_file_hle_range(gp32_t *g, uint32_t start, uint32_t end) 
             s3c2400_debug_read32(g->soc, a + 0x1cu) == 0xe3500001u &&
             s3c2400_debug_read32(g->soc, a + 0x20u) == 0x23a0000bu) {
             g->direct_hle_file_open_addr = a;
-            s3c2400_write32(g->soc, a, 0xef070001u);
+            direct_write32_if_ram(g, a, 0xef070001u);
         }
         if (w0 == 0xe92d4fffu && w1 == 0xe24dd00cu && w2 == 0xe1a05001u && w3 == 0xe3a0107fu && w4 == 0xe0016c40u) {
             if (!g->direct_hle_file_read_addr[0]) {
@@ -2956,15 +2963,15 @@ static void direct_scan_file_hle_range(gp32_t *g, uint32_t start, uint32_t end) 
             } else if (g->direct_hle_file_read_addr[0] != a && !g->direct_hle_file_read_addr[1]) {
                 g->direct_hle_file_read_addr[1] = a;
             }
-            s3c2400_write32(g->soc, a, 0xef070002u);
+            direct_write32_if_ram(g, a, 0xef070002u);
         }
         if (w0 == 0xe92d41f0u && w1 == 0xe24dd040u && w2 == 0xe3a0107fu && w3 == 0xe0014c40u) {
             g->direct_hle_file_close_addr = a;
-            s3c2400_write32(g->soc, a, 0xef070003u);
+            direct_write32_if_ram(g, a, 0xef070003u);
         }
         if (w0 == 0xe92d40f0u && w1 == 0xe24dd048u && w2 == 0xe1a05001u && w3 == 0xe1a06000u) {
             g->direct_hle_file_size_addr = a;
-            s3c2400_write32(g->soc, a, 0xef070004u);
+            direct_write32_if_ram(g, a, 0xef070004u);
         }
         if (w0 == 0xe92d4010u && w1 == 0xe1a04000u) {
             uint32_t bl = s3c2400_debug_read32(g->soc, a + 0x08u);
@@ -2978,26 +2985,26 @@ static void direct_scan_file_hle_range(gp32_t *g, uint32_t start, uint32_t end) 
                                      (s3c2400_debug_read32(g->soc, a + 0x3cu) & 0x0f000000u) == 0x0b000000u);
             if ((close_like || legacy_close_like || retail_close_like) && g->direct_hle_file_close_addr != a) {
                 if (!g->direct_hle_file_close_addr) g->direct_hle_file_close_addr = a;
-                s3c2400_write32(g->soc, a, 0xef070003u);
+                direct_write32_if_ram(g, a, 0xef070003u);
             }
         }
         if (w0 == 0xe92d4010u && w1 == 0xe1a04001u && s3c2400_debug_read32(g->soc, a + 0x54u) == 0xebffe483u) {
             if (!g->direct_hle_file_size_addr) g->direct_hle_file_size_addr = a;
-            s3c2400_write32(g->soc, a, 0xef070004u);
+            direct_write32_if_ram(g, a, 0xef070004u);
         }
         if (w0 == 0xe92d4010u && w1 == 0xe1a04001u && (w2 & 0x0f000000u) == 0x0b000000u &&
             s3c2400_debug_read32(g->soc, a + 0x48u) == 0xe1a01004u && (s3c2400_debug_read32(g->soc, a + 0x50u) & 0x0f000000u) == 0x0b000000u) {
             if (!g->direct_hle_file_size_addr) g->direct_hle_file_size_addr = a;
-            s3c2400_write32(g->soc, a, 0xef070004u);
+            direct_write32_if_ram(g, a, 0xef070004u);
         }
         if (w0 == 0xe92d4010u && w1 == 0xe1a04001u && (w2 & 0x0f000000u) == 0x0b000000u &&
             s3c2400_debug_read32(g->soc, a + 0x40u) == 0xe1a01004u &&
             direct_arm_bl_to(a + 0x50u, s3c2400_debug_read32(g->soc, a + 0x50u), GP32_RAM_BASE + 0x0010a150u)) {
             g->direct_hle_file_size_addr = a;
-            s3c2400_write32(g->soc, a, 0xef070004u);
+            direct_write32_if_ram(g, a, 0xef070004u);
         }
         if (w0 == 0xe92d40f0u && w1 == 0xe51f6b14u && w2 == 0xe3a07000u && w3 == 0xe5867040u) {
-            s3c2400_write32(g->soc, a, 0xef070008u);
+            direct_write32_if_ram(g, a, 0xef070008u);
         }
         /* GPSDK PCM library.  BIOSless direct loading has no firmware IIS/PCM
            service behind the library's SWI wrappers, so patch the stable GPSDK
@@ -3007,13 +3014,13 @@ static void direct_scan_file_hle_range(gp32_t *g, uint32_t start, uint32_t end) 
         if (!g->direct_hle_pcm_env_addr && w0 == 0xe59f302cu && w1 == 0xe593c000u && w2 == 0xe35c0000u && w3 == 0x03a00002u) {
             uint32_t lit = a + 8u + (w0 & 0xfffu);
             g->direct_hle_pcm_env_addr = direct_ram_range(g, lit, 4u) ? s3c2400_debug_read32(g->soc, lit) : 0u;
-            s3c2400_write32(g->soc, a, 0xef070009u);
+            direct_write32_if_ram(g, a, 0xef070009u);
         }
         if (!g->direct_hle_pcm_play_addr && w0 == 0xe92d4ff0u && w1 == 0xe1a04000u && w2 == 0xe51f00d8u &&
             w3 == 0xe1a06001u && w4 == 0xe5900000u && s3c2400_debug_read32(g->soc, a + 0x14u) == 0xe1a05002u &&
             s3c2400_debug_read32(g->soc, a + 0x18u) == 0xe3500000u && s3c2400_debug_read32(g->soc, a + 0x1cu) == 0x03a00002u) {
             g->direct_hle_pcm_play_addr = a;
-            s3c2400_write32(g->soc, a, 0xef07000au);
+            direct_write32_if_ram(g, a, 0xef07000au);
         }
         if (!g->direct_hle_pcm_init_addr && (w0 == 0xe92d43f0u || w0 == 0xe92d41f0u) &&
             w1 == 0xe24dd01cu && w2 == 0xe1a06000u && w3 == 0xe1a05001u &&
@@ -3030,32 +3037,32 @@ static void direct_scan_file_hle_range(gp32_t *g, uint32_t start, uint32_t end) 
              * both as the same SDK ABI and service them through the PCM HLE.
              */
             g->direct_hle_pcm_init_addr = a;
-            s3c2400_write32(g->soc, a, 0xef07000bu);
+            direct_write32_if_ram(g, a, 0xef07000bu);
         }
         if (!g->direct_hle_pcm_stop_addr && w0 == 0xe92d41f0u && w1 == 0xe24dd01cu && w3 == 0xe51f8398u) {
             g->direct_hle_pcm_stop_addr = a;
-            s3c2400_write32(g->soc, a, 0xef07000cu);
+            direct_write32_if_ram(g, a, 0xef07000cu);
         }
         if (!g->direct_hle_pcm_remove_addr && w0 == 0xe3500000u && w1 == 0x01a0f00eu && w2 == 0xe92d4010u && w3 == 0xe1a04000u &&
             s3c2400_debug_read32(g->soc, a + 0x10u) == 0xebfbdf9du) {
             g->direct_hle_pcm_remove_addr = a;
-            s3c2400_write32(g->soc, a, 0xef07000du);
+            direct_write32_if_ram(g, a, 0xef07000du);
         }
         if (!g->direct_hle_pcm_lock_addr && w0 == 0xe52de004u && w1 == 0xe51fc2a0u && w2 == 0xe3a03000u &&
             w3 == 0xe083e103u && w4 == 0xe79ce10eu) {
             g->direct_hle_pcm_lock_addr = a;
-            s3c2400_write32(g->soc, a, 0xef07000eu);
+            direct_write32_if_ram(g, a, 0xef07000eu);
         }
         if (!g->direct_hle_pcm_only_kill_addr && w0 == 0xe92d4070u && w1 == 0xe51f62ecu && w2 == 0xe1a04000u && w3 == 0xe3a05000u) {
             g->direct_hle_pcm_only_kill_addr = a;
-            s3c2400_write32(g->soc, a, 0xef07000fu);
+            direct_write32_if_ram(g, a, 0xef07000fu);
         }
         if (!g->direct_hle_sound_dispatch_addr && w0 == 0xe92d4030u && w1 == 0xe24dd040u && w2 == 0xe1a05000u && w3 == 0xe1a04001u && w4 == 0xe59f1054u &&
             s3c2400_debug_read32(g->soc, a + 0x14u) == 0xe1a0000du && s3c2400_debug_read32(g->soc, a + 0x18u) == 0xe3a02040u) {
             uint32_t literal = a + 0x10u + 8u + (w4 & 0xfffu);
             g->direct_hle_sound_dispatch_addr = a;
             if (direct_ram_range(g, literal, 4u)) g->direct_hle_sound_table_addr = s3c2400_debug_read32(g->soc, literal);
-            s3c2400_write32(g->soc, a, 0xef070006u);
+            direct_write32_if_ram(g, a, 0xef070006u);
         }
         if (!g->direct_hle_sound_play_addr && w0 == 0xe92d40f8u && w1 == 0xe51f6018u && w2 == 0xe1a04000u && w3 == 0xe5960030u && w4 == 0xe1a05001u) {
             uint32_t state_lit = a + 12u - 0x18u;
@@ -3063,7 +3070,7 @@ static void direct_scan_file_hle_range(gp32_t *g, uint32_t start, uint32_t end) 
             if (direct_ram_range(g, state_lit, 4u)) g->direct_hle_sound_state_addr = s3c2400_debug_read32(g->soc, state_lit);
             /* Keep this as a fallback for titles that call the GPSDK PCM path directly
                instead of going through the small sample-index dispatcher above. */
-            if (!g->direct_hle_sound_dispatch_addr) s3c2400_write32(g->soc, a, 0xef070007u);
+            if (!g->direct_hle_sound_dispatch_addr) direct_write32_if_ram(g, a, 0xef070007u);
         }
         /* Samsung/Mirko SMFS wrapper discovery: prologue shape, then a BL to
            the SWI-0x11 card gate, then a BL to the closed Samsung driver entry.
@@ -3094,7 +3101,7 @@ static void direct_scan_file_hle_range(gp32_t *g, uint32_t start, uint32_t end) 
                     hle_id = direct_smfs_driver_hle_id(g, t);
                     if (hle_id) break;
                 }
-                if (saw_gate && hle_id) s3c2400_write32(g->soc, a, 0xef070000u | hle_id);
+                if (saw_gate && hle_id) direct_write32_if_ram(g, a, 0xef070000u | hle_id);
             }
         }
     }
@@ -4068,7 +4075,7 @@ static int direct_fxe_swi(void *user, arm920t_t *cpu, uint32_t imm, uint32_t pc,
              * stack word the copy runs off the end of RAM into the SoC registers. */
             if (selector == 1u && direct_ram_range(g, argp, 4u)) {
                 size_t len = strlen(g->direct_smc_game_dir);
-                s3c2400_write32(g->soc, argp, (uint32_t)(len > 0xffu ? 0xffu : len));
+                direct_write32_if_ram(g, argp, (uint32_t)(len > 0xffu ? 0xffu : len));
             }
             arm920t_set_reg(cpu, 0, dst);
             return 1;
@@ -4080,7 +4087,7 @@ static int direct_fxe_swi(void *user, arm920t_t *cpu, uint32_t imm, uint32_t pc,
             return 1;
         }
         if (direct_ram_range(g, argp, 4u)) {
-            s3c2400_write32(g->soc, argp, 0u);
+            direct_write32_if_ram(g, argp, 0u);
             arm920t_set_reg(cpu, 0, argp);
         } else {
             arm920t_set_reg(cpu, 0, 0u);
@@ -4134,7 +4141,7 @@ static int direct_fxe_swi(void *user, arm920t_t *cpu, uint32_t imm, uint32_t pc,
                   * unchanged. */
         uint32_t source = arm920t_get_reg(cpu, 0) & 31u;
         uint32_t handler = arm920t_get_reg(cpu, 1);
-        s3c2400_write32(g->soc, S3C2400_HLE_ISR_TABLE_ADDR + source * 4u, handler);
+        direct_write32_if_ram(g, S3C2400_HLE_ISR_TABLE_ADDR + source * 4u, handler);
         s3c2400_write32(g->soc, 0x14400008u,
                         s3c2400_debug_read32(g->soc, 0x14400008u) & ~(1u << source));
         return 1;
@@ -4142,7 +4149,7 @@ static int direct_fxe_swi(void *user, arm920t_t *cpu, uint32_t imm, uint32_t pc,
     case 0x0a: { /* Firmware interrupt-handler removal (retail ROM 0x1294): clear
                   * the table entry and mask the source again. */
         uint32_t source = arm920t_get_reg(cpu, 0) & 31u;
-        s3c2400_write32(g->soc, S3C2400_HLE_ISR_TABLE_ADDR + source * 4u, 0u);
+        direct_write32_if_ram(g, S3C2400_HLE_ISR_TABLE_ADDR + source * 4u, 0u);
         s3c2400_write32(g->soc, 0x14400008u,
                         s3c2400_debug_read32(g->soc, 0x14400008u) | (1u << source));
         return 1;
@@ -4322,6 +4329,7 @@ gp32_status_t gp32_load_bios(gp32_t *g, const char *path) {
     if (!g || !path) return GP32_ERR_INVALID_ARGUMENT;
     char e[256] = {0};
     if (!s3c2400_load_bios(g->soc, path, e, sizeof(e))) { seterr(g, "%s", e[0] ? e : "BIOS load failed"); return GP32_ERR_IO; }
+    arm920t_flush_jit(g->cpu);
     return GP32_OK;
 }
 
@@ -4336,6 +4344,7 @@ gp32_status_t gp32_load_bios_data(gp32_t *g, const void *data, size_t size) {
     if (!g || !data || !size) return GP32_ERR_INVALID_ARGUMENT;
     char e[256] = {0};
     if (!s3c2400_load_bios_buffer(g->soc, (const uint8_t *)data, size, e, sizeof(e))) { seterr(g, "%s", e[0] ? e : "BIOS buffer load failed"); return GP32_ERR_IO; }
+    arm920t_flush_jit(g->cpu);
     return GP32_OK;
 }
 
@@ -5707,7 +5716,8 @@ static const uint8_t gp32_state_magic_v12[16] = { 'G','P','3','2','S','T','A','T
  * self-describing, so every older magic keeps loading through the full-image
  * layout and an older build refuses this magic outright. */
 static const uint8_t gp32_state_magic_v14[16] = { 'G','P','3','2','S','T','A','T','E','v','0','0','1','4',0,0 };
-static const uint8_t gp32_state_magic[16] = { 'G','P','3','2','S','T','A','T','E','v','0','0','1','5',0,0 };
+static const uint8_t gp32_state_magic_v15[16] = { 'G','P','3','2','S','T','A','T','E','v','0','0','1','5',0,0 };
+static const uint8_t gp32_state_magic[16] = { 'G','P','3','2','S','T','A','T','E','v','0','0','1','6',0,0 };
 static_assert(sizeof(gp32_frame_time_t) == 16u, "fixed frame-time wire extension");
 static_assert(sizeof(gp32_elapsed_time_t) == 16u, "fixed elapsed-time wire extension");
 
@@ -5877,7 +5887,8 @@ static int gp32_resume_validate(const gp32_resume_image_t *r, const gp32_state_i
     return 1;
 }
 
-static int gp32_state_write(const gp32_t *g, state_io_t *io) {
+static int gp32_state_write_with_pwm_phase(const gp32_t *g, state_io_t *io,
+                                          const s3c2400_pwm_phase_t *pwm_phase) {
     gp32_state_image_t direct;
     gp32_direct_state_capture(g, &direct);
     return state_io_write(io, gp32_state_magic, sizeof(gp32_state_magic)) &&
@@ -5886,14 +5897,20 @@ static int gp32_state_write(const gp32_t *g, state_io_t *io) {
            state_io_write(io, &g->frame_time, sizeof(g->frame_time)) &&
            gp32_resume_write(g, io) &&
            arm920t_state_save_io(g->cpu, io) &&
-           s3c2400_state_save_io(g->soc, io);
+           s3c2400_state_save_io_with_pwm_phase(g->soc, io, pwm_phase);
 }
 
-static int gp32_state_read(gp32_t *g, state_io_t *io, gp32_state_image_t *direct, gp32_resume_image_t *resume) {
+static int gp32_state_write(const gp32_t *g, state_io_t *io) {
+    return gp32_state_write_with_pwm_phase(g, io, NULL);
+}
+
+static int gp32_state_read(gp32_t *g, state_io_t *io, gp32_state_image_t *direct, gp32_resume_image_t *resume,
+                           s3c2400_pwm_phase_t *pwm_phase) {
     uint8_t got[sizeof(gp32_state_magic)];
     if (!state_io_read(io, got, sizeof(got))) return 0;
     int legacy = memcmp(got, gp32_state_magic_v2, sizeof(got)) == 0;
-    int has_translation = memcmp(got,gp32_state_magic,sizeof(got))==0;
+    int has_pwm_state = memcmp(got,gp32_state_magic,sizeof(got))==0;
+    int has_translation = has_pwm_state || memcmp(got,gp32_state_magic_v15,sizeof(got))==0;
     int has_tasks = has_translation || memcmp(got,gp32_state_magic_v14,sizeof(got))==0 ||
                     memcmp(got, gp32_state_magic_v12, sizeof(got)) == 0;
     int has_wait = has_tasks || memcmp(got, gp32_state_magic_v11, sizeof(got)) == 0;
@@ -5952,10 +5969,10 @@ static int gp32_state_read(gp32_t *g, state_io_t *io, gp32_state_image_t *direct
             if (required_ram_size < 0x2000u) required_ram_size = 0x2000u;
         }
     }
-    if (ok) ok = s3c2400_state_load_io_checked(g->soc, io, has_spans, has_iis_phase, has_lcd_phase, has_idle_phase, has_codec,
+    if (ok) ok = s3c2400_state_load_io_checked(g->soc, io, has_spans, has_iis_phase, has_lcd_phase, has_idle_phase, has_codec, has_pwm_state,
                                                resume->ram_size, resume->run_clock, required_ram_size,
                                                (has_translation || memcmp(got,gp32_state_magic_v14,sizeof(got))==0) ? SMC_STATE_FORMAT_V14
-                                                                                                : SMC_STATE_FORMAT_PRE_V14);
+                                                                                                : SMC_STATE_FORMAT_PRE_V14, pwm_phase);
     if (ok) {
         if (legacy) {
             /* v2 has no clock history. Continue from its former observable
@@ -6022,7 +6039,7 @@ gp32_status_t gp32_save_state_data(gp32_t *g, void *data, size_t size) {
     }
     state_io_t io = state_io_writer(data, size);
     s3c2400_clock_snapshot_t clock = gp32_cpu_speed_to_nominal(g);
-    int ok = gp32_state_write(g, &io);
+    int ok = gp32_state_write_with_pwm_phase(g, &io, &clock.pwm);
     s3c2400_clock_snapshot_restore(g->soc, &clock);
     if (!ok) { seterr(g, "write savestate buffer failed"); return GP32_ERR_IO; }
     if (io.pos < size) memset((uint8_t *)data + io.pos, 0, size - io.pos);
@@ -6034,8 +6051,9 @@ static gp32_status_t gp32_state_load_data(gp32_t *g, const void *data, size_t si
     state_io_t io = state_io_reader(data, size);
     gp32_state_image_t direct;
     gp32_resume_image_t resume;
+    s3c2400_pwm_phase_t pwm_phase;
     s3c2400_clock_snapshot_t clock = gp32_cpu_speed_to_nominal(g);
-    if (!gp32_state_read(g, &io, &direct, &resume)) {
+    if (!gp32_state_read(g, &io, &direct, &resume, &pwm_phase)) {
         s3c2400_clock_snapshot_restore(g->soc, &clock);
         seterr(g, "load savestate buffer failed or unsupported version");
         return GP32_ERR_IO;
@@ -6043,6 +6061,9 @@ static gp32_status_t gp32_state_load_data(gp32_t *g, const void *data, size_t si
     if (consumed) *consumed = io.pos;
     gp32_state_loaded(g, &direct, &resume);
     gp32_cpu_speed_restore(g, clock.cpu_speed_percent);
+    /* Restore directly from the trailer's original denominator. Converting
+     * through the nominal clock twice can move a 133% timer edge by a cycle. */
+    s3c2400_pwm_phase_restore(g->soc, &pwm_phase);
     return GP32_OK;
 }
 
@@ -6064,7 +6085,7 @@ gp32_status_t gp32_save_state(gp32_t *g, const char *path) {
     }
     state_io_t io = state_io_file(stage.file);
     s3c2400_clock_snapshot_t clock = gp32_cpu_speed_to_nominal(g);
-    int ok = gp32_state_write(g, &io);
+    int ok = gp32_state_write_with_pwm_phase(g, &io, &clock.pwm);
     s3c2400_clock_snapshot_restore(g->soc, &clock);
     if (!ok) {
         save_atomic_abort(&stage);
@@ -6090,8 +6111,9 @@ gp32_status_t gp32_load_state(gp32_t *g, const char *path) {
     state_io_t io = state_io_file(f);
     gp32_state_image_t direct;
     gp32_resume_image_t resume;
+    s3c2400_pwm_phase_t pwm_phase;
     s3c2400_clock_snapshot_t clock = gp32_cpu_speed_to_nominal(g);
-    int ok = gp32_state_read(g, &io, &direct, &resume);
+    int ok = gp32_state_read(g, &io, &direct, &resume, &pwm_phase);
     /* Read-only stream: the complete payload is already committed on success.
      * A close error must not report rejection of an applied state. */
     (void)fclose(f);
@@ -6102,5 +6124,6 @@ gp32_status_t gp32_load_state(gp32_t *g, const char *path) {
     }
     gp32_state_loaded(g, &direct, &resume);
     gp32_cpu_speed_restore(g, clock.cpu_speed_percent);
+    s3c2400_pwm_phase_restore(g->soc, &pwm_phase);
     return GP32_OK;
 }

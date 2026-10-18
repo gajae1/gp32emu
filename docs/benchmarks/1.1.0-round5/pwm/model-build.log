@@ -1,0 +1,13 @@
+$ /tmp/gp32-round4-tools/cmake/data/bin/cmake --build /tmp/gp32-round5-build-pwm/gcc --parallel 2 --target gp32emu
+[  7%] Building C object CMakeFiles/gp32emu.dir/src/s3c2400.c.o
+/tmp/gp32-round5-pwm/src/s3c2400.c: In function ‘audio_prepare_rate’:
+/tmp/gp32-round5-pwm/src/s3c2400.c:898:67: warning: comparison is always false due to limited range of data type [-Wtype-limits]
+  898 |                 if (cap <= s->audio_boundary_cap || (uint64_t)cap > SIZE_MAX / sizeof(*s->audio_boundaries)) return 0;
+      |                                                                   ^
+/tmp/gp32-round5-pwm/src/s3c2400.c: In function ‘s3c2400_state_load_image’:
+/tmp/gp32-round5-pwm/src/s3c2400.c:2944:67: warning: comparison is always false due to limited range of data type [-Wtype-limits]
+ 2944 |             span_count > st->audio_frames || (uint64_t)span_count > SIZE_MAX / sizeof(*new_spans)) goto bad_audio;
+      |                                                                   ^
+[ 15%] Linking C static library libgp32emu.a
+[100%] Built target gp32emu
+exit=0

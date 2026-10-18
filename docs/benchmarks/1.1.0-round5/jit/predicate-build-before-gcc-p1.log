@@ -1,0 +1,1 @@
+['gcc-13', '-std=c2x', '-O3', '-DNDEBUG', '-D_XOPEN_SOURCE=700', '-DGP32EMU_CPU_PROFILE=1', '-DCORE_UNDER_TEST="/tmp/gp32-round5-jit-condition-study/before/arm920t.c"', '-Isrc', '-Iinclude', 'scripts/bench_native_predicates.c', '-o', '/tmp/gp32-round5-jit-condition-study/before-gcc-p1']

@@ -1,0 +1,13 @@
+$ gcc-13 -std=c2x -O2 -D_XOPEN_SOURCE=700 -Isrc -Iinclude -I/tmp/gp32-round5-build-pwm/source/baseline docs/benchmarks/1.1.0-round5/pwm/legacy-writer.c /tmp/gp32-round5-build-pwm/source/baseline/s3c2400.c /tmp/gp32-round5-build-pwm/gcc/libgp32emu.a -lm -pthread -o /tmp/gp32-round5-build-pwm/legacy-writer
+exit=0
+$ /tmp/gp32-round5-build-pwm/legacy-writer /tmp/gp32-round5-build-pwm/source/legacy-pwm-soc9.bin
+timer0 old_visible=185
+timer1 old_visible=117
+timer2 old_visible=65521
+timer3 old_visible=151
+timer4 old_visible=4
+exit=0
+image_size=848482
+image_sha256=e1f722a14171d1e4dccb7f2990701951976e5da369d57024297b0670b303efe2
+s3c2400.c_sha256=787ee7c9244c46ace8bf4d8028756580c9126a16b19f7516055b473e92833b88
+s3c2400.h_sha256=e6778f7ae799b2954030ef8dd7369fa86e00fd8ebfc3ad4b5c5659b64bf688bb

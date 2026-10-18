@@ -1,0 +1,3 @@
+FAIL: failed read preserves every live BIOS byte
+FAIL: overlapping source is copied before tail erase
+s3c2400_bios_load_test: 12 checks, 2 failures

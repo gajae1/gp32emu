@@ -1,0 +1,23 @@
+--- a/src/arm920t.c
++++ b/src/arm920t.c
+@@ -4779,16 +4779,11 @@
+     case 5: x64_alu_r32_imm(e, 4, X64_R8D, N_FLAG); patch[(*npatch)++] = x64_jcc32(e, 0x5); break;
+     case 6: x64_alu_r32_imm(e, 4, X64_R8D, V_FLAG); patch[(*npatch)++] = x64_jcc32(e, 0x4); break;
+     case 7: x64_alu_r32_imm(e, 4, X64_R8D, V_FLAG); patch[(*npatch)++] = x64_jcc32(e, 0x5); break;
+-    case 8: /* HI: C && !Z */
+-        x64_alu_r32_imm(e, 4, X64_R8D, C_FLAG); patch[(*npatch)++] = x64_jcc32(e, 0x4);
+-        x64_mov_r32_mem_cpu(e, X64_R8D, cpsr_off()); x64_alu_r32_imm(e, 4, X64_R8D, Z_FLAG); patch[(*npatch)++] = x64_jcc32(e, 0x5); break;
+-    case 9: { /* LS: !C || Z; skip if C && !Z */
+-        size_t pass;
+-        x64_alu_r32_imm(e, 4, X64_R8D, C_FLAG); pass = x64_jcc32(e, 0x4);
+-        x64_mov_r32_mem_cpu(e, X64_R8D, cpsr_off()); x64_alu_r32_imm(e, 4, X64_R8D, Z_FLAG); patch[(*npatch)++] = x64_jcc32(e, 0x4);
+-        x64_patch32(e, pass, e->pos);
++    case 8: case 9: /* HI: {C,Z} == {1,0}; LS is its complement. */
++        x64_alu_r32_imm(e, 4, X64_R8D, C_FLAG | Z_FLAG);
++        x64_alu_r32_imm(e, 7, X64_R8D, C_FLAG);
++        patch[(*npatch)++] = x64_jcc32(e, cond == 8u ? 0x5 : 0x4);
+         break;
+-    }
+     case 10: case 11: case 12: case 13: {
+         size_t pass_patch = 0;
+         int has_pass_patch = 0;

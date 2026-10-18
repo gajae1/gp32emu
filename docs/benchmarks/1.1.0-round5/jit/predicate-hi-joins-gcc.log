@@ -1,0 +1,2 @@
+predicate-joins cases=256 native-insns=1792
+PASS: arm jit differential (flags/shift/branch/mem/half/block/mul/seeded/budget/loop-fences), jit events=256 fallbacks=0
