@@ -1061,6 +1061,24 @@ static void dma_trigger(s3c2400_t *s, int ch) {
     int inc_dst = GP32_BIT(r[1],29) == 0;
     int service = GP32_BIT(r[2],26);
     uint32_t dst0 = dst, moved = 0;
+    /* Whole-service RAM copies have no per-unit bus side effects. Prove both
+     * complete spans and their non-overlap before copying; forward overlap
+     * can reuse bytes written by earlier units, so it must keep the ordered
+     * bus loop below. Fixed addresses, partial RAM and reserved DSZ values
+     * also retain that path. Cursor/reload/IRQ and code invalidation are
+     * shared with ordinary transfers after the copy. */
+    if (service && tc > 1u && inc_src && inc_dst && dsz < 3u) {
+        uint32_t bytes = tc << dsz;
+        const uint8_t *from = ram_ptr(s, src, bytes);
+        uint8_t *to = ram_ptr(s, dst, bytes);
+        if (from && to && ((uint64_t)src + bytes <= dst || (uint64_t)dst + bytes <= src)) {
+            memcpy(to, from, bytes);
+            moved = tc;
+            tc = 0u;
+            src += bytes;
+            dst += bytes;
+        }
+    }
     while (tc) {
         tc--;
         moved++;
