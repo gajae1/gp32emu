@@ -747,7 +747,11 @@ static void check_irq(s3c2400_t *s) {
      * arbitration and must not populate INTPND or INTOFFSET (manual ch.14). */
     arm920t_set_fiq(s->cpu_irq_sink, (pending & s->irq[1]) != 0u);
     pending &= ~s->irq[1];
-    if (pending) {
+    /* INTPND is the selected IRQ latch after arbitration, not another copy
+     * of SRCPND. Hold it and INTOFFSET until software acknowledges INTPND,
+     * even when SRCPND or INTMSK changes first (manual pp.14-2, 14-13).
+     * Otherwise a later higher-priority source can redirect a running ISR. */
+    if (!s->irq[4] && pending) {
 #if defined(__GNUC__) || defined(__clang__)
         /* pending is nonzero: select the same lowest IRQ without scanning
          * every lower bit on each timer/DMA interrupt and acknowledgement. */
@@ -756,10 +760,11 @@ static void check_irq(s3c2400_t *s) {
         uint32_t t = pending, n = 0;
         while (!(t & 1u)) { n++; t >>= 1; }
 #endif
-        s->irq[4] |= (1u << n);
+        s->irq[4] = (1u << n);
         s->irq[5] = n;
-        arm920t_set_irq(s->cpu_irq_sink, 1);
-    } else arm920t_set_irq(s->cpu_irq_sink, 0);
+    }
+    if (!s->irq[4]) s->irq[5] = 0u;
+    arm920t_set_irq(s->cpu_irq_sink, s->irq[4] != 0u);
 }
 static void request_irq(s3c2400_t *s, unsigned n) {
     if (n >= 32) return;
@@ -1378,6 +1383,7 @@ static void io_write32(s3c2400_t *s, uint32_t addr, uint32_t value, uint32_t mas
     switch (addr >> 20u) {
     case 0x144u:
         if (off > 0x17u) break;
+        if (off == 0x14u) return; /* INTOFFSET is read-only. */
         {
             uint32_t old = reg_array_read(s->irq, sizeof(s->irq), off);
             reg_array_write(s->irq,sizeof(s->irq),off,value,mask);
