@@ -2842,6 +2842,19 @@ static int s3c2400_state_load_image(s3c2400_t *s, state_io_t *io, s3c2400_state_
     memcpy(s->memcon, st->memcon, sizeof(s->memcon));
     memcpy(s->usb_host, st->usb_host, sizeof(s->usb_host));
     memcpy(s->irq, st->irq, sizeof(s->irq));
+    /* Older cores could save several INTPND bits while INTOFFSET named one
+     * selection. Restore that selection as a single latch; SRCPND retains
+     * every queued source for arbitration after it is acknowledged. Repair
+     * inconsistent offsets without shifting by an untrusted saved value. */
+    if (s->irq[4]) {
+        uint32_t n = s->irq[5];
+        if (n >= 32u || !(s->irq[4] & (1u << n))) {
+            n = 0u;
+            while (!(s->irq[4] & (1u << n))) ++n;
+        }
+        s->irq[4] = 1u << n;
+        s->irq[5] = n;
+    }
     memcpy(s->dma, st->dma, sizeof(s->dma));
     memcpy(s->clkpow, st->clkpow, sizeof(s->clkpow));
     clock_refresh_values(s);

@@ -13,6 +13,11 @@ static int run_state_tests(void) {
     s3c2400_t *s = s3c2400_create(1024u * 1024u);
     CHECK(s != NULL, "create state fixture");
     if (!s) return 1;
+    arm_bus_t bus = s3c2400_get_bus(s);
+    arm920t_t *cpu = arm920t_create(&bus);
+    CHECK(cpu != NULL, "create IRQ state sink");
+    if (!cpu) { s3c2400_destroy(s); return 1; }
+    s3c2400_set_irq_sink(s, cpu);
     state_io_t count = state_io_counter();
     CHECK(s3c2400_state_save_io(s, &count), "count state bytes");
     size_t size = count.pos;
@@ -39,6 +44,42 @@ static int run_state_tests(void) {
         CHECK(s3c2400_state_load_io(s, &io, 1, 1, 1, 1, 1), "restore valid state");
     }
 
+    /* Older IRQ arbitration ORed new selections into INTPND. A real old
+     * two-timer state contains 0xc00 with INTOFFSET=10; simply holding that
+     * bitmap now leaves a stale offset after the first acknowledgement.
+     * Preserve the recorded selection and leave the other SRCPND request
+     * queued. An inconsistent offset must select a present bit safely. */
+    const uint32_t legacy_irqs[][2] = {
+        {0xc00u, 10u}, {0xc00u, 11u}, {0xc00u, 32u}, {0xc00u, 31u},
+        {0x800u, 11u}, {0x800u, UINT32_MAX}
+    };
+    for (unsigned i = 0; i < GP32_ARRAY_COUNT(legacy_irqs); ++i) {
+        memcpy(input, saved, size);
+        s3c2400_state_image_t *image = (s3c2400_state_image_t *)input;
+        image->irq[0] = 0xc00u;
+        image->irq[4] = legacy_irqs[i][0];
+        image->irq[2] = ~0xc00u;
+        image->irq[5] = legacy_irqs[i][1];
+        const uint32_t selected = legacy_irqs[i][1] == 11u || legacy_irqs[i][0] == 0x800u ? 11u : 10u;
+        const uint32_t queued = selected == 10u ? 11u : 10u;
+        io = state_io_reader(input, size);
+        CHECK(s3c2400_state_load_io(s, &io, 1, 1, 1, 1, 1), "legacy IRQ bitmap accepted");
+        CHECK(s3c2400_read32(s, 0x14400010u) == (1u << selected) &&
+              s3c2400_read32(s, 0x14400014u) == selected,
+              "legacy state restores one IRQ with a matching offset");
+        s3c2400_write32(s, 0x14400000u, 1u << selected);
+        s3c2400_write32(s, 0x14400010u, 1u << selected);
+        CHECK(s3c2400_read32(s, 0x14400010u) == (1u << queued) &&
+              s3c2400_read32(s, 0x14400014u) == queued,
+              "legacy queued IRQ remains serviceable after the selected IRQ");
+        s3c2400_write32(s, 0x14400000u, 1u << queued);
+        s3c2400_write32(s, 0x14400010u, 1u << queued);
+        CHECK(s3c2400_read32(s, 0x14400000u) == 0u &&
+              s3c2400_read32(s, 0x14400010u) == 0u &&
+              s3c2400_read32(s, 0x14400014u) == 0u,
+              "both restored IRQs can be fully acknowledged");
+    }
+
     /* Once the address bytes have been sent, old states may carry an
      * arbitrarily large byte count. They must continue the same transaction
      * without a signed increment wrapping into the address phase. */
@@ -60,9 +101,10 @@ static int run_state_tests(void) {
               "restored IIC transaction writes the next byte at its saved address");
     }
 end:
-    free(saved); free(input); free(after); s3c2400_destroy(s);
+    free(saved); free(input); free(after);
+    arm920t_destroy(cpu); s3c2400_destroy(s);
     if (failures) return 1;
-    puts("PASS: state index validation and IIC transaction continuation");
+    puts("PASS: state index validation, legacy IRQ normalization and IIC transaction continuation");
     return 0;
 }
 
