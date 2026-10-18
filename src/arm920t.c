@@ -1878,12 +1878,14 @@ static void exec_thumb(arm920t_t *c) {
         uint32_t list = op & 0xffu, addr = c->r[rb];
         int load = !!(op & 0x0800u);
         if (load) {
-            for (unsigned r = 0; r < 8u; ++r) if (list & (1u << r)) {
+            for (uint32_t regs = list; regs; regs &= regs - 1u) {
+                unsigned r = arm_ctz16(regs);
                 c->r[r] = rb32(c, addr & ~3u);
                 addr += 4u;
             }
         } else {
-            for (unsigned r = 0; r < 8u; ++r) if (list & (1u << r)) {
+            for (uint32_t regs = list; regs; regs &= regs - 1u) {
+                unsigned r = arm_ctz16(regs);
                 wb32(c, addr & ~3u, c->r[r]);
                 addr += 4u;
             }
