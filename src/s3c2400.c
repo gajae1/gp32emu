@@ -2792,6 +2792,9 @@ static int s3c2400_state_load_image(s3c2400_t *s, state_io_t *io, s3c2400_state_
     if (!state_io_read(io, st, sizeof(*st))) return 0;
     if (st->ram_size == 0u || st->ram_size > (size_t)64u * 1024u * 1024u || st->audio_frames > (uint64_t)10u * 60u * 44100u) return 0;
     if ((expected_ram_size && st->ram_size != expected_ram_size) || st->ram_size < required_ram_size) return 0;
+    /* The public descriptor exposes this fixed 240-stride pixel allocation.
+     * Reset and every renderer produce dimensions within these bounds. */
+    if (!st->fb_w || st->fb_w > 240u || !st->fb_h || st->fb_h > 320u) return 0;
     /* Restored indices address fixed arrays on later IIC/IIS register writes.
      * An out-of-range value turns the next guest write into an out-of-bounds
      * store inside this heap object, so the image must be rejected here. */
