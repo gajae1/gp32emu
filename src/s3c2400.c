@@ -2409,6 +2409,27 @@ int s3c2400_set_cpu_speed_percent(s3c2400_t *s, uint32_t percent) {
     return 1;
 }
 
+void s3c2400_clock_snapshot_capture(const s3c2400_t *s, s3c2400_clock_snapshot_t *snapshot) {
+    if (!s || !snapshot) return;
+    memcpy(snapshot->pwm_accum, s->pwm_accum, sizeof(snapshot->pwm_accum));
+    snapshot->iis_accum = s->iis_accum;
+    snapshot->audio_idle_phase = s->audio_idle_phase;
+    snapshot->lcd_line_accum = s->lcd_line_accum;
+    snapshot->lcd_hclk_remainder = s->lcd_hclk_remainder;
+    snapshot->cpu_speed_percent = s3c2400_cpu_speed_percent(s);
+}
+
+void s3c2400_clock_snapshot_restore(s3c2400_t *s, const s3c2400_clock_snapshot_t *snapshot) {
+    /* Use the ordinary setter first so no derived timing cache retains the
+     * temporary nominal rate. Only its lossy phase rescaling is undone. */
+    if (!snapshot || !s3c2400_set_cpu_speed_percent(s, snapshot->cpu_speed_percent)) return;
+    memcpy(s->pwm_accum, snapshot->pwm_accum, sizeof(s->pwm_accum));
+    s->iis_accum = snapshot->iis_accum;
+    s->audio_idle_phase = snapshot->audio_idle_phase;
+    s->lcd_line_accum = snapshot->lcd_line_accum;
+    s->lcd_hclk_remainder = snapshot->lcd_hclk_remainder;
+}
+
 static uint32_t iis_dma_transfers_per_frame(const s3c2400_t *s) {
     if (!s) return 1u;
     const uint32_t *r = &s->dma[2u << 3];
