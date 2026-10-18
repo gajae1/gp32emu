@@ -364,6 +364,7 @@ void s3c2400_reset(s3c2400_t *s) {
     memset(s->memcon, 0, sizeof(s->memcon));
     memset(s->usb_host, 0, sizeof(s->usb_host));
     memset(s->irq, 0, sizeof(s->irq));
+    s->irq[3] = 0x7fu; /* All seven priority arbiters rotate after reset. */
     memset(s->dma, 0, sizeof(s->dma));
     memset(s->clkpow, 0, sizeof(s->clkpow));
     clock_refresh_values(s);
@@ -740,6 +741,42 @@ static int gp32_smc_update_does_work(const gp32_smc_lines_t *m) {
     return m->do_read && m->read && !m->cmd_latch && !m->add_latch;
 }
 
+/* Each six-input arbiter fixes REQ0 highest and REQ5 lowest, rotating only
+ * REQ1..REQ4. Only an arbiter on the selected path has serviced a request;
+ * pending requests in a losing group do not advance its selector. */
+static unsigned irq_arbiter_select(uint32_t requests, unsigned arbiter,
+                                    uint32_t *priority) {
+    unsigned shift = 7u + arbiter * 2u;
+    unsigned selection = (*priority >> shift) & 3u;
+    unsigned request = 0u;
+    if (!(requests & 1u)) {
+        request = 5u;
+        for (unsigned i = 0; i < 4u; ++i) {
+            unsigned candidate = 1u + ((selection + i) & 3u);
+            if (requests & (1u << candidate)) { request = candidate; break; }
+        }
+    }
+    if ((*priority & (1u << arbiter)) && request >= 1u && request <= 4u)
+        *priority = (*priority & ~(3u << shift)) | ((request & 3u) << shift);
+    return request;
+}
+
+static unsigned irq_select(s3c2400_t *s, uint32_t pending) {
+    static const unsigned first_bit[6] = {0u, 4u, 10u, 16u, 22u, 28u};
+    uint32_t groups = ((pending & 0x0000000fu) != 0u) |
+                      (((pending & 0x000003f0u) != 0u) << 1) |
+                      (((pending & 0x0000fc00u) != 0u) << 2) |
+                      (((pending & 0x003f0000u) != 0u) << 3) |
+                      (((pending & 0x0fc00000u) != 0u) << 4) |
+                      (((pending & 0xf0000000u) != 0u) << 5);
+    unsigned group = irq_arbiter_select(groups, 6u, &s->irq[3]);
+    unsigned edge_group = group == 0u || group == 5u;
+    uint32_t requests = (pending >> first_bit[group]) & (edge_group ? 15u : 63u);
+    if (edge_group) requests <<= 1; /* These groups wire only REQ1..REQ4. */
+    unsigned request = irq_arbiter_select(requests, group, &s->irq[3]);
+    return first_bit[group] + request - edge_group;
+}
+
 static void check_irq(s3c2400_t *s) {
     if (!s->cpu_irq_sink) return;
     uint32_t pending = s->irq[0] & ~s->irq[2]; /* SRCPND masked by INTMSK */
@@ -752,14 +789,11 @@ static void check_irq(s3c2400_t *s) {
      * even when SRCPND or INTMSK changes first (manual pp.14-2, 14-13).
      * Otherwise a later higher-priority source can redirect a running ISR. */
     if (!s->irq[4] && pending) {
-#if defined(__GNUC__) || defined(__clang__)
-        /* pending is nonzero: select the same lowest IRQ without scanning
-         * every lower bit on each timer/DMA interrupt and acknowledgement. */
-        unsigned n = (unsigned)__builtin_ctz(pending);
-#else
-        uint32_t t = pending, n = 0;
-        while (!(t & 1u)) { n++; t >>= 1; }
-#endif
+        /* Model the manual's "serviced" event as accepting this winner into
+         * INTPND. Rechecks and acknowledgements of a held IRQ do not rotate
+         * again; a later explicit PRIORITY write governs the next selection
+         * (S3C2400 manual pp.14-3--14-5, 14-12--14-13). */
+        unsigned n = irq_select(s, pending);
         s->irq[4] = (1u << n);
         s->irq[5] = n;
     }
