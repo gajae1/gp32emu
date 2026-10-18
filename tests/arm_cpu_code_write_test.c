@@ -242,9 +242,10 @@ static void case_write_enters_ram(int native) {
     compare_state(); teardown_pair(); ++cases;
 }
 
-/* The native watch guard bakes in CP15.I. Execute a real guest c1 write after
- * compiling an I-enabled store, then prime the target in the new I=0 state.
- * Reusing that store's old unguarded native body would leave the target stale. */
+/* The native watch guard bakes in CP15.I. Warm both the target and its writer
+ * with I=1, then execute a real guest c1 write. Neither old block may survive
+ * into the new I=0 generation, where target fetches must create word watches
+ * and the writer must use them before the next call. */
 static void case_disable_icache(int native) {
     current_case = "guest MCR disabling I-cache revokes compiled store assumptions";
     setup_pair(); arm920t_set_jit(cpu_jit, native); arm920t_set_trace(cpu_ref, 1, NULL, NULL);
@@ -256,14 +257,39 @@ static void case_disable_icache(int native) {
     set_mem_both(target, 0xe3a00011u); set_mem_both(target + 4u, 0xe12fff1cu);
     if (native) prepare_native_block(cpu_jit, CODE_ADDR);
     else CHECK(arm_jit_translate(cpu_jit, CODE_ADDR) != NULL, "prepare I-enabled decoded store");
+    prime_target(target, native);
+    const uint32_t generation = cpu_jit->jit_generation;
     set_reg_both(9u, 0x70u); set_reg_both(15u, CODE_ADDR + 0x200u);
     CHECK(arm920t_run(cpu_jit, 1u) == arm920t_run(cpu_ref, 1u), "guest c1 write budget");
     CHECK(cpu_jit->cp15[1] == 0x70u, "guest really disabled instruction cache");
+    CHECK(cpu_jit->jit_generation != generation, "I-bit transition revokes both I-enabled blocks");
     prime_target(target, native);
     set_reg_both(1u, 0xe3a00022u); set_reg_both(7u, target); set_reg_both(8u, target);
     set_reg_both(15u, CODE_ADDR);
     CHECK(arm920t_run(cpu_jit, 12u) == arm920t_run(cpu_ref, 12u), "write after disabling I-cache budget");
     CHECK(cpu_jit->r[0] == 0x22u, "store now participates in I-disabled coherence");
+    compare_state(); teardown_pair(); ++cases;
+}
+
+/* DMA/HLE writes use the public physical-range notification even with I=1.
+ * Omitting CPU word watches must retain page tracking, or this notification
+ * would miss a target whose decoded/native code was warmed with I=1. */
+static void case_external_write_icache(int native) {
+    current_case = "I-enabled code remains tracked for external writes";
+    setup_pair(); arm920t_set_jit(cpu_jit, native); arm920t_set_trace(cpu_ref, 1, NULL, NULL);
+    cpu_jit->cp15[1] |= 1u << 12; cpu_ref->cp15[1] |= 1u << 12;
+    const uint32_t target = RAM_BASE + 0x9000u;
+    set_mem_both(target, 0xe3a00011u); set_mem_both(target + 4u, 0xe12fff1cu);
+    prime_target(target, native);
+    const uint32_t epoch = cpu_jit->jit_cache_epoch;
+    set_mem_both(target, 0xe3a00022u);
+    arm920t_invalidate_icache_range(cpu_jit, target, 4u);
+    arm920t_invalidate_icache_range(cpu_ref, target, 4u);
+    CHECK(cpu_jit->jit_cache_epoch != epoch, "external notification recognizes I-enabled code page");
+    set_reg_both(15u, target);
+    CHECK(arm920t_run(cpu_jit, 2u) == arm920t_run(cpu_ref, 2u), "external replacement call budget");
+    CHECK((cpu_jit->cp15[1] & (1u << 12)) && cpu_jit->r[0] == 0x22u,
+          "external notification reveals replacement while I-cache remains enabled");
     compare_state(); teardown_pair(); ++cases;
 }
 
@@ -306,6 +332,7 @@ int main(void) {
         case_remapped_code(native, 0); case_remapped_code(native, 1);
         case_write_enters_ram(native);
         case_disable_icache(native);
+        case_external_write_icache(native);
         for (int mmu = 0; mmu < 2; ++mmu) {
             case_final_ram_words(native, mmu);
             for (int same_page = 0; same_page < 3; ++same_page) case_data_store(native, mmu, same_page);
