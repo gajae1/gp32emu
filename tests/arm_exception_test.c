@@ -546,6 +546,80 @@ static void case_arm_undefined_dsp(void) {
     }
 }
 
+/* ARM920T implements every unallocated control-extension decode cell as
+ * UND (DDI0151C 2.2.2). DDI0100I A3.16 defines the decode fields as bits
+ * 27:20 and 7:4: operand/reserved fields do not turn an unallocated cell
+ * into MRS/MSR. Keep an explicit allocation table independent of the
+ * production decoder's masks. Allocated cells with invalid operands are
+ * excluded: those can be UNPREDICTABLE, rather than necessarily UND. */
+static void case_arm_undefined_control(void) {
+    static const struct { unsigned high; uint16_t allocated_low; } control[] = {
+        {0x10u, 0x0001u}, /* MRS CPSR */
+        {0x12u, 0x0003u}, /* MSR CPSR register, BX */
+        {0x14u, 0x0001u}, /* MRS SPSR */
+        {0x16u, 0x0001u}, /* MSR SPSR register */
+        {0x30u, 0x0000u},
+        {0x32u, 0xffffu}, /* MSR CPSR immediate */
+        {0x34u, 0x0000u},
+        {0x36u, 0xffffu}, /* MSR SPSR immediate */
+    };
+    static const uint32_t operands[] = {0x00012304u, 0x000fff00u, 0x00045607u};
+    unsigned cases = 0u;
+    for (unsigned engine = 0; engine < 3u; ++engine) {
+        for (unsigned h = 0; h < GP32_ARRAY_COUNT(control); ++h) {
+            for (unsigned low = 0; low < 16u; ++low) {
+                /* Register forms with both bits 7 and 4 set belong to the
+                 * separate load/store or multiply extension spaces. */
+                if (h < 4u && (low & 9u) == 9u) continue;
+                if (control[h].allocated_low & (1u << low)) continue;
+                for (unsigned operand = 0; operand < GP32_ARRAY_COUNT(operands); ++operand) {
+                    arm920t_t *c = make_cpu(engine == 2u);
+                    if (engine == 0u) arm920t_set_trace(c, 1, NULL, NULL);
+                    uint32_t insn = (control[h].high << 20) | (low << 4) | operands[operand];
+                    bios_w32(CODE_ADDR, 0xe3a04024u); /* MOV r4,#0x24 */
+                    bios_w32(CODE_ADDR + 4u, insn); /* EQ extension word */
+                    bios_w32(CODE_ADDR + 8u, 0xe3a05042u); /* MOV r5,#0x42 */
+                    bios_w32(0x04u, 0xe1b0f00eu); /* MOVS pc,lr */
+                    arm920t_set_cpsr(c, 0x000000dbu);
+                    arm920t_set_reg(c, 13u, 0x55667788u); /* distinct UND stack */
+                    for (unsigned phase = 0; phase < 4u; ++phase) {
+                        int traps = (phase & 1u) != 0;
+                        uint32_t cpsr = traps ? 0xe0000053u : 0xa0000053u;
+                        char name[96];
+                        snprintf(name, sizeof(name), "control-%08x-engine%u-phase%u", insn, engine, phase);
+                        current_case = name;
+                        arm920t_set_cpsr(c, cpsr);
+                        arm920t_set_reg(c, 15u, CODE_ADDR);
+                        for (unsigned r = 0; r < 15u; ++r) arm920t_set_reg(c, r, 0x11223300u + r);
+                        arm920t_reset_cpu_profile(c);
+                        CHECK(arm920t_run(c, 2u), 2u, "prefix and extension word retire");
+                        if (phase >= 2u) check_two_insn_engine(c, engine);
+                        CHECK(arm920t_get_pc(c), traps ? 4u : CODE_ADDR + 8u, "control extension predicate selects UND or fallthrough");
+                        CHECK(arm920t_get_cpsr(c), traps ? 0xe00000dbu : cpsr, "control extension exception state");
+                        for (unsigned r = 0; r < 13u; ++r)
+                            CHECK(arm920t_get_reg(c, r), r == 4u ? 0x24u : 0x11223300u + r, "extension preserves source registers");
+                        CHECK(arm920t_get_reg(c, 13u), traps ? 0x55667788u : 0x1122330du, "control extension selects the UND stack bank");
+                        CHECK(arm920t_get_reg(c, 14u), traps ? CODE_ADDR + 8u : 0x1122330eu, "control extension LR");
+                        if (traps) {
+                            CHECK(arm920t_run(c, 1u), 1u, "control extension exception return retires");
+                            CHECK(arm920t_get_pc(c), CODE_ADDR + 8u, "control extension return skips unsupported word");
+                            CHECK(arm920t_get_cpsr(c), cpsr, "control extension return restores SPSR");
+                            CHECK(arm920t_get_reg(c, 13u), 0x1122330du, "control extension return restores banked SP");
+                            CHECK(arm920t_get_reg(c, 14u), 0x1122330eu, "control extension return restores banked LR");
+                        }
+                        CHECK(arm920t_run(c, 1u), 1u, "control extension continuation retires");
+                        CHECK(arm920t_get_reg(c, 5u), 0x42u, "control extension reaches resumed marker");
+                        CHECK(arm920t_get_pc(c), CODE_ADDR + 12u, "control extension marker PC");
+                        ++cases;
+                    }
+                    arm920t_destroy(c);
+                }
+            }
+        }
+    }
+    printf("arm undefined control: %u cases\n", cases);
+}
+
 static void case_arm_multiply_decode(void) {
     /* Ordinary ARMv4 multiply encodings near the DSP extension still execute.
      * The initial long accumulator is 7; r2=-1 (or UINT32_MAX) and r3=2. */
@@ -762,6 +836,7 @@ int main(void) {
     case_cp15_access();
     case_arm_undefined_transfer();
     case_arm_undefined_dsp();
+    case_arm_undefined_control();
     case_arm_multiply_decode();
     case_block_alignment();
     for (int jit = 0; jit <= 1; ++jit) {
