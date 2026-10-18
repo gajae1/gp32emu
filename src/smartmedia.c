@@ -57,7 +57,12 @@ typedef struct smc_save_job {
 #define SMC_STATE_DELTA_TAG 0x31444d53u  /* 'S','M','D','1' */
 #define SMC_STATE_DELTA_MIN_ENTRIES 2048u
 #define SMC_STATE_DELTA_HEADROOM 1024u
-#define SMC_STATE_MAX_IMAGE ((size_t)128u * 1024u * 1024u)
+/* Card capacity counts data bytes. Every supported NAND page adds one spare
+ * byte per 32 data bytes: the largest 128 MiB card has a 132 MiB payload.
+ * The optional MAME header is separate from that serialized payload. */
+#define SMC_MAX_DATA_BYTES ((size_t)128u * 1024u * 1024u)
+#define SMC_STATE_MAX_IMAGE (SMC_MAX_DATA_BYTES / 512u * 528u)
+#define SMC_FILE_MAX_IMAGE (SMC_STATE_MAX_IMAGE + 1024u)
 #define SMC_STATE_MAX_PAGE_TOTAL 2112u
 
 /* Delta body, written after smc_state_image_t when SMC_STATE_DELTA_FLAG is set:
@@ -261,7 +266,7 @@ static void smc_base_release(smc_t *s) {
  * pages only and carries its geometry in the size. */
 static int smc_image_payload(const uint8_t *image, size_t image_size,
                              size_t *payload_off, uint32_t *page_total_size, uint32_t *num_pages) {
-    if (image_size == 0) return 0;
+    if (image_size == 0 || image_size > SMC_FILE_MAX_IMAGE) return 0;
     if (image_size > 1024u) {
         uint32_t pd = 0, pt = 0, np = 0, ppb = 0;
         if (smc_detect_small_geometry(image[0], image[1], &pd, &pt, &np, &ppb) &&
@@ -272,6 +277,7 @@ static int smc_image_payload(const uint8_t *image, size_t image_size,
             return 1;
         }
     }
+    if (image_size > SMC_STATE_MAX_IMAGE) return 0;
     if ((image_size % 528u) == 0) {
         *page_total_size = 528u;
         *num_pages = (uint32_t)(image_size / 528u);
@@ -394,6 +400,10 @@ static void smc_mount_image_free(smc_mount_image_t *img) {
  * image that is idle (reset command state) and ready to be installed. */
 static int smc_parse_image(const uint8_t *src, size_t len, smc_mount_image_t *out, char *err, size_t err_len) {
     memset(out, 0, sizeof(*out));
+    if (len > SMC_FILE_MAX_IMAGE) {
+        if (err && err_len) snprintf(err, err_len, "SmartMedia exceeds the 128 MiB data-card capacity");
+        return 0;
+    }
     size_t payload_off = 0;
     uint32_t pd = 0, pt = 0, np = 0, ppb = 0;
     if (len > 1024u && smc_detect_small_geometry(src[0], src[1], &pd, &pt, &np, &ppb) &&
@@ -419,6 +429,10 @@ static int smc_parse_image(const uint8_t *src, size_t len, smc_mount_image_t *ou
         memcpy(out->data_uid + 256, src + 272, 16);
         out->data_uid_present = 1;
     } else {
+        if (len > SMC_STATE_MAX_IMAGE) {
+            if (err && err_len) snprintf(err, err_len, "SmartMedia exceeds the 128 MiB data-card capacity");
+            return 0;
+        }
         smc_t shape;
         memset(&shape, 0, sizeof(shape));
         if (!smc_set_geometry_from_size(&shape, len, err, err_len)) return 0;
@@ -573,8 +587,8 @@ static int smc_read_file_image(const char *path, uint8_t **out, size_t *out_len,
         }
         if (fseek(f, 0, SEEK_END) != 0) { fclose(f); return 0; }
         long n = ftell(f);
-        /* No SmartMedia image exceeds 128 MiB plus its spare area. */
-        if (n <= 0 || (unsigned long)n > 136ul * 1024ul * 1024ul) {
+        /* Allow the largest NAND payload and its optional MAME header. */
+        if (n <= 0 || (unsigned long)n > SMC_FILE_MAX_IMAGE) {
             if (err && err_len && n > 0) snprintf(err, err_len, "%s is too large for a GP32 card", path);
             fclose(f);
             return 0;
