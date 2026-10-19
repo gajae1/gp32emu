@@ -1,7 +1,7 @@
 # GP32emu 1.0.0
 
 These notes describe the earlier 1.0.0 release. For current installation and
-usage, see the [README](../README.md); see [1.0.1](RELEASE-1.0.1.md) for newer changes.
+usage, see the [README](../README.md); see [1.1.0](RELEASE-1.1.0.md) for the current release.
 
 The first release of this GP32emu fork provides a Windows application and
 RetroArch cores for emulating the Game Park GP32.
