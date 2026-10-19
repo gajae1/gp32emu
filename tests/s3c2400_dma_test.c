@@ -115,6 +115,121 @@ static int trigger_case(s3c2400_t *s, unsigned ch, unsigned dsz,
     return failures;
 }
 
+/* DMASKTRIG.STOP (manual p.8-13) ends the current atomic transfer, clears
+ * the current registers, and prevents the remaining whole service. These
+ * cases use TSZ=0: the current emulator does not implement four-unit bursts. */
+static int stop_case(s3c2400_t *s, unsigned ch, unsigned dsz,
+                     unsigned whole, unsigned reload, unsigned iis_request) {
+    const uint32_t dma = 0x14600000u + ch * 32u;
+    const uint32_t src = BASE + 0x200u, width = 1u << dsz;
+    const uint32_t irq = 1u << (17u + ch);
+    int failures = 0;
+    s3c2400_reset(s);
+    s3c2400_write32(s, 0x14400008u, UINT32_MAX);
+    for (unsigned i = 0; i < 3u; ++i) {
+        uint32_t value = i ? i * 0x11111111u : 4u;
+        if (dsz == 0u) s3c2400_write8(s, src + i * width, (uint8_t)value);
+        else if (dsz == 1u) s3c2400_write16(s, src + i * width, (uint16_t)value);
+        else s3c2400_write32(s, src + i * width, value);
+    }
+    s3c2400_write32(s, dma, src);
+    s3c2400_write32(s, dma + 4u, dma + 24u);
+    s3c2400_write32(s, dma + 8u, (1u << 28) | (whole << 26) |
+                       (iis_request << 23) | (!reload << 22) | (dsz << 20) | 3u);
+    s3c2400_write32(s, dma + 24u, iis_request ? 2u : 3u);
+    if (iis_request) {
+        s3c2400_write32(s, 0x14800004u, 0u);
+        s3c2400_write32(s, 0x14800014u, 0u);
+        s3c2400_write32(s, 0x15508000u, 1u);
+        s3c2400_tick(s, 1000u); /* STOP on the first IIS unit, at cycle 500. */
+    }
+    uint32_t actual[] = {
+        s3c2400_read32(s, dma + 12u), s3c2400_read32(s, dma + 16u),
+        s3c2400_read32(s, dma + 20u), s3c2400_read32(s, dma + 24u),
+        s3c2400_read32(s, 0x14400000u)
+    };
+    const uint32_t want[] = {0u, 0u, 0u, 4u, 0u};
+    if (memcmp(actual, want, sizeof(want))) {
+        fprintf(stderr, "FAIL: DMA%u self STOP dsz=%u whole=%u reload=%u IIS=%u count=%u src=%08x dst=%08x mask=%08x irq=%08x\n",
+                ch, dsz, whole, reload, iis_request, actual[0], actual[1], actual[2], actual[3], actual[4]);
+        ++failures;
+    }
+    /* A fresh operation after cancellation still owns its current registers
+     * and emits its ordinary terminal IRQ. The cancellation is not sticky. */
+    s3c2400_write32(s, dma + 24u, 4u);
+    s3c2400_write32(s, 0x14400000u, UINT32_MAX);
+    s3c2400_write32(s, src, 0x1234a5e7u);
+    s3c2400_write32(s, dma, src);
+    s3c2400_write32(s, dma + 4u, BASE + 0x1800u);
+    s3c2400_write32(s, dma + 8u, (1u << 28) | (1u << 22) | (dsz << 20) | 1u);
+    s3c2400_write32(s, dma + 24u, 3u);
+    uint32_t mask = dsz == 0u ? 0xffu : dsz == 1u ? 0xffffu : UINT32_MAX;
+    if (s3c2400_read32(s, BASE + 0x1800u) != (0x1234a5e7u & mask) ||
+        s3c2400_read32(s, dma + 12u) != 0u ||
+        s3c2400_read32(s, dma + 16u) != src + width ||
+        s3c2400_read32(s, dma + 20u) != BASE + 0x1800u + width ||
+        s3c2400_read32(s, dma + 24u) != 0u ||
+        s3c2400_read32(s, 0x14400000u) != irq) {
+        fprintf(stderr, "FAIL: DMA%u fresh operation after self STOP dsz=%u\n", ch, dsz);
+        ++failures;
+    }
+    return failures;
+}
+
+/* Synchronous MMIO may trigger a second DMA. It can STOP the outer channel,
+ * then re-enable it before the outer bus write returns. The old operation
+ * has still been cancelled; it must leave the freshly loaded cursors alone.
+ * This checks emulator reentrancy, not simultaneous silicon arbitration. */
+static int nested_stop_case(s3c2400_t *s, unsigned whole,
+                            unsigned reenable, unsigned cancel_outer) {
+    const uint32_t dma = 0x14600000u, child = dma + 32u;
+    const uint32_t src = BASE + 0x200u, command = BASE + 0x280u;
+    const uint32_t stop = (cancel_outer ? dma : dma + 3u * 32u) + 24u;
+    s3c2400_reset(s);
+    s3c2400_write32(s, 0x14400008u, UINT32_MAX);
+    s3c2400_write32(s, src, 3u); /* First outer unit triggers DMA1. */
+    s3c2400_write32(s, src + 4u, 0x11111111u);
+    s3c2400_write32(s, src + 8u, 0x22222222u);
+    s3c2400_write32(s, command, 4u);
+    s3c2400_write32(s, command + 4u, 2u);
+    s3c2400_write32(s, child, command);
+    s3c2400_write32(s, child + 4u, stop | (1u << 29));
+    s3c2400_write32(s, child + 8u, 0x04600000u | (1u + reenable));
+    s3c2400_write32(s, dma, src);
+    s3c2400_write32(s, dma + 4u, child + 24u);
+    s3c2400_write32(s, dma + 8u, (1u << 28) | (whole << 26) | 0x00600003u);
+    s3c2400_write32(s, dma + 24u, 3u);
+    const uint32_t moved = whole ? 3u : 1u;
+    uint32_t want[] = {3u - moved, src + 4u * moved,
+                       child + 24u + 4u * moved, whole ? 0u : 2u,
+                       whole ? 1u << 17 : 0u,
+                       whole ? 0x22222222u : 0u};
+    if (cancel_outer) {
+        want[0] = reenable ? 3u : 0u;
+        want[1] = reenable ? src : 0u;
+        want[2] = reenable ? child + 24u : 0u;
+        want[3] = reenable ? 2u : 4u;
+        want[4] = want[5] = 0u;
+    }
+    const uint32_t actual[] = {
+        s3c2400_read32(s, dma + 12u), s3c2400_read32(s, dma + 16u),
+        s3c2400_read32(s, dma + 20u), s3c2400_read32(s, dma + 24u),
+        s3c2400_read32(s, 0x14400000u), s3c2400_read32(s, dma + 64u)
+    };
+    /* The child finishes independently even though it stopped DMA0/DMA3. */
+    if (memcmp(actual, want, sizeof(want)) ||
+        s3c2400_read32(s, child + 12u) != 0u ||
+        s3c2400_read32(s, child + 16u) != command + 4u * (1u + reenable) ||
+        s3c2400_read32(s, child + 20u) != stop ||
+        s3c2400_read32(s, child + 24u) != 0u) {
+        fprintf(stderr, "FAIL: nested STOP whole=%u reenable=%u cancel_outer=%u\n", whole, reenable, cancel_outer);
+        for (unsigned i = 0; i < GP32_ARRAY_COUNT(want); ++i)
+            if (actual[i] != want[i]) fprintf(stderr, " register %u=%08x expected %08x\n", i, actual[i], want[i]);
+        return 1;
+    }
+    return 0;
+}
+
 static int one(s3c2400_t *s, unsigned channel, unsigned dsz,
                const layout_t *layout, uint32_t count, unsigned mode) {
     s3c2400_reset(s);
@@ -217,8 +332,27 @@ int main(void) {
                     ++trigger_cases;
                     trigger_failures += trigger_case(s, channel, dsz, access, reload);
                 }
+    unsigned stop_cases = 0, stop_failures = 0;
+    for (unsigned channel = 0; channel < 4u; ++channel)
+        for (unsigned dsz = 0; dsz < 3u; ++dsz)
+            for (unsigned whole = 0; whole < 2u; ++whole)
+                for (unsigned reload = 0; reload < 2u; ++reload) {
+                    ++stop_cases;
+                    stop_failures += stop_case(s, channel, dsz, whole, reload, 0u);
+                    if (channel == 2u) {
+                        ++stop_cases;
+                        stop_failures += stop_case(s, channel, dsz, whole, reload, 1u);
+                    }
+                }
+    for (unsigned whole = 0; whole < 2u; ++whole)
+        for (unsigned reenable = 0; reenable < 2u; ++reenable)
+            for (unsigned cancel = 0; cancel < 2u; ++cancel) {
+                ++stop_cases;
+                stop_failures += nested_stop_case(s, whole, reenable, cancel);
+            }
     s3c2400_destroy(s);
     printf("DMA oracle cases=%u failures=%u\n", cases, failures);
     printf("DMA software-trigger scenarios=%u assertion_failures=%u\n", trigger_cases, trigger_failures);
-    return failures || trigger_failures ? 1 : 0;
+    printf("DMA in-flight STOP scenarios=%u assertion_failures=%u\n", stop_cases, stop_failures);
+    return failures || trigger_failures || stop_failures ? 1 : 0;
 }

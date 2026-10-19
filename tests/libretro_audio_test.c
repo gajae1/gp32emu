@@ -7,11 +7,20 @@
 #include <stdlib.h>
 #include <math.h>
 static unsigned state_file_opens;
+static int fail_delivery_allocation;
+static void *delivery_malloc(size_t bytes) {
+    return fail_delivery_allocation ? NULL : malloc(bytes);
+}
+static void *delivery_realloc(void *p, size_t bytes) {
+    return fail_delivery_allocation ? NULL : realloc(p, bytes);
+}
 static FILE *counted_fopen(const char *path, const char *mode) {
     ++state_file_opens;
     return fopen(path, mode);
 }
 #define fopen counted_fopen
+#define malloc delivery_malloc
+#define realloc delivery_realloc
 #define gp32_run_frame test_run_frame
 #define gp32_get_audio test_get_audio
 #define gp32_consume_audio test_consume_audio
@@ -23,6 +32,8 @@ static FILE *counted_fopen(const char *path, const char *mode) {
 #endif
 #include LIBRETRO_SOURCE
 #undef fopen
+#undef malloc
+#undef realloc
 #undef gp32_run_frame
 #undef gp32_get_audio
 #undef gp32_consume_audio
@@ -641,6 +652,50 @@ static void test_lifecycle(const char *state_path) {
     remove(state_path);
 }
 
+/* A rejected frontend trailer must not rewind the guest or discard delivery
+ * history. The saved guest and current guest deliberately use different input
+ * levels, and both have distinct queued audio. */
+static void test_delivery_rejection_atomic(void) {
+    start_case();
+    allowance = 0;
+    feed(128, 44100, 1000);
+    size_t size = retro_serialize_size(), guest = gp32_state_size(emu);
+    uint8_t *incoming = malloc(size), *before = malloc(size), *after = malloc(size);
+    if (!incoming || !before || !after || !retro_serialize(incoming, size)) exit(2);
+    lrst_header_t valid;
+    memcpy(&valid, incoming + guest, sizeof(valid));
+    for (unsigned which = 0; which < 7u; ++which) {
+        CHECK(retro_unserialize(incoming, size), "restore input for trailer rejection fixture");
+        CHECK(gp32_set_buttons(emu, GP32_BUTTON_A) == GP32_OK, "change current guest input");
+        reset_audio();
+        feed(4, 11025, -2000);
+        if (which == 6u) {
+            int16_t *small = realloc(audio_resample_buf, audio_pending_frames * 2u * sizeof(int16_t));
+            if (!small) exit(2);
+            audio_resample_buf = small;
+            audio_resample_cap = audio_pending_frames;
+            CHECK(audio_resample_cap < valid.pending_frames, "restore must need a larger queue");
+        }
+        CHECK(retro_serialize(before, size), "capture live guest and delivery before rejection");
+        lrst_header_t head = valid;
+        size_t cut = size;
+        if (which == 0u) cut = guest + sizeof(head.magic);
+        else if (which == 1u) cut = guest + sizeof(head) + 1u;
+        else if (which == 2u) head.body_size++;
+        else if (which == 3u) head.flags |= 0x80000000u;
+        else if (which == 4u) head.pending_frames = GP32_AUDIO_QUEUE_LIMIT + 1u;
+        else if (which == 5u) head.total_size--;
+        memcpy(incoming + guest, &head, sizeof(head));
+        fail_delivery_allocation = which == 6u;
+        CHECK(!retro_unserialize(incoming, cut), "reject malformed or unallocatable delivery section");
+        fail_delivery_allocation = 0;
+        CHECK(retro_serialize(after, size) && !memcmp(before, after, size),
+              "rejected delivery section preserves the complete live state");
+        memcpy(incoming + guest, &valid, sizeof(valid));
+    }
+    free(incoming); free(before); free(after);
+}
+
 static void test_state_buffers(const char *state_path) {
     start_case();
     uint8_t card[528u * 128u];
@@ -1109,6 +1164,7 @@ int main(int argc, char **argv) {
     test_portrait_video();
     test_lifecycle(argc > 1 ? argv[1] : "libretro_audio_test.tmp");
     test_state_buffers(argc > 1 ? argv[1] : "libretro_audio_test.tmp");
+    test_delivery_rejection_atomic();
     test_state_replay_continuity();
     retro_deinit();
     if (failures) {

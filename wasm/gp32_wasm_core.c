@@ -55,6 +55,14 @@ static void set_error(uint32_t code, const char *msg) {
     if (code != GP32_WASM_ERR_NONE) g_status = GP32_WASM_STATUS_ERROR;
 }
 
+/* A rejected save/import is an operation error. The core keeps its live
+ * machine, and the browser must still be able to run it or retry the slot. */
+static void set_state_error(const char *msg) {
+    uint32_t status = g_status;
+    set_error(GP32_WASM_ERR_BAD_STATE, msg);
+    g_status = status;
+}
+
 static void clear_error(void) { set_error(GP32_WASM_ERR_NONE, ""); if (g_gp32) g_status = GP32_WASM_STATUS_READY; }
 
 static void destroy_machine(void) {
@@ -191,6 +199,9 @@ uint32_t gp32_wasm_version(void) { return 0x00010000u; }
 
 __attribute__((export_name("gp32_wasm_malloc")))
 uint32_t gp32_wasm_malloc(uint32_t size) { return (uint32_t)(uintptr_t)malloc(size ? size : 1u); }
+
+__attribute__((export_name("gp32_wasm_free")))
+void gp32_wasm_free(uint32_t ptr) { free((void *)(uintptr_t)ptr); }
 
 __attribute__((export_name("gp32_wasm_heap_used")))
 uint32_t gp32_wasm_heap_used(void) { return __pcfx_wasm_heap_used(); }
@@ -334,11 +345,11 @@ static int read_file_to_save_buffer(const char *path) {
 __attribute__((export_name("gp32_wasm_save_state")))
 uint32_t gp32_wasm_save_state(void) {
     static const char path[] = "/gp32_wasm_state.gp32st";
-    if (!g_gp32 || g_status != GP32_WASM_STATUS_RUNNING) { set_error(GP32_WASM_ERR_BAD_STATE, "start the loaded BIOS/game before saving a state"); return 0u; }
+    if (!g_gp32 || g_status != GP32_WASM_STATUS_RUNNING) { set_state_error("start the loaded BIOS/game before saving a state"); return 0u; }
     g_save_state_size = 0;
     gp32_status_t st = gp32_save_state(g_gp32, path);
-    if (st != GP32_OK) { set_error(GP32_WASM_ERR_BAD_STATE, gp32_get_error(g_gp32)); return 0u; }
-    if (!read_file_to_save_buffer(path)) { remove(path); set_error(GP32_WASM_ERR_BAD_STATE, "saved state could not be staged for browser storage"); return 0u; }
+    if (st != GP32_OK) { set_state_error(gp32_get_error(g_gp32)); return 0u; }
+    if (!read_file_to_save_buffer(path)) { remove(path); set_state_error("saved state could not be staged for browser storage"); return 0u; }
     remove(path);
     g_error = GP32_WASM_ERR_NONE;
     g_error_text[0] = '\0';
@@ -351,16 +362,21 @@ __attribute__((export_name("gp32_wasm_get_save_size"))) uint32_t gp32_wasm_get_s
 __attribute__((export_name("gp32_wasm_load_state")))
 uint32_t gp32_wasm_load_state(uint32_t data_ptr, uint32_t size) {
     static const char path[] = "/gp32_wasm_state_import.gp32st";
-    if (!g_gp32 || g_status != GP32_WASM_STATUS_RUNNING || !data_ptr || !size) { set_error(GP32_WASM_ERR_BAD_STATE, "start the matching BIOS/game before loading a state"); return 0u; }
+    /* The browser transfers its malloc-owned import buffer on every path. */
+    if (!g_gp32 || g_status != GP32_WASM_STATUS_RUNNING || !data_ptr || !size) {
+        free((void *)(uintptr_t)data_ptr);
+        set_state_error("start the matching BIOS/game before loading a state");
+        return 0u;
+    }
     if (!pcfx_wasm_vfs_add_file((uint32_t)(uintptr_t)path, (uint32_t)(sizeof(path) - 1u), data_ptr, size)) {
         free((void *)(uintptr_t)data_ptr);
-        set_error(GP32_WASM_ERR_BAD_STATE, "savestate staging failed");
+        set_state_error("savestate staging failed");
         return 0u;
     }
     gp32_status_t st = gp32_load_state(g_gp32, path);
     remove(path);
     free((void *)(uintptr_t)data_ptr);
-    if (st != GP32_OK) { set_error(GP32_WASM_ERR_BAD_STATE, gp32_get_error(g_gp32)); return 0u; }
+    if (st != GP32_OK) { set_state_error(gp32_get_error(g_gp32)); return 0u; }
     g_audio_frames = 0;
     gp32_audio_resampler_reset(&g_resampler);
     if (g_video_effects_ready) gp32_video_effects_reset(&g_video_effects);

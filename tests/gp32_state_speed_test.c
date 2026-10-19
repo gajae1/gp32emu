@@ -14,6 +14,7 @@ static char scenario[128];
     fprintf(stderr, "FAIL: %s: %s (%d)\n", scenario, (msg), __LINE__); \
     ++failures; \
 } } while (0)
+#include "pcm_state_fixture.h"
 
 static uint32_t timer_count(s3c2400_t *soc, unsigned timer) {
     return s3c2400_read32(soc, timer == 4u ? 0x15100040u : 0x15100014u + timer * 12u);
@@ -266,20 +267,21 @@ static void check_pwm_versions(void) {
     size_t size = gp32_state_size(source), before_size = 0u;
     CHECK(size > S3C2400_PWM_STATE_BYTES, "state includes PWM trailer");
     if (size <= S3C2400_PWM_STATE_BYTES) goto done;
-    size_t legacy_size = size - S3C2400_PWM_STATE_BYTES;
-    saved = malloc(size); legacy = malloc(legacy_size); bad = malloc(size);
+    const size_t pwm_off = size - S3C2400_PWM_STATE_BYTES;
+    saved = malloc(size); legacy = malloc(size); bad = malloc(size);
     CHECK(saved && legacy && bad, "allocate version fixtures");
     if (!saved || !legacy || !bad) goto done;
-    CHECK(gp32_save_state_data(source, saved, size) == GP32_OK, "save nominal v16 source");
-    CHECK(memcmp(saved, "GP32STATEv0016", 14u) == 0 && !saved[14] && !saved[15] &&
-          memcmp(saved + legacy_size, "PWM1", 4u) == 0, "writer advertises explicit v16 trailer");
+    CHECK(gp32_save_state_data(source, saved, size) == GP32_OK, "save nominal v17 source");
+    CHECK(memcmp(saved, "GP32STATEv0017", 14u) == 0 && !saved[14] && !saved[15] &&
+          memcmp(saved + pwm_off, "PWM1", 4u) == 0, "writer retains explicit PWM trailer");
     /* This exercises the complete v15 decode path, including its existing CPU
      * translation extension. The separate SoC regression uses bytes produced
      * by the actual pre-change GP32SOC9 writer, not this projected fixture. */
-    memcpy(legacy, saved, legacy_size);
+    memcpy(legacy, saved, size);
+    size_t legacy_size = fixture_v16(legacy, size) - S3C2400_PWM_STATE_BYTES;
     memcpy(legacy, "GP32STATEv0015", 14u);
     CHECK(gp32_load_state_data(g, legacy, legacy_size) == GP32_OK, "v15 body migrates without a PWM trailer");
-    CHECK(gp32_load_state_data(control, saved, size) == GP32_OK, "v16 comparison load");
+    CHECK(gp32_load_state_data(control, saved, size) == GP32_OK, "v17 comparison load");
     CHECK(arm920t_get_reg(g->cpu, 4u) == 17u, "v15 incoming CPU accepted");
     compare_execution(g, control);
 
@@ -291,13 +293,13 @@ static void check_pwm_versions(void) {
     CHECK(before != NULL, "capture advanced machine before malformed load");
     if (!before) goto done;
     for (unsigned variant = 0u; variant < 3u; ++variant) {
-        snprintf(scenario, sizeof(scenario), "reject v16 PWM trailer variant=%u speed=150", variant);
+        snprintf(scenario, sizeof(scenario), "reject v17 PWM trailer variant=%u speed=150", variant);
         ++cases;
         memcpy(bad, saved, size);
         size_t bad_size = size;
-        if (variant == 0u) gp32_st32le(bad + legacy_size + 4u, 0u); /* Invalid phase clock. */
-        else if (variant == 1u) gp32_st32le(bad + legacy_size + 12u, 65536u); /* Count exceeds sixteen bits. */
-        else bad_size = legacy_size; /* v16 must not silently migrate a missing trailer. */
+        if (variant == 0u) gp32_st32le(bad + pwm_off + 4u, 0u); /* Invalid phase clock. */
+        else if (variant == 1u) gp32_st32le(bad + pwm_off + 12u, 65536u); /* Count exceeds sixteen bits. */
+        else bad_size = pwm_off; /* Current version must not silently migrate a missing trailer. */
         CHECK(gp32_load_state_data(g, bad, bad_size) == GP32_ERR_IO, "malformed extension rejected");
         CHECK(gp32_get_cpu_speed_percent(g) == 150u, "rejection retains host speed");
         expect_live(g, before, before_size, "rejection preserves CPU, RAM and every peripheral phase");

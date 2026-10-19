@@ -29,6 +29,12 @@
 #define GP32_DIRECT_GPOS_TIMER_COUNT 4u
 #define GP32_DIRECT_PCM_CHANNELS 4u
 
+typedef struct direct_pcm_channel {
+    uint32_t active, src_addr, size_bytes, pos_bytes;
+    uint32_t repeat, rate, stereo, bits;
+    uint64_t accum;
+} direct_pcm_channel_t;
+
 typedef struct direct_timer_due {
     uint32_t callback, tps, fires, epoch;
 } direct_timer_due_t;
@@ -147,17 +153,7 @@ struct gp32 {
     uint32_t direct_hle_pcm_pos_bytes;
     uint32_t direct_hle_pcm_repeat;
     uint64_t direct_hle_pcm_accum;
-    struct {
-        uint32_t active;
-        uint32_t src_addr;
-        uint32_t size_bytes;
-        uint32_t pos_bytes;
-        uint32_t repeat;
-        uint32_t rate;
-        uint32_t stereo;
-        uint32_t bits;
-        uint64_t accum;
-    } direct_hle_pcm_ch[GP32_DIRECT_PCM_CHANNELS];
+    direct_pcm_channel_t direct_hle_pcm_ch[GP32_DIRECT_PCM_CHANNELS];
     uint32_t direct_hle_sdk_sndmixedbuf_addr;
     uint32_t direct_hle_sdk_sndsrcexist_addr;
     uint32_t direct_hle_sdk_pcm_workidx_addr;
@@ -5717,9 +5713,15 @@ static const uint8_t gp32_state_magic_v12[16] = { 'G','P','3','2','S','T','A','T
  * layout and an older build refuses this magic outright. */
 static const uint8_t gp32_state_magic_v14[16] = { 'G','P','3','2','S','T','A','T','E','v','0','0','1','4',0,0 };
 static const uint8_t gp32_state_magic_v15[16] = { 'G','P','3','2','S','T','A','T','E','v','0','0','1','5',0,0 };
-static const uint8_t gp32_state_magic[16] = { 'G','P','3','2','S','T','A','T','E','v','0','0','1','6',0,0 };
+static const uint8_t gp32_state_magic_v16[16] = { 'G','P','3','2','S','T','A','T','E','v','0','0','1','6',0,0 };
+static const uint8_t gp32_state_magic[16] = { 'G','P','3','2','S','T','A','T','E','v','0','0','1','7',0,0 };
 static_assert(sizeof(gp32_frame_time_t) == 16u, "fixed frame-time wire extension");
 static_assert(sizeof(gp32_elapsed_time_t) == 16u, "fixed elapsed-time wire extension");
+/* v17 adds explicit PCM channel identities and resampling fractions after the
+ * CPU translation section. Older native-layout images remain byte-compatible;
+ * their single-channel mirror still follows the established lossy migration. */
+#define GP32_PCM_STATE_BYTES (4u + 4u * 40u)
+static_assert(GP32_DIRECT_PCM_CHANNELS == 4u, "fixed v17 PCM channel count");
 
 /* v10 has 81 LE words; v11 appends four display-cadence words; v12 adds
  * the SDK callback task identity and its suspension flag.
@@ -5732,6 +5734,8 @@ static_assert(sizeof(gp32_elapsed_time_t) == 16u, "fixed elapsed-time wire exten
 #define GP32_CONTINUATION_BYTES (GP32_CONTINUATION_WORDS * 4u)
 typedef struct gp32_resume_image {
     uint32_t ram_size, run_clock;
+    direct_pcm_channel_t pcm[GP32_DIRECT_PCM_CHANNELS];
+    int has_pcm_state;
     direct_callback_tail_t callback;
     direct_hle_tick_tail_t tick;
     uint32_t epoch[GP32_DIRECT_GPOS_TIMER_COUNT];
@@ -5887,6 +5891,46 @@ static int gp32_resume_validate(const gp32_resume_image_t *r, const gp32_state_i
     return 1;
 }
 
+static int gp32_pcm_state_write(const gp32_t *g, state_io_t *io) {
+    uint8_t bytes[GP32_PCM_STATE_BYTES];
+    memcpy(bytes, "PCM1", 4u);
+    for (unsigned ch = 0; ch < GP32_DIRECT_PCM_CHANNELS; ++ch) {
+        const direct_pcm_channel_t *c = &g->direct_hle_pcm_ch[ch];
+        uint8_t *p = bytes + 4u + ch * 40u;
+        gp32_st32le(p, c->active); gp32_st32le(p + 4u, c->src_addr);
+        gp32_st32le(p + 8u, c->size_bytes); gp32_st32le(p + 12u, c->pos_bytes);
+        gp32_st32le(p + 16u, c->repeat); gp32_st32le(p + 20u, c->rate);
+        gp32_st32le(p + 24u, c->stereo); gp32_st32le(p + 28u, c->bits);
+        gp32_st32le(p + 32u, (uint32_t)c->accum);
+        gp32_st32le(p + 36u, (uint32_t)(c->accum >> 32u));
+    }
+    return state_io_write(io, bytes, sizeof(bytes));
+}
+
+static int gp32_pcm_state_read(state_io_t *io, gp32_resume_image_t *resume) {
+    uint8_t bytes[GP32_PCM_STATE_BYTES];
+    if (!state_io_read(io, bytes, sizeof(bytes)) || memcmp(bytes, "PCM1", 4u)) return 0;
+    for (unsigned ch = 0; ch < GP32_DIRECT_PCM_CHANNELS; ++ch) {
+        direct_pcm_channel_t *c = &resume->pcm[ch];
+        const uint8_t *p = bytes + 4u + ch * 40u;
+        c->active = gp32_ld32le(p); c->src_addr = gp32_ld32le(p + 4u);
+        c->size_bytes = gp32_ld32le(p + 8u); c->pos_bytes = gp32_ld32le(p + 12u);
+        c->repeat = gp32_ld32le(p + 16u); c->rate = gp32_ld32le(p + 20u);
+        c->stereo = gp32_ld32le(p + 24u); c->bits = gp32_ld32le(p + 28u);
+        c->accum = gp32_ld32le(p + 32u) | (uint64_t)gp32_ld32le(p + 36u) << 32u;
+        if (!c->active) {
+            if (c->src_addr || c->size_bytes || c->pos_bytes || c->repeat ||
+                c->rate || c->stereo || c->bits || c->accum) return 0;
+        } else if (c->active != 1u || c->repeat > 1u || c->stereo > 1u ||
+                   (c->bits != 8u && c->bits != 16u) || c->rate < 4000u || c->rate > 192000u ||
+                   !c->size_bytes || c->pos_bytes >= c->size_bytes ||
+                   !gp32_resume_ram_range(resume->ram_size, c->src_addr, c->size_bytes) ||
+                   c->accum >= 44100u) return 0;
+    }
+    resume->has_pcm_state = 1;
+    return 1;
+}
+
 static int gp32_state_write_with_pwm_phase(const gp32_t *g, state_io_t *io,
                                           const s3c2400_pwm_phase_t *pwm_phase) {
     gp32_state_image_t direct;
@@ -5897,6 +5941,7 @@ static int gp32_state_write_with_pwm_phase(const gp32_t *g, state_io_t *io,
            state_io_write(io, &g->frame_time, sizeof(g->frame_time)) &&
            gp32_resume_write(g, io) &&
            arm920t_state_save_io(g->cpu, io) &&
+           gp32_pcm_state_write(g, io) &&
            s3c2400_state_save_io_with_pwm_phase(g->soc, io, pwm_phase);
 }
 
@@ -5909,7 +5954,8 @@ static int gp32_state_read(gp32_t *g, state_io_t *io, gp32_state_image_t *direct
     uint8_t got[sizeof(gp32_state_magic)];
     if (!state_io_read(io, got, sizeof(got))) return 0;
     int legacy = memcmp(got, gp32_state_magic_v2, sizeof(got)) == 0;
-    int has_pwm_state = memcmp(got,gp32_state_magic,sizeof(got))==0;
+    int has_pcm_state = memcmp(got,gp32_state_magic,sizeof(got))==0;
+    int has_pwm_state = has_pcm_state || memcmp(got,gp32_state_magic_v16,sizeof(got))==0;
     int has_translation = has_pwm_state || memcmp(got,gp32_state_magic_v15,sizeof(got))==0;
     int has_tasks = has_translation || memcmp(got,gp32_state_magic_v14,sizeof(got))==0 ||
                     memcmp(got, gp32_state_magic_v12, sizeof(got)) == 0;
@@ -5947,7 +5993,8 @@ static int gp32_state_read(gp32_t *g, state_io_t *io, gp32_state_image_t *direct
     arm920t_translation_state_image_t translation;
     int ok = (!has_resume || gp32_resume_read(io,resume,has_wait,has_tasks)) && state_io_read(io,cpu,sizeof(*cpu)) &&
         (!has_translation || arm920t_translation_state_read_io(io,&translation)) &&
-        (!has_resume || gp32_resume_validate(resume,direct,cpu,&elapsed));
+        (!has_resume || gp32_resume_validate(resume,direct,cpu,&elapsed)) &&
+        (!has_pcm_state || gp32_pcm_state_read(io,resume));
     uint32_t required_ram_size = 0u;
     if (ok && has_wait && (direct->direct_vblank_next_cycle || direct->direct_vblank_wait_cycles ||
                            direct->direct_vblank_wait_requested)) ok = 0;
@@ -5994,6 +6041,10 @@ static int gp32_state_read(gp32_t *g, state_io_t *io, gp32_state_image_t *direct
 
 static void gp32_state_loaded(gp32_t *g, const gp32_state_image_t *direct, const gp32_resume_image_t *resume) {
     gp32_direct_state_apply(g, direct);
+    if (resume->has_pcm_state) {
+        memcpy(g->direct_hle_pcm_ch, resume->pcm, sizeof(g->direct_hle_pcm_ch));
+        direct_pcm_sync_legacy(g);
+    }
     direct_fast_load_reset(g);
     g->direct_callback = resume->callback;
     g->direct_tick = resume->tick;
@@ -6046,9 +6097,12 @@ gp32_status_t gp32_save_state_data(gp32_t *g, void *data, size_t size) {
     return GP32_OK;
 }
 
-static gp32_status_t gp32_state_load_data(gp32_t *g, const void *data, size_t size, size_t *consumed) {
+static gp32_status_t gp32_state_load_data(gp32_t *g, const void *data, size_t size, size_t *consumed,
+                                         gp32_state_tail_validator_t validate_tail, void *user) {
     if (!g || !data || !size) return GP32_ERR_INVALID_ARGUMENT;
     state_io_t io = state_io_reader(data, size);
+    io.validate_tail = validate_tail;
+    io.validate_tail_user = user;
     gp32_state_image_t direct;
     gp32_resume_image_t resume;
     s3c2400_pwm_phase_t pwm_phase;
@@ -6068,11 +6122,16 @@ static gp32_status_t gp32_state_load_data(gp32_t *g, const void *data, size_t si
 }
 
 gp32_status_t gp32_load_state_data(gp32_t *g, const void *data, size_t size) {
-    return gp32_state_load_data(g, data, size, NULL);
+    return gp32_state_load_data(g, data, size, NULL, NULL, NULL);
 }
 
 gp32_status_t gp32_load_state_data_ex(gp32_t *g, const void *data, size_t size, size_t *consumed) {
-    return gp32_state_load_data(g, data, size, consumed);
+    return gp32_state_load_data(g, data, size, consumed, NULL, NULL);
+}
+
+gp32_status_t gp32_load_state_data_checked(gp32_t *g, const void *data, size_t size,
+                                          gp32_state_tail_validator_t validate_tail, void *user) {
+    return gp32_state_load_data(g, data, size, NULL, validate_tail, user);
 }
 
 gp32_status_t gp32_save_state(gp32_t *g, const char *path) {

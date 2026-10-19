@@ -12,6 +12,8 @@ typedef enum state_io_mode {
     STATE_IO_FILE, STATE_IO_READ, STATE_IO_WRITE, STATE_IO_COUNT
 } state_io_mode_t;
 
+typedef int (*state_io_tail_validator_t)(void *user, const void *tail, size_t size);
+
 typedef struct state_io {
     state_io_mode_t mode;
     FILE *file;
@@ -19,6 +21,8 @@ typedef struct state_io {
     uint8_t *output;
     size_t size, pos;
     int failed;
+    state_io_tail_validator_t validate_tail;
+    void *validate_tail_user;
 } state_io_t;
 
 static inline state_io_t state_io_file(FILE *file) {
@@ -56,6 +60,18 @@ static inline state_io_t state_io_counter(void) {
 static inline int state_io_fail(state_io_t *io) {
     if (io) io->failed = 1;
     return 0;
+}
+
+/* A composite memory state may append frontend-owned bytes. The owning
+ * loader calls this only after validating its entire payload and before its
+ * first live-state mutation, so a rejected tail cannot partially load it. */
+static inline int state_io_validate_tail(state_io_t *io) {
+    if (!io || io->failed) return state_io_fail(io);
+    if (!io->validate_tail) return 1;
+    if (io->mode != STATE_IO_READ || io->pos > io->size ||
+        !io->validate_tail(io->validate_tail_user, io->input + io->pos, io->size - io->pos))
+        return state_io_fail(io);
+    return 1;
 }
 
 static inline int state_io_write(state_io_t *io, const void *data, size_t bytes) {

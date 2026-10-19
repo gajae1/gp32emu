@@ -70,16 +70,24 @@ uint32_t test_vfs_growing_writes(void) {
     return 0;
 }
 
-__attribute__((export_name("test_vfs_close_full")))
-uint32_t test_vfs_close_full(void) {
+__attribute__((export_name("test_vfs_fill")))
+uint32_t test_vfs_fill(void) {
     static uint8_t borrowed = 0x5au;
-    uint32_t initial = __pcfx_wasm_heap_used();
     char path[32];
     for (unsigned i = 0; i < 128u; ++i) {
         snprintf(path, sizeof(path), "/entry%u", i);
         CHECK(pcfx_wasm_vfs_add_file((uint32_t)(uintptr_t)path, (uint32_t)strlen(path),
                                     (uint32_t)(uintptr_t)&borrowed, 1u));
     }
+    CHECK(pcfx_wasm_vfs_count() == 128u);
+    return 0;
+}
+
+__attribute__((export_name("test_vfs_close_full")))
+uint32_t test_vfs_close_full(void) {
+    uint8_t borrowed = 0x5au;
+    uint32_t initial = __pcfx_wasm_heap_used();
+    CHECK(test_vfs_fill() == 0u);
     FILE *reader = fopen("/entry0", "rb");
     FILE *writer = fopen("/overflow", "wb");
     CHECK(reader && writer);

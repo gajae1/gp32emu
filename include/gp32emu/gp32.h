@@ -134,6 +134,13 @@ gp32_status_t gp32_load_state_data(gp32_t *gp32, const void *data, size_t size);
  * buffer. Frontends that append their own section after the guest payload use
  * it to find where that section starts; trailing bytes stay tolerated. */
 gp32_status_t gp32_load_state_data_ex(gp32_t *gp32, const void *data, size_t size, size_t *consumed);
+/* Validate an optional frontend tail after all guest sections are read and
+ * validated, before any loaded state is committed. Return nonzero to accept.
+ * The callback may prepare private delivery data but must not alter gp32.
+ * A rejected tail preserves the live guest, just like a rejected guest body. */
+typedef int (*gp32_state_tail_validator_t)(void *user, const void *tail, size_t size);
+gp32_status_t gp32_load_state_data_checked(gp32_t *gp32, const void *data, size_t size,
+                                          gp32_state_tail_validator_t validate_tail, void *user);
 
 gp32_status_t gp32_reset(gp32_t *gp32);
 /* Explicit CPU-cycle budget shared by foreground and HLE callback execution,

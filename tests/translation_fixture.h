@@ -1,8 +1,10 @@
 /* Test-only conversion of a current capture into the frozen v14 wire layout.
  * New-format round trips still use the original capture. Legacy fixtures must
- * remove the explicit PWM trailer and translation extension before changing
- * the magic or older tails. */
+ * remove the explicit PCM/PWM and translation extensions before changing the
+ * magic or older tails. */
+#include "pcm_state_fixture.h"
 static size_t fixture_v14(uint8_t *data, size_t size) {
+    size = fixture_v16(data, size);
     if (size >= 16u && !memcmp(data, "GP32STATEv0016", 14u)) {
         CHECK(size >= S3C2400_PWM_STATE_BYTES &&
               !memcmp(data + size - S3C2400_PWM_STATE_BYTES, "PWM1", 4u),

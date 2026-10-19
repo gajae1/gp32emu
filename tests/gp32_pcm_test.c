@@ -664,7 +664,172 @@ static int check_sdk_buffer_ownership(void) {
     return ok;
 }
 
-int main(void) {
+/* Whole-machine saves must retain the mixer sources, their channel identities
+ * and their fractions within the fixed 44.1 kHz output stream. The legacy
+ * first-active mirror cannot reconstruct these independent channels. */
+static gp32_t *pcm_state_fixture(unsigned kind) {
+    gp32_t *g = gp32_create(NULL);
+    if (!g) return NULL;
+    direct_set_fxe_mode(g, 1u);
+    direct_install_stubs(g);
+    g->direct_hle_pcm_initialized = 1u;
+    unsigned channels = kind == 1u ? 1u : kind == 4u ? 4u : 2u;
+    for (unsigned ch = 0; ch < channels; ++ch) {
+        uint32_t addr = GP32_RAM_BASE + 0x40000u + ch * 0x1000u;
+        g->direct_hle_pcm_rate = kind == 1u || kind >= 3u ?
+            (ch % 3u == 0u ? 11025u : ch % 3u == 1u ? 22050u : 44100u) : 44100u;
+        g->direct_hle_pcm_bits = kind >= 3u && (ch & 1u) ? 16u : 8u;
+        g->direct_hle_pcm_stereo = kind >= 3u && ch == 1u;
+        for (unsigned i = 0; i < 512u; ++i)
+            s3c2400_write8(g->soc, addr + i, kind == 1u || kind >= 3u ?
+                          (uint8_t)(96u + i % 64u) : (uint8_t)(130u + ch * 2u));
+        if (!direct_start_pcm(g, addr, 512u, 1u, NULL)) { gp32_destroy(g); return NULL; }
+    }
+    if (kind == 2u) direct_stop_pcm_channel(g, 0u);
+    uint32_t clock = direct_run_clock_hz(g);
+    direct_hle_pcm_tick(g, clock / 100u, clock); /* 441 output frames, including a source fraction. */
+    gp32_clear_audio(g);
+    return g;
+}
+
+static uint8_t *pcm_state_capture(gp32_t *g, size_t *size) {
+    *size = gp32_state_size(g);
+    uint8_t *data = *size ? malloc(*size) : NULL;
+    if (data && gp32_save_state_data(g, data, *size) == GP32_OK) return data;
+    free(data);
+    return NULL;
+}
+
+static int check_pcm_state_roundtrip(const char *path) {
+    int ok = 1;
+    for (unsigned kind = 0; kind < 5u; ++kind) {
+        for (unsigned file = 0; file < 2u; ++file) {
+            gp32_t *source = pcm_state_fixture(kind), *restored = gp32_create(NULL);
+            if (!source || !restored) { gp32_destroy(source); gp32_destroy(restored); return 0; }
+            size_t size = 0;
+            uint8_t *data = pcm_state_capture(source, &size);
+            int loaded = file ? gp32_save_state(source, path) == GP32_OK &&
+                               gp32_load_state(restored, path) == GP32_OK :
+                               data && gp32_load_state_data(restored, data, size) == GP32_OK;
+            int same_channels = loaded && !memcmp(source->direct_hle_pcm_ch,
+                restored->direct_hle_pcm_ch, sizeof(source->direct_hle_pcm_ch));
+            uint32_t clock = direct_run_clock_hz(source);
+            direct_hle_pcm_tick(source, clock / 100u, clock);
+            direct_hle_pcm_tick(restored, clock / 100u, clock);
+            uint64_t a_frames = 0, b_frames = 0;
+            const int16_t *a = s3c2400_audio_samples(source->soc, &a_frames, NULL);
+            const int16_t *b = s3c2400_audio_samples(restored->soc, &b_frames, NULL);
+            int same_audio = a && b && a_frames == 441u && b_frames == a_frames &&
+                !memcmp(a, b, (size_t)a_frames * 2u * sizeof(*a));
+            int same_cursors = 1;
+            for (unsigned ch = 0; ch < GP32_DIRECT_PCM_CHANNELS; ++ch)
+                same_cursors &= direct_read32_if_ram(source, direct_pcm_cursor_addr_channel(source, ch)) ==
+                                direct_read32_if_ram(restored, direct_pcm_cursor_addr_channel(restored, ch));
+            if (!same_channels || !same_audio || !same_cursors) {
+                fprintf(stderr, "FAIL: PCM state kind=%u file=%u loaded=%d channels=%d audio=%d cursors=%d\n",
+                        kind, file, loaded, same_channels, same_audio, same_cursors);
+                ok = 0;
+            }
+            free(data);
+            gp32_destroy(source);
+            gp32_destroy(restored);
+        }
+    }
+    (void)remove(path);
+    return ok;
+}
+
+/* The v17 extension follows the architectural CPU translation section. Its
+ * independent wire specification is tag + four records of eight LE words and
+ * one LE uint64 fraction; none of the old native-layout sections moves within
+ * itself. */
+#define PCM_TEST_STATE_BYTES 164u
+static size_t pcm_state_offset(void) {
+    return 16u + sizeof(gp32_state_image_t) + 32u + GP32_CONTINUATION_BYTES +
+           sizeof(arm920t_state_image_t) + sizeof(arm920t_translation_state_image_t);
+}
+
+static int pcm_state_rejected(gp32_t *g, const uint8_t *live, size_t live_size,
+                              const uint8_t *bad, size_t bad_size) {
+    int rejected = gp32_load_state_data(g, bad, bad_size) == GP32_ERR_IO;
+    size_t after_size = 0;
+    uint8_t *after = pcm_state_capture(g, &after_size);
+    int same = after && after_size == live_size && !memcmp(after, live, live_size) &&
+               gp32_get_cpu_speed_percent(g) == 133u;
+    free(after);
+    return rejected && same;
+}
+
+static int check_pcm_state_validation(void) {
+    gp32_t *source = pcm_state_fixture(4u), *guard = pcm_state_fixture(2u);
+    if (!source || !guard) { gp32_destroy(source); gp32_destroy(guard); return 0; }
+    gp32_set_cpu_speed_percent(guard, 133u);
+    s3c2400_audio_append_s16_stereo(guard->soc, 1234, -5678, 22050u);
+    size_t size = 0, live_size = 0;
+    uint8_t *saved = pcm_state_capture(source, &size), *live = pcm_state_capture(guard, &live_size);
+    uint8_t *bad = saved ? malloc(size) : NULL;
+    int ok = saved && live && bad;
+    const size_t off = pcm_state_offset();
+    if (!ok) goto done;
+    ok = size > off + PCM_TEST_STATE_BYTES && !memcmp(saved, "GP32STATEv0017", 14u) &&
+         !memcmp(saved + off, "PCM1", 4u);
+    if (!ok) { fputs("FAIL: explicit v17 PCM state section is missing\n", stderr); goto done; }
+    for (unsigned cut = 0; cut < PCM_TEST_STATE_BYTES; ++cut)
+        if (!pcm_state_rejected(guard, live, live_size, saved, off + cut)) {
+            fprintf(stderr, "FAIL: truncated PCM state byte=%u changed live machine\n", cut);
+            ok = 0;
+        }
+    const uint32_t fields[][2] = {
+        {0u, 2u}, {4u, GP32_RAM_BASE - 1u}, {8u, 0u}, {8u, UINT32_MAX},
+        {12u, 512u}, {16u, 2u}, {20u, 0u}, {20u, 192001u},
+        {24u, 2u}, {28u, 24u}, {32u, 44100u}, {36u, 1u}, {0u, 0u}
+    };
+    for (unsigned ch = 0; ch < 4u; ++ch) {
+        for (unsigned field = 0; field < GP32_ARRAY_COUNT(fields); ++field) {
+            memcpy(bad, saved, size);
+            gp32_st32le(bad + off + 4u + ch * 40u + fields[field][0], fields[field][1]);
+            if (!pcm_state_rejected(guard, live, live_size, bad, size)) {
+                fprintf(stderr, "FAIL: malformed PCM state channel=%u field=%u accepted or changed live machine\n", ch, field);
+                ok = 0;
+            }
+        }
+    }
+    memcpy(bad, saved, size);
+    bad[off] = 'X';
+    ok &= pcm_state_rejected(guard, live, live_size, bad, size);
+    /* Bounds are accepted and converted from explicit little-endian words. */
+    memcpy(bad, saved, size);
+    gp32_st32le(bad + off + 4u + 20u, 4000u);
+    gp32_st32le(bad + off + 4u + 40u + 20u, 192000u);
+    gp32_st32le(bad + off + 4u + 32u, 44099u);
+    ok &= gp32_load_state_data(guard, bad, size) == GP32_OK &&
+          guard->direct_hle_pcm_ch[0].rate == 4000u &&
+          guard->direct_hle_pcm_ch[1].rate == 192000u &&
+          guard->direct_hle_pcm_ch[0].accum == 44099u;
+    /* Project to the genuinely unchanged v16 layout. Lost channels/fractions
+     * cannot be recovered from old files; preserve their established single
+     * legacy-channel migration rather than guessing from guest cursor words. */
+    memcpy(bad, saved, size);
+    memmove(bad + off, bad + off + PCM_TEST_STATE_BYTES, size - off - PCM_TEST_STATE_BYTES);
+    memcpy(bad, "GP32STATEv0016", 14u);
+    ok &= gp32_load_state_data(guard, bad, size - PCM_TEST_STATE_BYTES) == GP32_OK &&
+          guard->direct_hle_pcm_ch[0].active == 1u &&
+          guard->direct_hle_pcm_ch[0].src_addr == source->direct_hle_pcm_src_addr &&
+          guard->direct_hle_pcm_ch[0].rate == source->direct_hle_pcm_rate &&
+          guard->direct_hle_pcm_ch[0].bits == source->direct_hle_pcm_bits &&
+          guard->direct_hle_pcm_ch[0].accum == 0u;
+    for (unsigned ch = 1; ch < 4u; ++ch) ok &= !guard->direct_hle_pcm_ch[ch].active;
+    if (!ok) fputs("FAIL: PCM extension validation or v16 compatibility\n", stderr);
+done:
+    free(saved); free(live); free(bad);
+    gp32_destroy(source); gp32_destroy(guard);
+    return ok;
+}
+
+int main(int argc, char **argv) {
+    int pcm_state_ok = check_pcm_state_roundtrip(argc > 1 ? argv[1] : "gp32-pcm-state.tmp");
+    int pcm_validation_ok = check_pcm_state_validation();
+    if (!pcm_state_ok || !pcm_validation_ok) return 1;
     if (!check_sdk_refill_volume(0) || !check_sdk_refill_volume(1) ||
         !check_sdk_refill_starts_timer()) return 1;
     for (int jit = 0; jit <= 1; ++jit)

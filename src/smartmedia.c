@@ -1044,10 +1044,11 @@ void smc_command_w(smc_t *s, uint8_t data) {
     case 0xd0:
         if (s->mode == SM_M_ERASE) {
             uint32_t first = s->page_addr & ~((UINT32_C(1) << s->log2_pages_per_block) - 1u);
-            size_t off = (size_t)first * s->page_total_size;
-            size_t len = ((size_t)1u << s->log2_pages_per_block) * s->page_total_size;
-            if (off < s->data_size) {
-                if (off + len > s->data_size) len = s->data_size - off;
+            if (first < s->num_pages) {
+                size_t off = (size_t)first * s->page_total_size;
+                uint64_t block_bytes = (UINT64_C(1) << s->log2_pages_per_block) * s->page_total_size;
+                size_t len = s->data_size - off;
+                if (block_bytes < len) len = (size_t)block_bytes;
                 size_t i = 0;
                 while (i < len && s->data[off + i] == 0xff) ++i;
                 if (i < len) {
@@ -1344,8 +1345,17 @@ smc_state_stage_t *smc_state_stage_begin(smc_t *s, state_io_t *io, smc_state_for
     smc_state_image_t *st = &stage->st;
     if (!state_io_read(io, st, sizeof(*st))) goto fail;
     if (st->data_size > SMC_STATE_MAX_IMAGE || st->page_total_size > SMC_STATE_MAX_PAGE_TOTAL) goto fail;
+    /* Later address/erase commands shift 32-bit values using these fields.
+     * Validate the wire geometry before allocation or live-card replacement. */
+    if (st->log2_pages_per_block >= 32u || st->col_address_cycles > 4u ||
+        st->row_address_cycles > 4u || st->page_data_size > st->page_total_size ||
+        (st->page_total_size && (!st->page_data_size || !st->col_address_cycles || !st->row_address_cycles))) goto fail;
+    /* Inspect the representation before evaluating a streamed C bool. */
+    const bool flag_clear = false, flag_set = true;
+    if (memcmp(&st->mode_3065, &flag_clear, sizeof(flag_clear)) != 0 &&
+        memcmp(&st->mode_3065, &flag_set, sizeof(flag_set)) != 0) goto fail;
     if ((st->page_total_size == 0) != (st->num_pages == 0)) goto fail;
-    if (st->page_total_size ? st->data_size != (size_t)st->num_pages * st->page_total_size
+    if (st->page_total_size ? st->data_size != (uint64_t)st->num_pages * st->page_total_size
                             : st->data_size != 0) goto fail;
     if (st->dirty & ~(int)(SMC_STATE_DELTA_FLAG | 1)) goto fail;
     stage->delta = format == SMC_STATE_FORMAT_V14 && (st->dirty & (int)SMC_STATE_DELTA_FLAG) != 0;

@@ -584,44 +584,68 @@ static size_t lrst_write(uint8_t *dst, size_t room) {
     return size;
 }
 
-/* Restores a section written by lrst_write. Returns 1 when the section was
- * present and applied, 0 when the state predates it (or carries an unknown
- * version), and -1 when a section of this version is present but truncated or
- * malformed. */
-static int lrst_read(const uint8_t *src, size_t room) {
+typedef struct lrst_stage {
     lrst_header_t head;
     lrst_body_t body;
-    if (!src || room < sizeof(head)) return 0;
+    const uint8_t *payload;
+    int16_t *grown;
+    int present;
+} lrst_stage_t;
+
+/* The guest reader calls this before its commit. Parse the complete delivery
+ * section and reserve any extra queue memory without changing live history. */
+static int lrst_prepare(void *user, const void *data, size_t room) {
+    lrst_stage_t *stage = user;
+    const uint8_t *src = data;
+    lrst_header_t head;
+    lrst_body_t body;
+    if (!src || room < sizeof(head.magic) || memcmp(src, LRST_MAGIC, sizeof(head.magic)) != 0) return 1;
+    if (room < sizeof(head)) return 0;
     memcpy(&head, src, sizeof(head));
-    if (memcmp(head.magic, LRST_MAGIC, sizeof(head.magic)) != 0) return 0;
     if (head.version != LRST_VERSION) {
         lr_log(RETRO_LOG_WARN, "[gp32emu] savestate carries delivery section v%u; ignoring it.\n", head.version);
-        return 0;
+        return 1;
     }
-    if (head.body_size != sizeof(body) || head.pending_frames > GP32_AUDIO_QUEUE_LIMIT) return -1;
+    if (head.body_size != sizeof(body) || head.pending_frames > GP32_AUDIO_QUEUE_LIMIT) return 0;
     uint64_t want = (uint64_t)sizeof(head) + sizeof(body) +
                     (uint64_t)head.pending_frames * 2u * sizeof(int16_t);
-    if (head.flags & ~(uint32_t)(LRST_FLAG_PREV_RAW | LRST_FLAG_PREV_LCD)) return -1;
+    if (head.flags & ~(uint32_t)(LRST_FLAG_PREV_RAW | LRST_FLAG_PREV_LCD)) return 0;
     if (head.flags & LRST_FLAG_PREV_RAW) want += (uint64_t)GP32_VIDEO_EFFECTS_PIXELS * sizeof(uint32_t);
     if (head.flags & LRST_FLAG_PREV_LCD) want += (uint64_t)GP32_VIDEO_EFFECTS_PIXELS * sizeof(uint32_t);
-    if (want != head.total_size || (uint64_t)room < want) return -1;
+    if (want != head.total_size || (uint64_t)room < want) return 0;
     const uint8_t *p = src + sizeof(head);
     memcpy(&body, p, sizeof(body));
     p += sizeof(body);
     if (body.last_video_source != LRST_VIDEO_NONE && body.last_video_source != LRST_VIDEO_FRAME &&
-        body.last_video_source != LRST_VIDEO_EFFECT) return -1;
-    if (body.audio_have_raw_tail != 0 && body.audio_have_raw_tail != 1) return -1;
-    if (head.pending_frames) {
-        if (audio_resample_cap < head.pending_frames) {
-            int16_t *grown = (int16_t *)realloc(audio_resample_buf,
-                                                (size_t)head.pending_frames * 2u * sizeof(int16_t));
-            if (!grown) {
-                lr_log(RETRO_LOG_ERROR, "[gp32emu] savestate audio queue restore failed.\n");
-                return -1;
-            }
-            audio_resample_buf = grown;
-            audio_resample_cap = head.pending_frames;
+        body.last_video_source != LRST_VIDEO_EFFECT) return 0;
+    if (body.audio_have_raw_tail != 0 && body.audio_have_raw_tail != 1) return 0;
+    if (audio_resample_cap < head.pending_frames) {
+        stage->grown = malloc((size_t)head.pending_frames * 2u * sizeof(int16_t));
+        if (!stage->grown) {
+            lr_log(RETRO_LOG_ERROR, "[gp32emu] savestate audio queue restore failed.\n");
+            return 0;
         }
+    }
+    stage->head = head;
+    stage->body = body;
+    stage->payload = p;
+    stage->present = 1;
+    return 1;
+}
+
+/* All bounds and allocations succeeded before the guest commit. Nothing in
+ * this delivery commit can reject the state after the guest has changed. */
+static void lrst_apply(lrst_stage_t *stage) {
+    const lrst_header_t head = stage->head;
+    const lrst_body_t body = stage->body;
+    const uint8_t *p = stage->payload;
+    if (stage->grown) {
+        free(audio_resample_buf);
+        audio_resample_buf = stage->grown;
+        audio_resample_cap = head.pending_frames;
+        stage->grown = NULL;
+    }
+    if (head.pending_frames) {
         memcpy(audio_resample_buf, p, (size_t)head.pending_frames * 2u * sizeof(int16_t));
         p += (size_t)head.pending_frames * 2u * sizeof(int16_t);
     }
@@ -674,7 +698,6 @@ static int lrst_read(const uint8_t *src, size_t room) {
             effects.have_prev_lcd = 1;
         }
     }
-    return 1;
 }
 
 static void reset_audio(void) {
@@ -1307,24 +1330,18 @@ bool retro_serialize(void *data, size_t size) {
 }
 bool retro_unserialize(const void *data, size_t size) {
     if (!emu || !data || !size) return false;
-    size_t guest = 0;
-    if (gp32_load_state_data_ex(emu, data, size, &guest) != GP32_OK) return false;
-    if (guest && guest <= size) {
-        int loaded = lrst_read((const uint8_t *)data + guest, size - guest);
-        if (loaded == 1) return true;
-        if (loaded < 0) {
-            /* A truncated delivery section would silently replay with reset
-             * audio/duplicate state, which is exactly the divergence this
-             * section exists to prevent. */
-            reset_loaded_delivery_state();
-            return false;
-        }
+    lrst_stage_t stage = {0};
+    if (gp32_load_state_data_checked(emu, data, size, lrst_prepare, &stage) != GP32_OK) {
+        free(stage.grown);
+        return false;
     }
     /* State from before the delivery section, or one this build cannot read:
      * keep the historical reset. A loaded state can restore a frame counter
      * this run already presented, so equality alone cannot prove the pixels
      * are unchanged. */
-    reset_loaded_delivery_state();
+    if (stage.present) lrst_apply(&stage);
+    else reset_loaded_delivery_state();
+    free(stage.grown);
     return true;
 }
 void *retro_get_memory_data(unsigned id) { (void)id; return NULL; }
