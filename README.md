@@ -225,7 +225,8 @@ the exact original ROM. Restoring a state also rolls back in-game card progress.
 - Audio fidelity and input latency have not been measured against a physical
   GP32.
 - Compatibility checks cover selected scenes, not complete playthroughs.
-- Rewind and run-ahead in a real RetroArch session are unverified.
+- Per-frame rewind can noticeably reduce speed on low-power devices.
+  Interactive run-ahead remains unverified.
 - Android device checks cover selected startup scenes and input/rotation on an
   ARM64 phone with the development app. Broader performance and Android RetroArch
   integration remain unverified.
