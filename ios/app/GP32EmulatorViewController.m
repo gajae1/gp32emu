@@ -44,6 +44,7 @@ static NSString *const GP32DefaultBIOSKey = @"GP32SelectedBIOS";
 static NSString *const GP32DefaultGameKey = @"GP32SelectedGame";
 static NSString *const GP32DefaultBootModeKey = @"GP32BootMode";
 static NSString *const GP32TouchControlsHiddenKey = @"GP32TouchControlsHidden";
+static const NSUInteger GP32StateSlotCount = 10;
 
 @interface GP32EmulatorViewController () <UIDocumentPickerDelegate, UIAdaptivePresentationControllerDelegate>
 + (NSString *)importURL:(NSURL *)source into:(NSString *)directory error:(NSError **)error;
@@ -71,6 +72,8 @@ static NSString *const GP32TouchControlsHiddenKey = @"GP32TouchControlsHidden";
 - (void)applyRunningState;
 - (void)restoreSelectionIfPossible;
 - (void)loadContentAtPath:(NSString *)gamePath;
+- (nullable NSString *)statePathForGamePath:(NSString *)gamePath slot:(NSUInteger)slot;
+- (void)presentStateSlotChooserForSaving:(BOOL)saving;
 - (void)chooseBootMode:(gp32_ios_boot_mode_t)mode;
 - (void)presentPickerForImport:(GP32ImportKind)kind;
 - (void)presentSoon:(UIViewController *)controller;
@@ -174,6 +177,20 @@ static NSString *const GP32TouchControlsHiddenKey = @"GP32TouchControlsHidden";
 
 + (NSString *)statesDirectory {
     return [[self documentsDirectory] stringByAppendingPathComponent:@"GP32emu/States"];
+}
+
+/* Slot 1 keeps the path used by older iOS builds. Import identities are
+ * directory names, so the reserved .slotNN suffix gives the other nine slots
+ * a stable, per-game name without overlapping the legacy file. */
+- (NSString *)statePathForGamePath:(NSString *)gamePath slot:(NSUInteger)slot {
+    if (!gamePath.length || slot == 0 || slot > GP32StateSlotCount) return nil;
+    NSString *identity = gamePath.stringByDeletingLastPathComponent.lastPathComponent;
+    if (!identity.length) return nil;
+    NSString *name = slot == 1
+        ? [identity stringByAppendingPathExtension:@"gp32st"]
+        : [NSString stringWithFormat:@"%@.slot%02lu.gp32st",
+                                     identity, (unsigned long)slot];
+    return [[GP32EmulatorViewController statesDirectory] stringByAppendingPathComponent:name];
 }
 
 + (NSString *)cardsDirectory {
@@ -819,8 +836,7 @@ static NSString *const GP32TouchControlsHiddenKey = @"GP32TouchControlsHidden";
     NSString *identity = gamePath.stringByDeletingLastPathComponent.lastPathComponent;
     NSString *cardPath = [[GP32EmulatorViewController cardsDirectory]
                  stringByAppendingPathComponent:[identity stringByAppendingPathExtension:@"sav"]];
-    NSString *statePath = [[GP32EmulatorViewController statesDirectory]
-                  stringByAppendingPathComponent:[identity stringByAppendingPathExtension:@"gp32st"]];
+    NSString *statePath = [self statePathForGamePath:gamePath slot:1];
 
     NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
     if (_biosPath) [defaults setObject:[GP32EmulatorViewController storedContentPath:_biosPath] forKey:GP32DefaultBIOSKey];
@@ -968,6 +984,83 @@ static NSString *const GP32TouchControlsHiddenKey = @"GP32TouchControlsHidden";
     [self menuDidClose];
 }
 
+- (void)presentStateSlotChooserForSaving:(BOOL)saving {
+    NSString *gamePath = _gamePath ?: _emulator.contentPath;
+    if (!gamePath.length) {
+        [self showStatus:@"Load a game before choosing a save-state slot." temporary:NO];
+        [self menuDidClose];
+        return;
+    }
+
+    UIAlertController *chooser = [UIAlertController
+        alertControllerWithTitle:(saving ? @"Save state" : @"Load state")
+                         message:(saving ? @"Choose a slot. Saving replaces that slot's contents."
+                                         : @"Choose a saved state for this game.")
+                  preferredStyle:UIAlertControllerStyleActionSheet];
+    __weak typeof(self) weakSelf = self;
+    NSFileManager *files = [NSFileManager defaultManager];
+    for (NSUInteger slot = 1; slot <= GP32StateSlotCount; ++slot) {
+        NSString *path = [self statePathForGamePath:gamePath slot:slot];
+        if (!path.length) continue;
+
+        BOOL isDirectory = NO;
+        BOOL exists = [files fileExistsAtPath:path isDirectory:&isDirectory];
+        NSDictionary<NSFileAttributeKey, id> *attributes = exists && !isDirectory
+            ? [files attributesOfItemAtPath:path error:NULL] : nil;
+        NSString *fileType = attributes[NSFileType];
+        NSNumber *fileSize = attributes[NSFileSize];
+        BOOL occupied = [fileType isEqualToString:NSFileTypeRegular] &&
+                        fileSize.unsignedLongLongValue > 0;
+        NSString *title;
+        if (occupied) {
+            NSDate *savedAt = attributes[NSFileModificationDate];
+            NSString *date = savedAt ? [NSDateFormatter localizedStringFromDate:savedAt
+                                                                     dateStyle:NSDateFormatterMediumStyle
+                                                                     timeStyle:NSDateFormatterShortStyle]
+                                     : @"date unavailable";
+            title = [NSString stringWithFormat:@"Slot %lu — Occupied, %@",
+                     (unsigned long)slot, date];
+        } else if (exists && !isDirectory) {
+            title = [NSString stringWithFormat:@"Slot %lu — Empty", (unsigned long)slot];
+        } else if (exists) {
+            title = [NSString stringWithFormat:@"Slot %lu — Unavailable", (unsigned long)slot];
+        } else {
+            title = [NSString stringWithFormat:@"Slot %lu — Empty", (unsigned long)slot];
+        }
+
+        UIAlertAction *action = [UIAlertAction actionWithTitle:title
+                                                         style:UIAlertActionStyleDefault
+                                                       handler:^(UIAlertAction *choice) {
+            (void)choice;
+            typeof(self) self2 = weakSelf;
+            if (!self2) return;
+            if (saving) [self2->_emulator saveStateAtPath:path completion:nil];
+            else [self2->_emulator loadStateAtPath:path completion:nil];
+            [self2 menuDidClose];
+        }];
+        if (!saving) action.enabled = occupied;
+        [chooser addAction:action];
+    }
+    [chooser addAction:[UIAlertAction actionWithTitle:@"Cancel"
+                                                style:UIAlertActionStyleCancel
+                                              handler:^(UIAlertAction *choice) {
+        (void)choice;
+        typeof(self) self2 = weakSelf;
+        if (self2) [self2 menuDidClose];
+    }]];
+
+    /* Choosing Save or Load dismisses the main sheet, but _menuOpen stays set
+     * until a slot is chosen or cancelled. The guest and audio therefore stay
+     * paused while this second chooser is presented. */
+    UIPopoverPresentationController *popover = chooser.popoverPresentationController;
+    popover.sourceView = self.view;
+    popover.sourceRect = CGRectMake(CGRectGetMidX(self.view.bounds),
+                                   CGRectGetMidY(self.view.bounds), 1, 1);
+    popover.permittedArrowDirections = 0;
+    chooser.presentationController.delegate = self;
+    [self presentSoon:chooser];
+}
+
 #pragma mark - Menu
 
 - (void)showMenu:(id)sender {
@@ -1095,8 +1188,7 @@ static NSString *const GP32TouchControlsHiddenKey = @"GP32TouchControlsHidden";
         (void)action;
         typeof(self) self = weakSelf;
         if (!self) return;
-        [self->_emulator saveState:nil];
-        [self menuDidClose];
+        [self presentStateSlotChooserForSaving:YES];
     }]];
     [menu addAction:[UIAlertAction actionWithTitle:@"Load state"
                                             style:UIAlertActionStyleDefault
@@ -1104,8 +1196,7 @@ static NSString *const GP32TouchControlsHiddenKey = @"GP32TouchControlsHidden";
         (void)action;
         typeof(self) self = weakSelf;
         if (!self) return;
-        [self->_emulator loadState:nil];
-        [self menuDidClose];
+        [self presentStateSlotChooserForSaving:NO];
     }]];
     [menu addAction:[UIAlertAction actionWithTitle:@"Flush card save"
                                             style:UIAlertActionStyleDefault

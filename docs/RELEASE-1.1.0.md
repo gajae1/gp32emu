@@ -14,6 +14,8 @@ during landscape play and can be opened by tapping its position.
 Its enlarged touch target remains active after the icon hides.
 Hiding touch controls reclaims their screen space, including the Start/Select
 row, while preserving the game's 4:3 aspect ratio and hardware input.
+Save State and Load State offer ten per-game slots. A single state saved by an
+earlier iOS build remains in slot 1.
 
 The IPA is intended for SideStore or another compatible signing tool. It has no
 publisher signature, provisioning profile, BIOS, games or saves. The complete
@@ -57,6 +59,8 @@ Audio and lifecycle changes include:
 - Queues the first audio samples before starting playback, avoiding an empty
   audio track while the first emulated frame is being prepared. The same path
   is used after pause, reset and state load.
+- Gives each game ten save-state slots; the state menu shows whether each slot
+  is empty or occupied.
 - Redraws touch controls only when their pressed state changes, while continuing
   to process held-button and sliding input.
 
@@ -88,6 +92,9 @@ and polling-loop handling retain checked fallbacks. Polling safety checks no
 longer change translation state for a conditional instruction that does not run.
 Apple ARM64 execution preserves the host frame pointer for helper calls.
 
+DMA four-unit bursts and STOP now follow the S3C2400 transfer semantics,
+preventing incorrect memory or audio-FIFO movement when a transfer ends early.
+
 File transfers and eligible homebrew decompression avoid redundant host work.
 FXP loading preserves the original guest loader when host decompression fails;
 GXB loading respects initialized and zero-initialized data placement. Audio
@@ -99,11 +106,19 @@ corrections remain available; they are not new features of 1.1.0.
 
 ## Save-state compatibility
 
-New save states preserve separate instruction and data translation caches and
-require 1.1.0 or a later compatible build. Older states remain importable, but
-cannot describe separate cache histories. Exact continuation is not guaranteed
-for unusual cases that rely on those old mappings. Keep the original state files
-when upgrading. In-game card saves are unchanged.
+The Windows, Android and iOS apps keep ten save-state slots for each game. On
+iOS, the earlier single save remains slot 1. RetroArch continues to use the
+save-state slots managed by the frontend.
+
+New save states use the common v17 format. It preserves separate instruction
+and data translation caches, all four direct-PCM channel identities and their
+resampling positions, and PWM counters, reload values and fractional phase. GP32emu 1.1.0 can read
+existing v2-v12 and v14-v16 states. Older core builds cannot read v17 states,
+so keep copies of state files needed by an older build.
+
+Older states lack some cache, PCM-channel and timer history. They remain
+loadable, but exact continuation across the format change is not guaranteed. In-game SmartMedia card saves and their `.sav` data are unchanged by
+the new slot and state-file format.
 
 ## Remaining validation
 
