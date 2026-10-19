@@ -44,7 +44,7 @@ bytes again reuses the existing identity. Original files remain unchanged.
 | Data | App storage |
 | --- | --- |
 | BIOS and games | `Documents/GP32emu/BIOS` and `Documents/GP32emu/Games` |
-| Save states | `Documents/GP32emu/States` |
+| Save states (10 slots per game) | `Documents/GP32emu/States` |
 | In-game card progress | `Library/Application Support/GP32emu/Cards` |
 
 The Documents folders are available through the Files app. In-game card progress
@@ -52,6 +52,17 @@ is separate from save states and is kept in the app's private Library directory.
 A damaged, mismatched or unreadable card save stops loading to protect progress.
 If saving fails while changing games, the current game stays loaded and paused.
 Resolve the storage error and retry; closing the app can discard unsaved progress.
+
+## Save states
+
+Each game has ten save-state slots. Save State and Load State show whether each
+slot is empty or occupied; saving replaces the chosen slot. An existing single
+state from an earlier iOS build remains available as slot 1.
+
+New states use the common v17 format. This build imports existing v2-v12 and
+v14-v16 states. Older core builds cannot read v17 states, so keep a copy of
+state files you may need with an older build. In-game card progress uses the
+same `.sav` data as before; changing state slots does not convert card saves.
 
 ## Controls
 

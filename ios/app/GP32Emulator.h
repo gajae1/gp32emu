@@ -89,11 +89,17 @@ typedef void (^GP32ResultHandler)(BOOL success, NSString *message);
 #endif
 
 /* Card progress is also saved automatically by the running core; these are the
- * explicit flush and the state file the menu drives. Messages are the core's
- * own error text. */
+ * explicit flush and state-file operations the menu drives. The legacy state
+ * methods use the path supplied when the content loaded. The explicit-path
+ * variants validate and use that path on the owner queue without changing the
+ * configured legacy path. Messages are the core's own error text. */
 - (void)saveCardProgress:(nullable GP32ResultHandler)completion;
 - (void)saveState:(nullable GP32ResultHandler)completion;
 - (void)loadState:(nullable GP32ResultHandler)completion;
+- (void)saveStateAtPath:(NSString *)statePath
+             completion:(nullable GP32ResultHandler)completion;
+- (void)loadStateAtPath:(NSString *)statePath
+             completion:(nullable GP32ResultHandler)completion;
 
 @end
 

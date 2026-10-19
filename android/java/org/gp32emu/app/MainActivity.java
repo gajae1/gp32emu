@@ -57,7 +57,7 @@ import java.util.concurrent.locks.LockSupport;
 
 public final class MainActivity extends Activity implements SurfaceHolder.Callback {
     private static final int PICK_BIOS = 1, PICK_GAME = 2;
-    private static final int STATE_SLOTS = 3;
+    private static final int STATE_SLOTS = 10;
     private static final int ACCENT = Color.rgb(127, 209, 185), PANEL = Color.rgb(31, 37, 48);
     /* An old Activity can finish its save flush while the new one starts. */
     private static final Object CORE_OWNER = new Object();

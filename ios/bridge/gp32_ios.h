@@ -130,6 +130,11 @@ int gp32_ios_emulator_save_card(gp32_ios_emulator_t *e);
 int gp32_ios_emulator_save_state(gp32_ios_emulator_t *e);
 /* Successful restore also discards the previous host audio stream. */
 int gp32_ios_emulator_load_state(gp32_ios_emulator_t *e);
+/* Explicit-path variants validate the path before entering the core and never
+ * modify the configured state path. A failed load retains the core's existing
+ * read-before-commit behavior; a failed save leaves the live game untouched. */
+int gp32_ios_emulator_save_state_at_path(gp32_ios_emulator_t *e, const char *path);
+int gp32_ios_emulator_load_state_at_path(gp32_ios_emulator_t *e, const char *path);
 size_t gp32_ios_emulator_state_size(const gp32_ios_emulator_t *e);
 void gp32_ios_emulator_clear_audio(gp32_ios_emulator_t *e);
 
