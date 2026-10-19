@@ -117,7 +117,7 @@ static int trigger_case(s3c2400_t *s, unsigned ch, unsigned dsz,
 
 /* DMASKTRIG.STOP (manual p.8-13) ends the current atomic transfer, clears
  * the current registers, and prevents the remaining whole service. These
- * cases use TSZ=0: the current emulator does not implement four-unit bursts. */
+ * cases retain the TSZ=0 cancellation regressions from Round442. */
 static int stop_case(s3c2400_t *s, unsigned ch, unsigned dsz,
                      unsigned whole, unsigned reload, unsigned iis_request) {
     const uint32_t dma = 0x14600000u + ch * 32u;
@@ -290,6 +290,152 @@ static int one(s3c2400_t *s, unsigned channel, unsigned dsz,
     return 1;
 }
 
+/* Manual pp.8-7..8-11: TC counts atomic transfers, not individual units.
+ * Even a fixed address advances within a burst, then returns to its base.
+ * Two non-overlapping four-unit fixtures make those rules independent of
+ * the emulator's byte-at-a-time oracle above. */
+static int burst_case(s3c2400_t *s, unsigned ch, unsigned dsz,
+                      unsigned whole, unsigned reload, unsigned fixed) {
+    const uint32_t dma = 0x14600000u + ch * 32u;
+    const uint32_t src = BASE + 0x200u, dst = BASE + 0x1800u;
+    const uint32_t span = 4u << dsz, irq = 1u << (17u + ch);
+    const unsigned fixed_src = fixed & 1u, fixed_dst = fixed >> 1;
+    s3c2400_reset(s);
+    char error[128];
+    if (!s3c2400_load_ram_image(s, BASE, initial, sizeof(initial), error, sizeof(error))) return 1;
+    s3c2400_write32(s, 0x14400008u, UINT32_MAX);
+    s3c2400_write32(s, dma, src | (fixed_src << 29));
+    s3c2400_write32(s, dma + 4u, dst | (fixed_dst << 29));
+    s3c2400_write32(s, dma + 8u, (1u << 28) | (1u << 27) |
+                       (whole << 26) | (!reload << 22) | (dsz << 20) | 2u);
+    memcpy(expected, initial, sizeof(expected));
+    /* Also request the next reloaded service. Each whole service consists
+     * of exactly two bursts. */
+    const unsigned requests = (whole ? 1u : 2u) + reload;
+    for (unsigned request = 0; request < requests; ++request) {
+        unsigned bursts = whole ? 2u : request + 1u;
+        if (bursts > 2u) bursts = reload ? 1u : 2u;
+        if (whole || request != 2u || reload) {
+            if (whole || request == 0u || request == 2u)
+                memcpy(expected + dst - BASE, initial + src - BASE, span);
+            if (bursts == 2u)
+                memcpy(expected + dst - BASE + (fixed_dst ? 0u : span),
+                       initial + src - BASE + (fixed_src ? 0u : span), span);
+        }
+        s3c2400_write32(s, dma + 24u, 3u);
+        uint32_t tc = 2u - bursts;
+        uint32_t cursor = bursts * span;
+        const uint32_t on = tc || reload ? 2u : 0u;
+        const uint32_t pending = tc ? 0u : irq;
+        if (!tc && reload) { tc = 2u; cursor = 0u; }
+        const uint32_t want[] = {tc, src + (fixed_src ? 0u : cursor),
+                                 dst + (fixed_dst ? 0u : cursor), on, pending};
+        const uint32_t actual[] = {
+            s3c2400_read32(s, dma + 12u), s3c2400_read32(s, dma + 16u),
+            s3c2400_read32(s, dma + 20u), s3c2400_read32(s, dma + 24u),
+            s3c2400_read32(s, 0x14400000u)
+        };
+        if (memcmp(actual, want, sizeof(want)) ||
+            memcmp(s3c2400_ram_data(s), expected, sizeof(expected))) {
+            fprintf(stderr, "FAIL: DMA%u burst dsz=%u whole=%u reload=%u fixed=%u request=%u TC=%u/%u src=%08x/%08x dst=%08x/%08x\n",
+                    ch, dsz, whole, reload, fixed, request + 1u,
+                    actual[0], want[0], actual[1], want[1], actual[2], want[2]);
+            return 1;
+        }
+        if (reload || (!whole && request == 0u)) s3c2400_write32(s, 0x14400000u, irq);
+    }
+    return 0;
+}
+
+/* A nested STOP must finish the current four-unit atomic transfer, but must
+ * not publish its old cursors over the newly activated operation. The last
+ * two bus writes are observable markers; the next atomic transfer is absent.
+ * This specifies synchronous emulator cancellation, not silicon arbitration. */
+static int burst_stop_case(s3c2400_t *s, unsigned whole, unsigned reenable) {
+    const uint32_t dma = 0x14600000u, child = dma + 32u;
+    const uint32_t src = BASE + 0x200u, command = BASE + 0x280u;
+    const uint32_t data[] = {3u, 0u, 0x12345678u, 0x23456789u, 0x3456789au};
+    s3c2400_reset(s);
+    for (unsigned i = 0; i < GP32_ARRAY_COUNT(data); ++i)
+        s3c2400_write32(s, src + i * 4u, data[i]);
+    s3c2400_write32(s, command, 4u);
+    s3c2400_write32(s, command + 4u, 2u);
+    s3c2400_write32(s, 0x14400008u, UINT32_MAX);
+    s3c2400_write32(s, child, command);
+    s3c2400_write32(s, child + 4u, (dma + 24u) | (1u << 29));
+    s3c2400_write32(s, child + 8u, 0x04600000u | (1u + reenable));
+    s3c2400_write32(s, dma, src);
+    s3c2400_write32(s, dma + 4u, child + 24u);
+    s3c2400_write32(s, dma + 8u, 0x18600002u | (whole << 26));
+    s3c2400_write32(s, dma + 24u, 3u);
+    const uint32_t actual[] = {
+        s3c2400_read32(s, dma + 12u), s3c2400_read32(s, dma + 16u),
+        s3c2400_read32(s, dma + 20u), s3c2400_read32(s, dma + 24u),
+        s3c2400_read32(s, 0x14400000u), s3c2400_read32(s, dma + 64u),
+        s3c2400_read32(s, dma + 68u), s3c2400_read32(s, dma + 72u),
+        s3c2400_read32(s, child + 12u), s3c2400_read32(s, child + 24u)
+    };
+    const uint32_t want[] = {reenable ? 2u : 0u, reenable ? src : 0u,
+                             reenable ? child + 24u : 0u, reenable ? 2u : 4u,
+                             0u, data[2], data[3], 0u, 0u, 0u};
+    if (memcmp(actual, want, sizeof(want))) {
+        fprintf(stderr, "FAIL: burst nested STOP whole=%u reenable=%u\n", whole, reenable);
+        return 1;
+    }
+    return 0;
+}
+
+/* Fixed destination burst addresses are FIFO+0,+width,+2*width,+3*width,
+ * not four writes to FIFO+0. Compare to explicit public bus writes so the
+ * IIS fast path cannot silently treat a burst as a unit or a fixed stream.
+ * FIFO depth / DREQ timing on real hardware is outside this bus-level check. */
+static int burst_iis_case(s3c2400_t *s, unsigned dsz, unsigned hardware,
+                          unsigned whole, unsigned fixed_src) {
+    const uint32_t dma = 0x14600040u, src = BASE + 0x200u;
+    const uint32_t width = 1u << dsz;
+    const unsigned atoms = whole ? 3u : hardware && dsz == 1u ? 2u : 1u;
+    s3c2400_t *reference = s3c2400_create(RAM_BYTES);
+    if (!reference) return 1;
+    s3c2400_reset(s);
+    s3c2400_write32(s, 0x14400008u, UINT32_MAX);
+    s3c2400_write32(s, 0x14800004u, 0u);
+    s3c2400_write32(s, 0x14800014u, 0u);
+    s3c2400_write32(reference, 0x14800004u, 0u);
+    s3c2400_write32(reference, 0x14800014u, 0u);
+    for (unsigned i = 0; i < 12u; ++i)
+        s3c2400_write32(s, src + i * 4u, 0x12003400u + i * 0x00110013u);
+    for (unsigned atom = 0; atom < atoms; ++atom)
+        for (unsigned unit = 0; unit < 4u; ++unit) {
+            uint32_t at = src + ((fixed_src ? 0u : atom * 4u) + unit) * width;
+            if (dsz == 1u) s3c2400_write16(reference, 0x15508010u + unit * width, s3c2400_read16(s, at));
+            else s3c2400_write32(reference, 0x15508010u + unit * width, s3c2400_read32(s, at));
+        }
+    s3c2400_write32(s, dma, src | (fixed_src << 29));
+    s3c2400_write32(s, dma + 4u, 0x35508010u);
+    s3c2400_write32(s, dma + 8u, 0x18400003u | (whole << 26) |
+                       (hardware << 23) | (dsz << 20));
+    s3c2400_write32(s, dma + 24u, hardware ? 2u : 3u);
+    if (hardware) {
+        s3c2400_write32(s, 0x15508000u, 1u);
+        s3c2400_tick(s, 500u); /* Existing model: one stereo scheduling period. */
+    }
+    uint64_t frames = 0, ref_frames = 0;
+    const int16_t *pcm = s3c2400_audio_samples(s, &frames, NULL);
+    const int16_t *ref_pcm = s3c2400_audio_samples(reference, &ref_frames, NULL);
+    int failed = frames != ref_frames ||
+        (frames && memcmp(pcm, ref_pcm, (size_t)frames * 2u * sizeof(*pcm))) ||
+        s3c2400_read32(s, dma + 12u) != 3u - atoms ||
+        s3c2400_read32(s, dma + 16u) != src + (fixed_src ? 0u : atoms * 4u * width) ||
+        s3c2400_read32(s, dma + 20u) != 0x15508010u ||
+        s3c2400_read32(s, dma + 24u) != (whole ? 0u : 2u) ||
+        s3c2400_read32(s, 0x14400000u) != (whole ? 1u << 19 : 0u);
+    if (failed) fprintf(stderr, "FAIL: IIS burst dsz=%u hw=%u whole=%u fixed_src=%u frames=%llu/%llu\n",
+                        dsz, hardware, whole, fixed_src,
+                        (unsigned long long)frames, (unsigned long long)ref_frames);
+    s3c2400_destroy(reference);
+    return failed;
+}
+
 int main(void) {
     static const layout_t layouts[] = {
         {BASE + 0x200u, BASE + 0x1800u, 0, 0}, /* disjoint */
@@ -350,9 +496,31 @@ int main(void) {
                 ++stop_cases;
                 stop_failures += nested_stop_case(s, whole, reenable, cancel);
             }
+    unsigned burst_cases = 0, burst_failures = 0;
+    for (unsigned ch = 0; ch < 4u; ++ch)
+        for (unsigned dsz = 0; dsz < 3u; ++dsz)
+            for (unsigned whole = 0; whole < 2u; ++whole)
+                for (unsigned reload = 0; reload < 2u; ++reload)
+                    for (unsigned fixed = 0; fixed < 4u; ++fixed) {
+                        ++burst_cases;
+                        burst_failures += burst_case(s, ch, dsz, whole, reload, fixed);
+                    }
+    for (unsigned whole = 0; whole < 2u; ++whole)
+        for (unsigned reenable = 0; reenable < 2u; ++reenable) {
+            ++burst_cases;
+            burst_failures += burst_stop_case(s, whole, reenable);
+        }
+    for (unsigned dsz = 1u; dsz <= 2u; ++dsz)
+        for (unsigned hardware = 0; hardware < 2u; ++hardware)
+            for (unsigned whole = 0; whole < 2u; ++whole)
+                for (unsigned fixed_src = 0; fixed_src < 2u; ++fixed_src) {
+                    ++burst_cases;
+                    burst_failures += burst_iis_case(s, dsz, hardware, whole, fixed_src);
+                }
     s3c2400_destroy(s);
     printf("DMA oracle cases=%u failures=%u\n", cases, failures);
     printf("DMA software-trigger scenarios=%u assertion_failures=%u\n", trigger_cases, trigger_failures);
     printf("DMA in-flight STOP scenarios=%u assertion_failures=%u\n", stop_cases, stop_failures);
-    return failures || trigger_failures || stop_failures ? 1 : 0;
+    printf("DMA four-unit burst scenarios=%u assertion_failures=%u\n", burst_cases, burst_failures);
+    return failures || trigger_failures || stop_failures || burst_failures ? 1 : 0;
 }

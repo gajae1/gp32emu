@@ -972,7 +972,9 @@ static uint32_t dma_iis_fast_trigger_count(s3c2400_t *s, uint32_t *r, uint32_t r
     int inc_src = GP32_BIT(r[0],29) == 0;
     int inc_dst = GP32_BIT(r[1],29) == 0;
     int service = GP32_BIT(r[2],26);
-    if (!tc || !requests || inc_dst || dst != 0x15508010u || dsz == 0u) return 0;
+    /* Fixed addresses still advance within a four-unit burst, then reset
+     * (S3C2400 manual pp.8-7..8-8). Such writes are not a fixed FIFO stream. */
+    if (!tc || !requests || GP32_BIT(r[2],27) || inc_dst || dst != 0x15508010u || dsz == 0u) return 0;
     iis_refresh_clock_cache(s);
     /*
      * Units this call can move: single-service mode stops after the requests
@@ -1132,6 +1134,10 @@ static void dma_trigger(s3c2400_t *s, int ch) {
     int inc_src = GP32_BIT(r[0],29) == 0;
     int inc_dst = GP32_BIT(r[1],29) == 0;
     int service = GP32_BIT(r[2],26);
+    /* TC counts atomic transfers. TSZ selects one unit or four units per
+     * atomic transfer; single service accepts exactly one such group
+     * (S3C2400 manual pp.8-9..8-11). */
+    unsigned burst = GP32_BIT(r[2],27) ? 4u : 1u;
     uint32_t dst0 = dst, moved = 0;
     /* Whole-service RAM copies have no per-unit bus side effects. Prove both
      * complete spans and their non-overlap before copying; forward overlap
@@ -1140,26 +1146,32 @@ static void dma_trigger(s3c2400_t *s, int ch) {
      * also retain that path. Cursor/reload/IRQ and code invalidation are
      * shared with ordinary transfers after the copy. */
     if (service && tc > 1u && inc_src && inc_dst && dsz < 3u) {
-        uint32_t bytes = tc << dsz;
+        uint32_t bytes = (tc * burst) << dsz;
         const uint8_t *from = ram_ptr(s, src, bytes);
         uint8_t *to = ram_ptr(s, dst, bytes);
         if (from && to && ((uint64_t)src + bytes <= dst || (uint64_t)dst + bytes <= src)) {
             memcpy(to, from, bytes);
-            moved = tc;
+            moved = tc * burst;
             tc = 0u;
             src += bytes;
             dst += bytes;
         }
     }
     while (tc) {
+        uint32_t src0 = src, burst_dst = dst;
+        for (unsigned unit = 0; unit < burst; ++unit) {
+            moved++;
+            if (dsz == 0) { uint8_t v = s3c2400_read8(s, src); s3c2400_write8(s, dst, v); }
+            else if (dsz == 1) { uint16_t v = s3c2400_read16(s, src); s3c2400_write16(s, dst, v); }
+            else { uint32_t v = s3c2400_read32(s, src); s3c2400_write32(s, dst, v); }
+            if (inc_src || burst > 1u) src += 1u << dsz;
+            if (inc_dst || burst > 1u) dst += 1u << dsz;
+        }
+        /* Fixed addresses advance within a burst and reset between bursts. */
+        if (!inc_src) src = src0;
+        if (!inc_dst) dst = burst_dst;
         tc--;
-        moved++;
-        if (dsz == 0) { uint8_t v = s3c2400_read8(s, src); s3c2400_write8(s, dst, v); }
-        else if (dsz == 1) { uint16_t v = s3c2400_read16(s, src); s3c2400_write16(s, dst, v); }
-        else { uint32_t v = s3c2400_read32(s, src); s3c2400_write32(s, dst, v); }
-        if (inc_src) src += 1u << dsz;
-        if (inc_dst) dst += 1u << dsz;
-        /* Finish this bus unit, but do not let its stale local cursor resume
+        /* Finish this atomic transfer, but do not let its stale cursor resume
          * an operation that it or a nested DMA stopped (even if re-enabled). */
         if (s->dma_stop_epoch[ch] != stop_epoch) { stopped = 1; break; }
         if (!service) break;
@@ -1169,7 +1181,8 @@ static void dma_trigger(s3c2400_t *s, int ch) {
      * single-service or stopped transfer is covered too. I/O destinations such
      * as the IIS FIFO lie outside RAM and cost nothing. */
     if (moved && s->cpu_irq_sink)
-        arm920t_invalidate_icache_range(s->cpu_irq_sink, dst0, inc_dst ? moved << dsz : (dsz >= 2u ? 4u : 1u << dsz));
+        arm920t_invalidate_icache_range(s->cpu_irq_sink, dst0, inc_dst ? moved << dsz :
+                                      ((burst - 1u) << dsz) + (dsz >= 2u ? 4u : 1u << dsz));
     if (stopped) return; /* Keep STOP/new-operation registers; no old TC IRQ. */
     r[4] = (r[4] & ~0x1fffffffu) | src;
     r[5] = (r[5] & ~0x1fffffffu) | dst;
@@ -1515,10 +1528,10 @@ static void io_write32(s3c2400_t *s, uint32_t addr, uint32_t value, uint32_t mas
             uint32_t now = dr[6];
             if ((mask & 4u) && (now & 4u)) {
                 ++s->dma_stop_epoch[ch];
-                /* DMASKTRIG[2] STOP forces the channel off after the current
-                 * atomic transfer. DMA transfers are modeled atomically here,
-                 * so complete the stop immediately and clear the current
-                 * transfer registers as the hardware documents. */
+                /* Register clearing is immediate in this synchronous MMIO
+                 * model. An active dma_trigger still finishes its atomic
+                 * group, then the epoch prevents publishing stale cursors
+                 * over these cleared registers or a nested reactivation. */
                 dr[3] = 0;
                 dr[4] = 0;
                 dr[5] = 0;
@@ -2733,7 +2746,8 @@ static int dma_source_is_ram(s3c2400_t *s, uint32_t source, uint32_t units,
 static int iis_dma_batch_safe(s3c2400_t *s) {
     const uint32_t *r = &s->dma[2u << 3];
     unsigned dsz = GP32_BITS(r[2], 21, 20);
-    if (!GP32_BIT(r[1], 29) || (r[5] & 0x1fffffffu) != 0x15508010u || dsz > 2u)
+    if (GP32_BIT(r[2], 27) || !GP32_BIT(r[1], 29) ||
+        (r[5] & 0x1fffffffu) != 0x15508010u || dsz > 2u)
         return 0;
     unsigned width = 1u << dsz;
     int fixed = GP32_BIT(r[0], 29);
