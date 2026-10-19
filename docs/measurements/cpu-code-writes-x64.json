@@ -1,0 +1,1111 @@
+{
+  "cpu": 0,
+  "host": "AMD EPYC 9V74 80-Core Processor, Linux x86-64 virtualized host",
+  "compiler": "GCC 13.3.0, -O3 -std=c2x, GP32EMU_CPU_PROFILE=1",
+  "baseline_commit": "86eb4f98ad893b99eb5f94ebb5b9093252475611",
+  "guest_instructions": 30000000,
+  "warmup_guest_instructions": 30000,
+  "repetitions": 5,
+  "results": [
+    {
+      "mode": 1,
+      "I": 0,
+      "MMU": 0,
+      "placement": 0,
+      "samples": {
+        "before": [
+          {
+            "ns_per_insn": 2.2044,
+            "output": "mode=1 I=0 MMU=0 same_page=0 retired=30000000 ns_per_insn=2.2044 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.1284,
+            "output": "mode=1 I=0 MMU=0 same_page=0 retired=30000000 ns_per_insn=2.1284 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.227,
+            "output": "mode=1 I=0 MMU=0 same_page=0 retired=30000000 ns_per_insn=2.2270 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.0536,
+            "output": "mode=1 I=0 MMU=0 same_page=0 retired=30000000 ns_per_insn=2.0536 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.1283,
+            "output": "mode=1 I=0 MMU=0 same_page=0 retired=30000000 ns_per_insn=2.1283 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          }
+        ],
+        "after": [
+          {
+            "ns_per_insn": 2.3746,
+            "output": "mode=1 I=0 MMU=0 same_page=0 retired=30000000 ns_per_insn=2.3746 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.3933,
+            "output": "mode=1 I=0 MMU=0 same_page=0 retired=30000000 ns_per_insn=2.3933 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.415,
+            "output": "mode=1 I=0 MMU=0 same_page=0 retired=30000000 ns_per_insn=2.4150 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.4151,
+            "output": "mode=1 I=0 MMU=0 same_page=0 retired=30000000 ns_per_insn=2.4151 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.3475,
+            "output": "mode=1 I=0 MMU=0 same_page=0 retired=30000000 ns_per_insn=2.3475 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          }
+        ]
+      },
+      "before_median": 2.1284,
+      "after_median": 2.3933,
+      "change_percent": 12.4459688028566
+    },
+    {
+      "mode": 1,
+      "I": 0,
+      "MMU": 0,
+      "placement": 1,
+      "samples": {
+        "before": [
+          {
+            "ns_per_insn": 2.0533,
+            "output": "mode=1 I=0 MMU=0 same_page=1 retired=30000000 ns_per_insn=2.0533 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.134,
+            "output": "mode=1 I=0 MMU=0 same_page=1 retired=30000000 ns_per_insn=2.1340 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.1503,
+            "output": "mode=1 I=0 MMU=0 same_page=1 retired=30000000 ns_per_insn=2.1503 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.1042,
+            "output": "mode=1 I=0 MMU=0 same_page=1 retired=30000000 ns_per_insn=2.1042 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.0597,
+            "output": "mode=1 I=0 MMU=0 same_page=1 retired=30000000 ns_per_insn=2.0597 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          }
+        ],
+        "after": [
+          {
+            "ns_per_insn": 2.3453,
+            "output": "mode=1 I=0 MMU=0 same_page=1 retired=30000000 ns_per_insn=2.3453 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.3767,
+            "output": "mode=1 I=0 MMU=0 same_page=1 retired=30000000 ns_per_insn=2.3767 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.3898,
+            "output": "mode=1 I=0 MMU=0 same_page=1 retired=30000000 ns_per_insn=2.3898 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.4155,
+            "output": "mode=1 I=0 MMU=0 same_page=1 retired=30000000 ns_per_insn=2.4155 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.369,
+            "output": "mode=1 I=0 MMU=0 same_page=1 retired=30000000 ns_per_insn=2.3690 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          }
+        ]
+      },
+      "before_median": 2.1042,
+      "after_median": 2.3767,
+      "change_percent": 12.950289896397681
+    },
+    {
+      "mode": 1,
+      "I": 0,
+      "MMU": 0,
+      "placement": 2,
+      "samples": {
+        "before": [
+          {
+            "ns_per_insn": 2.0769,
+            "output": "mode=1 I=0 MMU=0 same_page=2 retired=30000000 ns_per_insn=2.0769 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.0705,
+            "output": "mode=1 I=0 MMU=0 same_page=2 retired=30000000 ns_per_insn=2.0705 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.0774,
+            "output": "mode=1 I=0 MMU=0 same_page=2 retired=30000000 ns_per_insn=2.0774 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.1524,
+            "output": "mode=1 I=0 MMU=0 same_page=2 retired=30000000 ns_per_insn=2.1524 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.0997,
+            "output": "mode=1 I=0 MMU=0 same_page=2 retired=30000000 ns_per_insn=2.0997 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          }
+        ],
+        "after": [
+          {
+            "ns_per_insn": 13.0057,
+            "output": "mode=1 I=0 MMU=0 same_page=2 retired=30000000 ns_per_insn=13.0057 native=29999999 epoch_changed=1 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 13.0247,
+            "output": "mode=1 I=0 MMU=0 same_page=2 retired=30000000 ns_per_insn=13.0247 native=29999999 epoch_changed=1 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 13.2315,
+            "output": "mode=1 I=0 MMU=0 same_page=2 retired=30000000 ns_per_insn=13.2315 native=29999999 epoch_changed=1 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 13.2872,
+            "output": "mode=1 I=0 MMU=0 same_page=2 retired=30000000 ns_per_insn=13.2872 native=29999999 epoch_changed=1 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 13.223,
+            "output": "mode=1 I=0 MMU=0 same_page=2 retired=30000000 ns_per_insn=13.2230 native=29999999 epoch_changed=1 generation_changed=0 r0=10010000 memory=10010000"
+          }
+        ]
+      },
+      "before_median": 2.0774,
+      "after_median": 13.223,
+      "change_percent": 536.5167998459614
+    },
+    {
+      "mode": 1,
+      "I": 0,
+      "MMU": 1,
+      "placement": 0,
+      "samples": {
+        "before": [
+          {
+            "ns_per_insn": 2.5117,
+            "output": "mode=1 I=0 MMU=1 same_page=0 retired=30000000 ns_per_insn=2.5117 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.5542,
+            "output": "mode=1 I=0 MMU=1 same_page=0 retired=30000000 ns_per_insn=2.5542 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.5561,
+            "output": "mode=1 I=0 MMU=1 same_page=0 retired=30000000 ns_per_insn=2.5561 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.5425,
+            "output": "mode=1 I=0 MMU=1 same_page=0 retired=30000000 ns_per_insn=2.5425 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.6009,
+            "output": "mode=1 I=0 MMU=1 same_page=0 retired=30000000 ns_per_insn=2.6009 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          }
+        ],
+        "after": [
+          {
+            "ns_per_insn": 2.7117,
+            "output": "mode=1 I=0 MMU=1 same_page=0 retired=30000000 ns_per_insn=2.7117 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.7072,
+            "output": "mode=1 I=0 MMU=1 same_page=0 retired=30000000 ns_per_insn=2.7072 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.7257,
+            "output": "mode=1 I=0 MMU=1 same_page=0 retired=30000000 ns_per_insn=2.7257 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.7208,
+            "output": "mode=1 I=0 MMU=1 same_page=0 retired=30000000 ns_per_insn=2.7208 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.8284,
+            "output": "mode=1 I=0 MMU=1 same_page=0 retired=30000000 ns_per_insn=2.8284 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          }
+        ]
+      },
+      "before_median": 2.5542,
+      "after_median": 2.7208,
+      "change_percent": 6.522590243520487
+    },
+    {
+      "mode": 1,
+      "I": 0,
+      "MMU": 1,
+      "placement": 1,
+      "samples": {
+        "before": [
+          {
+            "ns_per_insn": 2.5731,
+            "output": "mode=1 I=0 MMU=1 same_page=1 retired=30000000 ns_per_insn=2.5731 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.6929,
+            "output": "mode=1 I=0 MMU=1 same_page=1 retired=30000000 ns_per_insn=2.6929 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.6296,
+            "output": "mode=1 I=0 MMU=1 same_page=1 retired=30000000 ns_per_insn=2.6296 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.6182,
+            "output": "mode=1 I=0 MMU=1 same_page=1 retired=30000000 ns_per_insn=2.6182 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.7458,
+            "output": "mode=1 I=0 MMU=1 same_page=1 retired=30000000 ns_per_insn=2.7458 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          }
+        ],
+        "after": [
+          {
+            "ns_per_insn": 3.2812,
+            "output": "mode=1 I=0 MMU=1 same_page=1 retired=30000000 ns_per_insn=3.2812 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.7982,
+            "output": "mode=1 I=0 MMU=1 same_page=1 retired=30000000 ns_per_insn=2.7982 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 3.2349,
+            "output": "mode=1 I=0 MMU=1 same_page=1 retired=30000000 ns_per_insn=3.2349 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.895,
+            "output": "mode=1 I=0 MMU=1 same_page=1 retired=30000000 ns_per_insn=2.8950 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.8478,
+            "output": "mode=1 I=0 MMU=1 same_page=1 retired=30000000 ns_per_insn=2.8478 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          }
+        ]
+      },
+      "before_median": 2.6296,
+      "after_median": 2.895,
+      "change_percent": 10.09278977791299
+    },
+    {
+      "mode": 1,
+      "I": 0,
+      "MMU": 1,
+      "placement": 2,
+      "samples": {
+        "before": [
+          {
+            "ns_per_insn": 2.6467,
+            "output": "mode=1 I=0 MMU=1 same_page=2 retired=30000000 ns_per_insn=2.6467 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.5706,
+            "output": "mode=1 I=0 MMU=1 same_page=2 retired=30000000 ns_per_insn=2.5706 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 4.3904,
+            "output": "mode=1 I=0 MMU=1 same_page=2 retired=30000000 ns_per_insn=4.3904 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.5881,
+            "output": "mode=1 I=0 MMU=1 same_page=2 retired=30000000 ns_per_insn=2.5881 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.5857,
+            "output": "mode=1 I=0 MMU=1 same_page=2 retired=30000000 ns_per_insn=2.5857 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          }
+        ],
+        "after": [
+          {
+            "ns_per_insn": 15.9622,
+            "output": "mode=1 I=0 MMU=1 same_page=2 retired=30000000 ns_per_insn=15.9622 native=29999999 epoch_changed=1 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 16.5469,
+            "output": "mode=1 I=0 MMU=1 same_page=2 retired=30000000 ns_per_insn=16.5469 native=29999999 epoch_changed=1 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 17.4748,
+            "output": "mode=1 I=0 MMU=1 same_page=2 retired=30000000 ns_per_insn=17.4748 native=29999999 epoch_changed=1 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 15.9244,
+            "output": "mode=1 I=0 MMU=1 same_page=2 retired=30000000 ns_per_insn=15.9244 native=29999999 epoch_changed=1 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 15.9173,
+            "output": "mode=1 I=0 MMU=1 same_page=2 retired=30000000 ns_per_insn=15.9173 native=29999999 epoch_changed=1 generation_changed=0 r0=10010000 memory=10010000"
+          }
+        ]
+      },
+      "before_median": 2.5881,
+      "after_median": 15.9622,
+      "change_percent": 516.7536030292493
+    },
+    {
+      "mode": 1,
+      "I": 1,
+      "MMU": 0,
+      "placement": 0,
+      "samples": {
+        "before": [
+          {
+            "ns_per_insn": 2.3231,
+            "output": "mode=1 I=1 MMU=0 same_page=0 retired=30000000 ns_per_insn=2.3231 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.0975,
+            "output": "mode=1 I=1 MMU=0 same_page=0 retired=30000000 ns_per_insn=2.0975 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.214,
+            "output": "mode=1 I=1 MMU=0 same_page=0 retired=30000000 ns_per_insn=2.2140 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.5243,
+            "output": "mode=1 I=1 MMU=0 same_page=0 retired=30000000 ns_per_insn=2.5243 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.1225,
+            "output": "mode=1 I=1 MMU=0 same_page=0 retired=30000000 ns_per_insn=2.1225 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          }
+        ],
+        "after": [
+          {
+            "ns_per_insn": 2.092,
+            "output": "mode=1 I=1 MMU=0 same_page=0 retired=30000000 ns_per_insn=2.0920 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.2049,
+            "output": "mode=1 I=1 MMU=0 same_page=0 retired=30000000 ns_per_insn=2.2049 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.1436,
+            "output": "mode=1 I=1 MMU=0 same_page=0 retired=30000000 ns_per_insn=2.1436 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.2899,
+            "output": "mode=1 I=1 MMU=0 same_page=0 retired=30000000 ns_per_insn=2.2899 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.3941,
+            "output": "mode=1 I=1 MMU=0 same_page=0 retired=30000000 ns_per_insn=2.3941 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          }
+        ]
+      },
+      "before_median": 2.214,
+      "after_median": 2.2049,
+      "change_percent": -0.41102077687443783
+    },
+    {
+      "mode": 1,
+      "I": 1,
+      "MMU": 0,
+      "placement": 1,
+      "samples": {
+        "before": [
+          {
+            "ns_per_insn": 2.3297,
+            "output": "mode=1 I=1 MMU=0 same_page=1 retired=30000000 ns_per_insn=2.3297 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.0682,
+            "output": "mode=1 I=1 MMU=0 same_page=1 retired=30000000 ns_per_insn=2.0682 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.2517,
+            "output": "mode=1 I=1 MMU=0 same_page=1 retired=30000000 ns_per_insn=2.2517 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.3077,
+            "output": "mode=1 I=1 MMU=0 same_page=1 retired=30000000 ns_per_insn=2.3077 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.0579,
+            "output": "mode=1 I=1 MMU=0 same_page=1 retired=30000000 ns_per_insn=2.0579 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          }
+        ],
+        "after": [
+          {
+            "ns_per_insn": 2.3457,
+            "output": "mode=1 I=1 MMU=0 same_page=1 retired=30000000 ns_per_insn=2.3457 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.1072,
+            "output": "mode=1 I=1 MMU=0 same_page=1 retired=30000000 ns_per_insn=2.1072 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.0903,
+            "output": "mode=1 I=1 MMU=0 same_page=1 retired=30000000 ns_per_insn=2.0903 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.0722,
+            "output": "mode=1 I=1 MMU=0 same_page=1 retired=30000000 ns_per_insn=2.0722 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.0615,
+            "output": "mode=1 I=1 MMU=0 same_page=1 retired=30000000 ns_per_insn=2.0615 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          }
+        ]
+      },
+      "before_median": 2.2517,
+      "after_median": 2.0903,
+      "change_percent": -7.167917573388993
+    },
+    {
+      "mode": 1,
+      "I": 1,
+      "MMU": 0,
+      "placement": 2,
+      "samples": {
+        "before": [
+          {
+            "ns_per_insn": 2.0794,
+            "output": "mode=1 I=1 MMU=0 same_page=2 retired=30000000 ns_per_insn=2.0794 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.2248,
+            "output": "mode=1 I=1 MMU=0 same_page=2 retired=30000000 ns_per_insn=2.2248 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.2326,
+            "output": "mode=1 I=1 MMU=0 same_page=2 retired=30000000 ns_per_insn=2.2326 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.0929,
+            "output": "mode=1 I=1 MMU=0 same_page=2 retired=30000000 ns_per_insn=2.0929 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.1513,
+            "output": "mode=1 I=1 MMU=0 same_page=2 retired=30000000 ns_per_insn=2.1513 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          }
+        ],
+        "after": [
+          {
+            "ns_per_insn": 3.2764,
+            "output": "mode=1 I=1 MMU=0 same_page=2 retired=30000000 ns_per_insn=3.2764 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.2024,
+            "output": "mode=1 I=1 MMU=0 same_page=2 retired=30000000 ns_per_insn=2.2024 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.1655,
+            "output": "mode=1 I=1 MMU=0 same_page=2 retired=30000000 ns_per_insn=2.1655 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.0769,
+            "output": "mode=1 I=1 MMU=0 same_page=2 retired=30000000 ns_per_insn=2.0769 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.1355,
+            "output": "mode=1 I=1 MMU=0 same_page=2 retired=30000000 ns_per_insn=2.1355 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          }
+        ]
+      },
+      "before_median": 2.1513,
+      "after_median": 2.1655,
+      "change_percent": 0.660066006600668
+    },
+    {
+      "mode": 1,
+      "I": 1,
+      "MMU": 1,
+      "placement": 0,
+      "samples": {
+        "before": [
+          {
+            "ns_per_insn": 2.6118,
+            "output": "mode=1 I=1 MMU=1 same_page=0 retired=30000000 ns_per_insn=2.6118 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.6623,
+            "output": "mode=1 I=1 MMU=1 same_page=0 retired=30000000 ns_per_insn=2.6623 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.641,
+            "output": "mode=1 I=1 MMU=1 same_page=0 retired=30000000 ns_per_insn=2.6410 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.7743,
+            "output": "mode=1 I=1 MMU=1 same_page=0 retired=30000000 ns_per_insn=2.7743 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.8514,
+            "output": "mode=1 I=1 MMU=1 same_page=0 retired=30000000 ns_per_insn=2.8514 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          }
+        ],
+        "after": [
+          {
+            "ns_per_insn": 2.7632,
+            "output": "mode=1 I=1 MMU=1 same_page=0 retired=30000000 ns_per_insn=2.7632 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.6912,
+            "output": "mode=1 I=1 MMU=1 same_page=0 retired=30000000 ns_per_insn=2.6912 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.6978,
+            "output": "mode=1 I=1 MMU=1 same_page=0 retired=30000000 ns_per_insn=2.6978 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.7513,
+            "output": "mode=1 I=1 MMU=1 same_page=0 retired=30000000 ns_per_insn=2.7513 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.6529,
+            "output": "mode=1 I=1 MMU=1 same_page=0 retired=30000000 ns_per_insn=2.6529 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          }
+        ]
+      },
+      "before_median": 2.6623,
+      "after_median": 2.6978,
+      "change_percent": 1.3334334973519102
+    },
+    {
+      "mode": 1,
+      "I": 1,
+      "MMU": 1,
+      "placement": 1,
+      "samples": {
+        "before": [
+          {
+            "ns_per_insn": 2.6543,
+            "output": "mode=1 I=1 MMU=1 same_page=1 retired=30000000 ns_per_insn=2.6543 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.6964,
+            "output": "mode=1 I=1 MMU=1 same_page=1 retired=30000000 ns_per_insn=2.6964 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.7611,
+            "output": "mode=1 I=1 MMU=1 same_page=1 retired=30000000 ns_per_insn=2.7611 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.5506,
+            "output": "mode=1 I=1 MMU=1 same_page=1 retired=30000000 ns_per_insn=2.5506 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.5875,
+            "output": "mode=1 I=1 MMU=1 same_page=1 retired=30000000 ns_per_insn=2.5875 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          }
+        ],
+        "after": [
+          {
+            "ns_per_insn": 2.6065,
+            "output": "mode=1 I=1 MMU=1 same_page=1 retired=30000000 ns_per_insn=2.6065 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.6625,
+            "output": "mode=1 I=1 MMU=1 same_page=1 retired=30000000 ns_per_insn=2.6625 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.6216,
+            "output": "mode=1 I=1 MMU=1 same_page=1 retired=30000000 ns_per_insn=2.6216 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.5408,
+            "output": "mode=1 I=1 MMU=1 same_page=1 retired=30000000 ns_per_insn=2.5408 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.587,
+            "output": "mode=1 I=1 MMU=1 same_page=1 retired=30000000 ns_per_insn=2.5870 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          }
+        ]
+      },
+      "before_median": 2.6543,
+      "after_median": 2.6065,
+      "change_percent": -1.800851448592855
+    },
+    {
+      "mode": 1,
+      "I": 1,
+      "MMU": 1,
+      "placement": 2,
+      "samples": {
+        "before": [
+          {
+            "ns_per_insn": 2.605,
+            "output": "mode=1 I=1 MMU=1 same_page=2 retired=30000000 ns_per_insn=2.6050 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.5065,
+            "output": "mode=1 I=1 MMU=1 same_page=2 retired=30000000 ns_per_insn=2.5065 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.5297,
+            "output": "mode=1 I=1 MMU=1 same_page=2 retired=30000000 ns_per_insn=2.5297 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.5507,
+            "output": "mode=1 I=1 MMU=1 same_page=2 retired=30000000 ns_per_insn=2.5507 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.5336,
+            "output": "mode=1 I=1 MMU=1 same_page=2 retired=30000000 ns_per_insn=2.5336 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          }
+        ],
+        "after": [
+          {
+            "ns_per_insn": 2.5906,
+            "output": "mode=1 I=1 MMU=1 same_page=2 retired=30000000 ns_per_insn=2.5906 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.5612,
+            "output": "mode=1 I=1 MMU=1 same_page=2 retired=30000000 ns_per_insn=2.5612 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.526,
+            "output": "mode=1 I=1 MMU=1 same_page=2 retired=30000000 ns_per_insn=2.5260 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.5283,
+            "output": "mode=1 I=1 MMU=1 same_page=2 retired=30000000 ns_per_insn=2.5283 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 2.546,
+            "output": "mode=1 I=1 MMU=1 same_page=2 retired=30000000 ns_per_insn=2.5460 native=30000000 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          }
+        ]
+      },
+      "before_median": 2.5336,
+      "after_median": 2.546,
+      "change_percent": 0.4894221660877829
+    },
+    {
+      "mode": 0,
+      "I": 0,
+      "MMU": 0,
+      "placement": 0,
+      "samples": {
+        "before": [
+          {
+            "ns_per_insn": 8.3425,
+            "output": "mode=0 I=0 MMU=0 same_page=0 retired=30000000 ns_per_insn=8.3425 native=0 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 9.1875,
+            "output": "mode=0 I=0 MMU=0 same_page=0 retired=30000000 ns_per_insn=9.1875 native=0 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 8.8167,
+            "output": "mode=0 I=0 MMU=0 same_page=0 retired=30000000 ns_per_insn=8.8167 native=0 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 8.4254,
+            "output": "mode=0 I=0 MMU=0 same_page=0 retired=30000000 ns_per_insn=8.4254 native=0 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 8.2141,
+            "output": "mode=0 I=0 MMU=0 same_page=0 retired=30000000 ns_per_insn=8.2141 native=0 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          }
+        ],
+        "after": [
+          {
+            "ns_per_insn": 8.2479,
+            "output": "mode=0 I=0 MMU=0 same_page=0 retired=30000000 ns_per_insn=8.2479 native=0 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 9.0771,
+            "output": "mode=0 I=0 MMU=0 same_page=0 retired=30000000 ns_per_insn=9.0771 native=0 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 8.3345,
+            "output": "mode=0 I=0 MMU=0 same_page=0 retired=30000000 ns_per_insn=8.3345 native=0 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 8.3025,
+            "output": "mode=0 I=0 MMU=0 same_page=0 retired=30000000 ns_per_insn=8.3025 native=0 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 8.9907,
+            "output": "mode=0 I=0 MMU=0 same_page=0 retired=30000000 ns_per_insn=8.9907 native=0 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          }
+        ]
+      },
+      "before_median": 8.4254,
+      "after_median": 8.3345,
+      "change_percent": -1.0788805279274505
+    },
+    {
+      "mode": 0,
+      "I": 0,
+      "MMU": 1,
+      "placement": 0,
+      "samples": {
+        "before": [
+          {
+            "ns_per_insn": 9.1334,
+            "output": "mode=0 I=0 MMU=1 same_page=0 retired=30000000 ns_per_insn=9.1334 native=0 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 8.5787,
+            "output": "mode=0 I=0 MMU=1 same_page=0 retired=30000000 ns_per_insn=8.5787 native=0 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 9.5168,
+            "output": "mode=0 I=0 MMU=1 same_page=0 retired=30000000 ns_per_insn=9.5168 native=0 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 8.4287,
+            "output": "mode=0 I=0 MMU=1 same_page=0 retired=30000000 ns_per_insn=8.4287 native=0 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 8.2812,
+            "output": "mode=0 I=0 MMU=1 same_page=0 retired=30000000 ns_per_insn=8.2812 native=0 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          }
+        ],
+        "after": [
+          {
+            "ns_per_insn": 10.5683,
+            "output": "mode=0 I=0 MMU=1 same_page=0 retired=30000000 ns_per_insn=10.5683 native=0 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 9.1121,
+            "output": "mode=0 I=0 MMU=1 same_page=0 retired=30000000 ns_per_insn=9.1121 native=0 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 9.2527,
+            "output": "mode=0 I=0 MMU=1 same_page=0 retired=30000000 ns_per_insn=9.2527 native=0 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 8.8685,
+            "output": "mode=0 I=0 MMU=1 same_page=0 retired=30000000 ns_per_insn=8.8685 native=0 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 8.6981,
+            "output": "mode=0 I=0 MMU=1 same_page=0 retired=30000000 ns_per_insn=8.6981 native=0 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          }
+        ]
+      },
+      "before_median": 8.5787,
+      "after_median": 9.1121,
+      "change_percent": 6.2177252963735885
+    },
+    {
+      "mode": 0,
+      "I": 1,
+      "MMU": 0,
+      "placement": 0,
+      "samples": {
+        "before": [
+          {
+            "ns_per_insn": 8.2222,
+            "output": "mode=0 I=1 MMU=0 same_page=0 retired=30000000 ns_per_insn=8.2222 native=0 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 9.3636,
+            "output": "mode=0 I=1 MMU=0 same_page=0 retired=30000000 ns_per_insn=9.3636 native=0 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 8.4445,
+            "output": "mode=0 I=1 MMU=0 same_page=0 retired=30000000 ns_per_insn=8.4445 native=0 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 9.4799,
+            "output": "mode=0 I=1 MMU=0 same_page=0 retired=30000000 ns_per_insn=9.4799 native=0 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 8.7626,
+            "output": "mode=0 I=1 MMU=0 same_page=0 retired=30000000 ns_per_insn=8.7626 native=0 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          }
+        ],
+        "after": [
+          {
+            "ns_per_insn": 7.9851,
+            "output": "mode=0 I=1 MMU=0 same_page=0 retired=30000000 ns_per_insn=7.9851 native=0 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 8.4324,
+            "output": "mode=0 I=1 MMU=0 same_page=0 retired=30000000 ns_per_insn=8.4324 native=0 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 8.3693,
+            "output": "mode=0 I=1 MMU=0 same_page=0 retired=30000000 ns_per_insn=8.3693 native=0 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 8.3718,
+            "output": "mode=0 I=1 MMU=0 same_page=0 retired=30000000 ns_per_insn=8.3718 native=0 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 8.8124,
+            "output": "mode=0 I=1 MMU=0 same_page=0 retired=30000000 ns_per_insn=8.8124 native=0 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          }
+        ]
+      },
+      "before_median": 8.7626,
+      "after_median": 8.3718,
+      "change_percent": -4.45986351083012
+    },
+    {
+      "mode": 0,
+      "I": 1,
+      "MMU": 1,
+      "placement": 0,
+      "samples": {
+        "before": [
+          {
+            "ns_per_insn": 8.4393,
+            "output": "mode=0 I=1 MMU=1 same_page=0 retired=30000000 ns_per_insn=8.4393 native=0 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 8.6529,
+            "output": "mode=0 I=1 MMU=1 same_page=0 retired=30000000 ns_per_insn=8.6529 native=0 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 8.5477,
+            "output": "mode=0 I=1 MMU=1 same_page=0 retired=30000000 ns_per_insn=8.5477 native=0 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 8.6887,
+            "output": "mode=0 I=1 MMU=1 same_page=0 retired=30000000 ns_per_insn=8.6887 native=0 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 8.6048,
+            "output": "mode=0 I=1 MMU=1 same_page=0 retired=30000000 ns_per_insn=8.6048 native=0 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          }
+        ],
+        "after": [
+          {
+            "ns_per_insn": 8.9742,
+            "output": "mode=0 I=1 MMU=1 same_page=0 retired=30000000 ns_per_insn=8.9742 native=0 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 9.0315,
+            "output": "mode=0 I=1 MMU=1 same_page=0 retired=30000000 ns_per_insn=9.0315 native=0 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 8.7947,
+            "output": "mode=0 I=1 MMU=1 same_page=0 retired=30000000 ns_per_insn=8.7947 native=0 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 8.7207,
+            "output": "mode=0 I=1 MMU=1 same_page=0 retired=30000000 ns_per_insn=8.7207 native=0 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 8.7689,
+            "output": "mode=0 I=1 MMU=1 same_page=0 retired=30000000 ns_per_insn=8.7689 native=0 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          }
+        ]
+      },
+      "before_median": 8.6048,
+      "after_median": 8.7947,
+      "change_percent": 2.206907772406108
+    },
+    {
+      "mode": 2,
+      "I": 0,
+      "MMU": 0,
+      "placement": 0,
+      "samples": {
+        "before": [
+          {
+            "ns_per_insn": 11.5792,
+            "output": "mode=2 I=0 MMU=0 same_page=0 retired=30000000 ns_per_insn=11.5792 native=0 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 11.4889,
+            "output": "mode=2 I=0 MMU=0 same_page=0 retired=30000000 ns_per_insn=11.4889 native=0 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 11.7013,
+            "output": "mode=2 I=0 MMU=0 same_page=0 retired=30000000 ns_per_insn=11.7013 native=0 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 11.5424,
+            "output": "mode=2 I=0 MMU=0 same_page=0 retired=30000000 ns_per_insn=11.5424 native=0 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 11.9232,
+            "output": "mode=2 I=0 MMU=0 same_page=0 retired=30000000 ns_per_insn=11.9232 native=0 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          }
+        ],
+        "after": [
+          {
+            "ns_per_insn": 11.1571,
+            "output": "mode=2 I=0 MMU=0 same_page=0 retired=30000000 ns_per_insn=11.1571 native=0 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 11.134,
+            "output": "mode=2 I=0 MMU=0 same_page=0 retired=30000000 ns_per_insn=11.1340 native=0 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 11.388,
+            "output": "mode=2 I=0 MMU=0 same_page=0 retired=30000000 ns_per_insn=11.3880 native=0 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 11.3659,
+            "output": "mode=2 I=0 MMU=0 same_page=0 retired=30000000 ns_per_insn=11.3659 native=0 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 12.9578,
+            "output": "mode=2 I=0 MMU=0 same_page=0 retired=30000000 ns_per_insn=12.9578 native=0 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          }
+        ]
+      },
+      "before_median": 11.5792,
+      "after_median": 11.3659,
+      "change_percent": -1.8420961724471496
+    },
+    {
+      "mode": 2,
+      "I": 0,
+      "MMU": 1,
+      "placement": 0,
+      "samples": {
+        "before": [
+          {
+            "ns_per_insn": 13.3164,
+            "output": "mode=2 I=0 MMU=1 same_page=0 retired=30000000 ns_per_insn=13.3164 native=0 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 12.4102,
+            "output": "mode=2 I=0 MMU=1 same_page=0 retired=30000000 ns_per_insn=12.4102 native=0 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 12.5397,
+            "output": "mode=2 I=0 MMU=1 same_page=0 retired=30000000 ns_per_insn=12.5397 native=0 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 12.9101,
+            "output": "mode=2 I=0 MMU=1 same_page=0 retired=30000000 ns_per_insn=12.9101 native=0 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 12.9898,
+            "output": "mode=2 I=0 MMU=1 same_page=0 retired=30000000 ns_per_insn=12.9898 native=0 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          }
+        ],
+        "after": [
+          {
+            "ns_per_insn": 13.7369,
+            "output": "mode=2 I=0 MMU=1 same_page=0 retired=30000000 ns_per_insn=13.7369 native=0 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 13.239,
+            "output": "mode=2 I=0 MMU=1 same_page=0 retired=30000000 ns_per_insn=13.2390 native=0 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 13.0318,
+            "output": "mode=2 I=0 MMU=1 same_page=0 retired=30000000 ns_per_insn=13.0318 native=0 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 13.0643,
+            "output": "mode=2 I=0 MMU=1 same_page=0 retired=30000000 ns_per_insn=13.0643 native=0 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 13.4956,
+            "output": "mode=2 I=0 MMU=1 same_page=0 retired=30000000 ns_per_insn=13.4956 native=0 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          }
+        ]
+      },
+      "before_median": 12.9101,
+      "after_median": 13.239,
+      "change_percent": 2.5476177566401637
+    },
+    {
+      "mode": 2,
+      "I": 1,
+      "MMU": 0,
+      "placement": 0,
+      "samples": {
+        "before": [
+          {
+            "ns_per_insn": 11.6546,
+            "output": "mode=2 I=1 MMU=0 same_page=0 retired=30000000 ns_per_insn=11.6546 native=0 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 11.3363,
+            "output": "mode=2 I=1 MMU=0 same_page=0 retired=30000000 ns_per_insn=11.3363 native=0 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 11.3802,
+            "output": "mode=2 I=1 MMU=0 same_page=0 retired=30000000 ns_per_insn=11.3802 native=0 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 11.2182,
+            "output": "mode=2 I=1 MMU=0 same_page=0 retired=30000000 ns_per_insn=11.2182 native=0 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 11.3052,
+            "output": "mode=2 I=1 MMU=0 same_page=0 retired=30000000 ns_per_insn=11.3052 native=0 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          }
+        ],
+        "after": [
+          {
+            "ns_per_insn": 11.3401,
+            "output": "mode=2 I=1 MMU=0 same_page=0 retired=30000000 ns_per_insn=11.3401 native=0 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 11.1243,
+            "output": "mode=2 I=1 MMU=0 same_page=0 retired=30000000 ns_per_insn=11.1243 native=0 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 10.857,
+            "output": "mode=2 I=1 MMU=0 same_page=0 retired=30000000 ns_per_insn=10.8570 native=0 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 10.7198,
+            "output": "mode=2 I=1 MMU=0 same_page=0 retired=30000000 ns_per_insn=10.7198 native=0 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 10.6877,
+            "output": "mode=2 I=1 MMU=0 same_page=0 retired=30000000 ns_per_insn=10.6877 native=0 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          }
+        ]
+      },
+      "before_median": 11.3363,
+      "after_median": 10.857,
+      "change_percent": -4.2280109030283235
+    },
+    {
+      "mode": 2,
+      "I": 1,
+      "MMU": 1,
+      "placement": 0,
+      "samples": {
+        "before": [
+          {
+            "ns_per_insn": 12.2605,
+            "output": "mode=2 I=1 MMU=1 same_page=0 retired=30000000 ns_per_insn=12.2605 native=0 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 12.5508,
+            "output": "mode=2 I=1 MMU=1 same_page=0 retired=30000000 ns_per_insn=12.5508 native=0 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 12.3894,
+            "output": "mode=2 I=1 MMU=1 same_page=0 retired=30000000 ns_per_insn=12.3894 native=0 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 12.4971,
+            "output": "mode=2 I=1 MMU=1 same_page=0 retired=30000000 ns_per_insn=12.4971 native=0 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 12.7859,
+            "output": "mode=2 I=1 MMU=1 same_page=0 retired=30000000 ns_per_insn=12.7859 native=0 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          }
+        ],
+        "after": [
+          {
+            "ns_per_insn": 12.5207,
+            "output": "mode=2 I=1 MMU=1 same_page=0 retired=30000000 ns_per_insn=12.5207 native=0 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 12.3869,
+            "output": "mode=2 I=1 MMU=1 same_page=0 retired=30000000 ns_per_insn=12.3869 native=0 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 12.5318,
+            "output": "mode=2 I=1 MMU=1 same_page=0 retired=30000000 ns_per_insn=12.5318 native=0 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 14.7658,
+            "output": "mode=2 I=1 MMU=1 same_page=0 retired=30000000 ns_per_insn=14.7658 native=0 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          },
+          {
+            "ns_per_insn": 13.0694,
+            "output": "mode=2 I=1 MMU=1 same_page=0 retired=30000000 ns_per_insn=13.0694 native=0 epoch_changed=0 generation_changed=0 r0=10010000 memory=10010000"
+          }
+        ]
+      },
+      "before_median": 12.4971,
+      "after_median": 12.5318,
+      "change_percent": 0.2776644181450072
+    }
+  ]
+}

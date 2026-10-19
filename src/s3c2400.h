@@ -90,18 +90,49 @@ uint32_t s3c2400_run_clock_hz(const s3c2400_t *soc);
  * Peripheral time is preserved. Call only between CPU runs. */
 int s3c2400_set_cpu_speed_percent(s3c2400_t *soc, uint32_t percent);
 uint32_t s3c2400_cpu_speed_percent(const s3c2400_t *soc);
+/* A PWM fraction carries its own clock denominator so state I/O can restore
+ * it directly at the final host speed without an intermediate rounding. */
+typedef struct s3c2400_pwm_phase {
+    uint64_t accum[5];
+    uint32_t clock_hz;
+} s3c2400_pwm_phase_t;
+void s3c2400_pwm_phase_restore(s3c2400_t *soc, const s3c2400_pwm_phase_t *phase);
+/* Runtime-only checkpoint for undoing a temporary speed conversion around a
+ * save or rejected load. No guest execution or accepted state load may occur
+ * between capture and restore. Restoring refreshes derived clock caches, then
+ * replaces the phases exactly: integer rescaling is not reversible. */
+typedef struct s3c2400_clock_snapshot {
+    s3c2400_pwm_phase_t pwm;
+    uint64_t iis_accum;
+    uint64_t audio_idle_phase;
+    uint64_t lcd_line_accum;
+    uint32_t lcd_hclk_remainder;
+    uint32_t cpu_speed_percent;
+} s3c2400_clock_snapshot_t;
+void s3c2400_clock_snapshot_capture(const s3c2400_t *soc, s3c2400_clock_snapshot_t *snapshot);
+void s3c2400_clock_snapshot_restore(s3c2400_t *soc, const s3c2400_clock_snapshot_t *snapshot);
 uint64_t s3c2400_smc_bytes_read(const s3c2400_t *soc);
 int s3c2400_iis_running(const s3c2400_t *soc);
 int s3c2400_state_save(const s3c2400_t *soc, FILE *f);
 int s3c2400_state_load(s3c2400_t *soc, FILE *f);
 int s3c2400_state_save_io(const s3c2400_t *soc, state_io_t *io);
-int s3c2400_state_load_io(s3c2400_t *soc, state_io_t *io, int has_audio_spans, int has_iis_phase, int has_lcd_phase, int has_idle_phase, int has_codec);
+/* Whole-machine saves normalize older sections to 100% speed. This override
+ * preserves the original PWM numerator/denominator in its explicit trailer. */
+int s3c2400_state_save_io_with_pwm_phase(const s3c2400_t *soc, state_io_t *io,
+                                       const s3c2400_pwm_phase_t *phase);
+/* v16 appends a little-endian PWM1 trailer after the codec. Its clock
+ * denominator, live counts, captured reloads and fractions are explicit;
+ * the pre-v16 native-layout body is unchanged. */
+#define S3C2400_PWM_STATE_BYTES 92u
+int s3c2400_state_load_io(s3c2400_t *soc, state_io_t *io, int has_audio_spans, int has_iis_phase, int has_lcd_phase, int has_idle_phase, int has_codec, int has_pwm_state);
 /* HLE continuation validates against incoming RAM/clock. Legacy guest-wait
  * migration also requires its saved stack to fit before SoC commit. Zero
- * parameters disable the corresponding check for the compatibility wrapper. */
-int s3c2400_state_load_io_checked(s3c2400_t *soc, state_io_t *io, int has_audio_spans, int has_iis_phase, int has_lcd_phase, int has_idle_phase, int has_codec,
+ * parameters disable the corresponding check for the compatibility wrapper.
+ * loaded_pwm, when non-NULL, receives the validated source fraction only on
+ * success, for direct conversion after the caller restores its host speed. */
+int s3c2400_state_load_io_checked(s3c2400_t *soc, state_io_t *io, int has_audio_spans, int has_iis_phase, int has_lcd_phase, int has_idle_phase, int has_codec, int has_pwm_state,
                                   uint32_t expected_ram_size, uint32_t expected_run_clock, uint32_t required_ram_size,
-                                  smc_state_format_t card_format);
+                                  smc_state_format_t card_format, s3c2400_pwm_phase_t *loaded_pwm);
 
 uint8_t s3c2400_read8(void *user, uint32_t addr);
 uint16_t s3c2400_read16(void *user, uint32_t addr);

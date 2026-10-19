@@ -1,0 +1,9 @@
+chain way=0 budget=4 calls=1 hops=1 native=4
+chain way=0 budget=8 calls=1 hops=3 native=8
+chain way=0 budget=64 calls=1 hops=31 native=64
+chain way=0 budget=1000 calls=1 hops=499 native=1000
+chain way=1 budget=4 calls=1 hops=1 native=4
+chain way=1 budget=8 calls=1 hops=3 native=8
+chain way=1 budget=64 calls=1 hops=31 native=64
+chain way=1 budget=1000 calls=1 hops=499 native=1000
+PASS: 30 A64 chain way, budget and rejection scenarios

@@ -1,0 +1,11 @@
+# Baseline build: exit 1, duplicate core definitions
+aarch64-linux-gnu-gcc -std=c2x -O2 -D__SWITCH__ -D_XOPEN_SOURCE=700 -DGP32EMU_CPU_PROFILE=1 -Itests/switch_jit -Iinclude -Isrc tests/arm_jit_test.c src/arm920t.c tests/switch_jit/mock.c -lm -o /tmp/gp32-round4-switch-differential-before
+
+# Fixed build: exit 0
+aarch64-linux-gnu-gcc -std=c2x -O2 -D__SWITCH__ -D_XOPEN_SOURCE=700 -DGP32EMU_CPU_PROFILE=1 -Itests/switch_jit -Iinclude -Isrc tests/arm_jit_test.c tests/switch_jit/mock.c -lm -o /tmp/gp32-round4-switch-differential-after
+
+# Full default mapping gate
+env -u SWITCH_JIT_PERMISSION_MODE qemu-aarch64 -L /usr/aarch64-linux-gnu /tmp/gp32-round4-switch-differential-after
+
+# Full permission-switching gate
+SWITCH_JIT_PERMISSION_MODE=1 qemu-aarch64 -L /usr/aarch64-linux-gnu /tmp/gp32-round4-switch-differential-after

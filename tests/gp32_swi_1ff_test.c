@@ -21,6 +21,7 @@
 #include "../src/gp32.c"
 
 static int failures;
+static unsigned app_boundary_cases;
 #define CHECK(c, m) do { if (!(c)) { fprintf(stderr, "FAIL: %s (%d)\n", m, __LINE__); ++failures; } } while (0)
 
 static const uint32_t tramp = GP32_RAM_BASE + 0x2000u;
@@ -300,6 +301,55 @@ static void check_app_path_query(int jit) {
     gp32_destroy(g);
 }
 
+/* An unavailable/unknown path selector returns an empty word through r0.
+ * The last complete RAM word is valid; an address whose addition wraps is
+ * not. Run the actual SWI and compare all RAM, including rejection cases. */
+static void check_app_query_bounds(unsigned engine) {
+    gp32_t *g = gp32_create(NULL);
+    CHECK(g != NULL, "create app-query bounds core");
+    if (!g) return;
+    direct_set_fxe_mode(g, 1u);
+    const uint32_t size = (uint32_t)s3c2400_ram_size(g->soc);
+    const uint32_t end = GP32_RAM_BASE + size;
+    arm_bus_t bus = s3c2400_get_bus(g->soc);
+    uint8_t *ram = bus.fastmem(bus.user, GP32_RAM_BASE, size, 1);
+    uint8_t *expected = malloc(size);
+    CHECK(ram && expected, "allocate app-query memory oracle");
+    if (!ram || !expected) { free(expected); gp32_destroy(g); return; }
+    memset(ram, 0xa5, size);
+    s3c2400_write32(g->soc, tramp, 0xef00000fu); /* SWI #0x0f */
+    arm920t_set_jit(g->cpu, engine == 2u);
+    arm920t_set_trace(g->cpu, engine == 0u, NULL, NULL);
+    const uint32_t addresses[] = {
+        GP32_RAM_BASE - 4u, GP32_RAM_BASE, GP32_RAM_BASE + 4u,
+        end - 8u, end - 4u, end - 3u, end - 2u, end - 1u, end,
+        UINT32_MAX - 3u, UINT32_MAX - 2u, UINT32_MAX - 1u, UINT32_MAX
+    };
+    for (unsigned i = 0; i < GP32_ARRAY_COUNT(addresses); ++i) {
+        uint32_t addr = addresses[i];
+        /* Wide arithmetic makes this oracle independent of the range helper. */
+        int valid = addr >= GP32_RAM_BASE && (uint64_t)addr + 4u <= end;
+        memcpy(expected, ram, size);
+        if (valid) memset(expected + (addr - GP32_RAM_BASE), 0, 4u);
+        arm920t_set_reg(g->cpu, 0u, addr);
+        arm920t_set_reg(g->cpu, 4u, 99u); /* no path string for this selector */
+        arm920t_set_reg(g->cpu, 15u, tramp);
+        arm920t_set_cpsr(g->cpu, 0xd3u);
+        uint64_t cycles = arm920t_get_cycles(g->cpu);
+        int before = failures;
+        CHECK(arm920t_run(g->cpu, 1u) == 1u, "app-query SWI retires exactly once");
+        CHECK(arm920t_get_cycles(g->cpu) == cycles + 1u, "app-query cycle count");
+        CHECK(arm920t_get_reg(g->cpu, 0u) == (valid ? addr : 0u), "app-query accepts exactly one complete RAM word");
+        CHECK(!memcmp(ram, expected, size), "app-query changes only the accepted output word");
+        CHECK(arm920t_get_pc(g->cpu) == tramp + 4u && arm920t_get_cpsr(g->cpu) == 0xd3u,
+              "app-query continuation and flags");
+        if (failures != before) fprintf(stderr, "app-query range: engine=%u addr=%08x\n", engine, addr);
+        ++app_boundary_cases;
+    }
+    free(expected);
+    gp32_destroy(g);
+}
+
 int main(void) {
     for (int jit = 0; jit < 2; ++jit) {
         check_reinit_service(jit);
@@ -309,7 +359,8 @@ int main(void) {
         check_mode_switch_divider(jit);
         check_app_path_query(jit);
     }
+    for (unsigned engine = 0; engine < 3u; ++engine) check_app_query_bounds(engine);
     if (failures) { fprintf(stderr, "%d failure(s)\n", failures); return 1; }
-    printf("gp32_swi_1ff: all checks passed\n");
+    printf("gp32_swi_1ff: all checks passed, including %u app-query range cases\n", app_boundary_cases);
     return 0;
 }

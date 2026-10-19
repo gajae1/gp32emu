@@ -1,0 +1,825 @@
+{
+  "source": "/tmp/gp32-round4",
+  "driver_source": "/tmp/gp32-round4",
+  "source_commit": "865f88e2d095f71ac80935bd775a38f3b8985246",
+  "source_status": "",
+  "source_files": {
+    "src/arm920t.c": "8e390d734ecd6195a40044341ed841af092492104c3267e53831907b3bd7440c",
+    "src/arm920t.h": "33990ee4bc2a266adfd76709a1a47a14b7856d88bacd05ecf1d7a94992fa040f",
+    "src/arm920t_jit_a64.inc": "1137c007812c8f8acef85b3f88290032e2dd843459a9658f944f5bedfb3d1e01",
+    "src/arm920t_jit_ios.inc": "f4881a64e62d3805035780696079398cbc967c59f61695b8eee1c12042c36765",
+    "src/audio/gp32_audio_resampler.c": "913b01cd38cf1ade9ce0be4cd456782a7eb2518f615058887dff551be7199a4e",
+    "src/audio/gp32_audio_resampler.h": "002a78b438627b9d1446e33911ec4825d61996256b5884db8101cfeb0c5c1a15",
+    "src/common.h": "24eda7b5c5a164a46139e16544d4e14b4a5af98a4a6a016e2cc75ef9590d6d3e",
+    "src/fpk.c": "813da9e9044a4949e24685b7d2ea0780a0c76f1c8c839d423541f88989e0960b",
+    "src/fpk.h": "65d4128b4f31767bb367798d206e47237929f8b9d3afebd9243b1c3b3324931e",
+    "src/fxe.c": "78cc9dc75b4e1d16d5cd8889b6ca32518e5ab3027de0a9b6bbda1a1512b4ee05",
+    "src/fxe.h": "bd7ce9b24c015f8c614ccd719506f8718fdac410d24aef4c95aedb74e286e8c0",
+    "src/gp32.c": "d3a49d622522165e01d6bfd28cb6945f5dfbddae5332038e58314b6a2ebc07f8",
+    "src/gp32_codec.c": "d60b93499437ee1df0a691262a4ca143f4b2fcd333d05dac659d74f0d0b42179",
+    "src/gp32_codec.h": "685ef52e2ceefdb589a45ed7eb6d15c7630a82a814a463d361ba0ea11a511ca9",
+    "src/gp32_ecc_accel.inc": "bb4c5cd5ce366cd676f4563377be40fb08aef7c244df53196375f755c6918946",
+    "src/gp32_zip.c": "7769de72750a16d33f3fc0a3cddaaa14c2ca048a9b39e6ca2d426c7365914946",
+    "src/headless_main.c": "dafadb248ae10cc4c0fe81ef125e6eb535c71373f5403f265293485e87dd3214",
+    "src/input/gp32_sdl3_input_shared.c": "bb05ec62460decadbd81a9956c40bb36f5bf1a67298ce9398cd9d688d373b2cf",
+    "src/input/gp32_sdl3_input_shared.h": "2e6e6bcf8a018eea5dd69fb8828272a44fb7b575cf0d626022d46c437047e18b",
+    "src/input_script.c": "470a6cc264e952254c19c1d93d9e001f45e12e5b0291c8b3a615b349f7a32ef6",
+    "src/input_script.h": "bee41791d9b2acd22b6de3a132e0746f54e6b65704bd4e58dc87e2e0bcbe61a4",
+    "src/libretro/libretro.c": "224c549e402f9f8ada08c18826fc2335c8e4ddb8219f749f5c5c9c5a0adf303b",
+    "src/libretro/libretro.h": "e906b19a9ea7180231acef05d5e8a0ef61d92fe689774512abbfb60d86a7ce21",
+    "src/libretro/libretro.map": "aef666c9d74fd3701a8f4827ea52f318340d186b30f3bc9fafc608d28475a643",
+    "src/media/gp32_media.c": "29c9ecc93a0e9d7786aa0c0ddf1509fc6c6b8c8f2affc4cecf3ad229f3c5cf32",
+    "src/media/gp32_media.h": "5f6ac0c1f0039db93ee51e7a21e8cb66a3d27719f38cde58cfca98c86824012f",
+    "src/media/gp32_video_effects.c": "c3013d1f4c2fb3da09ed35aa5c0de63774601259d793bedd50d7cd66909ca26a",
+    "src/platform/platform.c": "7371f2e6a24cefed6e161e2ebb776c5131ce66b1f71683ad641c741736096b6f",
+    "src/platform/platform_internal.h": "de86ac5b324bfe631f6675725bbc9315a2b5bf1188f1249c29b13b3c7442e01c",
+    "src/platform/sdl12/audio.c": "3328edb27b4dedc92a3afc4b401ad8f5275f0d934370d889601c8c3eee734e67",
+    "src/platform/sdl12/common.c": "db37d32b679a16041a181a6be5a9c65562d618e6db7564d06c4fab8044987e63",
+    "src/platform/sdl12/common.h": "df9d00b41154dbd7bdc2e2a58b34caa955075e41ab93d59f4fa4167249191a43",
+    "src/platform/sdl12/input.c": "c732688df53013ac367342026ba71cfca832edf6530430417db86431064f15cd",
+    "src/platform/sdl12/video.c": "eb1fa53853147b92b95fe757f2e4b9904ee91ea9eb777f40809e786ab607f2d0",
+    "src/platform/sdl3/audio.c": "bf70ae42869c8f68660b1a23c1a54876fadbf90d045e5d1850a54a12177e10ac",
+    "src/platform/sdl3/common.c": "b932f285169d13ad4fb807c5e96e43e745de97fb0ac6ed29948184a1f06fca02",
+    "src/platform/sdl3/common.h": "e0de7e7f06c8cec4ca44182ac45e238b9a643849078c50af2b589124b9d4ee8f",
+    "src/platform/sdl3/input.c": "482d6464ccfb78a55164908e14207df2681cf0aedade77a40d427f5c5e0e72fe",
+    "src/platform/sdl3/video.c": "8478fa06b58ecf639af67124eb05780b5af6aa9dafca2e38d572f99ff56f55c3",
+    "src/qt/GP32Engine.cpp": "af9354f47512a27367573123cea5ffbc3eff2b9a7f6a70e3e6e5f7b83bdcd727",
+    "src/qt/GP32Engine.h": "38090000129607df9020127115d9673b029d74018b349ddb261f7ad157f762fe",
+    "src/qt/GP32MainWindow.cpp": "df2bc05dbab8bba523d9fab1af3e0e44f2fdba4212615a4cdebf6a557142d82a",
+    "src/qt/GP32MainWindow.h": "20f3ddc748cfa827b709d88e1cc5cceb13529a997f50e592a606b7ca01995940",
+    "src/qt/GP32VideoWidget.cpp": "4543d8bf19ad4cf02daedd84ef39c31b20ee0aa237bf3b8e9a3e157082e030f7",
+    "src/qt/GP32VideoWidget.h": "2aac29ba4a263d6db45e7eefc1544cfbff08e71c30c7e2d74687e1fcea9485ad",
+    "src/qt/main.cpp": "0f59a60e6ae41c8c52fddc5f39f0a3e6113925a6c588ba8692892e8bc77a74aa",
+    "src/s3c2400.c": "925754101aafb2d18398824f32cc3d3281baf7a1d6551524569518cde7f7b05d",
+    "src/s3c2400.h": "c012558c4eb1bebe07f1f68eed41b5abd42e54407cd61dc9c4fe71e9817023d2",
+    "src/save_atomic.c": "d07764ad32ea8ec201b565af7f325a8a192cd129f3a482a66c283f93f83ca109",
+    "src/save_atomic.h": "a7ede31bf8f880f5fd6a5dd598fdcad752223f5f7a13d374f83ad20bb4d33745",
+    "src/sdl12_main.c": "cac3547386f1b1d05bb0a565cc1793bc335084ad2cff8e349c61a38fbe44c55b",
+    "src/sdl3_main.c": "2f10cc8d7f3cd12898f8239c9a5ab0e5d54771686016263c147f3bf2238fdca2",
+    "src/smartmedia.c": "3969005e1a664139e98e7ec0faccede3b64655759610429084a39f6bf903a36b",
+    "src/smartmedia.h": "3f197fda2193b50a8d715479ea50b1920874fb5c14f2c8366b4bccb6612d2acc",
+    "src/smc_direct.c": "5e6f627a9949693c237029bd4a46020ebd0b7d257efff04aa0a6689c734d196f",
+    "src/smc_direct.h": "390067651e2894633bd7b40b6cb45a58534506a4d626308b356f60af7265bd04",
+    "src/state_io.h": "a56eb30bff329bac402f184c8cfd498bf0685afc8cb9a7689614e1dbc84bc41f",
+    "src/third_party/zip/miniz.h": "f4599c983f1cda85309d81d17982c915c979ef343bb0d4f8f3628240407495e0",
+    "src/third_party/zip/zip.c": "903b93b65761273e3dc144e48e8d5c2038d3cf36a5430cfd4a283a1ee432bba5",
+    "src/third_party/zip/zip.h": "d61105d9b2e3c957e2c2a25fed7c6f7f9c7b676914369c30ff29913fec653f63",
+    "src/win64/gp32_win64_audio.c": "a55bd94895ced7bab0ba8340f6724626c1d435963509319ddc58401623ca278c",
+    "src/win64/gp32_win64_audio.h": "3d2736b5d69157dcf8030538b5c553250238d06b9a78a3eb31e9858efe5a5176",
+    "src/win64/gp32_win64_main.c": "b54b11b2875922effeffd4b49a0ac0468a455b92d3faa5e876ea49eeec6ad400",
+    "src/win64/gp32_win64_sdl_input.c": "4e5c6360548f050f228c801e7d3fbb8c5b1fbccab7274e9497b22420bd553a03",
+    "src/win64/gp32_win64_sdl_input.h": "e6ce8e55129b9520bddc3b19dfb6cdc6dfb3f5bb7b537e66f0f29f52491e22ff",
+    "src/win64/gp32_win64_ui.c": "b9e233fb817ca298e400d8b73a48cac129d5c528e9f8c5e16bcbe952735cf1e6",
+    "src/win64/gp32_win64_ui.h": "952c78e47f876de07d8c31f902b4b0b39518924957a0e8a41fb8d577fcf171f8",
+    "src/win64/gp32_win64_video.c": "034b255786468fd277f078dd55cab4c85e5bbf50e67fa7fefa205f4a5adb9129",
+    "src/win64/gp32_win64_video.h": "71019e86b898c8ff5e7da7321192066f353567e0eb0f577ec6dcd0a4887a6060",
+    "src/win64/gp32emu.manifest": "2d93e9325d77e2ff1bfc1ad754d987e5a552d52e872cf8f1f2e48f4b873b6772",
+    "src/win64/gp32emu.rc": "88e122b41f846841f19d72131cb99bd848546f81b65dd2100fdfd85b7c213213",
+    "src/zip.h": "c2559231f7690e12932b76c083f1113d403d623715f2a6bda6b6b4c84b5ca982",
+    "include/gp32emu/gp32.h": "b5964763c69b972decc2598676285da5d72695e266050e12c74f4b7a44102525",
+    "include/gp32emu/platform.h": "86fb3873dbaff989d8652334138221e4a4ffacb8158dbcb1c43bd3e3724b467d",
+    "include/gp32emu/video_effects.h": "bbb4b7f55129e209d34bf418ab2a348718e1820c2b97466ff610f0e599fddf64"
+  },
+  "drivers": {
+    "scripts/bench_external_writes.c": "45067051bc01d370337104db44706d4f6d830f6c42252f46be05cd64e462af1f",
+    "scripts/bench_hle_outputs.c": "d77afe22b99c2839907a616bb0a861b55c34cca068ec83618aee29bc1e6ab65b",
+    "tests/arm_external_write_test.c": "2d61e4494c862e093ec1c63929d6c934f85a1b3ecb92d73660c5a7041804d464",
+    "scripts/bench_external_writes.py": "b8859cdc2c614eb496c3ad9eba36ceec1d3f89af3254d1a2026fffbf91054d0a",
+    "scripts/bench_hle_outputs.py": "3712e5d934a8dc60bc21a91f1a94078b73e3495fff0d46c0e0c22b321a1159f0",
+    "scripts/build_core_write_benchmarks.py": "ad887da8036291acc7683550f5ab89fa36f8f118b5978024f977e100fe3f5217"
+  },
+  "builds": [
+    {
+      "compiler": "gcc",
+      "version": "gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0",
+      "profile": 0,
+      "commands": [
+        [
+          "/tmp/gp32-round4-tools/cmake/data/bin/cmake",
+          "-S",
+          "/tmp/gp32-round4",
+          "-B",
+          "/tmp/gp32-round5-bench-after/gcc-profile0",
+          "-DCMAKE_C_COMPILER=/usr/bin/gcc",
+          "-DCMAKE_BUILD_TYPE=Release",
+          "-DGP32EMU_REQUIRE_C23=ON",
+          "-DGP32EMU_ENABLE_IPO=OFF",
+          "-DGP32EMU_CPU_PROFILE=OFF",
+          "-DGP32EMU_BUILD_TESTS=OFF",
+          "-DGP32EMU_BUILD_HEADLESS=OFF",
+          "-DGP32EMU_BUILD_LIBRETRO=OFF",
+          "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON"
+        ],
+        [
+          "/tmp/gp32-round4-tools/cmake/data/bin/cmake",
+          "--build",
+          "/tmp/gp32-round5-bench-after/gcc-profile0",
+          "--target",
+          "gp32emu",
+          "-j",
+          "2"
+        ],
+        [
+          "/usr/bin/gcc",
+          "-O3",
+          "-DNDEBUG",
+          "-std=c2x",
+          "-fno-lto",
+          "-D_XOPEN_SOURCE=700",
+          "-D_FILE_OFFSET_BITS=64",
+          "-DGP32EMU_ENABLE_THREADS=1",
+          "-DGP32EMU_CPU_PROFILE=0",
+          "-I",
+          "/tmp/gp32-round4/src",
+          "-I",
+          "/tmp/gp32-round4/include",
+          "-DARM_SOURCE=\"/tmp/gp32-round4/src/arm920t.c\"",
+          "/tmp/gp32-round4/scripts/bench_external_writes.c",
+          "-lm",
+          "-o",
+          "/tmp/gp32-round5-bench-after/gcc-profile0/external-writes"
+        ],
+        [
+          "/usr/bin/gcc",
+          "-O3",
+          "-DNDEBUG",
+          "-std=c2x",
+          "-fno-lto",
+          "-D_XOPEN_SOURCE=700",
+          "-D_FILE_OFFSET_BITS=64",
+          "-DGP32EMU_ENABLE_THREADS=1",
+          "-DGP32EMU_CPU_PROFILE=0",
+          "-I",
+          "/tmp/gp32-round4/src",
+          "-I",
+          "/tmp/gp32-round4/include",
+          "-DGP32_CORE_UNDER_TEST=\"/tmp/gp32-round4/src/gp32.c\"",
+          "/tmp/gp32-round4/scripts/bench_hle_outputs.c",
+          "/tmp/gp32-round5-bench-after/gcc-profile0/libgp32emu.a",
+          "-lm",
+          "-pthread",
+          "-o",
+          "/tmp/gp32-round5-bench-after/gcc-profile0/hle-outputs"
+        ]
+      ],
+      "log_sha256": "691f6ec2a98556df10ba3829bce1c0da84c6e909830d459b5692df04a66cb187",
+      "core_compile_commands": [
+        {
+          "directory": "/tmp/gp32-round5-bench-after/gcc-profile0",
+          "command": "/usr/bin/gcc -DGP32EMU_ENABLE_THREADS=1 -DZIP_ENABLE_DEFLATE=0 -DZIP_HAVE_SYMLINK=0 -D_FILE_OFFSET_BITS=64 -D_XOPEN_SOURCE=700 -I/tmp/gp32-round4/include -I/tmp/gp32-round4/src -O3 -DNDEBUG -std=c2x -Wall -Wextra -Wpedantic -o CMakeFiles/gp32emu.dir/src/gp32.c.o -c /tmp/gp32-round4/src/gp32.c",
+          "file": "/tmp/gp32-round4/src/gp32.c",
+          "output": "CMakeFiles/gp32emu.dir/src/gp32.c.o"
+        },
+        {
+          "directory": "/tmp/gp32-round5-bench-after/gcc-profile0",
+          "command": "/usr/bin/gcc -DGP32EMU_ENABLE_THREADS=1 -DZIP_ENABLE_DEFLATE=0 -DZIP_HAVE_SYMLINK=0 -D_FILE_OFFSET_BITS=64 -D_XOPEN_SOURCE=700 -I/tmp/gp32-round4/include -I/tmp/gp32-round4/src -O3 -DNDEBUG -std=c2x -Wall -Wextra -Wpedantic -o CMakeFiles/gp32emu.dir/src/arm920t.c.o -c /tmp/gp32-round4/src/arm920t.c",
+          "file": "/tmp/gp32-round4/src/arm920t.c",
+          "output": "CMakeFiles/gp32emu.dir/src/arm920t.c.o"
+        },
+        {
+          "directory": "/tmp/gp32-round5-bench-after/gcc-profile0",
+          "command": "/usr/bin/gcc -DGP32EMU_ENABLE_THREADS=1 -DZIP_ENABLE_DEFLATE=0 -DZIP_HAVE_SYMLINK=0 -D_FILE_OFFSET_BITS=64 -D_XOPEN_SOURCE=700 -I/tmp/gp32-round4/include -I/tmp/gp32-round4/src -O3 -DNDEBUG -std=c2x -Wall -Wextra -Wpedantic -o CMakeFiles/gp32emu.dir/src/s3c2400.c.o -c /tmp/gp32-round4/src/s3c2400.c",
+          "file": "/tmp/gp32-round4/src/s3c2400.c",
+          "output": "CMakeFiles/gp32emu.dir/src/s3c2400.c.o"
+        },
+        {
+          "directory": "/tmp/gp32-round5-bench-after/gcc-profile0",
+          "command": "/usr/bin/gcc -DGP32EMU_ENABLE_THREADS=1 -DZIP_ENABLE_DEFLATE=0 -DZIP_HAVE_SYMLINK=0 -D_FILE_OFFSET_BITS=64 -D_XOPEN_SOURCE=700 -I/tmp/gp32-round4/include -I/tmp/gp32-round4/src -O3 -DNDEBUG -std=c2x -Wall -Wextra -Wpedantic -o CMakeFiles/gp32emu.dir/src/gp32_codec.c.o -c /tmp/gp32-round4/src/gp32_codec.c",
+          "file": "/tmp/gp32-round4/src/gp32_codec.c",
+          "output": "CMakeFiles/gp32emu.dir/src/gp32_codec.c.o"
+        },
+        {
+          "directory": "/tmp/gp32-round5-bench-after/gcc-profile0",
+          "command": "/usr/bin/gcc -DGP32EMU_ENABLE_THREADS=1 -DZIP_ENABLE_DEFLATE=0 -DZIP_HAVE_SYMLINK=0 -D_FILE_OFFSET_BITS=64 -D_XOPEN_SOURCE=700 -I/tmp/gp32-round4/include -I/tmp/gp32-round4/src -O3 -DNDEBUG -std=c2x -Wall -Wextra -Wpedantic -o CMakeFiles/gp32emu.dir/src/smartmedia.c.o -c /tmp/gp32-round4/src/smartmedia.c",
+          "file": "/tmp/gp32-round4/src/smartmedia.c",
+          "output": "CMakeFiles/gp32emu.dir/src/smartmedia.c.o"
+        },
+        {
+          "directory": "/tmp/gp32-round5-bench-after/gcc-profile0",
+          "command": "/usr/bin/gcc -DGP32EMU_ENABLE_THREADS=1 -DZIP_ENABLE_DEFLATE=0 -DZIP_HAVE_SYMLINK=0 -D_FILE_OFFSET_BITS=64 -D_XOPEN_SOURCE=700 -I/tmp/gp32-round4/include -I/tmp/gp32-round4/src -O3 -DNDEBUG -std=c2x -Wall -Wextra -Wpedantic -o CMakeFiles/gp32emu.dir/src/smc_direct.c.o -c /tmp/gp32-round4/src/smc_direct.c",
+          "file": "/tmp/gp32-round4/src/smc_direct.c",
+          "output": "CMakeFiles/gp32emu.dir/src/smc_direct.c.o"
+        },
+        {
+          "directory": "/tmp/gp32-round5-bench-after/gcc-profile0",
+          "command": "/usr/bin/gcc -DGP32EMU_ENABLE_THREADS=1 -DZIP_ENABLE_DEFLATE=0 -DZIP_HAVE_SYMLINK=0 -D_FILE_OFFSET_BITS=64 -D_XOPEN_SOURCE=700 -I/tmp/gp32-round4/include -I/tmp/gp32-round4/src -O3 -DNDEBUG -std=c2x -Wall -Wextra -Wpedantic -o CMakeFiles/gp32emu.dir/src/fxe.c.o -c /tmp/gp32-round4/src/fxe.c",
+          "file": "/tmp/gp32-round4/src/fxe.c",
+          "output": "CMakeFiles/gp32emu.dir/src/fxe.c.o"
+        },
+        {
+          "directory": "/tmp/gp32-round5-bench-after/gcc-profile0",
+          "command": "/usr/bin/gcc -DGP32EMU_ENABLE_THREADS=1 -DZIP_ENABLE_DEFLATE=0 -DZIP_HAVE_SYMLINK=0 -D_FILE_OFFSET_BITS=64 -D_XOPEN_SOURCE=700 -I/tmp/gp32-round4/include -I/tmp/gp32-round4/src -O3 -DNDEBUG -std=c2x -Wall -Wextra -Wpedantic -o CMakeFiles/gp32emu.dir/src/fpk.c.o -c /tmp/gp32-round4/src/fpk.c",
+          "file": "/tmp/gp32-round4/src/fpk.c",
+          "output": "CMakeFiles/gp32emu.dir/src/fpk.c.o"
+        },
+        {
+          "directory": "/tmp/gp32-round5-bench-after/gcc-profile0",
+          "command": "/usr/bin/gcc -DGP32EMU_ENABLE_THREADS=1 -DZIP_ENABLE_DEFLATE=0 -DZIP_HAVE_SYMLINK=0 -D_FILE_OFFSET_BITS=64 -D_XOPEN_SOURCE=700 -I/tmp/gp32-round4/include -I/tmp/gp32-round4/src -O3 -DNDEBUG -std=c2x -Wall -Wextra -Wpedantic -o CMakeFiles/gp32emu.dir/src/gp32_zip.c.o -c /tmp/gp32-round4/src/gp32_zip.c",
+          "file": "/tmp/gp32-round4/src/gp32_zip.c",
+          "output": "CMakeFiles/gp32emu.dir/src/gp32_zip.c.o"
+        },
+        {
+          "directory": "/tmp/gp32-round5-bench-after/gcc-profile0",
+          "command": "/usr/bin/gcc -DGP32EMU_ENABLE_THREADS=1 -DZIP_ENABLE_DEFLATE=0 -DZIP_HAVE_SYMLINK=0 -D_FILE_OFFSET_BITS=64 -D_XOPEN_SOURCE=700 -I/tmp/gp32-round4/include -I/tmp/gp32-round4/src -O3 -DNDEBUG -std=c2x -Wall -Wextra -Wpedantic -w -o CMakeFiles/gp32emu.dir/src/third_party/zip/zip.c.o -c /tmp/gp32-round4/src/third_party/zip/zip.c",
+          "file": "/tmp/gp32-round4/src/third_party/zip/zip.c",
+          "output": "CMakeFiles/gp32emu.dir/src/third_party/zip/zip.c.o"
+        },
+        {
+          "directory": "/tmp/gp32-round5-bench-after/gcc-profile0",
+          "command": "/usr/bin/gcc -DGP32EMU_ENABLE_THREADS=1 -DZIP_ENABLE_DEFLATE=0 -DZIP_HAVE_SYMLINK=0 -D_FILE_OFFSET_BITS=64 -D_XOPEN_SOURCE=700 -I/tmp/gp32-round4/include -I/tmp/gp32-round4/src -O3 -DNDEBUG -std=c2x -Wall -Wextra -Wpedantic -o CMakeFiles/gp32emu.dir/src/input_script.c.o -c /tmp/gp32-round4/src/input_script.c",
+          "file": "/tmp/gp32-round4/src/input_script.c",
+          "output": "CMakeFiles/gp32emu.dir/src/input_script.c.o"
+        },
+        {
+          "directory": "/tmp/gp32-round5-bench-after/gcc-profile0",
+          "command": "/usr/bin/gcc -DGP32EMU_ENABLE_THREADS=1 -DZIP_ENABLE_DEFLATE=0 -DZIP_HAVE_SYMLINK=0 -D_FILE_OFFSET_BITS=64 -D_XOPEN_SOURCE=700 -I/tmp/gp32-round4/include -I/tmp/gp32-round4/src -O3 -DNDEBUG -std=c2x -Wall -Wextra -Wpedantic -o CMakeFiles/gp32emu.dir/src/platform/platform.c.o -c /tmp/gp32-round4/src/platform/platform.c",
+          "file": "/tmp/gp32-round4/src/platform/platform.c",
+          "output": "CMakeFiles/gp32emu.dir/src/platform/platform.c.o"
+        },
+        {
+          "directory": "/tmp/gp32-round5-bench-after/gcc-profile0",
+          "command": "/usr/bin/gcc -DGP32EMU_ENABLE_THREADS=1 -DZIP_ENABLE_DEFLATE=0 -DZIP_HAVE_SYMLINK=0 -D_FILE_OFFSET_BITS=64 -D_XOPEN_SOURCE=700 -I/tmp/gp32-round4/include -I/tmp/gp32-round4/src -O3 -DNDEBUG -std=c2x -Wall -Wextra -Wpedantic -o CMakeFiles/gp32emu.dir/src/audio/gp32_audio_resampler.c.o -c /tmp/gp32-round4/src/audio/gp32_audio_resampler.c",
+          "file": "/tmp/gp32-round4/src/audio/gp32_audio_resampler.c",
+          "output": "CMakeFiles/gp32emu.dir/src/audio/gp32_audio_resampler.c.o"
+        },
+        {
+          "directory": "/tmp/gp32-round5-bench-after/gcc-profile0",
+          "command": "/usr/bin/gcc -DGP32EMU_ENABLE_THREADS=1 -DZIP_ENABLE_DEFLATE=0 -DZIP_HAVE_SYMLINK=0 -D_FILE_OFFSET_BITS=64 -D_XOPEN_SOURCE=700 -I/tmp/gp32-round4/include -I/tmp/gp32-round4/src -O3 -DNDEBUG -std=c2x -Wall -Wextra -Wpedantic -o CMakeFiles/gp32emu.dir/src/media/gp32_media.c.o -c /tmp/gp32-round4/src/media/gp32_media.c",
+          "file": "/tmp/gp32-round4/src/media/gp32_media.c",
+          "output": "CMakeFiles/gp32emu.dir/src/media/gp32_media.c.o"
+        },
+        {
+          "directory": "/tmp/gp32-round5-bench-after/gcc-profile0",
+          "command": "/usr/bin/gcc -DGP32EMU_ENABLE_THREADS=1 -DZIP_ENABLE_DEFLATE=0 -DZIP_HAVE_SYMLINK=0 -D_FILE_OFFSET_BITS=64 -D_XOPEN_SOURCE=700 -I/tmp/gp32-round4/include -I/tmp/gp32-round4/src -O3 -DNDEBUG -std=c2x -Wall -Wextra -Wpedantic -o CMakeFiles/gp32emu.dir/src/media/gp32_video_effects.c.o -c /tmp/gp32-round4/src/media/gp32_video_effects.c",
+          "file": "/tmp/gp32-round4/src/media/gp32_video_effects.c",
+          "output": "CMakeFiles/gp32emu.dir/src/media/gp32_video_effects.c.o"
+        },
+        {
+          "directory": "/tmp/gp32-round5-bench-after/gcc-profile0",
+          "command": "/usr/bin/gcc -DGP32EMU_ENABLE_THREADS=1 -DZIP_ENABLE_DEFLATE=0 -DZIP_HAVE_SYMLINK=0 -D_FILE_OFFSET_BITS=64 -D_XOPEN_SOURCE=700 -I/tmp/gp32-round4/include -I/tmp/gp32-round4/src -O3 -DNDEBUG -std=c2x -Wall -Wextra -Wpedantic -o CMakeFiles/gp32emu.dir/src/save_atomic.c.o -c /tmp/gp32-round4/src/save_atomic.c",
+          "file": "/tmp/gp32-round4/src/save_atomic.c",
+          "output": "CMakeFiles/gp32emu.dir/src/save_atomic.c.o"
+        }
+      ],
+      "binaries": {
+        "external-writes": {
+          "path": "/tmp/gp32-round5-bench-after/gcc-profile0/external-writes",
+          "sha256": "d11f05e8421f22d53a706af3819346d12100963d7197a832ed88ab936dbcaba1"
+        },
+        "hle-outputs": {
+          "path": "/tmp/gp32-round5-bench-after/gcc-profile0/hle-outputs",
+          "sha256": "a40959da2e95c2d23eafe83c04db93164c0d7f10f852b9fb5ffe2822b6447bf0"
+        }
+      }
+    },
+    {
+      "compiler": "gcc",
+      "version": "gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0",
+      "profile": 1,
+      "commands": [
+        [
+          "/tmp/gp32-round4-tools/cmake/data/bin/cmake",
+          "-S",
+          "/tmp/gp32-round4",
+          "-B",
+          "/tmp/gp32-round5-bench-after/gcc-profile1",
+          "-DCMAKE_C_COMPILER=/usr/bin/gcc",
+          "-DCMAKE_BUILD_TYPE=Release",
+          "-DGP32EMU_REQUIRE_C23=ON",
+          "-DGP32EMU_ENABLE_IPO=OFF",
+          "-DGP32EMU_CPU_PROFILE=ON",
+          "-DGP32EMU_BUILD_TESTS=OFF",
+          "-DGP32EMU_BUILD_HEADLESS=OFF",
+          "-DGP32EMU_BUILD_LIBRETRO=OFF",
+          "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON"
+        ],
+        [
+          "/tmp/gp32-round4-tools/cmake/data/bin/cmake",
+          "--build",
+          "/tmp/gp32-round5-bench-after/gcc-profile1",
+          "--target",
+          "gp32emu",
+          "-j",
+          "2"
+        ],
+        [
+          "/usr/bin/gcc",
+          "-O3",
+          "-DNDEBUG",
+          "-std=c2x",
+          "-fno-lto",
+          "-D_XOPEN_SOURCE=700",
+          "-D_FILE_OFFSET_BITS=64",
+          "-DGP32EMU_ENABLE_THREADS=1",
+          "-DGP32EMU_CPU_PROFILE=1",
+          "-I",
+          "/tmp/gp32-round4/src",
+          "-I",
+          "/tmp/gp32-round4/include",
+          "-DARM_SOURCE=\"/tmp/gp32-round4/src/arm920t.c\"",
+          "/tmp/gp32-round4/scripts/bench_external_writes.c",
+          "-lm",
+          "-o",
+          "/tmp/gp32-round5-bench-after/gcc-profile1/external-writes"
+        ],
+        [
+          "/usr/bin/gcc",
+          "-O3",
+          "-DNDEBUG",
+          "-std=c2x",
+          "-fno-lto",
+          "-D_XOPEN_SOURCE=700",
+          "-D_FILE_OFFSET_BITS=64",
+          "-DGP32EMU_ENABLE_THREADS=1",
+          "-DGP32EMU_CPU_PROFILE=1",
+          "-I",
+          "/tmp/gp32-round4/src",
+          "-I",
+          "/tmp/gp32-round4/include",
+          "-DGP32_CORE_UNDER_TEST=\"/tmp/gp32-round4/src/gp32.c\"",
+          "/tmp/gp32-round4/scripts/bench_hle_outputs.c",
+          "/tmp/gp32-round5-bench-after/gcc-profile1/libgp32emu.a",
+          "-lm",
+          "-pthread",
+          "-o",
+          "/tmp/gp32-round5-bench-after/gcc-profile1/hle-outputs"
+        ]
+      ],
+      "log_sha256": "f611fbe868ceaef9a031272f0b5051a5c606c76ad261ec66599147d6ba5cec4f",
+      "core_compile_commands": [
+        {
+          "directory": "/tmp/gp32-round5-bench-after/gcc-profile1",
+          "command": "/usr/bin/gcc -DGP32EMU_CPU_PROFILE=1 -DGP32EMU_ENABLE_THREADS=1 -DZIP_ENABLE_DEFLATE=0 -DZIP_HAVE_SYMLINK=0 -D_FILE_OFFSET_BITS=64 -D_XOPEN_SOURCE=700 -I/tmp/gp32-round4/include -I/tmp/gp32-round4/src -O3 -DNDEBUG -std=c2x -Wall -Wextra -Wpedantic -o CMakeFiles/gp32emu.dir/src/gp32.c.o -c /tmp/gp32-round4/src/gp32.c",
+          "file": "/tmp/gp32-round4/src/gp32.c",
+          "output": "CMakeFiles/gp32emu.dir/src/gp32.c.o"
+        },
+        {
+          "directory": "/tmp/gp32-round5-bench-after/gcc-profile1",
+          "command": "/usr/bin/gcc -DGP32EMU_CPU_PROFILE=1 -DGP32EMU_ENABLE_THREADS=1 -DZIP_ENABLE_DEFLATE=0 -DZIP_HAVE_SYMLINK=0 -D_FILE_OFFSET_BITS=64 -D_XOPEN_SOURCE=700 -I/tmp/gp32-round4/include -I/tmp/gp32-round4/src -O3 -DNDEBUG -std=c2x -Wall -Wextra -Wpedantic -o CMakeFiles/gp32emu.dir/src/arm920t.c.o -c /tmp/gp32-round4/src/arm920t.c",
+          "file": "/tmp/gp32-round4/src/arm920t.c",
+          "output": "CMakeFiles/gp32emu.dir/src/arm920t.c.o"
+        },
+        {
+          "directory": "/tmp/gp32-round5-bench-after/gcc-profile1",
+          "command": "/usr/bin/gcc -DGP32EMU_CPU_PROFILE=1 -DGP32EMU_ENABLE_THREADS=1 -DZIP_ENABLE_DEFLATE=0 -DZIP_HAVE_SYMLINK=0 -D_FILE_OFFSET_BITS=64 -D_XOPEN_SOURCE=700 -I/tmp/gp32-round4/include -I/tmp/gp32-round4/src -O3 -DNDEBUG -std=c2x -Wall -Wextra -Wpedantic -o CMakeFiles/gp32emu.dir/src/s3c2400.c.o -c /tmp/gp32-round4/src/s3c2400.c",
+          "file": "/tmp/gp32-round4/src/s3c2400.c",
+          "output": "CMakeFiles/gp32emu.dir/src/s3c2400.c.o"
+        },
+        {
+          "directory": "/tmp/gp32-round5-bench-after/gcc-profile1",
+          "command": "/usr/bin/gcc -DGP32EMU_CPU_PROFILE=1 -DGP32EMU_ENABLE_THREADS=1 -DZIP_ENABLE_DEFLATE=0 -DZIP_HAVE_SYMLINK=0 -D_FILE_OFFSET_BITS=64 -D_XOPEN_SOURCE=700 -I/tmp/gp32-round4/include -I/tmp/gp32-round4/src -O3 -DNDEBUG -std=c2x -Wall -Wextra -Wpedantic -o CMakeFiles/gp32emu.dir/src/gp32_codec.c.o -c /tmp/gp32-round4/src/gp32_codec.c",
+          "file": "/tmp/gp32-round4/src/gp32_codec.c",
+          "output": "CMakeFiles/gp32emu.dir/src/gp32_codec.c.o"
+        },
+        {
+          "directory": "/tmp/gp32-round5-bench-after/gcc-profile1",
+          "command": "/usr/bin/gcc -DGP32EMU_CPU_PROFILE=1 -DGP32EMU_ENABLE_THREADS=1 -DZIP_ENABLE_DEFLATE=0 -DZIP_HAVE_SYMLINK=0 -D_FILE_OFFSET_BITS=64 -D_XOPEN_SOURCE=700 -I/tmp/gp32-round4/include -I/tmp/gp32-round4/src -O3 -DNDEBUG -std=c2x -Wall -Wextra -Wpedantic -o CMakeFiles/gp32emu.dir/src/smartmedia.c.o -c /tmp/gp32-round4/src/smartmedia.c",
+          "file": "/tmp/gp32-round4/src/smartmedia.c",
+          "output": "CMakeFiles/gp32emu.dir/src/smartmedia.c.o"
+        },
+        {
+          "directory": "/tmp/gp32-round5-bench-after/gcc-profile1",
+          "command": "/usr/bin/gcc -DGP32EMU_CPU_PROFILE=1 -DGP32EMU_ENABLE_THREADS=1 -DZIP_ENABLE_DEFLATE=0 -DZIP_HAVE_SYMLINK=0 -D_FILE_OFFSET_BITS=64 -D_XOPEN_SOURCE=700 -I/tmp/gp32-round4/include -I/tmp/gp32-round4/src -O3 -DNDEBUG -std=c2x -Wall -Wextra -Wpedantic -o CMakeFiles/gp32emu.dir/src/smc_direct.c.o -c /tmp/gp32-round4/src/smc_direct.c",
+          "file": "/tmp/gp32-round4/src/smc_direct.c",
+          "output": "CMakeFiles/gp32emu.dir/src/smc_direct.c.o"
+        },
+        {
+          "directory": "/tmp/gp32-round5-bench-after/gcc-profile1",
+          "command": "/usr/bin/gcc -DGP32EMU_CPU_PROFILE=1 -DGP32EMU_ENABLE_THREADS=1 -DZIP_ENABLE_DEFLATE=0 -DZIP_HAVE_SYMLINK=0 -D_FILE_OFFSET_BITS=64 -D_XOPEN_SOURCE=700 -I/tmp/gp32-round4/include -I/tmp/gp32-round4/src -O3 -DNDEBUG -std=c2x -Wall -Wextra -Wpedantic -o CMakeFiles/gp32emu.dir/src/fxe.c.o -c /tmp/gp32-round4/src/fxe.c",
+          "file": "/tmp/gp32-round4/src/fxe.c",
+          "output": "CMakeFiles/gp32emu.dir/src/fxe.c.o"
+        },
+        {
+          "directory": "/tmp/gp32-round5-bench-after/gcc-profile1",
+          "command": "/usr/bin/gcc -DGP32EMU_CPU_PROFILE=1 -DGP32EMU_ENABLE_THREADS=1 -DZIP_ENABLE_DEFLATE=0 -DZIP_HAVE_SYMLINK=0 -D_FILE_OFFSET_BITS=64 -D_XOPEN_SOURCE=700 -I/tmp/gp32-round4/include -I/tmp/gp32-round4/src -O3 -DNDEBUG -std=c2x -Wall -Wextra -Wpedantic -o CMakeFiles/gp32emu.dir/src/fpk.c.o -c /tmp/gp32-round4/src/fpk.c",
+          "file": "/tmp/gp32-round4/src/fpk.c",
+          "output": "CMakeFiles/gp32emu.dir/src/fpk.c.o"
+        },
+        {
+          "directory": "/tmp/gp32-round5-bench-after/gcc-profile1",
+          "command": "/usr/bin/gcc -DGP32EMU_CPU_PROFILE=1 -DGP32EMU_ENABLE_THREADS=1 -DZIP_ENABLE_DEFLATE=0 -DZIP_HAVE_SYMLINK=0 -D_FILE_OFFSET_BITS=64 -D_XOPEN_SOURCE=700 -I/tmp/gp32-round4/include -I/tmp/gp32-round4/src -O3 -DNDEBUG -std=c2x -Wall -Wextra -Wpedantic -o CMakeFiles/gp32emu.dir/src/gp32_zip.c.o -c /tmp/gp32-round4/src/gp32_zip.c",
+          "file": "/tmp/gp32-round4/src/gp32_zip.c",
+          "output": "CMakeFiles/gp32emu.dir/src/gp32_zip.c.o"
+        },
+        {
+          "directory": "/tmp/gp32-round5-bench-after/gcc-profile1",
+          "command": "/usr/bin/gcc -DGP32EMU_CPU_PROFILE=1 -DGP32EMU_ENABLE_THREADS=1 -DZIP_ENABLE_DEFLATE=0 -DZIP_HAVE_SYMLINK=0 -D_FILE_OFFSET_BITS=64 -D_XOPEN_SOURCE=700 -I/tmp/gp32-round4/include -I/tmp/gp32-round4/src -O3 -DNDEBUG -std=c2x -Wall -Wextra -Wpedantic -w -o CMakeFiles/gp32emu.dir/src/third_party/zip/zip.c.o -c /tmp/gp32-round4/src/third_party/zip/zip.c",
+          "file": "/tmp/gp32-round4/src/third_party/zip/zip.c",
+          "output": "CMakeFiles/gp32emu.dir/src/third_party/zip/zip.c.o"
+        },
+        {
+          "directory": "/tmp/gp32-round5-bench-after/gcc-profile1",
+          "command": "/usr/bin/gcc -DGP32EMU_CPU_PROFILE=1 -DGP32EMU_ENABLE_THREADS=1 -DZIP_ENABLE_DEFLATE=0 -DZIP_HAVE_SYMLINK=0 -D_FILE_OFFSET_BITS=64 -D_XOPEN_SOURCE=700 -I/tmp/gp32-round4/include -I/tmp/gp32-round4/src -O3 -DNDEBUG -std=c2x -Wall -Wextra -Wpedantic -o CMakeFiles/gp32emu.dir/src/input_script.c.o -c /tmp/gp32-round4/src/input_script.c",
+          "file": "/tmp/gp32-round4/src/input_script.c",
+          "output": "CMakeFiles/gp32emu.dir/src/input_script.c.o"
+        },
+        {
+          "directory": "/tmp/gp32-round5-bench-after/gcc-profile1",
+          "command": "/usr/bin/gcc -DGP32EMU_CPU_PROFILE=1 -DGP32EMU_ENABLE_THREADS=1 -DZIP_ENABLE_DEFLATE=0 -DZIP_HAVE_SYMLINK=0 -D_FILE_OFFSET_BITS=64 -D_XOPEN_SOURCE=700 -I/tmp/gp32-round4/include -I/tmp/gp32-round4/src -O3 -DNDEBUG -std=c2x -Wall -Wextra -Wpedantic -o CMakeFiles/gp32emu.dir/src/platform/platform.c.o -c /tmp/gp32-round4/src/platform/platform.c",
+          "file": "/tmp/gp32-round4/src/platform/platform.c",
+          "output": "CMakeFiles/gp32emu.dir/src/platform/platform.c.o"
+        },
+        {
+          "directory": "/tmp/gp32-round5-bench-after/gcc-profile1",
+          "command": "/usr/bin/gcc -DGP32EMU_CPU_PROFILE=1 -DGP32EMU_ENABLE_THREADS=1 -DZIP_ENABLE_DEFLATE=0 -DZIP_HAVE_SYMLINK=0 -D_FILE_OFFSET_BITS=64 -D_XOPEN_SOURCE=700 -I/tmp/gp32-round4/include -I/tmp/gp32-round4/src -O3 -DNDEBUG -std=c2x -Wall -Wextra -Wpedantic -o CMakeFiles/gp32emu.dir/src/audio/gp32_audio_resampler.c.o -c /tmp/gp32-round4/src/audio/gp32_audio_resampler.c",
+          "file": "/tmp/gp32-round4/src/audio/gp32_audio_resampler.c",
+          "output": "CMakeFiles/gp32emu.dir/src/audio/gp32_audio_resampler.c.o"
+        },
+        {
+          "directory": "/tmp/gp32-round5-bench-after/gcc-profile1",
+          "command": "/usr/bin/gcc -DGP32EMU_CPU_PROFILE=1 -DGP32EMU_ENABLE_THREADS=1 -DZIP_ENABLE_DEFLATE=0 -DZIP_HAVE_SYMLINK=0 -D_FILE_OFFSET_BITS=64 -D_XOPEN_SOURCE=700 -I/tmp/gp32-round4/include -I/tmp/gp32-round4/src -O3 -DNDEBUG -std=c2x -Wall -Wextra -Wpedantic -o CMakeFiles/gp32emu.dir/src/media/gp32_media.c.o -c /tmp/gp32-round4/src/media/gp32_media.c",
+          "file": "/tmp/gp32-round4/src/media/gp32_media.c",
+          "output": "CMakeFiles/gp32emu.dir/src/media/gp32_media.c.o"
+        },
+        {
+          "directory": "/tmp/gp32-round5-bench-after/gcc-profile1",
+          "command": "/usr/bin/gcc -DGP32EMU_CPU_PROFILE=1 -DGP32EMU_ENABLE_THREADS=1 -DZIP_ENABLE_DEFLATE=0 -DZIP_HAVE_SYMLINK=0 -D_FILE_OFFSET_BITS=64 -D_XOPEN_SOURCE=700 -I/tmp/gp32-round4/include -I/tmp/gp32-round4/src -O3 -DNDEBUG -std=c2x -Wall -Wextra -Wpedantic -o CMakeFiles/gp32emu.dir/src/media/gp32_video_effects.c.o -c /tmp/gp32-round4/src/media/gp32_video_effects.c",
+          "file": "/tmp/gp32-round4/src/media/gp32_video_effects.c",
+          "output": "CMakeFiles/gp32emu.dir/src/media/gp32_video_effects.c.o"
+        },
+        {
+          "directory": "/tmp/gp32-round5-bench-after/gcc-profile1",
+          "command": "/usr/bin/gcc -DGP32EMU_CPU_PROFILE=1 -DGP32EMU_ENABLE_THREADS=1 -DZIP_ENABLE_DEFLATE=0 -DZIP_HAVE_SYMLINK=0 -D_FILE_OFFSET_BITS=64 -D_XOPEN_SOURCE=700 -I/tmp/gp32-round4/include -I/tmp/gp32-round4/src -O3 -DNDEBUG -std=c2x -Wall -Wextra -Wpedantic -o CMakeFiles/gp32emu.dir/src/save_atomic.c.o -c /tmp/gp32-round4/src/save_atomic.c",
+          "file": "/tmp/gp32-round4/src/save_atomic.c",
+          "output": "CMakeFiles/gp32emu.dir/src/save_atomic.c.o"
+        }
+      ],
+      "binaries": {
+        "external-writes": {
+          "path": "/tmp/gp32-round5-bench-after/gcc-profile1/external-writes",
+          "sha256": "d6e90ba8a9d37ff7108bf4f621286cd8c140d28a47afcc50615f83e6cb52b2e1"
+        },
+        "hle-outputs": {
+          "path": "/tmp/gp32-round5-bench-after/gcc-profile1/hle-outputs",
+          "sha256": "ae6e1df83178afe394b4c98738a6aa7e3409109a7f7df060c3d691d14cdffb79"
+        }
+      }
+    },
+    {
+      "compiler": "clang",
+      "version": "Ubuntu clang version 18.1.3 (1ubuntu1)",
+      "profile": 0,
+      "commands": [
+        [
+          "/tmp/gp32-round4-tools/cmake/data/bin/cmake",
+          "-S",
+          "/tmp/gp32-round4",
+          "-B",
+          "/tmp/gp32-round5-bench-after/clang-profile0",
+          "-DCMAKE_C_COMPILER=/usr/bin/clang-18",
+          "-DCMAKE_BUILD_TYPE=Release",
+          "-DGP32EMU_REQUIRE_C23=ON",
+          "-DGP32EMU_ENABLE_IPO=OFF",
+          "-DGP32EMU_CPU_PROFILE=OFF",
+          "-DGP32EMU_BUILD_TESTS=OFF",
+          "-DGP32EMU_BUILD_HEADLESS=OFF",
+          "-DGP32EMU_BUILD_LIBRETRO=OFF",
+          "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON"
+        ],
+        [
+          "/tmp/gp32-round4-tools/cmake/data/bin/cmake",
+          "--build",
+          "/tmp/gp32-round5-bench-after/clang-profile0",
+          "--target",
+          "gp32emu",
+          "-j",
+          "2"
+        ],
+        [
+          "/usr/bin/clang-18",
+          "-O3",
+          "-DNDEBUG",
+          "-std=c2x",
+          "-fno-lto",
+          "-D_XOPEN_SOURCE=700",
+          "-D_FILE_OFFSET_BITS=64",
+          "-DGP32EMU_ENABLE_THREADS=1",
+          "-DGP32EMU_CPU_PROFILE=0",
+          "-I",
+          "/tmp/gp32-round4/src",
+          "-I",
+          "/tmp/gp32-round4/include",
+          "-DARM_SOURCE=\"/tmp/gp32-round4/src/arm920t.c\"",
+          "/tmp/gp32-round4/scripts/bench_external_writes.c",
+          "-lm",
+          "-o",
+          "/tmp/gp32-round5-bench-after/clang-profile0/external-writes"
+        ],
+        [
+          "/usr/bin/clang-18",
+          "-O3",
+          "-DNDEBUG",
+          "-std=c2x",
+          "-fno-lto",
+          "-D_XOPEN_SOURCE=700",
+          "-D_FILE_OFFSET_BITS=64",
+          "-DGP32EMU_ENABLE_THREADS=1",
+          "-DGP32EMU_CPU_PROFILE=0",
+          "-I",
+          "/tmp/gp32-round4/src",
+          "-I",
+          "/tmp/gp32-round4/include",
+          "-DGP32_CORE_UNDER_TEST=\"/tmp/gp32-round4/src/gp32.c\"",
+          "/tmp/gp32-round4/scripts/bench_hle_outputs.c",
+          "/tmp/gp32-round5-bench-after/clang-profile0/libgp32emu.a",
+          "-lm",
+          "-pthread",
+          "-o",
+          "/tmp/gp32-round5-bench-after/clang-profile0/hle-outputs"
+        ]
+      ],
+      "log_sha256": "d3e3d6802e7fa5b6fda8b065e25dc8de908b7b11cb30c96d67934c14ed35d45d",
+      "core_compile_commands": [
+        {
+          "directory": "/tmp/gp32-round5-bench-after/clang-profile0",
+          "command": "/usr/bin/clang-18 -DGP32EMU_ENABLE_THREADS=1 -DZIP_ENABLE_DEFLATE=0 -DZIP_HAVE_SYMLINK=0 -D_FILE_OFFSET_BITS=64 -D_XOPEN_SOURCE=700 -I/tmp/gp32-round4/include -I/tmp/gp32-round4/src -O3 -DNDEBUG -std=c23 -Wall -Wextra -Wpedantic -o CMakeFiles/gp32emu.dir/src/gp32.c.o -c /tmp/gp32-round4/src/gp32.c",
+          "file": "/tmp/gp32-round4/src/gp32.c",
+          "output": "CMakeFiles/gp32emu.dir/src/gp32.c.o"
+        },
+        {
+          "directory": "/tmp/gp32-round5-bench-after/clang-profile0",
+          "command": "/usr/bin/clang-18 -DGP32EMU_ENABLE_THREADS=1 -DZIP_ENABLE_DEFLATE=0 -DZIP_HAVE_SYMLINK=0 -D_FILE_OFFSET_BITS=64 -D_XOPEN_SOURCE=700 -I/tmp/gp32-round4/include -I/tmp/gp32-round4/src -O3 -DNDEBUG -std=c23 -Wall -Wextra -Wpedantic -o CMakeFiles/gp32emu.dir/src/arm920t.c.o -c /tmp/gp32-round4/src/arm920t.c",
+          "file": "/tmp/gp32-round4/src/arm920t.c",
+          "output": "CMakeFiles/gp32emu.dir/src/arm920t.c.o"
+        },
+        {
+          "directory": "/tmp/gp32-round5-bench-after/clang-profile0",
+          "command": "/usr/bin/clang-18 -DGP32EMU_ENABLE_THREADS=1 -DZIP_ENABLE_DEFLATE=0 -DZIP_HAVE_SYMLINK=0 -D_FILE_OFFSET_BITS=64 -D_XOPEN_SOURCE=700 -I/tmp/gp32-round4/include -I/tmp/gp32-round4/src -O3 -DNDEBUG -std=c23 -Wall -Wextra -Wpedantic -o CMakeFiles/gp32emu.dir/src/s3c2400.c.o -c /tmp/gp32-round4/src/s3c2400.c",
+          "file": "/tmp/gp32-round4/src/s3c2400.c",
+          "output": "CMakeFiles/gp32emu.dir/src/s3c2400.c.o"
+        },
+        {
+          "directory": "/tmp/gp32-round5-bench-after/clang-profile0",
+          "command": "/usr/bin/clang-18 -DGP32EMU_ENABLE_THREADS=1 -DZIP_ENABLE_DEFLATE=0 -DZIP_HAVE_SYMLINK=0 -D_FILE_OFFSET_BITS=64 -D_XOPEN_SOURCE=700 -I/tmp/gp32-round4/include -I/tmp/gp32-round4/src -O3 -DNDEBUG -std=c23 -Wall -Wextra -Wpedantic -o CMakeFiles/gp32emu.dir/src/gp32_codec.c.o -c /tmp/gp32-round4/src/gp32_codec.c",
+          "file": "/tmp/gp32-round4/src/gp32_codec.c",
+          "output": "CMakeFiles/gp32emu.dir/src/gp32_codec.c.o"
+        },
+        {
+          "directory": "/tmp/gp32-round5-bench-after/clang-profile0",
+          "command": "/usr/bin/clang-18 -DGP32EMU_ENABLE_THREADS=1 -DZIP_ENABLE_DEFLATE=0 -DZIP_HAVE_SYMLINK=0 -D_FILE_OFFSET_BITS=64 -D_XOPEN_SOURCE=700 -I/tmp/gp32-round4/include -I/tmp/gp32-round4/src -O3 -DNDEBUG -std=c23 -Wall -Wextra -Wpedantic -o CMakeFiles/gp32emu.dir/src/smartmedia.c.o -c /tmp/gp32-round4/src/smartmedia.c",
+          "file": "/tmp/gp32-round4/src/smartmedia.c",
+          "output": "CMakeFiles/gp32emu.dir/src/smartmedia.c.o"
+        },
+        {
+          "directory": "/tmp/gp32-round5-bench-after/clang-profile0",
+          "command": "/usr/bin/clang-18 -DGP32EMU_ENABLE_THREADS=1 -DZIP_ENABLE_DEFLATE=0 -DZIP_HAVE_SYMLINK=0 -D_FILE_OFFSET_BITS=64 -D_XOPEN_SOURCE=700 -I/tmp/gp32-round4/include -I/tmp/gp32-round4/src -O3 -DNDEBUG -std=c23 -Wall -Wextra -Wpedantic -o CMakeFiles/gp32emu.dir/src/smc_direct.c.o -c /tmp/gp32-round4/src/smc_direct.c",
+          "file": "/tmp/gp32-round4/src/smc_direct.c",
+          "output": "CMakeFiles/gp32emu.dir/src/smc_direct.c.o"
+        },
+        {
+          "directory": "/tmp/gp32-round5-bench-after/clang-profile0",
+          "command": "/usr/bin/clang-18 -DGP32EMU_ENABLE_THREADS=1 -DZIP_ENABLE_DEFLATE=0 -DZIP_HAVE_SYMLINK=0 -D_FILE_OFFSET_BITS=64 -D_XOPEN_SOURCE=700 -I/tmp/gp32-round4/include -I/tmp/gp32-round4/src -O3 -DNDEBUG -std=c23 -Wall -Wextra -Wpedantic -o CMakeFiles/gp32emu.dir/src/fxe.c.o -c /tmp/gp32-round4/src/fxe.c",
+          "file": "/tmp/gp32-round4/src/fxe.c",
+          "output": "CMakeFiles/gp32emu.dir/src/fxe.c.o"
+        },
+        {
+          "directory": "/tmp/gp32-round5-bench-after/clang-profile0",
+          "command": "/usr/bin/clang-18 -DGP32EMU_ENABLE_THREADS=1 -DZIP_ENABLE_DEFLATE=0 -DZIP_HAVE_SYMLINK=0 -D_FILE_OFFSET_BITS=64 -D_XOPEN_SOURCE=700 -I/tmp/gp32-round4/include -I/tmp/gp32-round4/src -O3 -DNDEBUG -std=c23 -Wall -Wextra -Wpedantic -o CMakeFiles/gp32emu.dir/src/fpk.c.o -c /tmp/gp32-round4/src/fpk.c",
+          "file": "/tmp/gp32-round4/src/fpk.c",
+          "output": "CMakeFiles/gp32emu.dir/src/fpk.c.o"
+        },
+        {
+          "directory": "/tmp/gp32-round5-bench-after/clang-profile0",
+          "command": "/usr/bin/clang-18 -DGP32EMU_ENABLE_THREADS=1 -DZIP_ENABLE_DEFLATE=0 -DZIP_HAVE_SYMLINK=0 -D_FILE_OFFSET_BITS=64 -D_XOPEN_SOURCE=700 -I/tmp/gp32-round4/include -I/tmp/gp32-round4/src -O3 -DNDEBUG -std=c23 -Wall -Wextra -Wpedantic -o CMakeFiles/gp32emu.dir/src/gp32_zip.c.o -c /tmp/gp32-round4/src/gp32_zip.c",
+          "file": "/tmp/gp32-round4/src/gp32_zip.c",
+          "output": "CMakeFiles/gp32emu.dir/src/gp32_zip.c.o"
+        },
+        {
+          "directory": "/tmp/gp32-round5-bench-after/clang-profile0",
+          "command": "/usr/bin/clang-18 -DGP32EMU_ENABLE_THREADS=1 -DZIP_ENABLE_DEFLATE=0 -DZIP_HAVE_SYMLINK=0 -D_FILE_OFFSET_BITS=64 -D_XOPEN_SOURCE=700 -I/tmp/gp32-round4/include -I/tmp/gp32-round4/src -O3 -DNDEBUG -std=c23 -Wall -Wextra -Wpedantic -w -o CMakeFiles/gp32emu.dir/src/third_party/zip/zip.c.o -c /tmp/gp32-round4/src/third_party/zip/zip.c",
+          "file": "/tmp/gp32-round4/src/third_party/zip/zip.c",
+          "output": "CMakeFiles/gp32emu.dir/src/third_party/zip/zip.c.o"
+        },
+        {
+          "directory": "/tmp/gp32-round5-bench-after/clang-profile0",
+          "command": "/usr/bin/clang-18 -DGP32EMU_ENABLE_THREADS=1 -DZIP_ENABLE_DEFLATE=0 -DZIP_HAVE_SYMLINK=0 -D_FILE_OFFSET_BITS=64 -D_XOPEN_SOURCE=700 -I/tmp/gp32-round4/include -I/tmp/gp32-round4/src -O3 -DNDEBUG -std=c23 -Wall -Wextra -Wpedantic -o CMakeFiles/gp32emu.dir/src/input_script.c.o -c /tmp/gp32-round4/src/input_script.c",
+          "file": "/tmp/gp32-round4/src/input_script.c",
+          "output": "CMakeFiles/gp32emu.dir/src/input_script.c.o"
+        },
+        {
+          "directory": "/tmp/gp32-round5-bench-after/clang-profile0",
+          "command": "/usr/bin/clang-18 -DGP32EMU_ENABLE_THREADS=1 -DZIP_ENABLE_DEFLATE=0 -DZIP_HAVE_SYMLINK=0 -D_FILE_OFFSET_BITS=64 -D_XOPEN_SOURCE=700 -I/tmp/gp32-round4/include -I/tmp/gp32-round4/src -O3 -DNDEBUG -std=c23 -Wall -Wextra -Wpedantic -o CMakeFiles/gp32emu.dir/src/platform/platform.c.o -c /tmp/gp32-round4/src/platform/platform.c",
+          "file": "/tmp/gp32-round4/src/platform/platform.c",
+          "output": "CMakeFiles/gp32emu.dir/src/platform/platform.c.o"
+        },
+        {
+          "directory": "/tmp/gp32-round5-bench-after/clang-profile0",
+          "command": "/usr/bin/clang-18 -DGP32EMU_ENABLE_THREADS=1 -DZIP_ENABLE_DEFLATE=0 -DZIP_HAVE_SYMLINK=0 -D_FILE_OFFSET_BITS=64 -D_XOPEN_SOURCE=700 -I/tmp/gp32-round4/include -I/tmp/gp32-round4/src -O3 -DNDEBUG -std=c23 -Wall -Wextra -Wpedantic -o CMakeFiles/gp32emu.dir/src/audio/gp32_audio_resampler.c.o -c /tmp/gp32-round4/src/audio/gp32_audio_resampler.c",
+          "file": "/tmp/gp32-round4/src/audio/gp32_audio_resampler.c",
+          "output": "CMakeFiles/gp32emu.dir/src/audio/gp32_audio_resampler.c.o"
+        },
+        {
+          "directory": "/tmp/gp32-round5-bench-after/clang-profile0",
+          "command": "/usr/bin/clang-18 -DGP32EMU_ENABLE_THREADS=1 -DZIP_ENABLE_DEFLATE=0 -DZIP_HAVE_SYMLINK=0 -D_FILE_OFFSET_BITS=64 -D_XOPEN_SOURCE=700 -I/tmp/gp32-round4/include -I/tmp/gp32-round4/src -O3 -DNDEBUG -std=c23 -Wall -Wextra -Wpedantic -o CMakeFiles/gp32emu.dir/src/media/gp32_media.c.o -c /tmp/gp32-round4/src/media/gp32_media.c",
+          "file": "/tmp/gp32-round4/src/media/gp32_media.c",
+          "output": "CMakeFiles/gp32emu.dir/src/media/gp32_media.c.o"
+        },
+        {
+          "directory": "/tmp/gp32-round5-bench-after/clang-profile0",
+          "command": "/usr/bin/clang-18 -DGP32EMU_ENABLE_THREADS=1 -DZIP_ENABLE_DEFLATE=0 -DZIP_HAVE_SYMLINK=0 -D_FILE_OFFSET_BITS=64 -D_XOPEN_SOURCE=700 -I/tmp/gp32-round4/include -I/tmp/gp32-round4/src -O3 -DNDEBUG -std=c23 -Wall -Wextra -Wpedantic -o CMakeFiles/gp32emu.dir/src/media/gp32_video_effects.c.o -c /tmp/gp32-round4/src/media/gp32_video_effects.c",
+          "file": "/tmp/gp32-round4/src/media/gp32_video_effects.c",
+          "output": "CMakeFiles/gp32emu.dir/src/media/gp32_video_effects.c.o"
+        },
+        {
+          "directory": "/tmp/gp32-round5-bench-after/clang-profile0",
+          "command": "/usr/bin/clang-18 -DGP32EMU_ENABLE_THREADS=1 -DZIP_ENABLE_DEFLATE=0 -DZIP_HAVE_SYMLINK=0 -D_FILE_OFFSET_BITS=64 -D_XOPEN_SOURCE=700 -I/tmp/gp32-round4/include -I/tmp/gp32-round4/src -O3 -DNDEBUG -std=c23 -Wall -Wextra -Wpedantic -o CMakeFiles/gp32emu.dir/src/save_atomic.c.o -c /tmp/gp32-round4/src/save_atomic.c",
+          "file": "/tmp/gp32-round4/src/save_atomic.c",
+          "output": "CMakeFiles/gp32emu.dir/src/save_atomic.c.o"
+        }
+      ],
+      "binaries": {
+        "external-writes": {
+          "path": "/tmp/gp32-round5-bench-after/clang-profile0/external-writes",
+          "sha256": "8432454c0ce78b60b56d94bbd99b165c9d54ba60f293157547ba1d303594ca37"
+        },
+        "hle-outputs": {
+          "path": "/tmp/gp32-round5-bench-after/clang-profile0/hle-outputs",
+          "sha256": "f7b64869cc133445970377afb94d9b7e4c2da7f5797018a1a8df8deab0ea7bc0"
+        }
+      }
+    },
+    {
+      "compiler": "clang",
+      "version": "Ubuntu clang version 18.1.3 (1ubuntu1)",
+      "profile": 1,
+      "commands": [
+        [
+          "/tmp/gp32-round4-tools/cmake/data/bin/cmake",
+          "-S",
+          "/tmp/gp32-round4",
+          "-B",
+          "/tmp/gp32-round5-bench-after/clang-profile1",
+          "-DCMAKE_C_COMPILER=/usr/bin/clang-18",
+          "-DCMAKE_BUILD_TYPE=Release",
+          "-DGP32EMU_REQUIRE_C23=ON",
+          "-DGP32EMU_ENABLE_IPO=OFF",
+          "-DGP32EMU_CPU_PROFILE=ON",
+          "-DGP32EMU_BUILD_TESTS=OFF",
+          "-DGP32EMU_BUILD_HEADLESS=OFF",
+          "-DGP32EMU_BUILD_LIBRETRO=OFF",
+          "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON"
+        ],
+        [
+          "/tmp/gp32-round4-tools/cmake/data/bin/cmake",
+          "--build",
+          "/tmp/gp32-round5-bench-after/clang-profile1",
+          "--target",
+          "gp32emu",
+          "-j",
+          "2"
+        ],
+        [
+          "/usr/bin/clang-18",
+          "-O3",
+          "-DNDEBUG",
+          "-std=c2x",
+          "-fno-lto",
+          "-D_XOPEN_SOURCE=700",
+          "-D_FILE_OFFSET_BITS=64",
+          "-DGP32EMU_ENABLE_THREADS=1",
+          "-DGP32EMU_CPU_PROFILE=1",
+          "-I",
+          "/tmp/gp32-round4/src",
+          "-I",
+          "/tmp/gp32-round4/include",
+          "-DARM_SOURCE=\"/tmp/gp32-round4/src/arm920t.c\"",
+          "/tmp/gp32-round4/scripts/bench_external_writes.c",
+          "-lm",
+          "-o",
+          "/tmp/gp32-round5-bench-after/clang-profile1/external-writes"
+        ],
+        [
+          "/usr/bin/clang-18",
+          "-O3",
+          "-DNDEBUG",
+          "-std=c2x",
+          "-fno-lto",
+          "-D_XOPEN_SOURCE=700",
+          "-D_FILE_OFFSET_BITS=64",
+          "-DGP32EMU_ENABLE_THREADS=1",
+          "-DGP32EMU_CPU_PROFILE=1",
+          "-I",
+          "/tmp/gp32-round4/src",
+          "-I",
+          "/tmp/gp32-round4/include",
+          "-DGP32_CORE_UNDER_TEST=\"/tmp/gp32-round4/src/gp32.c\"",
+          "/tmp/gp32-round4/scripts/bench_hle_outputs.c",
+          "/tmp/gp32-round5-bench-after/clang-profile1/libgp32emu.a",
+          "-lm",
+          "-pthread",
+          "-o",
+          "/tmp/gp32-round5-bench-after/clang-profile1/hle-outputs"
+        ]
+      ],
+      "log_sha256": "f26d954687e8e9ab5155bfc81c1f4b5817578b8c70b3af5b2a9eb11db9126a48",
+      "core_compile_commands": [
+        {
+          "directory": "/tmp/gp32-round5-bench-after/clang-profile1",
+          "command": "/usr/bin/clang-18 -DGP32EMU_CPU_PROFILE=1 -DGP32EMU_ENABLE_THREADS=1 -DZIP_ENABLE_DEFLATE=0 -DZIP_HAVE_SYMLINK=0 -D_FILE_OFFSET_BITS=64 -D_XOPEN_SOURCE=700 -I/tmp/gp32-round4/include -I/tmp/gp32-round4/src -O3 -DNDEBUG -std=c23 -Wall -Wextra -Wpedantic -o CMakeFiles/gp32emu.dir/src/gp32.c.o -c /tmp/gp32-round4/src/gp32.c",
+          "file": "/tmp/gp32-round4/src/gp32.c",
+          "output": "CMakeFiles/gp32emu.dir/src/gp32.c.o"
+        },
+        {
+          "directory": "/tmp/gp32-round5-bench-after/clang-profile1",
+          "command": "/usr/bin/clang-18 -DGP32EMU_CPU_PROFILE=1 -DGP32EMU_ENABLE_THREADS=1 -DZIP_ENABLE_DEFLATE=0 -DZIP_HAVE_SYMLINK=0 -D_FILE_OFFSET_BITS=64 -D_XOPEN_SOURCE=700 -I/tmp/gp32-round4/include -I/tmp/gp32-round4/src -O3 -DNDEBUG -std=c23 -Wall -Wextra -Wpedantic -o CMakeFiles/gp32emu.dir/src/arm920t.c.o -c /tmp/gp32-round4/src/arm920t.c",
+          "file": "/tmp/gp32-round4/src/arm920t.c",
+          "output": "CMakeFiles/gp32emu.dir/src/arm920t.c.o"
+        },
+        {
+          "directory": "/tmp/gp32-round5-bench-after/clang-profile1",
+          "command": "/usr/bin/clang-18 -DGP32EMU_CPU_PROFILE=1 -DGP32EMU_ENABLE_THREADS=1 -DZIP_ENABLE_DEFLATE=0 -DZIP_HAVE_SYMLINK=0 -D_FILE_OFFSET_BITS=64 -D_XOPEN_SOURCE=700 -I/tmp/gp32-round4/include -I/tmp/gp32-round4/src -O3 -DNDEBUG -std=c23 -Wall -Wextra -Wpedantic -o CMakeFiles/gp32emu.dir/src/s3c2400.c.o -c /tmp/gp32-round4/src/s3c2400.c",
+          "file": "/tmp/gp32-round4/src/s3c2400.c",
+          "output": "CMakeFiles/gp32emu.dir/src/s3c2400.c.o"
+        },
+        {
+          "directory": "/tmp/gp32-round5-bench-after/clang-profile1",
+          "command": "/usr/bin/clang-18 -DGP32EMU_CPU_PROFILE=1 -DGP32EMU_ENABLE_THREADS=1 -DZIP_ENABLE_DEFLATE=0 -DZIP_HAVE_SYMLINK=0 -D_FILE_OFFSET_BITS=64 -D_XOPEN_SOURCE=700 -I/tmp/gp32-round4/include -I/tmp/gp32-round4/src -O3 -DNDEBUG -std=c23 -Wall -Wextra -Wpedantic -o CMakeFiles/gp32emu.dir/src/gp32_codec.c.o -c /tmp/gp32-round4/src/gp32_codec.c",
+          "file": "/tmp/gp32-round4/src/gp32_codec.c",
+          "output": "CMakeFiles/gp32emu.dir/src/gp32_codec.c.o"
+        },
+        {
+          "directory": "/tmp/gp32-round5-bench-after/clang-profile1",
+          "command": "/usr/bin/clang-18 -DGP32EMU_CPU_PROFILE=1 -DGP32EMU_ENABLE_THREADS=1 -DZIP_ENABLE_DEFLATE=0 -DZIP_HAVE_SYMLINK=0 -D_FILE_OFFSET_BITS=64 -D_XOPEN_SOURCE=700 -I/tmp/gp32-round4/include -I/tmp/gp32-round4/src -O3 -DNDEBUG -std=c23 -Wall -Wextra -Wpedantic -o CMakeFiles/gp32emu.dir/src/smartmedia.c.o -c /tmp/gp32-round4/src/smartmedia.c",
+          "file": "/tmp/gp32-round4/src/smartmedia.c",
+          "output": "CMakeFiles/gp32emu.dir/src/smartmedia.c.o"
+        },
+        {
+          "directory": "/tmp/gp32-round5-bench-after/clang-profile1",
+          "command": "/usr/bin/clang-18 -DGP32EMU_CPU_PROFILE=1 -DGP32EMU_ENABLE_THREADS=1 -DZIP_ENABLE_DEFLATE=0 -DZIP_HAVE_SYMLINK=0 -D_FILE_OFFSET_BITS=64 -D_XOPEN_SOURCE=700 -I/tmp/gp32-round4/include -I/tmp/gp32-round4/src -O3 -DNDEBUG -std=c23 -Wall -Wextra -Wpedantic -o CMakeFiles/gp32emu.dir/src/smc_direct.c.o -c /tmp/gp32-round4/src/smc_direct.c",
+          "file": "/tmp/gp32-round4/src/smc_direct.c",
+          "output": "CMakeFiles/gp32emu.dir/src/smc_direct.c.o"
+        },
+        {
+          "directory": "/tmp/gp32-round5-bench-after/clang-profile1",
+          "command": "/usr/bin/clang-18 -DGP32EMU_CPU_PROFILE=1 -DGP32EMU_ENABLE_THREADS=1 -DZIP_ENABLE_DEFLATE=0 -DZIP_HAVE_SYMLINK=0 -D_FILE_OFFSET_BITS=64 -D_XOPEN_SOURCE=700 -I/tmp/gp32-round4/include -I/tmp/gp32-round4/src -O3 -DNDEBUG -std=c23 -Wall -Wextra -Wpedantic -o CMakeFiles/gp32emu.dir/src/fxe.c.o -c /tmp/gp32-round4/src/fxe.c",
+          "file": "/tmp/gp32-round4/src/fxe.c",
+          "output": "CMakeFiles/gp32emu.dir/src/fxe.c.o"
+        },
+        {
+          "directory": "/tmp/gp32-round5-bench-after/clang-profile1",
+          "command": "/usr/bin/clang-18 -DGP32EMU_CPU_PROFILE=1 -DGP32EMU_ENABLE_THREADS=1 -DZIP_ENABLE_DEFLATE=0 -DZIP_HAVE_SYMLINK=0 -D_FILE_OFFSET_BITS=64 -D_XOPEN_SOURCE=700 -I/tmp/gp32-round4/include -I/tmp/gp32-round4/src -O3 -DNDEBUG -std=c23 -Wall -Wextra -Wpedantic -o CMakeFiles/gp32emu.dir/src/fpk.c.o -c /tmp/gp32-round4/src/fpk.c",
+          "file": "/tmp/gp32-round4/src/fpk.c",
+          "output": "CMakeFiles/gp32emu.dir/src/fpk.c.o"
+        },
+        {
+          "directory": "/tmp/gp32-round5-bench-after/clang-profile1",
+          "command": "/usr/bin/clang-18 -DGP32EMU_CPU_PROFILE=1 -DGP32EMU_ENABLE_THREADS=1 -DZIP_ENABLE_DEFLATE=0 -DZIP_HAVE_SYMLINK=0 -D_FILE_OFFSET_BITS=64 -D_XOPEN_SOURCE=700 -I/tmp/gp32-round4/include -I/tmp/gp32-round4/src -O3 -DNDEBUG -std=c23 -Wall -Wextra -Wpedantic -o CMakeFiles/gp32emu.dir/src/gp32_zip.c.o -c /tmp/gp32-round4/src/gp32_zip.c",
+          "file": "/tmp/gp32-round4/src/gp32_zip.c",
+          "output": "CMakeFiles/gp32emu.dir/src/gp32_zip.c.o"
+        },
+        {
+          "directory": "/tmp/gp32-round5-bench-after/clang-profile1",
+          "command": "/usr/bin/clang-18 -DGP32EMU_CPU_PROFILE=1 -DGP32EMU_ENABLE_THREADS=1 -DZIP_ENABLE_DEFLATE=0 -DZIP_HAVE_SYMLINK=0 -D_FILE_OFFSET_BITS=64 -D_XOPEN_SOURCE=700 -I/tmp/gp32-round4/include -I/tmp/gp32-round4/src -O3 -DNDEBUG -std=c23 -Wall -Wextra -Wpedantic -w -o CMakeFiles/gp32emu.dir/src/third_party/zip/zip.c.o -c /tmp/gp32-round4/src/third_party/zip/zip.c",
+          "file": "/tmp/gp32-round4/src/third_party/zip/zip.c",
+          "output": "CMakeFiles/gp32emu.dir/src/third_party/zip/zip.c.o"
+        },
+        {
+          "directory": "/tmp/gp32-round5-bench-after/clang-profile1",
+          "command": "/usr/bin/clang-18 -DGP32EMU_CPU_PROFILE=1 -DGP32EMU_ENABLE_THREADS=1 -DZIP_ENABLE_DEFLATE=0 -DZIP_HAVE_SYMLINK=0 -D_FILE_OFFSET_BITS=64 -D_XOPEN_SOURCE=700 -I/tmp/gp32-round4/include -I/tmp/gp32-round4/src -O3 -DNDEBUG -std=c23 -Wall -Wextra -Wpedantic -o CMakeFiles/gp32emu.dir/src/input_script.c.o -c /tmp/gp32-round4/src/input_script.c",
+          "file": "/tmp/gp32-round4/src/input_script.c",
+          "output": "CMakeFiles/gp32emu.dir/src/input_script.c.o"
+        },
+        {
+          "directory": "/tmp/gp32-round5-bench-after/clang-profile1",
+          "command": "/usr/bin/clang-18 -DGP32EMU_CPU_PROFILE=1 -DGP32EMU_ENABLE_THREADS=1 -DZIP_ENABLE_DEFLATE=0 -DZIP_HAVE_SYMLINK=0 -D_FILE_OFFSET_BITS=64 -D_XOPEN_SOURCE=700 -I/tmp/gp32-round4/include -I/tmp/gp32-round4/src -O3 -DNDEBUG -std=c23 -Wall -Wextra -Wpedantic -o CMakeFiles/gp32emu.dir/src/platform/platform.c.o -c /tmp/gp32-round4/src/platform/platform.c",
+          "file": "/tmp/gp32-round4/src/platform/platform.c",
+          "output": "CMakeFiles/gp32emu.dir/src/platform/platform.c.o"
+        },
+        {
+          "directory": "/tmp/gp32-round5-bench-after/clang-profile1",
+          "command": "/usr/bin/clang-18 -DGP32EMU_CPU_PROFILE=1 -DGP32EMU_ENABLE_THREADS=1 -DZIP_ENABLE_DEFLATE=0 -DZIP_HAVE_SYMLINK=0 -D_FILE_OFFSET_BITS=64 -D_XOPEN_SOURCE=700 -I/tmp/gp32-round4/include -I/tmp/gp32-round4/src -O3 -DNDEBUG -std=c23 -Wall -Wextra -Wpedantic -o CMakeFiles/gp32emu.dir/src/audio/gp32_audio_resampler.c.o -c /tmp/gp32-round4/src/audio/gp32_audio_resampler.c",
+          "file": "/tmp/gp32-round4/src/audio/gp32_audio_resampler.c",
+          "output": "CMakeFiles/gp32emu.dir/src/audio/gp32_audio_resampler.c.o"
+        },
+        {
+          "directory": "/tmp/gp32-round5-bench-after/clang-profile1",
+          "command": "/usr/bin/clang-18 -DGP32EMU_CPU_PROFILE=1 -DGP32EMU_ENABLE_THREADS=1 -DZIP_ENABLE_DEFLATE=0 -DZIP_HAVE_SYMLINK=0 -D_FILE_OFFSET_BITS=64 -D_XOPEN_SOURCE=700 -I/tmp/gp32-round4/include -I/tmp/gp32-round4/src -O3 -DNDEBUG -std=c23 -Wall -Wextra -Wpedantic -o CMakeFiles/gp32emu.dir/src/media/gp32_media.c.o -c /tmp/gp32-round4/src/media/gp32_media.c",
+          "file": "/tmp/gp32-round4/src/media/gp32_media.c",
+          "output": "CMakeFiles/gp32emu.dir/src/media/gp32_media.c.o"
+        },
+        {
+          "directory": "/tmp/gp32-round5-bench-after/clang-profile1",
+          "command": "/usr/bin/clang-18 -DGP32EMU_CPU_PROFILE=1 -DGP32EMU_ENABLE_THREADS=1 -DZIP_ENABLE_DEFLATE=0 -DZIP_HAVE_SYMLINK=0 -D_FILE_OFFSET_BITS=64 -D_XOPEN_SOURCE=700 -I/tmp/gp32-round4/include -I/tmp/gp32-round4/src -O3 -DNDEBUG -std=c23 -Wall -Wextra -Wpedantic -o CMakeFiles/gp32emu.dir/src/media/gp32_video_effects.c.o -c /tmp/gp32-round4/src/media/gp32_video_effects.c",
+          "file": "/tmp/gp32-round4/src/media/gp32_video_effects.c",
+          "output": "CMakeFiles/gp32emu.dir/src/media/gp32_video_effects.c.o"
+        },
+        {
+          "directory": "/tmp/gp32-round5-bench-after/clang-profile1",
+          "command": "/usr/bin/clang-18 -DGP32EMU_CPU_PROFILE=1 -DGP32EMU_ENABLE_THREADS=1 -DZIP_ENABLE_DEFLATE=0 -DZIP_HAVE_SYMLINK=0 -D_FILE_OFFSET_BITS=64 -D_XOPEN_SOURCE=700 -I/tmp/gp32-round4/include -I/tmp/gp32-round4/src -O3 -DNDEBUG -std=c23 -Wall -Wextra -Wpedantic -o CMakeFiles/gp32emu.dir/src/save_atomic.c.o -c /tmp/gp32-round4/src/save_atomic.c",
+          "file": "/tmp/gp32-round4/src/save_atomic.c",
+          "output": "CMakeFiles/gp32emu.dir/src/save_atomic.c.o"
+        }
+      ],
+      "binaries": {
+        "external-writes": {
+          "path": "/tmp/gp32-round5-bench-after/clang-profile1/external-writes",
+          "sha256": "26d803396b32abf7a8d0b009a1170ac56b8d294a2d92533636e5971c7d8ba2fc"
+        },
+        "hle-outputs": {
+          "path": "/tmp/gp32-round5-bench-after/clang-profile1/hle-outputs",
+          "sha256": "43284220ef8a9b9ab194f601bb964e3ebebd566a5353af1fe98a9f01588feea6"
+        }
+      }
+    }
+  ]
+}

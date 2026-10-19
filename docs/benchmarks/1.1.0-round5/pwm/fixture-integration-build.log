@@ -1,0 +1,80 @@
+$ /tmp/gp32-round4-tools/cmake/data/bin/cmake --build /tmp/gp32-round5-build-pwm/gcc --parallel 2
+[  2%] Built target arm_write_permission_test
+[ 15%] Built target gp32emu
+[ 16%] Built target arm_read_window_test
+[ 18%] Built target arm_fetch_callback_test
+[ 20%] Built target arm_thumb_transfer_test
+[ 22%] Built target arm_thumb_alu_test
+[ 23%] Built target arm_thumb_pc_test
+[ 25%] Built target s3c2400_dma_test
+[ 27%] Built target s3c2400_priority_test
+[ 28%] Built target s3c2400_pwm_model_test
+[ 30%] Built target s3c2400_pwm_state_test
+[ 31%] Built target gp32_hle_memory_test
+[ 32%] Building C object CMakeFiles/gp32_state_speed_test.dir/tests/gp32_state_speed_test.c.o
+[ 34%] Built target arm_jit_recycle_test
+[ 35%] Built target arm_jit_policy_test
+[ 37%] Built target arm_alu_differential_test
+[ 39%] Built target gp32_headless
+[ 41%] Built target ios_bridge_test
+[ 42%] Built target libretro_audio_test
+[ 44%] Built target audio_resampler_test
+[ 46%] Built target libretro_persistence_test
+[ 48%] Built target libretro_input_test
+[ 49%] Built target libretro_runahead_test
+[ 50%] Built target input_script_test
+[ 52%] Built target arm_poll_test
+[ 53%] Built target arm_jit_test
+[ 54%] Built target arm_translation_test
+[ 55%] Built target arm_accelerator_test
+[ 56%] Built target arm_exception_test
+[ 57%] Built target arm_code_write_test
+[ 59%] Built target arm_cpu_code_write_test
+[ 61%] Built target s3c2400_timing_test
+[ 63%] Built target s3c2400_iis_irq_test
+[ 64%] Built target s3c2400_muted_dma_test
+[ 64%] Building C object CMakeFiles/s3c2400_irq_test.dir/tests/s3c2400_irq_test.c.o
+[ 65%] Linking C executable s3c2400_irq_test
+[ 65%] Built target s3c2400_irq_test
+[ 67%] Built target s3c2400_lcd_test
+[ 69%] Built target s3c2400_scanout_test
+[ 70%] Building C object CMakeFiles/s3c2400_pwm_test.dir/tests/s3c2400_pwm_test.c.o
+[ 70%] Linking C executable s3c2400_pwm_test
+[ 70%] Built target s3c2400_pwm_test
+[ 71%] Built target s3c2400_gpio_test
+[ 72%] Built target s3c2400_state_test
+[ 73%] Built target gp32_pcm_test
+[ 74%] Building C object CMakeFiles/gp32_timer_test.dir/tests/gp32_timer_test.c.o
+In file included from /tmp/gp32-round5-pwm/tests/gp32_timer_test.c:10:
+/tmp/gp32-round5-pwm/tests/translation_fixture.h:5:15: warning: ‘fixture_v14’ defined but not used [-Wunused-function]
+    5 | static size_t fixture_v14(uint8_t *data, size_t size) {
+      |               ^~~~~~~~~~~
+[ 75%] Linking C executable gp32_state_speed_test
+[ 75%] Built target gp32_state_speed_test
+[ 76%] Building C object CMakeFiles/gp32_callback_test.dir/tests/gp32_callback_test.c.o
+[ 76%] Linking C executable gp32_timer_test
+[ 76%] Built target gp32_timer_test
+[ 77%] Building C object CMakeFiles/gp32_wait_test.dir/tests/gp32_wait_test.c.o
+In file included from /tmp/gp32-round5-pwm/tests/gp32_wait_test.c:6:
+/tmp/gp32-round5-pwm/tests/translation_fixture.h:25:12: warning: ‘fixture_cpu_prefix’ defined but not used [-Wunused-function]
+   25 | static int fixture_cpu_prefix(arm920t_t *cpu,arm920t_state_image_t *out) {
+      |            ^~~~~~~~~~~~~~~~~~
+[ 78%] Linking C executable gp32_callback_test
+[ 78%] Built target gp32_callback_test
+[ 80%] Built target gp32_swi_1ff_test
+[ 82%] Built target gp32_file_test
+[ 83%] Built target gp32_codec_test
+[ 85%] Built target gp32_eeprom_test
+[ 86%] Built target gp32_shadow_test
+[ 87%] Built target gp32_game_fix_test
+[ 89%] Built target gp32_pinball_fix_test
+[ 90%] Built target gp32_fast_load_test
+[ 91%] Built target gp32_state_test
+[ 93%] Built target gp32_media_png_test
+[ 95%] Built target smartmedia_test
+[ 97%] Built target smartmedia_capacity_test
+[ 98%] Built target savestate_session_test
+[ 99%] Built target atomic_save_test
+[100%] Linking C executable gp32_wait_test
+[100%] Built target gp32_wait_test
+exit=0

@@ -4,6 +4,11 @@
 #include <stdint.h>
 #include <string.h>
 
+#if defined(__SSE2__) || defined(_M_X64) || (defined(_M_IX86_FP) && _M_IX86_FP >= 2)
+#include <emmintrin.h>
+#define GP32_AUDIO_SSE2 1
+#endif
+
 #define GP32_AUDIO_Q32_ONE 4294967296.0
 #define GP32_AUDIO_FADE_MAX_FRAMES 96u
 #define GP32_AUDIO_FADE_MIN_FRAMES 16u
@@ -221,6 +226,24 @@ static uint32_t transition_frames(uint32_t dst_rate_hz) {
     return fade;
 }
 
+#if defined(GP32_AUDIO_SSE2)
+/* Four stereo frames and four coefficients produce one wide L/R sum.
+ * Widen every product before adding: PMADDWD would overflow for two
+ * (-32768 * -32768) products, and the FIR's signed lobes need wide sums. */
+static inline __m128i poly_dot4_sse2(__m128i samples, __m128i coeff) {
+    coeff = _mm_unpacklo_epi16(coeff, coeff);
+    __m128i lo = _mm_mullo_epi16(coeff, samples);
+    __m128i hi = _mm_mulhi_epi16(coeff, samples);
+    __m128i p0 = _mm_unpacklo_epi16(lo, hi);
+    __m128i p1 = _mm_unpackhi_epi16(lo, hi);
+    __m128i sign0 = _mm_srai_epi32(p0, 31);
+    __m128i sign1 = _mm_srai_epi32(p1, 31);
+    return _mm_add_epi64(
+        _mm_add_epi64(_mm_unpacklo_epi32(p0, sign0), _mm_unpackhi_epi32(p0, sign0)),
+        _mm_add_epi64(_mm_unpacklo_epi32(p1, sign1), _mm_unpackhi_epi32(p1, sign1)));
+}
+#endif
+
 /* Band-limited value at the virtual source index n + frac, one filter delay
  * of GP32_AUDIO_POLY_HALF source frames behind the linearly interpolated one.
  * Virtual index 0 is prev; index k >= 1 is src[k - 1] when the block carries a
@@ -236,7 +259,26 @@ static void poly_gather(const gp32_audio_resampler_t *r, const int16_t *src,
     /* Each product fits int32_t, but the signed FIR lobes can sum above
      * INT32_MAX on full-scale PCM. Clip only after the wide accumulation. */
     int64_t sum_l = 0, sum_r = 0;
-    for (size_t i = 0; i < src_taps; ++i) {
+    size_t i = 0;
+#if defined(GP32_AUDIO_SSE2)
+    if (src_taps >= 4u) {
+        __m128i sums = _mm_setzero_si128();
+        for (; i + 3u < src_taps; i += 4u) {
+            /* Load exactly four real frames, oldest first, then reverse
+             * frames while keeping the left/right pair within each frame. */
+            const int16_t *p = src + ((n - i - 3u) - lead) * 2u;
+            __m128i samples = _mm_shuffle_epi32(_mm_loadu_si128((const __m128i *)p),
+                                               _MM_SHUFFLE(0, 1, 2, 3));
+            sums = _mm_add_epi64(sums, poly_dot4_sse2(samples,
+                                      _mm_loadl_epi64((const __m128i *)(c + i))));
+        }
+        int64_t result[2];
+        _mm_storeu_si128((__m128i *)result, sums);
+        sum_l = result[0];
+        sum_r = result[1];
+    }
+#endif
+    for (; i < src_taps; ++i) {
         const int16_t *p = src + ((n - i) - lead) * 2u;
         sum_l += (int32_t)c[i] * (int32_t)p[0];
         sum_r += (int32_t)c[i] * (int32_t)p[1];
@@ -246,7 +288,28 @@ static void poly_gather(const gp32_audio_resampler_t *r, const int16_t *src,
         int32_t p0r = have_prev ? (int32_t)r->prev_r : (int32_t)src[1];
         sum_l += (int32_t)c[n] * p0l;
         sum_r += (int32_t)c[n] * p0r;
-        for (size_t i = n + 1u; i < GP32_AUDIO_POLY_TAPS; ++i) {
+        i = n + 1u;
+#if defined(GP32_AUDIO_SSE2)
+        if (i + 3u < GP32_AUDIO_POLY_TAPS) {
+            __m128i sums = _mm_setzero_si128();
+            for (; i + 3u < GP32_AUDIO_POLY_TAPS; i += 4u) {
+                /* History stores channels separately. Interleave exactly
+                 * four carried frames, then use the same wide dot product. */
+                size_t h = GP32_AUDIO_POLY_HISTORY + n - i - 3u;
+                __m128i left = _mm_loadl_epi64((const __m128i *)(r->poly_hist_l + h));
+                __m128i right = _mm_loadl_epi64((const __m128i *)(r->poly_hist_r + h));
+                __m128i samples = _mm_shuffle_epi32(_mm_unpacklo_epi16(left, right),
+                                                   _MM_SHUFFLE(0, 1, 2, 3));
+                sums = _mm_add_epi64(sums, poly_dot4_sse2(samples,
+                                          _mm_loadl_epi64((const __m128i *)(c + i))));
+            }
+            int64_t result[2];
+            _mm_storeu_si128((__m128i *)result, sums);
+            sum_l += result[0];
+            sum_r += result[1];
+        }
+#endif
+        for (; i < GP32_AUDIO_POLY_TAPS; ++i) {
             size_t h = GP32_AUDIO_POLY_HISTORY + n - i;
             sum_l += (int32_t)c[i] * (int32_t)r->poly_hist_l[h];
             sum_r += (int32_t)c[i] * (int32_t)r->poly_hist_r[h];

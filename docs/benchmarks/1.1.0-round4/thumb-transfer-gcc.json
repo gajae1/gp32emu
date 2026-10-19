@@ -1,0 +1,841 @@
+{
+  "cpu": 0,
+  "instructions": 3000000,
+  "warmup_instructions": 30000,
+  "repetitions": 7,
+  "configuration": "GCC 13.3.0 Ubuntu 6ubuntu2~24.04.1 -O3 -DNDEBUG -std=c2x -DGP32EMU_CPU_PROFILE=0 -Iinclude -Isrc; baseline 7dd1290 source SHA256 3f2fff84a5de7e53ee5f02319f3f54485fcf0e9188de3a55e698d3d4d9b51324; candidate source SHA256 9b6c89ddd91e5261bc1a47cd3ae8b8d1d652c3ed70bcdc1dcc330ba15344a656; C harness SHA256 3637f421c1a43461fad1b92cd9a62695bc43d74f68bc5da7e87618ea203d4567",
+  "binaries": {
+    "before": "/tmp/gp32-round4-interpreter-transfer-bench-gcc-before",
+    "after": "/tmp/gp32-round4-interpreter-transfer-bench-gcc-after"
+  },
+  "results": [
+    {
+      "thumb": 1,
+      "mask": "01",
+      "samples": {
+        "before": [
+          {
+            "ns_per_insn": 8.4798,
+            "output": "thumb=1 list=0001 retired=3000000 ns_per_insn=8.4798 hash=9e8e94df9c200405 checked=1"
+          },
+          {
+            "ns_per_insn": 8.5524,
+            "output": "thumb=1 list=0001 retired=3000000 ns_per_insn=8.5524 hash=9e8e94df9c200405 checked=1"
+          },
+          {
+            "ns_per_insn": 8.5095,
+            "output": "thumb=1 list=0001 retired=3000000 ns_per_insn=8.5095 hash=9e8e94df9c200405 checked=1"
+          },
+          {
+            "ns_per_insn": 8.6064,
+            "output": "thumb=1 list=0001 retired=3000000 ns_per_insn=8.6064 hash=9e8e94df9c200405 checked=1"
+          },
+          {
+            "ns_per_insn": 8.5933,
+            "output": "thumb=1 list=0001 retired=3000000 ns_per_insn=8.5933 hash=9e8e94df9c200405 checked=1"
+          },
+          {
+            "ns_per_insn": 8.7175,
+            "output": "thumb=1 list=0001 retired=3000000 ns_per_insn=8.7175 hash=9e8e94df9c200405 checked=1"
+          },
+          {
+            "ns_per_insn": 8.6587,
+            "output": "thumb=1 list=0001 retired=3000000 ns_per_insn=8.6587 hash=9e8e94df9c200405 checked=1"
+          }
+        ],
+        "after": [
+          {
+            "ns_per_insn": 6.837,
+            "output": "thumb=1 list=0001 retired=3000000 ns_per_insn=6.8370 hash=9e8e94df9c200405 checked=1"
+          },
+          {
+            "ns_per_insn": 7.0192,
+            "output": "thumb=1 list=0001 retired=3000000 ns_per_insn=7.0192 hash=9e8e94df9c200405 checked=1"
+          },
+          {
+            "ns_per_insn": 6.6237,
+            "output": "thumb=1 list=0001 retired=3000000 ns_per_insn=6.6237 hash=9e8e94df9c200405 checked=1"
+          },
+          {
+            "ns_per_insn": 6.9213,
+            "output": "thumb=1 list=0001 retired=3000000 ns_per_insn=6.9213 hash=9e8e94df9c200405 checked=1"
+          },
+          {
+            "ns_per_insn": 6.593,
+            "output": "thumb=1 list=0001 retired=3000000 ns_per_insn=6.5930 hash=9e8e94df9c200405 checked=1"
+          },
+          {
+            "ns_per_insn": 6.9229,
+            "output": "thumb=1 list=0001 retired=3000000 ns_per_insn=6.9229 hash=9e8e94df9c200405 checked=1"
+          },
+          {
+            "ns_per_insn": 6.6321,
+            "output": "thumb=1 list=0001 retired=3000000 ns_per_insn=6.6321 hash=9e8e94df9c200405 checked=1"
+          }
+        ]
+      },
+      "before_median": 8.5933,
+      "after_median": 6.837,
+      "change_percent": -20.43801566336564
+    },
+    {
+      "thumb": 1,
+      "mask": "80",
+      "samples": {
+        "before": [
+          {
+            "ns_per_insn": 8.4999,
+            "output": "thumb=1 list=0080 retired=3000000 ns_per_insn=8.4999 hash=f602da116b4763bd checked=1"
+          },
+          {
+            "ns_per_insn": 8.2157,
+            "output": "thumb=1 list=0080 retired=3000000 ns_per_insn=8.2157 hash=f602da116b4763bd checked=1"
+          },
+          {
+            "ns_per_insn": 8.4877,
+            "output": "thumb=1 list=0080 retired=3000000 ns_per_insn=8.4877 hash=f602da116b4763bd checked=1"
+          },
+          {
+            "ns_per_insn": 8.256,
+            "output": "thumb=1 list=0080 retired=3000000 ns_per_insn=8.2560 hash=f602da116b4763bd checked=1"
+          },
+          {
+            "ns_per_insn": 8.4728,
+            "output": "thumb=1 list=0080 retired=3000000 ns_per_insn=8.4728 hash=f602da116b4763bd checked=1"
+          },
+          {
+            "ns_per_insn": 8.2758,
+            "output": "thumb=1 list=0080 retired=3000000 ns_per_insn=8.2758 hash=f602da116b4763bd checked=1"
+          },
+          {
+            "ns_per_insn": 8.2653,
+            "output": "thumb=1 list=0080 retired=3000000 ns_per_insn=8.2653 hash=f602da116b4763bd checked=1"
+          }
+        ],
+        "after": [
+          {
+            "ns_per_insn": 6.6411,
+            "output": "thumb=1 list=0080 retired=3000000 ns_per_insn=6.6411 hash=f602da116b4763bd checked=1"
+          },
+          {
+            "ns_per_insn": 6.9245,
+            "output": "thumb=1 list=0080 retired=3000000 ns_per_insn=6.9245 hash=f602da116b4763bd checked=1"
+          },
+          {
+            "ns_per_insn": 6.8439,
+            "output": "thumb=1 list=0080 retired=3000000 ns_per_insn=6.8439 hash=f602da116b4763bd checked=1"
+          },
+          {
+            "ns_per_insn": 7.1872,
+            "output": "thumb=1 list=0080 retired=3000000 ns_per_insn=7.1872 hash=f602da116b4763bd checked=1"
+          },
+          {
+            "ns_per_insn": 6.872,
+            "output": "thumb=1 list=0080 retired=3000000 ns_per_insn=6.8720 hash=f602da116b4763bd checked=1"
+          },
+          {
+            "ns_per_insn": 6.828,
+            "output": "thumb=1 list=0080 retired=3000000 ns_per_insn=6.8280 hash=f602da116b4763bd checked=1"
+          },
+          {
+            "ns_per_insn": 6.7757,
+            "output": "thumb=1 list=0080 retired=3000000 ns_per_insn=6.7757 hash=f602da116b4763bd checked=1"
+          }
+        ]
+      },
+      "before_median": 8.2758,
+      "after_median": 6.8439,
+      "change_percent": -17.302254766910764
+    },
+    {
+      "thumb": 1,
+      "mask": "81",
+      "samples": {
+        "before": [
+          {
+            "ns_per_insn": 9.2763,
+            "output": "thumb=1 list=0081 retired=3000000 ns_per_insn=9.2763 hash=29b48c51f41239d7 checked=1"
+          },
+          {
+            "ns_per_insn": 9.3734,
+            "output": "thumb=1 list=0081 retired=3000000 ns_per_insn=9.3734 hash=29b48c51f41239d7 checked=1"
+          },
+          {
+            "ns_per_insn": 9.4084,
+            "output": "thumb=1 list=0081 retired=3000000 ns_per_insn=9.4084 hash=29b48c51f41239d7 checked=1"
+          },
+          {
+            "ns_per_insn": 9.1846,
+            "output": "thumb=1 list=0081 retired=3000000 ns_per_insn=9.1846 hash=29b48c51f41239d7 checked=1"
+          },
+          {
+            "ns_per_insn": 9.2109,
+            "output": "thumb=1 list=0081 retired=3000000 ns_per_insn=9.2109 hash=29b48c51f41239d7 checked=1"
+          },
+          {
+            "ns_per_insn": 9.1671,
+            "output": "thumb=1 list=0081 retired=3000000 ns_per_insn=9.1671 hash=29b48c51f41239d7 checked=1"
+          },
+          {
+            "ns_per_insn": 9.1314,
+            "output": "thumb=1 list=0081 retired=3000000 ns_per_insn=9.1314 hash=29b48c51f41239d7 checked=1"
+          }
+        ],
+        "after": [
+          {
+            "ns_per_insn": 7.7989,
+            "output": "thumb=1 list=0081 retired=3000000 ns_per_insn=7.7989 hash=29b48c51f41239d7 checked=1"
+          },
+          {
+            "ns_per_insn": 7.8974,
+            "output": "thumb=1 list=0081 retired=3000000 ns_per_insn=7.8974 hash=29b48c51f41239d7 checked=1"
+          },
+          {
+            "ns_per_insn": 7.8661,
+            "output": "thumb=1 list=0081 retired=3000000 ns_per_insn=7.8661 hash=29b48c51f41239d7 checked=1"
+          },
+          {
+            "ns_per_insn": 8.0371,
+            "output": "thumb=1 list=0081 retired=3000000 ns_per_insn=8.0371 hash=29b48c51f41239d7 checked=1"
+          },
+          {
+            "ns_per_insn": 7.7506,
+            "output": "thumb=1 list=0081 retired=3000000 ns_per_insn=7.7506 hash=29b48c51f41239d7 checked=1"
+          },
+          {
+            "ns_per_insn": 7.8735,
+            "output": "thumb=1 list=0081 retired=3000000 ns_per_insn=7.8735 hash=29b48c51f41239d7 checked=1"
+          },
+          {
+            "ns_per_insn": 7.9642,
+            "output": "thumb=1 list=0081 retired=3000000 ns_per_insn=7.9642 hash=29b48c51f41239d7 checked=1"
+          }
+        ]
+      },
+      "before_median": 9.2109,
+      "after_median": 7.8735,
+      "change_percent": -14.519753769989908
+    },
+    {
+      "thumb": 1,
+      "mask": "55",
+      "samples": {
+        "before": [
+          {
+            "ns_per_insn": 11.1604,
+            "output": "thumb=1 list=0055 retired=3000000 ns_per_insn=11.1604 hash=2ad23cabfa057825 checked=1"
+          },
+          {
+            "ns_per_insn": 11.1394,
+            "output": "thumb=1 list=0055 retired=3000000 ns_per_insn=11.1394 hash=2ad23cabfa057825 checked=1"
+          },
+          {
+            "ns_per_insn": 11.0291,
+            "output": "thumb=1 list=0055 retired=3000000 ns_per_insn=11.0291 hash=2ad23cabfa057825 checked=1"
+          },
+          {
+            "ns_per_insn": 11.4285,
+            "output": "thumb=1 list=0055 retired=3000000 ns_per_insn=11.4285 hash=2ad23cabfa057825 checked=1"
+          },
+          {
+            "ns_per_insn": 11.0469,
+            "output": "thumb=1 list=0055 retired=3000000 ns_per_insn=11.0469 hash=2ad23cabfa057825 checked=1"
+          },
+          {
+            "ns_per_insn": 11.0866,
+            "output": "thumb=1 list=0055 retired=3000000 ns_per_insn=11.0866 hash=2ad23cabfa057825 checked=1"
+          },
+          {
+            "ns_per_insn": 11.3569,
+            "output": "thumb=1 list=0055 retired=3000000 ns_per_insn=11.3569 hash=2ad23cabfa057825 checked=1"
+          }
+        ],
+        "after": [
+          {
+            "ns_per_insn": 9.8295,
+            "output": "thumb=1 list=0055 retired=3000000 ns_per_insn=9.8295 hash=2ad23cabfa057825 checked=1"
+          },
+          {
+            "ns_per_insn": 9.6998,
+            "output": "thumb=1 list=0055 retired=3000000 ns_per_insn=9.6998 hash=2ad23cabfa057825 checked=1"
+          },
+          {
+            "ns_per_insn": 9.6902,
+            "output": "thumb=1 list=0055 retired=3000000 ns_per_insn=9.6902 hash=2ad23cabfa057825 checked=1"
+          },
+          {
+            "ns_per_insn": 10.0442,
+            "output": "thumb=1 list=0055 retired=3000000 ns_per_insn=10.0442 hash=2ad23cabfa057825 checked=1"
+          },
+          {
+            "ns_per_insn": 10.1068,
+            "output": "thumb=1 list=0055 retired=3000000 ns_per_insn=10.1068 hash=2ad23cabfa057825 checked=1"
+          },
+          {
+            "ns_per_insn": 9.915,
+            "output": "thumb=1 list=0055 retired=3000000 ns_per_insn=9.9150 hash=2ad23cabfa057825 checked=1"
+          },
+          {
+            "ns_per_insn": 10.0881,
+            "output": "thumb=1 list=0055 retired=3000000 ns_per_insn=10.0881 hash=2ad23cabfa057825 checked=1"
+          }
+        ]
+      },
+      "before_median": 11.1394,
+      "after_median": 9.915,
+      "change_percent": -10.991615347325723
+    },
+    {
+      "thumb": 1,
+      "mask": "7f",
+      "samples": {
+        "before": [
+          {
+            "ns_per_insn": 14.1828,
+            "output": "thumb=1 list=007f retired=3000000 ns_per_insn=14.1828 hash=c50384a2c481c081 checked=1"
+          },
+          {
+            "ns_per_insn": 14.1623,
+            "output": "thumb=1 list=007f retired=3000000 ns_per_insn=14.1623 hash=c50384a2c481c081 checked=1"
+          },
+          {
+            "ns_per_insn": 14.5284,
+            "output": "thumb=1 list=007f retired=3000000 ns_per_insn=14.5284 hash=c50384a2c481c081 checked=1"
+          },
+          {
+            "ns_per_insn": 14.9152,
+            "output": "thumb=1 list=007f retired=3000000 ns_per_insn=14.9152 hash=c50384a2c481c081 checked=1"
+          },
+          {
+            "ns_per_insn": 14.353,
+            "output": "thumb=1 list=007f retired=3000000 ns_per_insn=14.3530 hash=c50384a2c481c081 checked=1"
+          },
+          {
+            "ns_per_insn": 14.2839,
+            "output": "thumb=1 list=007f retired=3000000 ns_per_insn=14.2839 hash=c50384a2c481c081 checked=1"
+          },
+          {
+            "ns_per_insn": 14.4638,
+            "output": "thumb=1 list=007f retired=3000000 ns_per_insn=14.4638 hash=c50384a2c481c081 checked=1"
+          }
+        ],
+        "after": [
+          {
+            "ns_per_insn": 12.9762,
+            "output": "thumb=1 list=007f retired=3000000 ns_per_insn=12.9762 hash=c50384a2c481c081 checked=1"
+          },
+          {
+            "ns_per_insn": 12.8099,
+            "output": "thumb=1 list=007f retired=3000000 ns_per_insn=12.8099 hash=c50384a2c481c081 checked=1"
+          },
+          {
+            "ns_per_insn": 13.3134,
+            "output": "thumb=1 list=007f retired=3000000 ns_per_insn=13.3134 hash=c50384a2c481c081 checked=1"
+          },
+          {
+            "ns_per_insn": 13.0564,
+            "output": "thumb=1 list=007f retired=3000000 ns_per_insn=13.0564 hash=c50384a2c481c081 checked=1"
+          },
+          {
+            "ns_per_insn": 12.7651,
+            "output": "thumb=1 list=007f retired=3000000 ns_per_insn=12.7651 hash=c50384a2c481c081 checked=1"
+          },
+          {
+            "ns_per_insn": 13.0328,
+            "output": "thumb=1 list=007f retired=3000000 ns_per_insn=13.0328 hash=c50384a2c481c081 checked=1"
+          },
+          {
+            "ns_per_insn": 12.8924,
+            "output": "thumb=1 list=007f retired=3000000 ns_per_insn=12.8924 hash=c50384a2c481c081 checked=1"
+          }
+        ]
+      },
+      "before_median": 14.353,
+      "after_median": 12.9762,
+      "change_percent": -9.59241970319793
+    },
+    {
+      "thumb": 1,
+      "mask": "ff",
+      "samples": {
+        "before": [
+          {
+            "ns_per_insn": 15.1731,
+            "output": "thumb=1 list=00ff retired=3000000 ns_per_insn=15.1731 hash=4b358b96d5990145 checked=1"
+          },
+          {
+            "ns_per_insn": 15.5154,
+            "output": "thumb=1 list=00ff retired=3000000 ns_per_insn=15.5154 hash=4b358b96d5990145 checked=1"
+          },
+          {
+            "ns_per_insn": 15.4295,
+            "output": "thumb=1 list=00ff retired=3000000 ns_per_insn=15.4295 hash=4b358b96d5990145 checked=1"
+          },
+          {
+            "ns_per_insn": 15.3874,
+            "output": "thumb=1 list=00ff retired=3000000 ns_per_insn=15.3874 hash=4b358b96d5990145 checked=1"
+          },
+          {
+            "ns_per_insn": 15.61,
+            "output": "thumb=1 list=00ff retired=3000000 ns_per_insn=15.6100 hash=4b358b96d5990145 checked=1"
+          },
+          {
+            "ns_per_insn": 15.4343,
+            "output": "thumb=1 list=00ff retired=3000000 ns_per_insn=15.4343 hash=4b358b96d5990145 checked=1"
+          },
+          {
+            "ns_per_insn": 15.3192,
+            "output": "thumb=1 list=00ff retired=3000000 ns_per_insn=15.3192 hash=4b358b96d5990145 checked=1"
+          }
+        ],
+        "after": [
+          {
+            "ns_per_insn": 13.8626,
+            "output": "thumb=1 list=00ff retired=3000000 ns_per_insn=13.8626 hash=4b358b96d5990145 checked=1"
+          },
+          {
+            "ns_per_insn": 13.749,
+            "output": "thumb=1 list=00ff retired=3000000 ns_per_insn=13.7490 hash=4b358b96d5990145 checked=1"
+          },
+          {
+            "ns_per_insn": 14.0816,
+            "output": "thumb=1 list=00ff retired=3000000 ns_per_insn=14.0816 hash=4b358b96d5990145 checked=1"
+          },
+          {
+            "ns_per_insn": 14.2216,
+            "output": "thumb=1 list=00ff retired=3000000 ns_per_insn=14.2216 hash=4b358b96d5990145 checked=1"
+          },
+          {
+            "ns_per_insn": 15.7374,
+            "output": "thumb=1 list=00ff retired=3000000 ns_per_insn=15.7374 hash=4b358b96d5990145 checked=1"
+          },
+          {
+            "ns_per_insn": 14.0567,
+            "output": "thumb=1 list=00ff retired=3000000 ns_per_insn=14.0567 hash=4b358b96d5990145 checked=1"
+          },
+          {
+            "ns_per_insn": 14.22,
+            "output": "thumb=1 list=00ff retired=3000000 ns_per_insn=14.2200 hash=4b358b96d5990145 checked=1"
+          }
+        ]
+      },
+      "before_median": 15.4295,
+      "after_median": 14.0816,
+      "change_percent": -8.735863119349307
+    },
+    {
+      "thumb": 0,
+      "mask": "01",
+      "samples": {
+        "before": [
+          {
+            "ns_per_insn": 18.349,
+            "output": "thumb=0 list=0001 retired=3000000 ns_per_insn=18.3490 hash=b2781fce386dd645 checked=1"
+          },
+          {
+            "ns_per_insn": 22.2488,
+            "output": "thumb=0 list=0001 retired=3000000 ns_per_insn=22.2488 hash=b2781fce386dd645 checked=1"
+          },
+          {
+            "ns_per_insn": 18.8165,
+            "output": "thumb=0 list=0001 retired=3000000 ns_per_insn=18.8165 hash=b2781fce386dd645 checked=1"
+          },
+          {
+            "ns_per_insn": 18.4137,
+            "output": "thumb=0 list=0001 retired=3000000 ns_per_insn=18.4137 hash=b2781fce386dd645 checked=1"
+          },
+          {
+            "ns_per_insn": 18.3916,
+            "output": "thumb=0 list=0001 retired=3000000 ns_per_insn=18.3916 hash=b2781fce386dd645 checked=1"
+          },
+          {
+            "ns_per_insn": 17.5762,
+            "output": "thumb=0 list=0001 retired=3000000 ns_per_insn=17.5762 hash=b2781fce386dd645 checked=1"
+          },
+          {
+            "ns_per_insn": 17.7077,
+            "output": "thumb=0 list=0001 retired=3000000 ns_per_insn=17.7077 hash=b2781fce386dd645 checked=1"
+          }
+        ],
+        "after": [
+          {
+            "ns_per_insn": 18.8553,
+            "output": "thumb=0 list=0001 retired=3000000 ns_per_insn=18.8553 hash=b2781fce386dd645 checked=1"
+          },
+          {
+            "ns_per_insn": 17.6209,
+            "output": "thumb=0 list=0001 retired=3000000 ns_per_insn=17.6209 hash=b2781fce386dd645 checked=1"
+          },
+          {
+            "ns_per_insn": 18.6345,
+            "output": "thumb=0 list=0001 retired=3000000 ns_per_insn=18.6345 hash=b2781fce386dd645 checked=1"
+          },
+          {
+            "ns_per_insn": 18.1337,
+            "output": "thumb=0 list=0001 retired=3000000 ns_per_insn=18.1337 hash=b2781fce386dd645 checked=1"
+          },
+          {
+            "ns_per_insn": 18.4037,
+            "output": "thumb=0 list=0001 retired=3000000 ns_per_insn=18.4037 hash=b2781fce386dd645 checked=1"
+          },
+          {
+            "ns_per_insn": 18.4579,
+            "output": "thumb=0 list=0001 retired=3000000 ns_per_insn=18.4579 hash=b2781fce386dd645 checked=1"
+          },
+          {
+            "ns_per_insn": 18.4648,
+            "output": "thumb=0 list=0001 retired=3000000 ns_per_insn=18.4648 hash=b2781fce386dd645 checked=1"
+          }
+        ]
+      },
+      "before_median": 18.3916,
+      "after_median": 18.4579,
+      "change_percent": 0.3604906587789891
+    },
+    {
+      "thumb": 0,
+      "mask": "80",
+      "samples": {
+        "before": [
+          {
+            "ns_per_insn": 18.0676,
+            "output": "thumb=0 list=0080 retired=3000000 ns_per_insn=18.0676 hash=5299be59ee7394f5 checked=1"
+          },
+          {
+            "ns_per_insn": 19.424,
+            "output": "thumb=0 list=0080 retired=3000000 ns_per_insn=19.4240 hash=5299be59ee7394f5 checked=1"
+          },
+          {
+            "ns_per_insn": 18.5808,
+            "output": "thumb=0 list=0080 retired=3000000 ns_per_insn=18.5808 hash=5299be59ee7394f5 checked=1"
+          },
+          {
+            "ns_per_insn": 19.3307,
+            "output": "thumb=0 list=0080 retired=3000000 ns_per_insn=19.3307 hash=5299be59ee7394f5 checked=1"
+          },
+          {
+            "ns_per_insn": 18.0973,
+            "output": "thumb=0 list=0080 retired=3000000 ns_per_insn=18.0973 hash=5299be59ee7394f5 checked=1"
+          },
+          {
+            "ns_per_insn": 18.0864,
+            "output": "thumb=0 list=0080 retired=3000000 ns_per_insn=18.0864 hash=5299be59ee7394f5 checked=1"
+          },
+          {
+            "ns_per_insn": 18.2673,
+            "output": "thumb=0 list=0080 retired=3000000 ns_per_insn=18.2673 hash=5299be59ee7394f5 checked=1"
+          }
+        ],
+        "after": [
+          {
+            "ns_per_insn": 18.2509,
+            "output": "thumb=0 list=0080 retired=3000000 ns_per_insn=18.2509 hash=5299be59ee7394f5 checked=1"
+          },
+          {
+            "ns_per_insn": 18.5736,
+            "output": "thumb=0 list=0080 retired=3000000 ns_per_insn=18.5736 hash=5299be59ee7394f5 checked=1"
+          },
+          {
+            "ns_per_insn": 18.5016,
+            "output": "thumb=0 list=0080 retired=3000000 ns_per_insn=18.5016 hash=5299be59ee7394f5 checked=1"
+          },
+          {
+            "ns_per_insn": 18.5901,
+            "output": "thumb=0 list=0080 retired=3000000 ns_per_insn=18.5901 hash=5299be59ee7394f5 checked=1"
+          },
+          {
+            "ns_per_insn": 18.6925,
+            "output": "thumb=0 list=0080 retired=3000000 ns_per_insn=18.6925 hash=5299be59ee7394f5 checked=1"
+          },
+          {
+            "ns_per_insn": 17.897,
+            "output": "thumb=0 list=0080 retired=3000000 ns_per_insn=17.8970 hash=5299be59ee7394f5 checked=1"
+          },
+          {
+            "ns_per_insn": 17.887,
+            "output": "thumb=0 list=0080 retired=3000000 ns_per_insn=17.8870 hash=5299be59ee7394f5 checked=1"
+          }
+        ]
+      },
+      "before_median": 18.2673,
+      "after_median": 18.5016,
+      "change_percent": 1.2826197631834013
+    },
+    {
+      "thumb": 0,
+      "mask": "81",
+      "samples": {
+        "before": [
+          {
+            "ns_per_insn": 20.3016,
+            "output": "thumb=0 list=0081 retired=3000000 ns_per_insn=20.3016 hash=04b777b1b2705567 checked=1"
+          },
+          {
+            "ns_per_insn": 19.055,
+            "output": "thumb=0 list=0081 retired=3000000 ns_per_insn=19.0550 hash=04b777b1b2705567 checked=1"
+          },
+          {
+            "ns_per_insn": 19.4684,
+            "output": "thumb=0 list=0081 retired=3000000 ns_per_insn=19.4684 hash=04b777b1b2705567 checked=1"
+          },
+          {
+            "ns_per_insn": 20.3453,
+            "output": "thumb=0 list=0081 retired=3000000 ns_per_insn=20.3453 hash=04b777b1b2705567 checked=1"
+          },
+          {
+            "ns_per_insn": 19.5098,
+            "output": "thumb=0 list=0081 retired=3000000 ns_per_insn=19.5098 hash=04b777b1b2705567 checked=1"
+          },
+          {
+            "ns_per_insn": 20.2754,
+            "output": "thumb=0 list=0081 retired=3000000 ns_per_insn=20.2754 hash=04b777b1b2705567 checked=1"
+          },
+          {
+            "ns_per_insn": 19.6222,
+            "output": "thumb=0 list=0081 retired=3000000 ns_per_insn=19.6222 hash=04b777b1b2705567 checked=1"
+          }
+        ],
+        "after": [
+          {
+            "ns_per_insn": 19.5808,
+            "output": "thumb=0 list=0081 retired=3000000 ns_per_insn=19.5808 hash=04b777b1b2705567 checked=1"
+          },
+          {
+            "ns_per_insn": 19.9379,
+            "output": "thumb=0 list=0081 retired=3000000 ns_per_insn=19.9379 hash=04b777b1b2705567 checked=1"
+          },
+          {
+            "ns_per_insn": 19.718,
+            "output": "thumb=0 list=0081 retired=3000000 ns_per_insn=19.7180 hash=04b777b1b2705567 checked=1"
+          },
+          {
+            "ns_per_insn": 19.6366,
+            "output": "thumb=0 list=0081 retired=3000000 ns_per_insn=19.6366 hash=04b777b1b2705567 checked=1"
+          },
+          {
+            "ns_per_insn": 19.6166,
+            "output": "thumb=0 list=0081 retired=3000000 ns_per_insn=19.6166 hash=04b777b1b2705567 checked=1"
+          },
+          {
+            "ns_per_insn": 19.946,
+            "output": "thumb=0 list=0081 retired=3000000 ns_per_insn=19.9460 hash=04b777b1b2705567 checked=1"
+          },
+          {
+            "ns_per_insn": 19.1304,
+            "output": "thumb=0 list=0081 retired=3000000 ns_per_insn=19.1304 hash=04b777b1b2705567 checked=1"
+          }
+        ]
+      },
+      "before_median": 19.6222,
+      "after_median": 19.6366,
+      "change_percent": 0.07338626657562575
+    },
+    {
+      "thumb": 0,
+      "mask": "55",
+      "samples": {
+        "before": [
+          {
+            "ns_per_insn": 21.5796,
+            "output": "thumb=0 list=0055 retired=3000000 ns_per_insn=21.5796 hash=6948f6affe5cd9e5 checked=1"
+          },
+          {
+            "ns_per_insn": 23.1745,
+            "output": "thumb=0 list=0055 retired=3000000 ns_per_insn=23.1745 hash=6948f6affe5cd9e5 checked=1"
+          },
+          {
+            "ns_per_insn": 22.8786,
+            "output": "thumb=0 list=0055 retired=3000000 ns_per_insn=22.8786 hash=6948f6affe5cd9e5 checked=1"
+          },
+          {
+            "ns_per_insn": 23.163,
+            "output": "thumb=0 list=0055 retired=3000000 ns_per_insn=23.1630 hash=6948f6affe5cd9e5 checked=1"
+          },
+          {
+            "ns_per_insn": 21.09,
+            "output": "thumb=0 list=0055 retired=3000000 ns_per_insn=21.0900 hash=6948f6affe5cd9e5 checked=1"
+          },
+          {
+            "ns_per_insn": 21.3199,
+            "output": "thumb=0 list=0055 retired=3000000 ns_per_insn=21.3199 hash=6948f6affe5cd9e5 checked=1"
+          },
+          {
+            "ns_per_insn": 21.2019,
+            "output": "thumb=0 list=0055 retired=3000000 ns_per_insn=21.2019 hash=6948f6affe5cd9e5 checked=1"
+          }
+        ],
+        "after": [
+          {
+            "ns_per_insn": 21.8438,
+            "output": "thumb=0 list=0055 retired=3000000 ns_per_insn=21.8438 hash=6948f6affe5cd9e5 checked=1"
+          },
+          {
+            "ns_per_insn": 27.8852,
+            "output": "thumb=0 list=0055 retired=3000000 ns_per_insn=27.8852 hash=6948f6affe5cd9e5 checked=1"
+          },
+          {
+            "ns_per_insn": 23.4156,
+            "output": "thumb=0 list=0055 retired=3000000 ns_per_insn=23.4156 hash=6948f6affe5cd9e5 checked=1"
+          },
+          {
+            "ns_per_insn": 20.7458,
+            "output": "thumb=0 list=0055 retired=3000000 ns_per_insn=20.7458 hash=6948f6affe5cd9e5 checked=1"
+          },
+          {
+            "ns_per_insn": 21.0684,
+            "output": "thumb=0 list=0055 retired=3000000 ns_per_insn=21.0684 hash=6948f6affe5cd9e5 checked=1"
+          },
+          {
+            "ns_per_insn": 21.3908,
+            "output": "thumb=0 list=0055 retired=3000000 ns_per_insn=21.3908 hash=6948f6affe5cd9e5 checked=1"
+          },
+          {
+            "ns_per_insn": 21.2975,
+            "output": "thumb=0 list=0055 retired=3000000 ns_per_insn=21.2975 hash=6948f6affe5cd9e5 checked=1"
+          }
+        ]
+      },
+      "before_median": 21.5796,
+      "after_median": 21.3908,
+      "change_percent": -0.8749003688668933
+    },
+    {
+      "thumb": 0,
+      "mask": "7f",
+      "samples": {
+        "before": [
+          {
+            "ns_per_insn": 24.9475,
+            "output": "thumb=0 list=007f retired=3000000 ns_per_insn=24.9475 hash=8120001b7dc0e291 checked=1"
+          },
+          {
+            "ns_per_insn": 27.1882,
+            "output": "thumb=0 list=007f retired=3000000 ns_per_insn=27.1882 hash=8120001b7dc0e291 checked=1"
+          },
+          {
+            "ns_per_insn": 24.8967,
+            "output": "thumb=0 list=007f retired=3000000 ns_per_insn=24.8967 hash=8120001b7dc0e291 checked=1"
+          },
+          {
+            "ns_per_insn": 25.0554,
+            "output": "thumb=0 list=007f retired=3000000 ns_per_insn=25.0554 hash=8120001b7dc0e291 checked=1"
+          },
+          {
+            "ns_per_insn": 24.9557,
+            "output": "thumb=0 list=007f retired=3000000 ns_per_insn=24.9557 hash=8120001b7dc0e291 checked=1"
+          },
+          {
+            "ns_per_insn": 24.3599,
+            "output": "thumb=0 list=007f retired=3000000 ns_per_insn=24.3599 hash=8120001b7dc0e291 checked=1"
+          },
+          {
+            "ns_per_insn": 25.9519,
+            "output": "thumb=0 list=007f retired=3000000 ns_per_insn=25.9519 hash=8120001b7dc0e291 checked=1"
+          }
+        ],
+        "after": [
+          {
+            "ns_per_insn": 24.712,
+            "output": "thumb=0 list=007f retired=3000000 ns_per_insn=24.7120 hash=8120001b7dc0e291 checked=1"
+          },
+          {
+            "ns_per_insn": 25.1819,
+            "output": "thumb=0 list=007f retired=3000000 ns_per_insn=25.1819 hash=8120001b7dc0e291 checked=1"
+          },
+          {
+            "ns_per_insn": 24.8328,
+            "output": "thumb=0 list=007f retired=3000000 ns_per_insn=24.8328 hash=8120001b7dc0e291 checked=1"
+          },
+          {
+            "ns_per_insn": 25.0607,
+            "output": "thumb=0 list=007f retired=3000000 ns_per_insn=25.0607 hash=8120001b7dc0e291 checked=1"
+          },
+          {
+            "ns_per_insn": 24.4835,
+            "output": "thumb=0 list=007f retired=3000000 ns_per_insn=24.4835 hash=8120001b7dc0e291 checked=1"
+          },
+          {
+            "ns_per_insn": 24.38,
+            "output": "thumb=0 list=007f retired=3000000 ns_per_insn=24.3800 hash=8120001b7dc0e291 checked=1"
+          },
+          {
+            "ns_per_insn": 24.3558,
+            "output": "thumb=0 list=007f retired=3000000 ns_per_insn=24.3558 hash=8120001b7dc0e291 checked=1"
+          }
+        ]
+      },
+      "before_median": 24.9557,
+      "after_median": 24.712,
+      "change_percent": -0.9765304118898754
+    },
+    {
+      "thumb": 0,
+      "mask": "ff",
+      "samples": {
+        "before": [
+          {
+            "ns_per_insn": 25.4608,
+            "output": "thumb=0 list=00ff retired=3000000 ns_per_insn=25.4608 hash=580c47c95a90c2c5 checked=1"
+          },
+          {
+            "ns_per_insn": 25.4449,
+            "output": "thumb=0 list=00ff retired=3000000 ns_per_insn=25.4449 hash=580c47c95a90c2c5 checked=1"
+          },
+          {
+            "ns_per_insn": 25.4152,
+            "output": "thumb=0 list=00ff retired=3000000 ns_per_insn=25.4152 hash=580c47c95a90c2c5 checked=1"
+          },
+          {
+            "ns_per_insn": 26.5937,
+            "output": "thumb=0 list=00ff retired=3000000 ns_per_insn=26.5937 hash=580c47c95a90c2c5 checked=1"
+          },
+          {
+            "ns_per_insn": 25.4504,
+            "output": "thumb=0 list=00ff retired=3000000 ns_per_insn=25.4504 hash=580c47c95a90c2c5 checked=1"
+          },
+          {
+            "ns_per_insn": 25.4686,
+            "output": "thumb=0 list=00ff retired=3000000 ns_per_insn=25.4686 hash=580c47c95a90c2c5 checked=1"
+          },
+          {
+            "ns_per_insn": 25.4717,
+            "output": "thumb=0 list=00ff retired=3000000 ns_per_insn=25.4717 hash=580c47c95a90c2c5 checked=1"
+          }
+        ],
+        "after": [
+          {
+            "ns_per_insn": 25.4542,
+            "output": "thumb=0 list=00ff retired=3000000 ns_per_insn=25.4542 hash=580c47c95a90c2c5 checked=1"
+          },
+          {
+            "ns_per_insn": 25.4233,
+            "output": "thumb=0 list=00ff retired=3000000 ns_per_insn=25.4233 hash=580c47c95a90c2c5 checked=1"
+          },
+          {
+            "ns_per_insn": 25.4511,
+            "output": "thumb=0 list=00ff retired=3000000 ns_per_insn=25.4511 hash=580c47c95a90c2c5 checked=1"
+          },
+          {
+            "ns_per_insn": 26.5975,
+            "output": "thumb=0 list=00ff retired=3000000 ns_per_insn=26.5975 hash=580c47c95a90c2c5 checked=1"
+          },
+          {
+            "ns_per_insn": 25.449,
+            "output": "thumb=0 list=00ff retired=3000000 ns_per_insn=25.4490 hash=580c47c95a90c2c5 checked=1"
+          },
+          {
+            "ns_per_insn": 25.4746,
+            "output": "thumb=0 list=00ff retired=3000000 ns_per_insn=25.4746 hash=580c47c95a90c2c5 checked=1"
+          },
+          {
+            "ns_per_insn": 25.4228,
+            "output": "thumb=0 list=00ff retired=3000000 ns_per_insn=25.4228 hash=580c47c95a90c2c5 checked=1"
+          }
+        ]
+      },
+      "before_median": 25.4608,
+      "after_median": 25.4511,
+      "change_percent": -0.038097781687918
+    }
+  ]
+}

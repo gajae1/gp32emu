@@ -1,0 +1,140 @@
+{
+  "emissions": 96,
+  "normalized_sites": 14,
+  "categories": {
+    "-Wunused-function": {
+      "emissions": 9,
+      "normalized_sites": 4
+    },
+    "-Wtype-limits": {
+      "emissions": 11,
+      "normalized_sites": 4
+    },
+    "-Wmaybe-uninitialized": {
+      "emissions": 74,
+      "normalized_sites": 4
+    },
+    "-Wformat-truncation": {
+      "emissions": 2,
+      "normalized_sites": 2
+    }
+  },
+  "all_warning_sites_predate_round4": true,
+  "warnings": [
+    {
+      "file": "src/arm920t.c",
+      "line": 837,
+      "message": "\u2018itlb_store\u2019 defined but not used [-Wunused-function]",
+      "occurrences": 1,
+      "origin_commit": "6c7fed8eaf0ce0236db9a21a3f305f094a314904",
+      "origin_is_ancestor_of_round4_baseline": true
+    },
+    {
+      "file": "src/arm920t.c",
+      "line": 3498,
+      "message": "comparison is always false due to limited range of data type [-Wtype-limits]",
+      "occurrences": 4,
+      "origin_commit": "959e6df02300f4f542fb732facb99b10d2a1950f",
+      "origin_is_ancestor_of_round4_baseline": true
+    },
+    {
+      "file": "src/arm920t.c",
+      "line": 3811,
+      "message": "\u2018x64_fetch_guard\u2019 defined but not used [-Wunused-function]",
+      "occurrences": 4,
+      "origin_commit": "6c7fed8eaf0ce0236db9a21a3f305f094a314904",
+      "origin_is_ancestor_of_round4_baseline": true
+    },
+    {
+      "file": "src/s3c2400.c",
+      "line": 892,
+      "message": "comparison is always false due to limited range of data type [-Wtype-limits]",
+      "occurrences": 3,
+      "origin_commit": "6c2e3a5dedf77f076fb4983752a9632d716373fc",
+      "origin_is_ancestor_of_round4_baseline": true
+    },
+    {
+      "file": "src/s3c2400.c",
+      "line": 2847,
+      "message": "comparison is always false due to limited range of data type [-Wtype-limits]",
+      "occurrences": 3,
+      "origin_commit": "6c2e3a5dedf77f076fb4983752a9632d716373fc",
+      "origin_is_ancestor_of_round4_baseline": true
+    },
+    {
+      "file": "tests/arm_jit_test.c",
+      "line": 3161,
+      "message": "\u2018c.spsr_fiq\u2019 may be used uninitialized [-Wmaybe-uninitialized]",
+      "occurrences": 16,
+      "origin_commit": "373526a9614ebaaa610922a4d1e2b80330428a39",
+      "origin_is_ancestor_of_round4_baseline": true
+    },
+    {
+      "file": "tests/arm_jit_test.c",
+      "line": 3162,
+      "message": "\u2018c.spsr_irq\u2019 may be used uninitialized [-Wmaybe-uninitialized]",
+      "occurrences": 15,
+      "origin_commit": "373526a9614ebaaa610922a4d1e2b80330428a39",
+      "origin_is_ancestor_of_round4_baseline": true
+    },
+    {
+      "file": "tests/arm_jit_test.c",
+      "line": 3163,
+      "message": "\u2018c.spsr_svc\u2019 may be used uninitialized [-Wmaybe-uninitialized]",
+      "occurrences": 28,
+      "origin_commit": "373526a9614ebaaa610922a4d1e2b80330428a39",
+      "origin_is_ancestor_of_round4_baseline": true
+    },
+    {
+      "file": "tests/arm_jit_test.c",
+      "line": 3164,
+      "message": "\u2018c.spsr_abt\u2019 may be used uninitialized [-Wmaybe-uninitialized]",
+      "occurrences": 15,
+      "origin_commit": "373526a9614ebaaa610922a4d1e2b80330428a39",
+      "origin_is_ancestor_of_round4_baseline": true
+    },
+    {
+      "file": "tests/atomic_save_test.c",
+      "line": 124,
+      "message": "\u2018.tmp\u2019 directive output may be truncated writing 4 bytes into a region of size between 1 and 4096 [-Wformat-truncation=]",
+      "occurrences": 1,
+      "origin_commit": "639a65e6640575309e3ce49e8a844219d8a3bd80",
+      "origin_is_ancestor_of_round4_baseline": true
+    },
+    {
+      "file": "tests/atomic_save_test.c",
+      "line": 170,
+      "message": "\u2018.tmp\u2019 directive output may be truncated writing 4 bytes into a region of size between 1 and 4096 [-Wformat-truncation=]",
+      "occurrences": 1,
+      "origin_commit": "639a65e6640575309e3ce49e8a844219d8a3bd80",
+      "origin_is_ancestor_of_round4_baseline": true
+    },
+    {
+      "file": "tests/libretro_runahead_test.c",
+      "line": 275,
+      "message": "comparison of unsigned expression in \u2018>= 0\u2019 is always true [-Wtype-limits]",
+      "occurrences": 1,
+      "origin_commit": "c2691534736513f4f3752d38c83a275fa86e24bd",
+      "origin_is_ancestor_of_round4_baseline": true
+    },
+    {
+      "file": "tests/translation_fixture.h",
+      "line": 4,
+      "message": "\u2018fixture_v14\u2019 defined but not used [-Wunused-function]",
+      "occurrences": 1,
+      "origin_commit": "6c7fed8eaf0ce0236db9a21a3f305f094a314904",
+      "origin_is_ancestor_of_round4_baseline": true
+    },
+    {
+      "file": "tests/translation_fixture.h",
+      "line": 15,
+      "message": "\u2018fixture_cpu_prefix\u2019 defined but not used [-Wunused-function]",
+      "occurrences": 3,
+      "origin_commit": "6c7fed8eaf0ce0236db9a21a3f305f094a314904",
+      "origin_is_ancestor_of_round4_baseline": true
+    }
+  ],
+  "unparsed_warning_lines": 0,
+  "build_log_scope": "fresh full build",
+  "compile_steps_in_captured_log": 72
+}

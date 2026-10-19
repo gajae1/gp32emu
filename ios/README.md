@@ -1,11 +1,15 @@
 # GP32emu for iPhone and iPad
 
-The iOS app is part of the **unreleased 1.1.0 development version**. It runs on
+The experimental iOS app is included in **1.1.0**. It runs on
 ARM64 devices with iOS/iPadOS 15 or later. Supply your own GP32 BIOS and games.
 
-The development package is `gp32emu-1.1.0-ios-unsigned.ipa`. It includes the
+The package is `gp32emu-1.1.0-ios-unsigned.ipa`. It includes the
 interpreter and an experimental AArch64 JIT. Games start with the interpreter;
 installing the IPA does not automatically enable JIT.
+
+The final ten-slot and v17 state flow was checked in Simulator. Physical iPhone
+revalidation of this final build remains outstanding; earlier device checks do
+not establish compatibility with every game or iOS configuration.
 
 ## Install and update
 
@@ -44,7 +48,7 @@ bytes again reuses the existing identity. Original files remain unchanged.
 | Data | App storage |
 | --- | --- |
 | BIOS and games | `Documents/GP32emu/BIOS` and `Documents/GP32emu/Games` |
-| Save states | `Documents/GP32emu/States` |
+| Save states (10 slots per game) | `Documents/GP32emu/States` |
 | In-game card progress | `Library/Application Support/GP32emu/Cards` |
 
 The Documents folders are available through the Files app. In-game card progress
@@ -52,6 +56,17 @@ is separate from save states and is kept in the app's private Library directory.
 A damaged, mismatched or unreadable card save stops loading to protect progress.
 If saving fails while changing games, the current game stays loaded and paused.
 Resolve the storage error and retry; closing the app can discard unsaved progress.
+
+## Save states
+
+Each game has ten save-state slots. Save State and Load State show whether each
+slot is empty or occupied; saving replaces the chosen slot. An existing single
+state from an earlier iOS build remains available as slot 1.
+
+New states use the common v17 format. This build imports existing v2-v12 and
+v14-v16 states. Older core builds cannot read v17 states, so keep a copy of
+state files you may need with an older build. In-game card progress uses the
+same `.sav` data as before; changing state slots does not convert card saves.
 
 ## Controls
 

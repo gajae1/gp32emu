@@ -1,0 +1,113 @@
+Test project /tmp/gp32-round4-build-aarch64
+      Start  8: arm_poll
+      Start 15: arm_exception
+ 1/54 Test #15: arm_exception ....................   Passed    1.79 sec
+      Start  9: arm_jit
+ 2/54 Test  #8: arm_poll .........................   Passed   13.17 sec
+      Start 54: arm_alu_differential
+ 3/54 Test #54: arm_alu_differential .............   Passed   34.00 sec
+      Start 36: gp32_wait
+ 4/54 Test  #9: arm_jit ..........................   Passed   48.63 sec
+      Start 18: arm_thumb_pc
+ 5/54 Test #36: gp32_wait ........................   Passed    6.44 sec
+      Start 17: arm_thumb_alu
+ 6/54 Test #18: arm_thumb_pc .....................   Passed    5.29 sec
+      Start  3: audio_resampler
+ 7/54 Test #17: arm_thumb_alu ....................   Passed    4.44 sec
+      Start 33: gp32_timer
+ 8/54 Test  #3: audio_resampler ..................   Passed    2.38 sec
+      Start 34: gp32_callback
+ 9/54 Test #34: gp32_callback ....................   Passed    1.90 sec
+      Start  2: libretro_audio
+10/54 Test #33: gp32_timer .......................   Passed    2.07 sec
+      Start 49: smartmedia_capacity
+11/54 Test #49: smartmedia_capacity ..............   Passed    1.32 sec
+      Start 20: arm_cpu_code_write
+12/54 Test  #2: libretro_audio ...................   Passed    1.83 sec
+      Start 52: arm_jit_recycle
+13/54 Test #52: arm_jit_recycle ..................   Passed    0.69 sec
+      Start 38: gp32_hle_memory
+14/54 Test #20: arm_cpu_code_write ...............   Passed    1.12 sec
+      Start 53: arm_jit_policy
+15/54 Test #38: gp32_hle_memory ..................   Passed    0.61 sec
+      Start 14: arm_accelerator
+16/54 Test #53: arm_jit_policy ...................   Passed    0.61 sec
+      Start 35: gp32_swi_1ff
+17/54 Test #14: arm_accelerator ..................   Passed    0.55 sec
+      Start 45: gp32_state
+18/54 Test #35: gp32_swi_1ff .....................   Passed    0.56 sec
+      Start 46: gp32_state_speed
+19/54 Test #45: gp32_state .......................   Passed    0.58 sec
+      Start 10: arm_write_permission
+20/54 Test #46: gp32_state_speed .................   Passed    0.55 sec
+      Start 11: arm_read_window
+21/54 Test #11: arm_read_window ..................   Passed    0.30 sec
+      Start 12: arm_fetch_callback
+22/54 Test #10: arm_write_permission .............   Passed    0.42 sec
+      Start  6: libretro_runahead
+23/54 Test #12: arm_fetch_callback ...............   Passed    0.27 sec
+      Start 48: smartmedia
+24/54 Test  #6: libretro_runahead ................   Passed    0.27 sec
+      Start 27: s3c2400_lcd
+25/54 Test #48: smartmedia .......................   Passed    0.25 sec
+      Start 50: savestate_session
+26/54 Test #27: s3c2400_lcd ......................   Passed    0.28 sec
+      Start 32: gp32_pcm
+27/54 Test #50: savestate_session ................   Passed    0.19 sec
+      Start  4: libretro_persistence
+28/54 Test #32: gp32_pcm .........................   Passed    0.22 sec
+      Start 21: s3c2400_timing
+29/54 Test  #4: libretro_persistence .............   Passed    0.26 sec
+      Start 44: gp32_fast_load
+30/54 Test #21: s3c2400_timing ...................   Passed    0.17 sec
+      Start 23: s3c2400_dma
+31/54 Test #23: s3c2400_dma ......................   Passed    0.15 sec
+      Start 43: gp32_pinball_fix
+32/54 Test #44: gp32_fast_load ...................   Passed    0.24 sec
+      Start 29: s3c2400_pwm
+33/54 Test #43: gp32_pinball_fix .................   Passed    0.15 sec
+      Start  1: ios_bridge
+34/54 Test #29: s3c2400_pwm ......................   Passed    0.16 sec
+      Start 47: gp32_media_png
+35/54 Test  #1: ios_bridge .......................   Passed    0.14 sec
+      Start 19: arm_code_write
+36/54 Test #47: gp32_media_png ...................   Passed    0.12 sec
+      Start 22: s3c2400_iis_irq
+37/54 Test #19: arm_code_write ...................   Passed    0.11 sec
+      Start  5: libretro_input
+38/54 Test #22: s3c2400_iis_irq ..................   Passed    0.12 sec
+      Start 42: gp32_game_fix
+39/54 Test  #5: libretro_input ...................   Passed    0.11 sec
+      Start 40: gp32_eeprom
+40/54 Test #42: gp32_game_fix ....................   Passed    0.11 sec
+      Start 37: gp32_file
+41/54 Test #40: gp32_eeprom ......................   Passed    0.10 sec
+      Start 51: atomic_save
+42/54 Test #37: gp32_file ........................   Passed    0.09 sec
+      Start 39: gp32_codec
+43/54 Test #51: atomic_save ......................   Passed    0.07 sec
+      Start 16: arm_thumb_transfer
+44/54 Test #39: gp32_codec .......................   Passed    0.07 sec
+      Start 13: arm_translation
+45/54 Test #16: arm_thumb_transfer ...............   Passed    0.06 sec
+      Start 25: s3c2400_irq
+46/54 Test #13: arm_translation ..................   Passed    0.07 sec
+      Start 31: s3c2400_state
+47/54 Test #25: s3c2400_irq ......................   Passed    0.06 sec
+      Start 30: s3c2400_gpio
+48/54 Test #31: s3c2400_state ....................   Passed    0.05 sec
+      Start 28: s3c2400_scanout
+49/54 Test #30: s3c2400_gpio .....................   Passed    0.05 sec
+      Start 41: gp32_shadow
+50/54 Test #41: gp32_shadow ......................   Passed    0.03 sec
+      Start 26: s3c2400_priority
+51/54 Test #28: s3c2400_scanout ..................   Passed    0.06 sec
+      Start 24: s3c2400_muted_dma
+52/54 Test #26: s3c2400_priority .................   Passed    0.03 sec
+      Start  7: input_script
+53/54 Test #24: s3c2400_muted_dma ................   Passed    0.03 sec
+54/54 Test  #7: input_script .....................   Passed    0.02 sec
+
+100% tests passed out of 54
+
+Total Test time (real) =  66.69 sec

@@ -1,0 +1,269 @@
+$ /tmp/gp32-round4-tools/cmake/data/bin/ctest --test-dir /tmp/gp32-round5-build-pwm/gcc --output-on-failure
+Test project /tmp/gp32-round5-build-pwm/gcc
+      Start  1: ios_bridge
+ 1/56 Test  #1: ios_bridge .......................   Passed    0.07 sec
+      Start  2: libretro_audio
+ 2/56 Test  #2: libretro_audio ...................   Passed    0.17 sec
+      Start  3: audio_resampler
+ 3/56 Test  #3: audio_resampler ..................   Passed    0.29 sec
+      Start  4: libretro_persistence
+ 4/56 Test  #4: libretro_persistence .............   Passed    0.11 sec
+      Start  5: libretro_input
+ 5/56 Test  #5: libretro_input ...................   Passed    0.06 sec
+      Start  6: libretro_runahead
+ 6/56 Test  #6: libretro_runahead ................   Passed    0.11 sec
+      Start  7: input_script
+ 7/56 Test  #7: input_script .....................   Passed    0.00 sec
+      Start  8: arm_poll
+ 8/56 Test  #8: arm_poll .........................   Passed    0.68 sec
+      Start  9: arm_jit
+ 9/56 Test  #9: arm_jit ..........................   Passed    5.23 sec
+      Start 10: arm_write_permission
+10/56 Test #10: arm_write_permission .............   Passed    0.09 sec
+      Start 11: arm_read_window
+11/56 Test #11: arm_read_window ..................   Passed    0.05 sec
+      Start 12: arm_fetch_callback
+12/56 Test #12: arm_fetch_callback ...............   Passed    0.22 sec
+      Start 13: arm_translation
+13/56 Test #13: arm_translation ..................   Passed    0.04 sec
+      Start 14: arm_accelerator
+14/56 Test #14: arm_accelerator ..................   Passed    0.02 sec
+      Start 15: arm_exception
+15/56 Test #15: arm_exception ....................   Passed    0.98 sec
+      Start 16: arm_thumb_transfer
+16/56 Test #16: arm_thumb_transfer ...............   Passed    0.00 sec
+      Start 17: arm_thumb_alu
+17/56 Test #17: arm_thumb_alu ....................   Passed    0.34 sec
+      Start 18: arm_thumb_pc
+18/56 Test #18: arm_thumb_pc .....................   Passed    0.44 sec
+      Start 19: arm_code_write
+19/56 Test #19: arm_code_write ...................   Passed    0.06 sec
+      Start 20: arm_cpu_code_write
+20/56 Test #20: arm_cpu_code_write ...............   Passed    0.23 sec
+      Start 21: s3c2400_timing
+21/56 Test #21: s3c2400_timing ...................   Passed    0.04 sec
+      Start 22: s3c2400_iis_irq
+22/56 Test #22: s3c2400_iis_irq ..................   Passed    0.05 sec
+      Start 23: s3c2400_dma
+23/56 Test #23: s3c2400_dma ......................   Passed    0.02 sec
+      Start 24: s3c2400_muted_dma
+24/56 Test #24: s3c2400_muted_dma ................   Passed    0.02 sec
+      Start 25: s3c2400_irq
+25/56 Test #25: s3c2400_irq ......................***Failed    0.02 sec
+FAIL line 37: s3c2400_read32(s, 0x14400000u) == fiq
+FAIL line 43: enter(c, 0x80u) == 0x11u
+FAIL line 44: arm920t_get_pc(c) == 0x20u && arm920t_get_reg(c, 7u) == 0x11u
+FAIL line 48: enter(c, 0u) == 0x12u
+FAIL line 49: arm920t_get_pc(c) == 0x1cu && arm920t_get_reg(c, 6u) == 0x12u
+FAIL line 50: s3c2400_read32(s, 0x14400010u) == fiq
+FAIL line 62: s3c2400_read32(s, 0x14400010u) == irq
+FAIL line 63: s3c2400_read32(s, 0x14400014u) == 11u
+FAIL line 64: enter(c, 0u) == 0x11u
+FAIL line 65: enter(c, 0x40u) == 0x12u
+FAIL line 67: enter(c, 0u) == 0x12u
+FAIL line 70: enter(c, 0u) == 0x12u
+FAIL line 37: s3c2400_read32(s, 0x14400000u) == fiq
+FAIL line 43: enter(c, 0x80u) == 0x11u
+FAIL line 44: arm920t_get_pc(c) == 0x20u && arm920t_get_reg(c, 7u) == 0x11u
+FAIL line 48: enter(c, 0u) == 0x12u
+FAIL line 49: arm920t_get_pc(c) == 0x1cu && arm920t_get_reg(c, 6u) == 0x12u
+FAIL line 50: s3c2400_read32(s, 0x14400010u) == fiq
+FAIL line 62: s3c2400_read32(s, 0x14400010u) == irq
+FAIL line 63: s3c2400_read32(s, 0x14400014u) == 11u
+FAIL line 64: enter(c, 0u) == 0x11u
+FAIL line 65: enter(c, 0x40u) == 0x12u
+FAIL line 67: enter(c, 0u) == 0x12u
+FAIL line 70: enter(c, 0u) == 0x12u
+FAIL: first timer INTPND=00000000 INTOFFSET=0, expected 00000800/11
+FAIL line 119: s3c2400_read32(s, 0x14400000u) == (first | queued)
+FAIL: masked queued timer INTPND=00000000 INTOFFSET=0, expected 00000800/11
+FAIL: unmasked higher-priority timer INTPND=00000000 INTOFFSET=0, expected 00000800/11
+FAIL: read-only offset write INTPND=00000000 INTOFFSET=0, expected 00000800/11
+FAIL: restore selected and queued timers INTPND=00000000 INTOFFSET=0, expected 00000800/11
+FAIL: unrelated pending acknowledgement INTPND=00000000 INTOFFSET=0, expected 00000800/11
+FAIL: mask sources after selection INTPND=00000000 INTOFFSET=0, expected 00000800/11
+FAIL line 140: enter(c, 0u) == 0x12u
+FAIL: source acknowledgement before pending INTPND=00000000 INTOFFSET=0, expected 00000800/11
+FAIL: queued timer selected after acknowledgement INTPND=00000000 INTOFFSET=0, expected 00000400/10
+FAIL line 147: s3c2400_read32(s, 0x14400000u) == queued
+FAIL: pending acknowledgement before source INTPND=00000000 INTOFFSET=0, expected 00000400/10
+FAIL: selected IRQ outlives source acknowledgement INTPND=00000000 INTOFFSET=0, expected 00000400/10
+FAIL line 153: enter(c, 0u) == 0x12u
+FAIL: first timer INTPND=00000000 INTOFFSET=0, expected 00000800/11
+FAIL line 119: s3c2400_read32(s, 0x14400000u) == (first | queued)
+FAIL: masked queued timer INTPND=00000000 INTOFFSET=0, expected 00000800/11
+FAIL: unmasked higher-priority timer INTPND=00000000 INTOFFSET=0, expected 00000800/11
+FAIL: read-only offset write INTPND=00000000 INTOFFSET=0, expected 00000800/11
+FAIL: restore selected and queued timers INTPND=00000000 INTOFFSET=0, expected 00000800/11
+FAIL: unrelated pending acknowledgement INTPND=00000000 INTOFFSET=0, expected 00000800/11
+FAIL: mask sources after selection INTPND=00000000 INTOFFSET=0, expected 00000800/11
+FAIL line 140: enter(c, 0u) == 0x12u
+FAIL: source acknowledgement before pending INTPND=00000000 INTOFFSET=0, expected 00000800/11
+FAIL: queued timer selected after acknowledgement INTPND=00000000 INTOFFSET=0, expected 00000400/10
+FAIL line 147: s3c2400_read32(s, 0x14400000u) == queued
+FAIL: pending acknowledgement before source INTPND=00000000 INTOFFSET=0, expected 00000400/10
+FAIL: selected IRQ outlives source acknowledgement INTPND=00000000 INTOFFSET=0, expected 00000400/10
+FAIL line 153: enter(c, 0u) == 0x12u
+
+      Start 26: s3c2400_priority
+26/56 Test #26: s3c2400_priority .................   Passed    0.00 sec
+      Start 27: s3c2400_lcd
+27/56 Test #27: s3c2400_lcd ......................   Passed    0.04 sec
+      Start 28: s3c2400_scanout
+28/56 Test #28: s3c2400_scanout ..................   Passed    0.01 sec
+      Start 29: s3c2400_pwm
+29/56 Test #29: s3c2400_pwm ......................***Failed    0.00 sec
+FAIL: PWM clock change rewinds counter or shifts IRQ boundary
+
+      Start 30: s3c2400_pwm_model
+30/56 Test #30: s3c2400_pwm_model ................   Passed    0.00 sec
+      Start 31: s3c2400_pwm_state
+31/56 Test #31: s3c2400_pwm_state ................   Passed    0.05 sec
+      Start 32: s3c2400_gpio
+32/56 Test #32: s3c2400_gpio .....................   Passed    0.01 sec
+      Start 33: s3c2400_state
+33/56 Test #33: s3c2400_state ....................   Passed    0.01 sec
+      Start 34: gp32_pcm
+34/56 Test #34: gp32_pcm .........................   Passed    0.07 sec
+      Start 35: gp32_timer
+35/56 Test #35: gp32_timer .......................***Failed    0.33 sec
+FAIL: PWM expires at old/new clock boundary (434)
+FAIL: callback execution advances hardware timer (443)
+FAIL: PWM expires at old/new clock boundary (434)
+FAIL: callback execution advances hardware timer (443)
+frame-callback jit=0 ns=16666666 pending=1
+frame-callback jit=1 ns=16666666 pending=1
+
+      Start 36: gp32_callback
+36/56 Test #36: gp32_callback ....................***Failed    0.36 sec
+FAIL: task switch keeps unfinished callback and consumer tail (297)
+FAIL: saved SDK task frame identifies callback ownership (298)
+FAIL: foreign task never completes callback (305)
+FAIL: resumed callback tail and original foreground context survive save/load (308)
+FAIL: task switch keeps unfinished callback and consumer tail (297)
+FAIL: saved SDK task frame identifies callback ownership (298)
+FAIL: foreign task never completes callback (305)
+FAIL: resumed callback tail and original foreground context survive save/load (308)
+refill jit=0 final=0 ack=1
+refill jit=0 final=1 ack=1
+state-validation jit=0
+clock-volume jit=0 clock=48000000 fraction=36363636
+timer-epoch jit=0 count=1
+remaining-timer-calls jit=0 count=8
+fault jit=0 case=0 cycles=66002960 error=HLE callback fault: emulated-time watchdog; owner=2 fn=0c002000 pc=0c002000 sp=0c7d1f00 ns=1000044848
+fault jit=0 case=1 cycles=16 error=HLE callback fault: halted or zero-progress CPU; owner=2 fn=0c002000 pc=0c002000 sp=0c7d1f00 ns=242
+exception-bank-state jit=0
+task-switch jit=0 status=0 error=
+refill jit=1 final=0 ack=1
+refill jit=1 final=1 ack=1
+state-validation jit=1
+clock-volume jit=1 clock=48000000 fraction=36363636
+timer-epoch jit=1 count=1
+remaining-timer-calls jit=1 count=8
+fault jit=1 case=0 cycles=66002960 error=HLE callback fault: emulated-time watchdog; owner=2 fn=0c002000 pc=0c002000 sp=0c7d1f00 ns=1000044848
+fault jit=1 case=1 cycles=16 error=HLE callback fault: halted or zero-progress CPU; owner=2 fn=0c002000 pc=0c002000 sp=0c7d1f00 ns=242
+exception-bank-state jit=1
+task-switch jit=1 status=0 error=
+callback regression: FAIL (8 failures)
+
+      Start 37: gp32_swi_1ff
+37/56 Test #37: gp32_swi_1ff .....................   Passed    0.08 sec
+      Start 38: gp32_wait
+38/56 Test #38: gp32_wait ........................***Failed    0.75 sec
+FAIL: hardware IRQ/FIQ owns a nested guest display call (218)
+FAIL: nested display gets its own following deadline (221)
+FAIL: IRQ and callback consumer tails each complete exactly once (226)
+FAIL: hardware IRQ/FIQ owns a nested guest display call (218)
+FAIL: nested display gets its own following deadline (221)
+FAIL: IRQ and callback consumer tails each complete exactly once (226)
+FAIL: hardware IRQ/FIQ owns a nested guest display call (218)
+FAIL: nested display gets its own following deadline (221)
+FAIL: IRQ and callback consumer tails each complete exactly once (226)
+FAIL: hardware IRQ/FIQ owns a nested guest display call (218)
+FAIL: nested display gets its own following deadline (221)
+FAIL: IRQ and callback consumer tails each complete exactly once (226)
+callback-wait jit=0 origin=0 clock=66000000 elapsed=17688454 cycles=1167438
+callback-wait jit=0 origin=4293967295 clock=48000000 elapsed=17688613 cycles=849078
+callback-wait jit=0 origin=18446744073701551615 clock=66000000 elapsed=17688454 cycles=1167438
+foreground jit=0 invalid=0 pc=0c020000 sp=0c01f000 cpsr=a00000d3 elapsed=17749546
+foreground jit=0 invalid=1 pc=0c020000 sp=0c01f000 cpsr=a00000d3 elapsed=212
+legacy-return jit=0 pc=0c020000 cpsr=a00000d3 sp=0c01f000 r0=11110000 r12=1111000c
+legacy-wait jit=0
+nested-display jit=0 fiq=0 elapsed=17688469 cycles=1167439
+nested-display jit=0 fiq=1 elapsed=17688469 cycles=1167439
+refill-audio jit=0 frames=1 other=1 first=10000 last=10000 buffer=a710a710
+refill-display jit=0 ack=1
+wait-reset-watchdog jit=0 cycles=66002960
+wrapped-frame jit=0 elapsed=33333333
+display-cadence jit=0 target=53063256
+panel-rate jit=0 base=17687727.285975 slow=35375454.571950 delta=35375454
+coherent-mirror jit=0 old-high=12 new-high=13
+legacy-request jit=0 clock=48000000
+callback-wait jit=1 origin=0 clock=66000000 elapsed=17688454 cycles=1167438
+callback-wait jit=1 origin=4293967295 clock=48000000 elapsed=17688613 cycles=849078
+callback-wait jit=1 origin=18446744073701551615 clock=66000000 elapsed=17688454 cycles=1167438
+foreground jit=1 invalid=0 pc=0c020000 sp=0c01f000 cpsr=a00000d3 elapsed=17749546
+foreground jit=1 invalid=1 pc=0c020000 sp=0c01f000 cpsr=a00000d3 elapsed=212
+legacy-return jit=1 pc=0c020000 cpsr=a00000d3 sp=0c01f000 r0=11110000 r12=1111000c
+legacy-wait jit=1
+nested-display jit=1 fiq=0 elapsed=17688469 cycles=1167439
+nested-display jit=1 fiq=1 elapsed=17688469 cycles=1167439
+refill-audio jit=1 frames=1 other=1 first=10000 last=10000 buffer=a710a710
+refill-display jit=1 ack=1
+wait-reset-watchdog jit=1 cycles=66002960
+wrapped-frame jit=1 elapsed=33333333
+display-cadence jit=1 target=53063256
+panel-rate jit=1 base=17687727.285975 slow=35375454.571950 delta=35375454
+coherent-mirror jit=1 old-high=12 new-high=13
+legacy-request jit=1 clock=48000000
+guest wait regression: FAIL (12 failures)
+
+      Start 39: gp32_file
+39/56 Test #39: gp32_file ........................   Passed    0.02 sec
+      Start 40: gp32_hle_memory
+40/56 Test #40: gp32_hle_memory ..................   Passed    0.06 sec
+      Start 41: gp32_codec
+41/56 Test #41: gp32_codec .......................   Passed    0.03 sec
+      Start 42: gp32_eeprom
+42/56 Test #42: gp32_eeprom ......................   Passed    0.05 sec
+      Start 43: gp32_shadow
+43/56 Test #43: gp32_shadow ......................   Passed    0.01 sec
+      Start 44: gp32_game_fix
+44/56 Test #44: gp32_game_fix ....................   Passed    0.06 sec
+      Start 45: gp32_pinball_fix
+45/56 Test #45: gp32_pinball_fix .................   Passed    0.11 sec
+      Start 46: gp32_fast_load
+46/56 Test #46: gp32_fast_load ...................   Passed    0.05 sec
+      Start 47: gp32_state
+47/56 Test #47: gp32_state .......................   Passed    0.20 sec
+      Start 48: gp32_state_speed
+48/56 Test #48: gp32_state_speed .................   Passed    0.16 sec
+      Start 49: gp32_media_png
+49/56 Test #49: gp32_media_png ...................   Passed    0.02 sec
+      Start 50: smartmedia
+50/56 Test #50: smartmedia .......................   Passed    0.09 sec
+      Start 51: smartmedia_capacity
+51/56 Test #51: smartmedia_capacity ..............   Passed    1.72 sec
+      Start 52: savestate_session
+52/56 Test #52: savestate_session ................   Passed    0.08 sec
+      Start 53: atomic_save
+53/56 Test #53: atomic_save ......................   Passed    0.03 sec
+      Start 54: arm_jit_recycle
+54/56 Test #54: arm_jit_recycle ..................   Passed    0.03 sec
+      Start 55: arm_jit_policy
+55/56 Test #55: arm_jit_policy ...................   Passed    0.06 sec
+      Start 56: arm_alu_differential
+56/56 Test #56: arm_alu_differential .............   Passed    0.91 sec
+
+91% tests passed, 5 tests failed out of 56
+
+Total Test time (real) =  14.79 sec
+
+The following tests FAILED:
+	 25 - s3c2400_irq (Failed)
+	 29 - s3c2400_pwm (Failed)
+	 35 - gp32_timer (Failed)
+	 36 - gp32_callback (Failed)
+	 38 - gp32_wait (Failed)
+Errors while running CTest
+exit=8

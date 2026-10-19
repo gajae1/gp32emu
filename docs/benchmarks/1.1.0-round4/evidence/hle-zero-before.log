@@ -1,0 +1,5 @@
+FAIL: external zero revokes the old MOV
+FAIL: external zero revokes the old MOV
+FAIL: external zero revokes the old MOV
+FAIL: external zero revokes the old MOV
+HLE memory: 71 cases, 4 failures

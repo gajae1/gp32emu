@@ -1,0 +1,198 @@
+{
+  "gcc": {
+    "before": {
+      "exception_enter": {
+        "address": "0000000000007310",
+        "bytes": 618
+      },
+      "restore_cpsr_from_spsr": {
+        "address": "00000000000086e0",
+        "bytes": 368
+      },
+      "exec_arm_at.isra.0": {
+        "address": "000000000000cd40",
+        "bytes": 8357
+      },
+      "exec_arm": {
+        "address": "0000000000012620",
+        "bytes": 188
+      },
+      "x64_emit_cond_skip.part.0.constprop.0": {
+        "address": "0000000000015ae0",
+        "bytes": 3442
+      },
+      "arm_jit_compile_host": {
+        "address": "000000000001e600",
+        "bytes": 15646
+      },
+      "arm920t_run.part.0.constprop.0": {
+        "address": "0000000000024560",
+        "bytes": 13528
+      },
+      "arm920t_run": {
+        "address": "0000000000028840",
+        "bytes": 35
+      }
+    },
+    "after": {
+      "exception_enter": {
+        "address": "0000000000007490",
+        "bytes": 449
+      },
+      "restore_cpsr_from_spsr": {
+        "address": "00000000000087d0",
+        "bytes": 292
+      },
+      "exec_arm_at.isra.0": {
+        "address": "000000000000cc00",
+        "bytes": 8365
+      },
+      "exec_arm": {
+        "address": "00000000000124e0",
+        "bytes": 188
+      },
+      "x64_emit_cond_skip.part.0.constprop.0": {
+        "address": "0000000000012670",
+        "bytes": 2517
+      },
+      "arm_jit_compile_host": {
+        "address": "000000000001e120",
+        "bytes": 15646
+      },
+      "arm920t_run.part.0.constprop.0": {
+        "address": "0000000000024080",
+        "bytes": 13528
+      },
+      "arm920t_run": {
+        "address": "0000000000028360",
+        "bytes": 35
+      }
+    },
+    "after-hi": {
+      "exception_enter": {
+        "address": "0000000000007310",
+        "bytes": 618
+      },
+      "restore_cpsr_from_spsr": {
+        "address": "00000000000086e0",
+        "bytes": 368
+      },
+      "exec_arm_at.isra.0": {
+        "address": "000000000000cd40",
+        "bytes": 8357
+      },
+      "exec_arm": {
+        "address": "0000000000012620",
+        "bytes": 188
+      },
+      "x64_emit_cond_skip.part.0.constprop.0": {
+        "address": "00000000000127b0",
+        "bytes": 2709
+      },
+      "arm_jit_compile_host": {
+        "address": "000000000001e320",
+        "bytes": 15646
+      },
+      "arm920t_run.part.0.constprop.0": {
+        "address": "0000000000024280",
+        "bytes": 13528
+      },
+      "arm920t_run": {
+        "address": "0000000000028560",
+        "bytes": 35
+      }
+    }
+  },
+  "clang": {
+    "before": {
+      "arm920t_run": {
+        "address": "0000000000002690",
+        "bytes": 11657
+      },
+      "exec_arm": {
+        "address": "0000000000005420",
+        "bytes": 193
+      },
+      "arm_jit_compile_host": {
+        "address": "00000000000098b0",
+        "bytes": 39337
+      },
+      "exception_enter": {
+        "address": "0000000000013260",
+        "bytes": 656
+      },
+      "exec_arm_at": {
+        "address": "0000000000016a50",
+        "bytes": 941
+      },
+      "restore_cpsr_from_spsr": {
+        "address": "000000000001a030",
+        "bytes": 101
+      },
+      "x64_emit_cond_skip": {
+        "address": "000000000001c020",
+        "bytes": 4225
+      }
+    },
+    "after": {
+      "arm920t_run": {
+        "address": "0000000000002690",
+        "bytes": 11657
+      },
+      "exec_arm": {
+        "address": "0000000000005420",
+        "bytes": 193
+      },
+      "arm_jit_compile_host": {
+        "address": "00000000000098b0",
+        "bytes": 39337
+      },
+      "exception_enter": {
+        "address": "0000000000013260",
+        "bytes": 656
+      },
+      "exec_arm_at": {
+        "address": "0000000000016a50",
+        "bytes": 941
+      },
+      "restore_cpsr_from_spsr": {
+        "address": "000000000001a030",
+        "bytes": 101
+      },
+      "x64_emit_cond_skip": {
+        "address": "000000000001c020",
+        "bytes": 2822
+      }
+    },
+    "after-hi": {
+      "arm920t_run": {
+        "address": "0000000000002690",
+        "bytes": 11657
+      },
+      "exec_arm": {
+        "address": "0000000000005420",
+        "bytes": 193
+      },
+      "arm_jit_compile_host": {
+        "address": "00000000000098b0",
+        "bytes": 39337
+      },
+      "exception_enter": {
+        "address": "0000000000013260",
+        "bytes": 656
+      },
+      "exec_arm_at": {
+        "address": "0000000000016a50",
+        "bytes": 941
+      },
+      "restore_cpsr_from_spsr": {
+        "address": "000000000001a030",
+        "bytes": 101
+      },
+      "x64_emit_cond_skip": {
+        "address": "000000000001c020",
+        "bytes": 3164
+      }
+    }
+  }
+}

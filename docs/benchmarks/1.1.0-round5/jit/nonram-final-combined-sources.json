@@ -1,0 +1,14 @@
+{
+  "common_source_sha256": "7438796c34eab2a39a4bffb2c31274e214950d5e29789e43de10dda38a64a733",
+  "native_patch_base": "85d36d55a47fc6da191e2ad6fd2e5079a4e91e4f",
+  "native_patch_sha256": "4197b39ef0c049cc23f26090f78b3cf7a401892304bd56c1fa5a215b1edfeb6a",
+  "combined_sources": {
+    "arm_nonram_code_write_test.c": "3a349fc9945851c39928ac011316753154847080ad58bc0f2e909daa28a8cff9",
+    "src/arm920t.c": "8e390d734ecd6195a40044341ed841af092492104c3267e53831907b3bd7440c",
+    "src/arm920t.h": "55a000dd757d09d25bb4f28412146c677a89e6d02c148785e82849a98b1aa764",
+    "src/arm920t_jit_a64.inc": "1137c007812c8f8acef85b3f88290032e2dd843459a9658f944f5bedfb3d1e01",
+    "src/arm920t_jit_ios.inc": "f4881a64e62d3805035780696079398cbc967c59f61695b8eee1c12042c36765"
+  },
+  "previous_failed_fixture": "nonram-combined-sources.json; cached I=1 expectations assumed direct admission; corrected fixture explicitly prepares cached target and adds public BL-stitched controls without changing architectural oracle.",
+  "common_source_commit": "89184ed82f5982d075420e1b0b5a81be444d0c35"
+}

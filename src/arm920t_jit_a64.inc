@@ -87,7 +87,7 @@ typedef struct a64_emit {
     size_t pos, cap;
     uint16_t *branch_map; /* one bit per emitted word; runtime stubs use NULL */
     int fail;
-    int ram_read, ram_write, mmu;
+    int ram_read, ram_write, mmu, check_code_writes;
     int hop;         /* clean exits may link to a resident successor */
     int counted;     /* shape has per-load native observation support */
     /* Guest register -> host register holding a write-through copy, or 0.
@@ -97,6 +97,7 @@ typedef struct a64_emit {
     uint8_t cache_host[16];
     int bios_read;   /* jit_bios_base probes the whole read-only BIOS window */
     int open_bus;    /* bus promises open_bus_word32 outside every window */
+    int io_read_callback, io_write_callback; /* proved no fastmem at device PAs */
     int nzcv_valid; /* host NZCV equals the committed guest flags */
     int fwd_guest;  /* guest register whose committed value is still in w2, -1 = none.
                      * A plain data op publishes it for the next data op or a
@@ -247,17 +248,18 @@ static int arm_a64_ldword_checked(arm920t_t *c, const arm_jit_op_t *op,
  * callback-visible PC, one bus access, destination then writeback, then the
  * same continuation snapshot - while skipping the second mmu_translate, the
  * transfer decode and the physical-window probes that the emitter already
- * performed.  Cycle and timing state stay untouched exactly as there, and an
+ * performed. Generic buses retain their complete physical fastmem probe;
+ * certified buses skip it. Cycle and timing state stay untouched exactly as there, and an
  * I/O write keeps the identical exit condition (interrupts, timers, halt,
  * trace, epoch/generation, RAM rebase).  Address and value are handed over
  * already computed: pa is 4-byte aligned and inside that window, rotation is
  * (VA & 3) * 8, writeback is base +/- offset (used only when the decoded
  * shape writes back).  No profiling counter is advanced: like the RAM
  * fast path this is a native fast path, not a checked-helper invocation. */
-static int arm_a64_io_word_checked(arm920t_t *c, const arm_jit_op_t *op,
-                                   uint32_t pa, uint32_t value, uint32_t writeback,
-                                   uint32_t rotation, uint32_t expected_next,
-                                   uint32_t generation) {
+ARM_FORCE_INLINE int arm_a64_io_word_access(arm920t_t *c, const arm_jit_op_t *op,
+                                            uint32_t pa, uint32_t value, uint32_t writeback,
+                                            uint32_t rotation, uint32_t expected_next,
+                                            uint32_t generation, int probe_fastmem) {
     int stop = op->stop;
     unsigned rd = op->b, rn = op->a; /* callbacks can invalidate decoded-op storage */
     int load = !!(op->d & ARM_BC_SD_L);
@@ -265,17 +267,37 @@ static int arm_a64_io_word_checked(arm920t_t *c, const arm_jit_op_t *op,
     uint32_t status = c->cpsr & 0xffu, epoch = c->jit_cache_epoch, run_limit = c->run_limit;
     uint8_t *ram_base = c->jit_ram_base;
     c->r[15] = op->pc + 4u; /* callback-visible PC, exactly as classified */
+    uint8_t *direct = probe_fastmem ? fastmem(c, pa, 4u, !load) : NULL;
     if (load) {
-        /* Same callback selection as arm_bc_ld_word_phys' identity-I/O arm. */
-        uint32_t v = (c->bus.read32_io ? c->bus.read32_io : c->bus.read32)(c->bus.user, pa);
+        /* A generic bus may approve direct memory inside the device window.
+         * Preserve the complete span and independent read/write permission. */
+        uint32_t v = direct ? gp32_ld32le(direct) :
+            (c->bus.read32_io ? c->bus.read32_io : c->bus.read32)(c->bus.user, pa);
         if (rotation) v = gp32_ror32(v, rotation);
         write_r(c, rd, v);
     } else {
-        /* Same callback selection as arm_bc_st_word_phys' identity-I/O arm. */
-        (c->bus.write32_io ? c->bus.write32_io : c->bus.write32)(c->bus.user, pa, value);
+        if (direct) gp32_st32le(direct, value);
+        else (c->bus.write32_io ? c->bus.write32_io : c->bus.write32)(c->bus.user, pa, value);
+        arm920t_cpu_code_write(c, pa, 4u);
     }
     if (wb) write_r(c, rn, writeback);
     return arm_a64_can_continue(c, stop, expected_next, generation, status, epoch, run_limit, ram_base);
+}
+
+static int arm_a64_io_word_checked(arm920t_t *c, const arm_jit_op_t *op,
+                                   uint32_t pa, uint32_t value, uint32_t writeback,
+                                   uint32_t rotation, uint32_t expected_next,
+                                   uint32_t generation) {
+    return arm_a64_io_word_access(c, op, pa, value, writeback, rotation,
+                                 expected_next, generation, 0);
+}
+
+static int arm_a64_io_word_mapped_checked(arm920t_t *c, const arm_jit_op_t *op,
+                                          uint32_t pa, uint32_t value, uint32_t writeback,
+                                          uint32_t rotation, uint32_t expected_next,
+                                          uint32_t generation) {
+    return arm_a64_io_word_access(c, op, pa, value, writeback, rotation,
+                                 expected_next, generation, 1);
 }
 
 static void a64_u32(a64_emit_t *e, uint32_t v) {
@@ -787,7 +809,9 @@ static void a64_io_word_pa(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done,
     a64_imm(e, 7, e->generation);
     a64_rr(e, 0xaa000000u, 0, 31, 19);
     a64_ptr(e, 1, (uintptr_t)op);
-    a64_ptr(e, 16, (uintptr_t)arm_a64_io_word_checked);
+    int callback_only = load ? e->io_read_callback : e->io_write_callback;
+    a64_ptr(e, 16, callback_only ? (uintptr_t)arm_a64_io_word_checked :
+                                  (uintptr_t)arm_a64_io_word_mapped_checked);
     a64_u32(e, 0xd63f0200u); /* blr x16 */
     size_t keep = e->pos;
     a64_branch_word(e, 0x35000000u); /* cbnz w0: commits are done, may continue */
@@ -979,7 +1003,7 @@ static int a64_data(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
         if (op->c == 15u) a64_mask(e, 2, 2, ~3u);
         a64_put_guest(e, op->c, result);
         if (op->c == 15u) {
-            if (op->reserved == 7u) {
+            if (op->reserved == ARM_JIT_RETURN_GUARDED) {
                 /* Retire the real MOV pc,lr; an unexpected LR exits with its
                  * actual aligned PC instead of following a stale caller. */
                 a64_imm(e, 6, e->expected_next);
@@ -1041,6 +1065,67 @@ static void a64_ram_offset(a64_emit_t *e, size_t *slow, unsigned *nslow, unsigne
         a64_imm(e, 6, ARM_JIT_RAM_SIZE_BYTES - bytes);
         a64_cmp(e, 9, 6);
         slow[(*nslow)++] = a64_jump(e, 8); /* HI also rejects identity below RAM */
+    }
+}
+
+static void a64_code_watch_base(a64_emit_t *e) {
+    size_t off = offsetof(arm920t_t, jit_code_watches) - offsetof(arm920t_t, irq_line);
+    if (off <= 0xfffu)
+        a64_u32(e, 0x91000000u | ((uint32_t)off << 10) | (25u << 5) | 17u);
+    else a64_cpu_addr(e, 17, offsetof(arm920t_t, jit_code_watches));
+}
+
+/* A proved, aligned STM fragment contains at most 16 instruction words.
+ * The padded bitmap permits one 64-bit window covering any such range,
+ * including one ending at the final RAM word. count=0 takes its length from
+ * count_reg; both dynamic fragments of a two-page transfer have 1..15 words.
+ * Only x6/x7/x17 are scratch, preserving both physical offsets and w5's split. */
+static void a64_guard_code_words(a64_emit_t *e, size_t *slow, unsigned *nslow,
+                                  unsigned offset, unsigned count, unsigned count_reg) {
+    if (!e->check_code_writes) return;
+    a64_code_watch_base(e);
+    a64_ubfx(e, 6, offset, 7u, 25u);
+    a64_rr(e, 0x8b000800u, 6, 17, 6); /* x6 = bitmap + (offset >> 7) * 4 */
+    a64_u32(e, 0xf9400000u | (6u << 5) | 7u); /* ldr x7,[x6], including next bitmap word */
+    a64_ubfx(e, 6, offset, 2u, 5u);
+    a64_rr(e, 0x9ac02400u, 7, 7, 6); /* lsr x7,x7,x6 */
+    if (count) {
+        a64_mask(e, 7, 7, (1u << count) - 1u);
+    } else {
+        a64_imm(e, 6, 1u);
+        a64_rr(e, 0x1ac02000u, 6, 6, count_reg); /* lsl w6,w6,count */
+        a64_u32(e, 0x51000400u | (6u << 5) | 6u); /* sub w6,w6,#1 */
+        a64_rr(e, 0x0a000000u, 7, 7, 6);
+    }
+    slow[(*nslow)++] = e->pos;
+    a64_branch_word(e, 0x35000000u | 7u);
+}
+
+/* w9 is a proved physical RAM offset. Reject watched-span stores before any
+ * guest mutation and let the checked helper finish the instruction before
+ * its epoch fence leaves this trace. Keep w0/w2/w11 for its cold operands.
+ * Control writes flush native blocks, so no guard is emitted with CP15.I=1. */
+static void a64_guard_code_write(a64_emit_t *e, size_t *slow, unsigned *nslow,
+                                  unsigned last_delta) {
+    if (!e->check_code_writes) return;
+    if (last_delta >= 4u) {
+        a64_guard_code_words(e, slow, nslow, 9u, last_delta / 4u + 1u, 0u);
+        return;
+    }
+    a64_code_watch_base(e);
+    for (unsigned last = 0; last < (last_delta ? 2u : 1u); ++last) {
+        unsigned offset = 9u;
+        if (last) {
+            a64_u32(e, 0x11000000u | (last_delta << 10) | (9u << 5) | 16u);
+            offset = 16u;
+        }
+        a64_ubfx(e, 6, offset, ARM_JIT_CODE_WATCH_SHIFT + 5u, 32u - ARM_JIT_CODE_WATCH_SHIFT - 5u);
+        a64_u32(e, 0xb8605800u | (6u << 16) | (17u << 5) | 7u); /* ldr w7,[x17,w6,uxtw #2] */
+        a64_ubfx(e, 6, offset, ARM_JIT_CODE_WATCH_SHIFT, 5u);
+        a64_rr(e, 0x1ac02400u, 7, 7, 6); /* lsr w7,w7,w6 */
+        a64_mask(e, 7, 7, 1u);
+        slow[(*nslow)++] = e->pos;
+        a64_branch_word(e, 0x35000000u | 7u); /* cbnz w7 -> checked instruction */
     }
 }
 
@@ -1189,6 +1274,7 @@ static int a64_single_dt(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
         }
     }
     a64_ram_offset(e, slow, &nslow, byte ? 1u : 4u, !byte);
+    if (!load) a64_guard_code_write(e, slow, &nslow, 0u);
     /* Keep the authoritative guest store, but avoid moving its value through
      * w1 when a write-through register is already assigned. Guard failures
      * still enter the unchanged cold path before any guest value is written. */
@@ -1260,7 +1346,7 @@ static int a64_half(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
     int wb = !p || !!(d & ARM_BC_HALF_W);
     if (!(load ? e->ram_read : e->ram_write) || op->b == 15u ||
         (wb && op->a == 15u) || (load ? !sh : sh != 1u)) return 0;
-    size_t slow[4];
+    size_t slow[6];
     unsigned nslow = 0;
     if (d & ARM_BC_HALF_IMM) a64_imm(e, 1, op->imm);
     else if (op->c == 15u) a64_imm(e, 1, op->pc + 4u);
@@ -1272,6 +1358,7 @@ static int a64_half(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
     a64_rr(e, (d & ARM_BC_HALF_U) ? 0x0b000000u : 0x4b000000u, folded_half ? 0u : 2u, 0, 1);
     if (p && !folded_half) a64_mov(e, 0, 2); /* pre-indexed accesses target the offset address */
     a64_ram_offset(e, slow, &nslow, (load && sh == 2u) ? 1u : 2u, 0);
+    if (!load) a64_guard_code_write(e, slow, &nslow, 1u);
     unsigned value = e->cache_host[op->b] ? e->cache_host[op->b] : 1u;
     if (load) {
         /* ldrh/ldrsb/ldrsh: A64 already yields the exact
@@ -1357,6 +1444,7 @@ static int a64_block_dt(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
     /* The span stays within this 4 KiB page, so proving its aligned first
      * word in a full RAM page also proves every transferred word. */
     a64_ram_offset(e, slow, &nslow, 4u, 0);
+    if (!load) a64_guard_code_write(e, slow, &nslow, 4u * (count - 1u));
     a64_rr(e, 0x8b000000u, 12, 21, 9); /* x12 = jit_ram_base + in-RAM offset */
     a64_block_dt_transfer(e, op, count, 0, slow, &nslow);
     if (w && (!load || !(list & (1u << rn))))
@@ -1410,6 +1498,15 @@ static void a64_block_dt_xpage(a64_emit_t *e, const arm_jit_op_t *op, uint32_t d
     a64_imm(e, 6, 0x1000u);
     a64_rr(e, 0x4b000000u, 5, 6, 5); /* w5 = 0x1000 - addr0 page offset */
     a64_ubfx(e, 5, 5, 2, 30); /* w5 /= 4 */
+
+    if (!load && e->check_code_writes) {
+        /* Virtual neighbors can map to unrelated physical pages. Test all
+         * words in each resolved fragment, before any transfer or writeback. */
+        a64_guard_code_words(e, slow, nslow, 2u, 0u, 5u);
+        a64_imm(e, 16, count);
+        a64_rr(e, 0x4b000000u, 16, 16, 5); /* w16 = count - first-page count */
+        a64_guard_code_words(e, slow, nslow, 4u, 0u, 16u);
+    }
 
     /* Each fragment ends at or before its already-proved RAM page edge. */
     a64_rr(e, 0x8b000000u, 12, 21, 2); /* x12 = RAM pointer for page 0 */
@@ -1653,9 +1750,9 @@ static uint32_t a64_selfloop_prefix(arm920t_t *c, arm_jit_block_t *b) {
         return 0;
     for (unsigned i = 0; i < b->count; ++i) {
         const arm_jit_op_t *op = &arm_jit_ops(c, b)[i];
-        /* Existing register-only leaf inlining proves LR/SP/mode unchanged.
-         * Its decoded return is materialized directly by the main emitter. */
-        if (op->reserved == 7u) continue;
+        /* General trace returns check live LR and execution state. Proven
+         * register-only leaves materialize their known caller directly. */
+        if (op->reserved == ARM_JIT_RETURN_GUARDED || op->reserved == ARM_JIT_RETURN_LEAF) continue;
         /* The decoder has already validated these framed leaf operations.
          * Keep their real stack reads/writes and existing return-target guard;
          * a changed/Thumb return exits before reaching the self backedge. */
@@ -2105,25 +2202,6 @@ static int a64_emit_runtime(arm920t_t *c) {
     return a64_publish(c, 0, A64_RT_BYTES, 0, 0);
 }
 
-/* A conditional B whose target is a later op of the same straight-line trace
- * can jump there inside the block instead of leaving it. Every op between the
- * two must be a plain, non-terminating op at consecutive addresses, so the
- * target is reached by the same emission on both paths. The self backedge
- * keeps its own path. Returns the target op index, or 0. */
-static unsigned a64_fwd_target(const arm_jit_op_t *ops, unsigned count, unsigned i, uint32_t loop_done) {
-    const arm_jit_op_t *op = &ops[i];
-    if (op->kind != ARM_JIT_OP_BRANCH || op->cond >= 14u || op->stop || op->reserved ||
-        (op->insn & (1u << 24)) || loop_done == i + 1u) return 0;
-    uint32_t target = arm_jit_branch_target(op->pc, op->insn);
-    for (unsigned k = i + 1u; k < count; ++k) {
-        const arm_jit_op_t *o = &ops[k];
-        if (o->pc != op->pc + 4u * (k - i)) return 0;
-        if (o->pc == target) return k;
-        if (o->stop || o->reserved) return 0;
-    }
-    return 0;
-}
-
 static void arm_jit_compile_host(arm920t_t *c, arm_jit_block_t *b) {
     if (!c || !b || !b->count) return;
 #if defined(__SWITCH__)
@@ -2142,11 +2220,12 @@ static void arm_jit_compile_host(arm920t_t *c, arm_jit_block_t *b) {
     e.cold_cap = ARM_JIT_MAX_INSNS;
     e.fwd_guest = -1;
     e.mmu = !!(c->cp15[1] & 1u);
+    e.check_code_writes = !(c->cp15[1] & (1u << 12));
     e.live_read32 = c->live_read32;
     e.live_read32_count = c->live_read32_count;
     e.loop_done = a64_selfloop_prefix(c, b);
 #if ARM920T_PROFILING
-    c->profile_native_loop[b - c->jit_blocks] = e.loop_done != 0;
+    c->profile_native_variable_count[b - c->jit_blocks] = e.loop_done != 0;
 #endif
     e.block_count = b->count;
     e.counted = (b->poll_backedge >> 1) != 0;
@@ -2154,15 +2233,16 @@ static void arm_jit_compile_host(arm920t_t *c, arm_jit_block_t *b) {
      * Tiny or discontinuous test buses must retain their callback path. */
     e.ram_read = c->jit_ram_base && fastmem(c, ARM_JIT_RAM_BASE_ADDR, ARM_JIT_RAM_SIZE_BYTES, 0) == c->jit_ram_base;
     e.ram_write = c->jit_ram_base && fastmem(c, ARM_JIT_RAM_BASE_ADDR, ARM_JIT_RAM_SIZE_BYTES, 1) == c->jit_ram_base;
-    /* The read-only probes inline a physical word only when its whole window
-     * is backed exactly as the checked helpers will find it.  The open-bus
-     * contract additionally needs no fastmem mapping outside the windows: the
-     * only map s3c2400-style buses extend is RAM itself, so probe one byte past
-     * the window.  ram_size changes happen through state load, which kills
-     * every block, so the check cannot go stale inside compiled code. */
+    /* A whole-window read probe authorizes BIOS loads. Open-bus inlining also
+     * needs every possible RAM extension excluded: one rejected byte cannot
+     * prove the absence of mappings at later addresses or for wider reads.
+     * Requery the certificate whenever mapping flushes force compilation. */
     e.bios_read = c->jit_bios_base && fastmem(c, 0, ARM_JIT_BIOS_SIZE_BYTES, 0) == c->jit_bios_base;
     e.open_bus = c->bus.open_bus_valid &&
-                 !fastmem(c, ARM_JIT_RAM_BASE_ADDR + ARM_JIT_RAM_SIZE_BYTES, 1u, 0);
+        fastmem_excludes(c, ARM_JIT_RAM_BASE_ADDR + ARM_JIT_RAM_SIZE_BYTES,
+            (size_t)UINT32_MAX - (ARM_JIT_RAM_BASE_ADDR + ARM_JIT_RAM_SIZE_BYTES) + 1u, 0);
+    e.io_read_callback = fastmem_excludes(c, 0x14000000u, 0x02000000u, 0);
+    e.io_write_callback = fastmem_excludes(c, 0x14000000u, 0x02000000u, 1);
     /* Counted and plain poll sources keep returning to the dispatcher, whose
      * general path owns their observation and skip bookkeeping. */
     e.hop = ARM_JIT_A64_LINK && !b->poll_backedge;
@@ -2230,7 +2310,7 @@ static void arm_jit_compile_host(arm920t_t *c, arm_jit_block_t *b) {
          * Keep the architectural PC visible to subsequent callbacks, but a
          * decoded caller successor needs no dynamic return-target guard. The
          * guest op/cycle count and guarded boundary returns remain intact. */
-        if (op->reserved == 7u && i + 1u < b->count) {
+        if (op->reserved == ARM_JIT_RETURN_LEAF && i + 1u < b->count) {
             a64_store_imm(&e, offsetof(arm920t_t, r) + 15u * 4u, e.expected_next);
             continue;
         }
@@ -2248,7 +2328,7 @@ static void arm_jit_compile_host(arm920t_t *c, arm_jit_block_t *b) {
         /* A self move preserves the guest value and flags; any preceding
          * forwarded result remains valid. Counts and exit PC commits stay. */
         if (arm_jit_is_side_effect_free_nop(op->insn)) continue;
-        unsigned fwd = fwd_ok ? a64_fwd_target(arm_jit_ops(c, b), b->count, i, e.loop_done) : 0u;
+        unsigned fwd = fwd_ok ? arm_jit_fwd_target(arm_jit_ops(c, b), b->count, i, e.loop_done) : 0u;
         if (fwd) {
             /* The skipped ops never run. The taken path returns them to the
              * entry budget (w22) and the completed count (w23), so every later
@@ -2260,6 +2340,9 @@ static void arm_jit_compile_host(arm920t_t *c, arm_jit_block_t *b) {
              * early; dispatch then resumes with the real remaining budget. */
             unsigned skipped = fwd - i - 1u;
             if (!skipped) continue; /* a branch to the next op changes nothing */
+#if ARM920T_PROFILING
+            c->profile_native_variable_count[b - c->jit_blocks] = 1u;
+#endif
             if (!e.nzcv_valid) {
                 a64_load(&e, 3, offsetof(arm920t_t, cpsr));
                 a64_u32(&e, 0xd51b4203u);

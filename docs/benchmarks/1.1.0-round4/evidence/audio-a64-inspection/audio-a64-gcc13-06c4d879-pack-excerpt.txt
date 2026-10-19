@@ -1,0 +1,33 @@
+# Existing Release object: scalar pack after the steady-state poly_gather call.
+# Addresses are object .text offsets; no compilation or timing was performed.
+
+    15b4:	2a1203e4 	mov	w4, w18
+    15b8:	d360fe43 	lsr	x3, x18, #32
+    15bc:	2a1803e2 	mov	w2, w24
+    15c0:	aa1a03e1 	mov	x1, x26
+    15c4:	aa1903e0 	mov	x0, x25
+    15c8:	97fffa8e 	bl	0 <poly_gather>
+    15cc:	a9460fe4 	ldp	x4, x3, [sp, #96]
+    15d0:	928fffe9 	mov	x9, #0xffffffffffff8000    	// #-32768
+    15d4:	d28fffe8 	mov	x8, #0x7fff                	// #32767
+    15d8:	8b140252 	add	x18, x18, x20
+    15dc:	91001273 	add	x19, x19, #0x4
+    15e0:	91401084 	add	x4, x4, #0x4, lsl #12
+    15e4:	91401063 	add	x3, x3, #0x4, lsl #12
+    15e8:	934ffc84 	asr	x4, x4, #15
+    15ec:	934ffc63 	asr	x3, x3, #15
+    15f0:	b140209f 	cmn	x4, #0x8, lsl #12
+    15f4:	9a89a084 	csel	x4, x4, x9, ge	// ge = tcont
+    15f8:	eb08009f 	cmp	x4, x8
+    15fc:	9a88d084 	csel	x4, x4, x8, le
+    1600:	eb09007f 	cmp	x3, x9
+    1604:	9a89a063 	csel	x3, x3, x9, ge	// ge = tcont
+    1608:	eb08007f 	cmp	x3, x8
+    160c:	13003c96 	sxth	w22, w4
+    1610:	9a88d063 	csel	x3, x3, x8, le
+    1614:	781fc276 	sturh	w22, [x19, #-4]
+    1618:	f10006f7 	subs	x23, x23, #0x1
+    161c:	13003c75 	sxth	w21, w3
+    1620:	781fe275 	sturh	w21, [x19, #-2]
+    1624:	fa521380 	ccmp	x28, x18, #0x0, ne	// ne = any
+    1628:	54fffc68 	b.hi	15b4 <gp32_audio_resampler_process+0x9f4>  // b.pmore

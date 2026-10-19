@@ -78,6 +78,71 @@ static void audio_underrun_recovery(void) {
     gp32_ios_emulator_destroy(e);
 }
 
+/* Slot paths are supplied per operation. A rejected path must not redirect the
+ * legacy state path or disturb the live core behind it. */
+static void explicit_state_paths(const char *base) {
+    char legacy_path[GP32_IOS_PATH_MAX];
+    char slot_path[GP32_IOS_PATH_MAX];
+    char missing_path[GP32_IOS_PATH_MAX];
+    char oversized_path[GP32_IOS_PATH_MAX + 1u];
+    snprintf(legacy_path, sizeof(legacy_path), "%s.legacy.gp32st", base);
+    snprintf(slot_path, sizeof(slot_path), "%s.slot02.gp32st", base);
+    snprintf(missing_path, sizeof(missing_path), "%s.missing.gp32st", base);
+    remove(slot_path);
+    remove(missing_path);
+    memset(oversized_path, 'x', sizeof(oversized_path) - 1u);
+    oversized_path[sizeof(oversized_path) - 1u] = '\0';
+
+    gp32_ios_audio_sink_t sink;
+    gp32_ios_audio_sink_init(&sink);
+    gp32_ios_emulator_t *e = gp32_ios_emulator_create();
+    CHECK(e != NULL, "allocate explicit-path bridge");
+    if (!e) return;
+    e->core = gp32_create(NULL);
+    CHECK(e->core != NULL, "create explicit-path core");
+    if (!e->core) { gp32_ios_emulator_destroy(e); return; }
+    gp32_set_jit(e->core, 0);
+    e->sink = &sink;
+    e->have_game = 1;
+    CHECK(copy_text(e->state_path, sizeof(e->state_path), legacy_path),
+          "set legacy state path");
+    gp32_ios_emulator_set_buttons(e, GP32_BUTTON_A);
+    gp32_t *session = e->core;
+    uint32_t buttons_before = gp32_debug_read32(e->core, 0x1560000cu);
+
+    CHECK(!gp32_ios_emulator_load_state_at_path(e, oversized_path),
+          "oversized explicit state path is rejected");
+    CHECK(e->core == session &&
+          gp32_debug_read32(e->core, 0x1560000cu) == buttons_before,
+          "rejected oversized path keeps the live core");
+    CHECK(strcmp(e->state_path, legacy_path) == 0,
+          "rejected oversized path keeps the legacy path");
+
+    CHECK(!gp32_ios_emulator_load_state_at_path(e, missing_path),
+          "missing explicit state path is rejected");
+    CHECK(e->core == session &&
+          gp32_debug_read32(e->core, 0x1560000cu) == buttons_before,
+          "failed explicit load keeps the live core");
+    CHECK(strcmp(e->state_path, legacy_path) == 0,
+          "failed explicit load keeps the legacy path");
+
+    CHECK(gp32_ios_emulator_save_state_at_path(e, slot_path),
+          "save through an explicit slot path");
+    CHECK(strcmp(e->state_path, legacy_path) == 0,
+          "successful explicit save keeps the legacy path");
+    CHECK(gp32_ios_emulator_load_state_at_path(e, slot_path),
+          "load through the same explicit slot path");
+    FILE *saved = fopen(slot_path, "rb");
+    CHECK(saved != NULL, "explicit slot save exists");
+    if (saved) {
+        CHECK(fseek(saved, 0, SEEK_END) == 0 && ftell(saved) > 0,
+              "explicit slot save is non-empty");
+        fclose(saved);
+    }
+    CHECK(remove(slot_path) == 0, "remove explicit slot state");
+    gp32_ios_emulator_destroy(e);
+}
+
 /* A regular file in place of the save directory fails on every host, even
  * when tests run as root. Keep the modified card alive until saving can retry. */
 static void failed_card_unload(const char *path) {
@@ -141,8 +206,9 @@ int main(int argc, char **argv) {
     for (unsigned action = 0; action < 3u; ++action)
         audio_transition(action, argv[1]);
     audio_underrun_recovery();
+    explicit_state_paths(argv[1]);
     failed_card_unload(argv[1]);
     if (failures) return 1;
-    puts("PASS: iOS audio continuity, reset input release and failed-save preservation");
+    puts("PASS: iOS audio continuity, reset input release, explicit state paths and failed-save preservation");
     return 0;
 }

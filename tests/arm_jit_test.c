@@ -59,6 +59,7 @@ typedef struct {
     unsigned io_flush_at, io_flushes;
     unsigned io_trace_at, trace_lines;
     unsigned io_return_at;
+    uint32_t io_lr_target;
     unsigned block_io, block_effect, block_at, block_count;
     uint32_t block_addr[3], block_pc[3], block_base[3], block_value[3];
     unsigned mem_probe, mem_effect, mem_calls;
@@ -136,6 +137,8 @@ static uint32_t tb_io_value(test_bus_t *b, uint32_t a) {
             b->io_cpsr[b->io_count] = arm920t_get_cpsr(b->observe_cpu);
         }
         ++b->io_count;
+        if (b->io_lr_target)
+            arm920t_set_reg(b->observe_cpu, 14u, b->io_lr_target);
         if (b->io_fiq_at && b->io_count == b->io_fiq_at)
             arm920t_set_cpsr(b->observe_cpu,
                             (arm920t_get_cpsr(b->observe_cpu) & ~0x1fu) | 0x11u);
@@ -1730,6 +1733,7 @@ static void case_native_forward_callback(void) {
         for (unsigned k = 0; k < GP32_ARRAY_COUNT(budgets); ++k) {
             current_case = "native-forward-callback";
             setup_pair();
+            arm920t_set_trace(cpu_ref, 1, NULL, NULL);
             load_both(program, GP32_ARRAY_COUNT(program));
             set_reg_both(0u, v);
             set_reg_both(1u, IO_ADDR);
@@ -1737,7 +1741,7 @@ static void case_native_forward_callback(void) {
             bus_ref.observe_cpu = cpu_ref;
             bus_jit.mem_probe = bus_ref.mem_probe = 1u;
             bus_jit.mem_effect = bus_ref.mem_effect = 1u;
-            uint32_t j = arm920t_run(cpu_jit, budgets[k]);
+            uint32_t j = prepared_native_run(cpu_jit, budgets[k]);
             uint32_t r = arm920t_run(cpu_ref, budgets[k]);
             CHECK(j == r && r == 4u + 2u * v, "forward callback retired prefix");
             compare_state();
@@ -1745,9 +1749,223 @@ static void case_native_forward_callback(void) {
                   "forward flags join and stop");
             CHECK(bus_jit.mem_calls == 1u && bus_ref.mem_calls == 1u,
                   "forward callback count");
+            gp32_cpu_profile_t profile;
+            arm920t_get_cpu_profile(cpu_jit, &profile);
+            if (profile.supported && profile.native_backend)
+                CHECK(profile.native_block_calls == 1u && profile.native_arm_insns == j,
+                      "forward callback must finish in one native entry");
             teardown_pair();
         }
     }
+}
+
+/* Separate skips must accumulate across a returning bus helper. The second
+ * shape also enters the middle of a foldable constant chain and bypasses the
+ * EAX-producing instruction immediately before another join. */
+static void case_native_forward_joins(void) {
+    static const uint32_t programs[2][13] = {
+        {0xe3500000u, 0x0a000001u, 0xe3a05011u, 0xe2966001u,
+         0xe594b000u, 0xe3510000u, 0x0a000001u, 0xe3a07022u,
+         0xe2588001u, 0xe594c004u, 0xe3a090eeu, 0xeafffffeu, 0xeafffffeu},
+        {0xe3500000u, 0x0a000001u, 0xe3a06011u, 0xe3866022u,
+         0xe3866044u, 0xe594b000u, 0xe3510000u, 0x0a000001u,
+         0xe3a08055u, 0xe2889001u, 0xe289a001u, 0xe594c004u, 0xeafffffeu}
+    };
+    const uint32_t va = 0x10003000u;
+    for (unsigned shape = 0; shape < 2u; ++shape) {
+        for (unsigned mmu = 0; mmu < 2u; ++mmu) {
+            for (unsigned paths = 0; paths < 4u; ++paths) {
+                current_case = shape ? "native-forward-folded-join" : "native-forward-multiple-skips";
+                setup_pair();
+                load_both(programs[shape], GP32_ARRAY_COUNT(programs[shape]));
+                if (mmu) {
+                    arm920t_state_image_t *st = calloc(1, sizeof(*st));
+                    if (!st) exit(2);
+                    st->r[15] = CODE_ADDR; st->cpsr = 0xd3u; st->cp15[1] = 1u;
+                    st->tlb_valid[0] = 1u; st->tlb_mask[0] = 0xfffu;
+                    unsigned slot = (va >> 12) & 0xfffu;
+                    st->tlb_valid[slot] = 1u; st->tlb_mask[slot] = 0xfffu;
+                    st->tlb_va_base[slot] = va; st->tlb_pa_base[slot] = IO_ADDR;
+                    apply_io_fixture_state(cpu_jit, st); apply_io_fixture_state(cpu_ref, st);
+                    free(st);
+                    arm920t_set_jit(cpu_jit, 1);
+                }
+                arm920t_set_trace(cpu_ref, 1, NULL, NULL);
+                set_reg_both(0u, paths & 1u); set_reg_both(1u, paths >> 1);
+                set_reg_both(4u, mmu ? va : IO_ADDR);
+                set_reg_both(6u, 0x80000000u); set_reg_both(8u, 0x40000000u);
+                set_reg_both(9u, 0x9au);
+                bus_jit.observe_cpu = cpu_jit; bus_ref.observe_cpu = cpu_ref;
+                bus_jit.block_io = bus_ref.block_io = 1u;
+                bus_jit.block_effect = bus_ref.block_effect = 4u;
+                bus_jit.block_at = bus_ref.block_at = 2u;
+                uint32_t j = prepared_native_run(cpu_jit, 64u), r = arm920t_run(cpu_ref, 64u);
+                uint32_t expected = (shape ? 12u : 10u) -
+                    ((paths & 1u) ? 0u : 2u) - ((paths & 2u) ? 0u : 2u);
+                CHECK(j == r && r == expected, "multiple forward skips retire the exact prefix");
+                compare_state();
+                CHECK(bus_jit.block_count == 2u && bus_ref.block_count == 2u &&
+                      !memcmp(bus_jit.block_pc, bus_ref.block_pc, sizeof(bus_jit.block_pc)),
+                      "forward helper resumes once, then stops at the second callback");
+                CHECK(bus_ref.block_pc[0] == CODE_ADDR + (shape ? 24u : 20u) &&
+                      bus_ref.block_pc[1] == CODE_ADDR + (shape ? 48u : 40u),
+                      "forward callbacks observe each instruction's PC+4");
+                if (shape) {
+                    CHECK(ref_reg(6u) == ((paths & 1u) ? 0x77u : 0x80000044u),
+                          "forward target preserves the middle of a constant chain");
+                    CHECK(ref_reg(10u) == ((paths & 2u) ? 0x57u : 0x9bu),
+                          "forward join consumes the live committed register");
+                }
+                gp32_cpu_profile_t profile;
+                arm920t_get_cpu_profile(cpu_jit, &profile);
+                if (profile.supported && profile.native_backend) {
+                    CHECK(profile.native_block_calls == 1u && profile.native_arm_insns == j,
+                          "multiple forward skips stay in one native entry");
+                    CHECK(profile.native_cross_exits[GP32_CPU_PROFILE_OP_KINDS] == 1u,
+                          "variable retirement count must not misidentify the exit opcode");
+                }
+                teardown_pair();
+            }
+        }
+    }
+}
+
+static int forward_swi_stop(void *user, arm920t_t *c, uint32_t imm,
+                            uint32_t pc, int is_thumb) {
+    ++*(unsigned *)user;
+    CHECK(imm == 0x42u && !is_thumb && arm920t_get_pc(c) == pc + 4u,
+          "forward terminal callback observes the real SWI");
+    arm920t_set_reg(c, 12u, pc);
+    arm920t_stop_run(c);
+    return 1;
+}
+
+/* All NZCV combinations cover both arms of compound predicates too. A
+ * next-instruction target needs no skip counter; a real skip must adjust the
+ * terminal helper's retirement count. Direct short entries test the early
+ * budget return before that counter has been initialized. */
+static void case_native_forward_predicates(void) {
+    unsigned cases = 0;
+    for (unsigned adjacent = 0; adjacent < 2u; ++adjacent) {
+        for (unsigned cond = 0; cond < 16u; ++cond) {
+            for (unsigned flags = 0; flags < 16u; ++flags) {
+                current_case = adjacent ? "native-forward-next-op" : "native-forward-predicates";
+                setup_pair();
+                const uint32_t program[] = {
+                    (cond << 28) | (adjacent ? 0x0affffffu : 0x0a000001u),
+                    0xe3a05011u, 0xe2856022u, 0xef000042u, 0xeafffffeu
+                };
+                load_both(program, GP32_ARRAY_COUNT(program));
+                arm920t_set_cpsr(cpu_jit, (flags << 28) | 0xd3u);
+                arm920t_set_cpsr(cpu_ref, (flags << 28) | 0xd3u);
+                arm920t_set_trace(cpu_ref, 1, NULL, NULL);
+                unsigned observed_jit = 0, observed_ref = 0;
+                arm920t_set_swi_handler(cpu_jit, forward_swi_stop, &observed_jit);
+                arm920t_set_swi_handler(cpu_ref, forward_swi_stop, &observed_ref);
+                prepare_native_block(cpu_jit, CODE_ADDR);
+#if ARM920T_NATIVE_BACKEND
+                arm_jit_block_t *b = cpu_jit->jit_blocks ?
+                    &cpu_jit->jit_blocks[arm_jit_block_index(CODE_ADDR)] : NULL;
+                CHECK(b && b->native, "forward predicate fixture has a native entry");
+                if (b && b->native) {
+                    CHECK(b->native(cpu_jit, 0u) == 0u &&
+                          b->native(cpu_jit, b->count - 1u) == 0u,
+                          "short forward entry leaves guest state untouched");
+                    compare_state();
+                }
+#endif
+                uint32_t j = arm920t_run(cpu_jit, 64u), r = arm920t_run(cpu_ref, 64u);
+                CHECK(j == r && (r == 2u || r == 4u), "forward terminal helper retirement count");
+                compare_state();
+                CHECK(observed_jit == 1u && observed_ref == 1u && ref_reg(12u) == CODE_ADDR + 12u,
+                      "forward terminal helper executes exactly once");
+                if (adjacent) CHECK(r == 4u && ref_reg(6u) == 0x33u, "next-op target preserves all instructions");
+                gp32_cpu_profile_t profile;
+                arm920t_get_cpu_profile(cpu_jit, &profile);
+                if (profile.supported && profile.native_backend) {
+                    /* FAxxxxxx remains the ARMv5 BLX rejection boundary even
+                     * though its ARMv4 NV predicate prevents execution. */
+                    if (cond == 15u) CHECK(profile.native_arm_insns != 0u, "NV control enters native code");
+                    else CHECK(profile.native_block_calls == 1u && profile.native_arm_insns == j,
+                               "forward terminal helper finishes in one native entry");
+                }
+                teardown_pair();
+                ++cases;
+            }
+        }
+    }
+    printf("forward-predicates cases=%u\n", cases);
+}
+
+/* Compute predicates from their architectural Boolean definitions, without
+ * calling cond_pass or the decoder. Both ALU joins must preserve the previous
+ * committed source. The intervening callback changes Z and two registers, so
+ * the second predicate and cached register reads must observe the new state. */
+static int native_predicate_expected(unsigned cond, unsigned flags) {
+    int n = !!(flags & 8u), z = !!(flags & 4u);
+    int c = !!(flags & 2u), v = !!(flags & 1u);
+    const int pass[16] = {z, !z, c, !c, n, !n, v, !v,
+        c && !z, !c || z, n == v, n != v, !z && n == v, z || n != v, 1, 0};
+    return pass[cond];
+}
+
+static void case_native_predicate_joins(void) {
+    unsigned cases = 0;
+    uint64_t native_insns = 0;
+    for (unsigned cond = 0; cond < 16u; ++cond) {
+        for (unsigned flags = 0; flags < 16u; ++flags) {
+            current_case = "native-predicate-joins";
+            setup_pair();
+            const uint32_t program[] = {
+                0xe2834001u,                   /* ADD r4,r3,#1 */
+                (cond << 28) | 0x02845002u,    /* ADD<cond> r5,r4,#2 */
+                0xe2846003u,                   /* ADD r6,r4,#3 */
+                0xe5917000u,                   /* LDR r7,[r1]: callback */
+                (cond << 28) | 0x00858006u,    /* ADD<cond> r8,r5,r6 */
+                0xe2849001u,                   /* ADD r9,r4,#1 */
+                0xef000042u, 0xeafffffeu
+            };
+            load_both(program, GP32_ARRAY_COUNT(program));
+            set_reg_both(1u, IO_ADDR);
+            set_reg_both(3u, 0x4567u);
+            set_reg_both(5u, 0x1234u);
+            set_reg_both(8u, 0x89abu);
+            arm920t_set_cpsr(cpu_jit, (flags << 28) | 0xd3u);
+            arm920t_set_cpsr(cpu_ref, (flags << 28) | 0xd3u);
+            arm920t_set_trace(cpu_ref, 1, NULL, NULL);
+            bus_jit.observe_cpu = cpu_jit; bus_ref.observe_cpu = cpu_ref;
+            bus_jit.mem_probe = bus_ref.mem_probe = 1u;
+            bus_jit.mem_effect = bus_ref.mem_effect = 3u; /* toggle Z */
+            unsigned swi_jit = 0, swi_ref = 0;
+            arm920t_set_swi_handler(cpu_jit, forward_swi_stop, &swi_jit);
+            arm920t_set_swi_handler(cpu_ref, forward_swi_stop, &swi_ref);
+            uint32_t j = prepared_native_run(cpu_jit, 64u), r = arm920t_run(cpu_ref, 64u);
+            CHECK(j == 7u && r == 7u, "predicate joins retire the complete native prefix");
+            compare_state();
+            uint32_t expected5 = native_predicate_expected(cond, flags) ? 0x456au : 0x1234u;
+            uint32_t expected8 = native_predicate_expected(cond, flags ^ 4u) ? expected5 + 0x456bu : 0x89abu;
+            CHECK(ref_reg(5u) == expected5 && ref_reg(6u) == 0x456bu && ref_reg(8u) == expected8,
+                  "predicates match the independent NZCV truth table");
+            CHECK(ref_reg(4u) == 0x12345678u && ref_reg(9u) == 0x12345679u &&
+                  ref_reg(7u) == 0x8877ff80u && ref_reg(2u) == 0xabcdef01u,
+                  "native helper continuation observes callback register changes");
+            CHECK(arm920t_get_cpsr(cpu_ref) == (((flags ^ 4u) << 28) | 0xd3u),
+                  "conditional ALU operations preserve the callback's flags");
+            CHECK(bus_jit.mem_calls == 1u && bus_ref.mem_calls == 1u &&
+                  bus_jit.mem_pc == CODE_ADDR + 16u && bus_ref.mem_pc == CODE_ADDR + 16u &&
+                  swi_jit == 1u && swi_ref == 1u, "predicate joins preserve callback order and PC");
+            gp32_cpu_profile_t profile;
+            arm920t_get_cpu_profile(cpu_jit, &profile);
+            if (profile.supported && profile.native_backend) {
+                CHECK(profile.native_block_calls == 1u && profile.native_arm_insns == 7u,
+                      "all predicate joins execute in one native entry");
+                native_insns += profile.native_arm_insns;
+            }
+            teardown_pair();
+            ++cases;
+        }
+    }
+    printf("predicate-joins cases=%u native-insns=%" PRIu64 "\n", cases, native_insns);
 }
 
 /* Bus callbacks observe the current instruction's PC+4, even after an inlined
@@ -4511,6 +4729,50 @@ static void case_superblock_lr_writes(void) {
     teardown_pair();
 }
 
+/* General traced callees may call the bus without an explicit ARM write to
+ * LR. A callback can still replace the link: retire MOV/BX through its live
+ * value and let BX select Thumb before executing any caller continuation. */
+static void case_superblock_callback_lr(void) {
+    const uint32_t returns[] = {0xe1a0f00eu, 0xe12fff1eu, 0xe12fff1eu};
+    const uint32_t budgets[] = {1u, 2u, 3u, 4u, 32u};
+    for (unsigned ret = 0; ret < GP32_ARRAY_COUNT(returns); ++ret) {
+        for (unsigned k = 0; k < GP32_ARRAY_COUNT(budgets); ++k) {
+            current_case = ret == 0u ? "trace-callback-lr-mov" :
+                           ret == 1u ? "trace-callback-lr-bx" : "trace-callback-lr-thumb";
+            setup_pair();
+            arm920t_set_trace(cpu_ref, 1, NULL, NULL);
+            const uint32_t program[] = {
+                cache_branch(CODE_ADDR, CODE_ADDR + 0x40u, 1),
+                0xe3a05055u, 0xeafffffeu
+            };
+            load_both(program, GP32_ARRAY_COUNT(program));
+            set_mem_both(CODE_ADDR + 0x40u, 0xe5910000u); /* LDR r0,[r1] */
+            set_mem_both(CODE_ADDR + 0x44u, returns[ret]);
+            int thumb_target = ret == 2u;
+            set_mem_both(CODE_ADDR + 0x80u,
+                         thumb_target ? 0xe7fe2666u : 0xe3a06066u); /* MOV r6,#0x66 */
+            set_mem_both(CODE_ADDR + 0x84u, 0xeafffffeu);
+            set_reg_both(1u, IO_ADDR);
+            bus_jit.observe_cpu = cpu_jit;
+            bus_ref.observe_cpu = cpu_ref;
+            bus_jit.io_lr_target = bus_ref.io_lr_target = CODE_ADDR + 0x80u + thumb_target;
+            CHECK(prepared_native_run(cpu_jit, budgets[k]) == arm920t_run(cpu_ref, budgets[k]),
+                  "callback LR return budget");
+            compare_state();
+            CHECK(ref_reg(5u) == 0u, "callback LR skips original caller continuation");
+            CHECK(ref_reg(6u) == (budgets[k] >= 4u ? 0x66u : 0u),
+                  "callback LR reaches replacement continuation");
+            CHECK(!!(arm920t_get_cpsr(cpu_ref) & 0x20u) == (thumb_target && budgets[k] >= 3u),
+                  "callback LR selects the BX execution state");
+            CHECK(bus_jit.io_count == (budgets[k] >= 2u) &&
+                  bus_ref.io_count == (budgets[k] >= 2u), "callback LR access count");
+            if (budgets[k] == 32u && ARM920T_NATIVE_BACKEND)
+                CHECK(cpu_jit->prof.native_arm_insns >= 3u, "callback LR return ran natively");
+            teardown_pair();
+        }
+    }
+}
+
 static void case_superblock_trace(void) {
     const uint32_t callee = CODE_ADDR + 0x40u;
     current_case = "superblock-call-return";
@@ -5660,7 +5922,14 @@ int main(int argc, char **argv) {
     int psr_only = argc == 2 && !strcmp(argv[1], "--psr");
     int terminal_coproc_only = argc == 2 && !strcmp(argv[1], "--terminal-coproc");
     int selfmove_only = argc == 2 && !strcmp(argv[1], "--self-move-nop");
-    if (argc == 2 && !strcmp(argv[1], "--ldm-predicate")) {
+    if (argc == 2 && !strcmp(argv[1], "--predicate-joins")) {
+        case_native_predicate_joins();
+    } else if (argc == 2 && !strcmp(argv[1], "--internal-forward")) {
+        case_native_internal_forward();
+        case_native_forward_callback();
+        case_native_forward_joins();
+        case_native_forward_predicates();
+    } else if (argc == 2 && !strcmp(argv[1], "--ldm-predicate")) {
         case_ldm_predicate();
     } else if (argc == 2 && !strcmp(argv[1], "--promotion-access")) {
         case_live_read32_cold_tlb();
@@ -5686,6 +5955,7 @@ int main(int argc, char **argv) {
         case_checked_access_translation();
     } else if (argc == 2 && !strcmp(argv[1], "--trace-lr")) {
         case_superblock_lr_writes();
+        case_superblock_callback_lr();
     } else if (argc == 2 && !strcmp(argv[1], "--alu-callback-state")) {
         case_alu_callback_state();
         case_loop_callback_state();
@@ -5897,6 +6167,9 @@ int main(int argc, char **argv) {
     case_direct_dispatch();
     case_native_internal_forward();
     case_native_forward_callback();
+    case_native_forward_joins();
+    case_native_forward_predicates();
+    case_native_predicate_joins();
     case_loop_irq_fence();
     case_loop_smc_epoch();
     case_loop_callback_flush();
@@ -5905,6 +6178,7 @@ int main(int argc, char **argv) {
     case_nested_framed_leaf();
     case_superblock_trace();
     case_superblock_lr_writes();
+    case_superblock_callback_lr();
     }
     current_case = "summary";
     if (jit_events == 0)

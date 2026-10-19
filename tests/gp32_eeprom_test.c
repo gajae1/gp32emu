@@ -181,9 +181,87 @@ static void check_mode(int jit) {
     gp32_destroy(g);
 }
 
+/* The caller owns an EEPROM read's destination. It can be a previously
+ * executed RAM function, so these host writes need the same external-code
+ * notification as an HLE file read. Exercise actual SWIs, including the
+ * device-ID transformation, while keeping the raw ARM path as a control. */
+static void check_read_code(unsigned engine, unsigned instruction_cache, int devid) {
+    gp32_t *g = gp32_create(NULL);
+    CHECK(g != NULL);
+    if (!g) return;
+    direct_set_fxe_mode(g, 1u);
+    arm920t_set_jit(g->cpu, engine == 2u);
+    arm920t_set_trace(g->cpu, engine == 0u, NULL, NULL);
+    const uint32_t control = code + 0x200u;
+    s3c2400_write32(g->soc, code, 0xef000105u);
+    s3c2400_write32(g->soc, devid_code, 0xef000104u);
+    s3c2400_write32(g->soc, control, 0xee010f10u); /* MCR p15,0,r0,c1,c0,0 */
+    arm920t_set_reg(g->cpu, 0u, 0x70u | (instruction_cache << 12));
+    arm920t_set_reg(g->cpu, 15u, control);
+    CHECK(arm920t_run(g->cpu, 1u) == 1u);
+    s3c2400_write32(g->soc, buffer, 0xe3a00011u); /* MOV r0,#0x11 */
+    s3c2400_write32(g->soc, buffer + 4u, 0xe12fff1cu); /* BX r12 */
+    arm920t_set_reg(g->cpu, 12u, control);
+    for (unsigned warm = 0; warm < 2u; ++warm) {
+        arm920t_set_reg(g->cpu, 0u, 0u);
+        arm920t_set_reg(g->cpu, 15u, buffer);
+        CHECK(arm920t_run(g->cpu, 2u) == 2u);
+        CHECK(arm920t_get_reg(g->cpu, 0u) == 0x11u);
+    }
+#if defined(GP32EMU_CPU_PROFILE) && GP32EMU_CPU_PROFILE
+    if (engine == 2u && arm920t_get_jit_enabled(g->cpu)) {
+        gp32_cpu_profile_t profile;
+        arm920t_get_cpu_profile(g->cpu, &profile);
+        CHECK(profile.native_arm_insns != 0u);
+    }
+#endif
+    static const uint8_t replacement[16] = {
+        0x22u, 0x00u, 0xa0u, 0xe3u, /* MOV r0,#0x22 */
+        0x1cu, 0xffu, 0x2fu, 0xe1u, /* BX r12 */
+        0x00u, 0x00u, 0xa0u, 0xe1u, 0x00u, 0x00u, 0xa0u, 0xe1u
+    };
+    static const uint8_t key[8] = {'S', 'A', 'N', 'G', 'H', 'Y', 'U', 'K'};
+    uint32_t count = devid ? 16u : 4u, offset = devid ? 0x10u : 0x200u;
+    for (uint32_t i = 0; i < count; ++i)
+        s3c2400_eeprom_write8(g->soc, offset + i,
+            (uint8_t)(replacement[i] ^ (devid ? key[i & 7u] : 0u)));
+    s3c2400_write8(g->soc, buffer - 1u, 0xa5u);
+    if (devid) s3c2400_write8(g->soc, buffer + count, 0x5au);
+    CHECK((devid ? call_devid(g, buffer) : call(g, offset, count, buffer, 0u)) == 0u);
+    for (uint32_t i = 0; i < count; ++i)
+        CHECK(s3c2400_read8(g->soc, buffer + i) == replacement[i]);
+    CHECK(s3c2400_read8(g->soc, buffer - 1u) == 0xa5u);
+    CHECK(s3c2400_read32(g->soc, buffer + 4u) == 0xe12fff1cu);
+    if (devid) CHECK(s3c2400_read8(g->soc, buffer + count) == 0x5au);
+    arm920t_set_cpsr(g->cpu, 0xd3u);
+    arm920t_set_reg(g->cpu, 0u, 0u);
+    arm920t_set_reg(g->cpu, 15u, buffer);
+    uint64_t before = arm920t_get_cycles(g->cpu);
+    CHECK(arm920t_run(g->cpu, 2u) == 2u);
+    CHECK(arm920t_get_cycles(g->cpu) == before + 2u);
+    CHECK(arm920t_get_reg(g->cpu, 0u) == 0x22u);
+    CHECK(arm920t_get_pc(g->cpu) == control);
+    CHECK(arm920t_get_cpsr(g->cpu) == 0xd3u);
+
+    /* A write to EEPROM cannot change guest code, and an ordinary read
+     * buffer on an untracked page must not invalidate the code cache. */
+    gp32_cpu_profile_t p0, p1;
+    arm920t_get_cpu_profile(g->cpu, &p0);
+    CHECK(call(g, 0x300u, 4u, buffer, 1u) == 0u);
+    CHECK((devid ? call_devid(g, buffer + 0x1000u) :
+        call(g, offset, count, buffer + 0x1000u, 0u)) == 0u);
+    arm920t_get_cpu_profile(g->cpu, &p1);
+    CHECK(p0.jit_invalidations == p1.jit_invalidations);
+    gp32_destroy(g);
+}
+
 int main(void) {
     check_mode(0);
     check_mode(1);
-    if (!failures) puts("PASS: SDK EEPROM / IIC / state, interpreter and JIT");
+    for (unsigned engine = 0; engine < 3u; ++engine)
+        for (unsigned instruction_cache = 0; instruction_cache < 2u; ++instruction_cache)
+            for (int devid = 0; devid < 2; ++devid)
+                check_read_code(engine, instruction_cache, devid);
+    if (!failures) puts("PASS: SDK EEPROM / IIC / state and 12 read-code coherency cases");
     return failures ? 1 : 0;
 }

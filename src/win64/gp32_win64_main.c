@@ -29,7 +29,7 @@ static_assert(sizeof(void *) == 8, "The Windows frontend supports 64-bit targets
 #define GP32_BASE_TITLE "GP32emu"
 #define GP32_APP_VERSION "1.1.0"
 #define GP32_RECENT_MAX 8
-#define GP32_STATE_SLOTS 9
+#define GP32_STATE_SLOTS 10
 #define GP32_FAST_FORWARD 4u
 
 #define IDM_FILE_OPEN_GAME       1002

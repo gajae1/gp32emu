@@ -1,7 +1,19 @@
-/* Test-only conversion of a v15 capture into the frozen v14 wire layout.
+/* Test-only conversion of a current capture into the frozen v14 wire layout.
  * New-format round trips still use the original capture. Legacy fixtures must
- * remove the translation extension before changing the magic or older tails. */
+ * remove the explicit PCM/PWM and translation extensions before changing the
+ * magic or older tails. */
+#include "pcm_state_fixture.h"
 static size_t fixture_v14(uint8_t *data, size_t size) {
+    size = fixture_v16(data, size);
+    if (size >= 16u && !memcmp(data, "GP32STATEv0016", 14u)) {
+        CHECK(size >= S3C2400_PWM_STATE_BYTES &&
+              !memcmp(data + size - S3C2400_PWM_STATE_BYTES, "PWM1", 4u),
+              "legacy conversion starts with complete v16 PWM extension");
+        if (size < S3C2400_PWM_STATE_BYTES ||
+            memcmp(data + size - S3C2400_PWM_STATE_BYTES, "PWM1", 4u)) return size;
+        size -= S3C2400_PWM_STATE_BYTES;
+        memcpy(data, "GP32STATEv0015", 14u);
+    }
     const size_t off=16u+sizeof(gp32_state_image_t)+32u+
         GP32_CONTINUATION_BYTES+sizeof(arm920t_state_image_t);
     const size_t extra=sizeof(arm920t_translation_state_image_t);

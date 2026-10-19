@@ -1,0 +1,11 @@
+$ gcc-13 -std=c2x -O2 -DGP32EMU_CPU_PROFILE=1 -Isrc -Iinclude /tmp/gp32-round5-pwm/docs/benchmarks/1.1.0-round5/pwm/same-speed-probe.c /tmp/gp32-round5-build-pwm/gcc/libgp32emu.a -lm -pthread -o /tmp/gp32-round5-build-pwm/same-speed-pwm-probe-after
+exit=0
+$ /tmp/gp32-round5-build-pwm/same-speed-pwm-probe-after
+FAIL: same-speed source continuation 133: saved and live full phases equal (84)
+FAIL: same-speed source continuation 150: saved and live full phases equal (84)
+same-speed probe failures=2
+exit=1
+sha256 a8a300add8301da4444bb582b0e96a02151a1eddab1c70cd710a084f3fb1c96c docs/benchmarks/1.1.0-round5/pwm/same-speed-probe.c
+sha256 5898aa88079c23c0eb829d9a1b553e657cbbef2bb03044e6ca2a48f343e53983 src/gp32.c
+sha256 a797014071c7b1d82e26eb025423194e9dfad0db20498b3b65572b7f5244f566 src/s3c2400.c
+sha256 ee5a979344a8d485ecee5a6abe4d8f4f4c59a54f8c1528d1fc4debfafe0b6342 tests/gp32_state_speed_test.c

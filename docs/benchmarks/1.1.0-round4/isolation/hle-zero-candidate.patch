@@ -1,0 +1,22 @@
+diff --git a/src/gp32.c b/src/gp32.c
+index 81aa255..a5ca5b4 100644
+--- a/src/gp32.c
++++ b/src/gp32.c
+@@ -675,8 +675,15 @@ static void direct_copy_bytes_if_ram(gp32_t *g, uint32_t dst, const uint8_t *src
+ }
+ 
+ static void direct_zero_if_ram(gp32_t *g, uint32_t dst, uint32_t len) {
+-    if (!g || !direct_ram_range(g, dst, len)) return;
+-    for (uint32_t i = 0; i < len; ++i) s3c2400_write8(g->soc, dst + i, 0u);
++    if (!g || !len || !direct_ram_range(g, dst, len)) return;
++    /* BSS/PCM initialization touches ordinary, fully bounded SDRAM. Use the
++     * bus's writable span without dispatching one byte store per byte. */
++    arm_bus_t bus = s3c2400_get_bus(g->soc);
++    uint8_t *p = bus.fastmem ? bus.fastmem(bus.user, dst, len, 1) : NULL;
++    if (p) memset(p, 0, len);
++    else for (uint32_t i = 0; i < len; ++i) s3c2400_write8(g->soc, dst + i, 0u);
++    /* HLE writes are external CPU writers, including a zero fill. */
++    arm920t_invalidate_icache_range(g->cpu, dst, len);
+ }
+ 
+ static void direct_write_cstr_if_ram(gp32_t *g, uint32_t dst, const char *s) {

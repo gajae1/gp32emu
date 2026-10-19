@@ -1,0 +1,1305 @@
+{
+  "backtraceGraph" : 
+  {
+    "commands" : 
+    [
+      "add_test"
+    ],
+    "files" : 
+    [
+      "/tmp/gp32-round4/CMakeLists.txt"
+    ],
+    "nodes" : 
+    [
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 91,
+        "parent" : 0
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 92,
+        "parent" : 2
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 93,
+        "parent" : 4
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 94,
+        "parent" : 6
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 95,
+        "parent" : 8
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 96,
+        "parent" : 10
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 97,
+        "parent" : 12
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 98,
+        "parent" : 14
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 99,
+        "parent" : 16
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 103,
+        "parent" : 18
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 107,
+        "parent" : 20
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 111,
+        "parent" : 22
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 115,
+        "parent" : 24
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 119,
+        "parent" : 26
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 123,
+        "parent" : 28
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 124,
+        "parent" : 30
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 125,
+        "parent" : 32
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 126,
+        "parent" : 34
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 130,
+        "parent" : 36
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 134,
+        "parent" : 38
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 138,
+        "parent" : 40
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 139,
+        "parent" : 42
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 140,
+        "parent" : 44
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 141,
+        "parent" : 46
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 142,
+        "parent" : 48
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 149,
+        "parent" : 50
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 150,
+        "parent" : 52
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 151,
+        "parent" : 54
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 155,
+        "parent" : 56
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 156,
+        "parent" : 58
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 157,
+        "parent" : 60
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 158,
+        "parent" : 62
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 167,
+        "parent" : 64
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 168,
+        "parent" : 66
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 169,
+        "parent" : 68
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 170,
+        "parent" : 70
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 174,
+        "parent" : 72
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 175,
+        "parent" : 74
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 176,
+        "parent" : 76
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 177,
+        "parent" : 78
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 178,
+        "parent" : 80
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 179,
+        "parent" : 82
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 180,
+        "parent" : 84
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 184,
+        "parent" : 86
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 188,
+        "parent" : 88
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 192,
+        "parent" : 90
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 196,
+        "parent" : 92
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 197,
+        "parent" : 94
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 198,
+        "parent" : 96
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 199,
+        "parent" : 98
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 200,
+        "parent" : 100
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 201,
+        "parent" : 102
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 202,
+        "parent" : 104
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 203,
+        "parent" : 106
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 207,
+        "parent" : 108
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 208,
+        "parent" : 110
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 209,
+        "parent" : 112
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 210,
+        "parent" : 114
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 211,
+        "parent" : 116
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 212,
+        "parent" : 118
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 216,
+        "parent" : 120
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 220,
+        "parent" : 122
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 224,
+        "parent" : 124
+      },
+      {
+        "file" : 0
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 228,
+        "parent" : 126
+      }
+    ]
+  },
+  "kind" : "ctestInfo",
+  "tests" : 
+  [
+    {
+      "backtrace" : 1,
+      "name" : "ios_bridge",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round5-final-clang"
+        }
+      ]
+    },
+    {
+      "backtrace" : 3,
+      "name" : "libretro_audio",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round5-final-clang"
+        }
+      ]
+    },
+    {
+      "backtrace" : 5,
+      "name" : "audio_resampler",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round5-final-clang"
+        }
+      ]
+    },
+    {
+      "backtrace" : 7,
+      "name" : "libretro_persistence",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round5-final-clang"
+        }
+      ]
+    },
+    {
+      "backtrace" : 9,
+      "name" : "libretro_input",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round5-final-clang"
+        }
+      ]
+    },
+    {
+      "backtrace" : 11,
+      "name" : "libretro_runahead",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round5-final-clang"
+        }
+      ]
+    },
+    {
+      "backtrace" : 13,
+      "name" : "input_script",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round5-final-clang"
+        }
+      ]
+    },
+    {
+      "backtrace" : 15,
+      "name" : "arm_poll",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round5-final-clang"
+        }
+      ]
+    },
+    {
+      "backtrace" : 17,
+      "name" : "arm_jit",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round5-final-clang"
+        }
+      ]
+    },
+    {
+      "backtrace" : 19,
+      "name" : "arm_write_permission",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round5-final-clang"
+        }
+      ]
+    },
+    {
+      "backtrace" : 21,
+      "name" : "arm_read_window",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round5-final-clang"
+        }
+      ]
+    },
+    {
+      "backtrace" : 23,
+      "name" : "arm_fetch_callback",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round5-final-clang"
+        }
+      ]
+    },
+    {
+      "backtrace" : 25,
+      "name" : "arm_fastmem_io",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round5-final-clang"
+        }
+      ]
+    },
+    {
+      "backtrace" : 27,
+      "name" : "arm_multiply",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round5-final-clang"
+        }
+      ]
+    },
+    {
+      "backtrace" : 29,
+      "name" : "arm_nonram_code_write",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round5-final-clang"
+        }
+      ]
+    },
+    {
+      "backtrace" : 31,
+      "name" : "arm_translation",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round5-final-clang"
+        }
+      ]
+    },
+    {
+      "backtrace" : 33,
+      "name" : "arm_accelerator",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round5-final-clang"
+        }
+      ]
+    },
+    {
+      "backtrace" : 35,
+      "name" : "arm_exception",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round5-final-clang"
+        }
+      ]
+    },
+    {
+      "backtrace" : 37,
+      "name" : "arm_thumb_transfer",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round5-final-clang"
+        }
+      ]
+    },
+    {
+      "backtrace" : 39,
+      "name" : "arm_thumb_alu",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round5-final-clang"
+        }
+      ]
+    },
+    {
+      "backtrace" : 41,
+      "name" : "arm_thumb_pc",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round5-final-clang"
+        }
+      ]
+    },
+    {
+      "backtrace" : 43,
+      "name" : "arm_code_write",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round5-final-clang"
+        }
+      ]
+    },
+    {
+      "backtrace" : 45,
+      "name" : "arm_cpu_code_write",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round5-final-clang"
+        }
+      ]
+    },
+    {
+      "backtrace" : 47,
+      "name" : "s3c2400_timing",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round5-final-clang"
+        }
+      ]
+    },
+    {
+      "backtrace" : 49,
+      "name" : "s3c2400_iis_irq",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round5-final-clang"
+        }
+      ]
+    },
+    {
+      "backtrace" : 51,
+      "name" : "s3c2400_dma",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round5-final-clang"
+        }
+      ]
+    },
+    {
+      "backtrace" : 53,
+      "name" : "s3c2400_muted_dma",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round5-final-clang"
+        }
+      ]
+    },
+    {
+      "backtrace" : 55,
+      "name" : "s3c2400_irq",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round5-final-clang"
+        }
+      ]
+    },
+    {
+      "backtrace" : 57,
+      "name" : "s3c2400_priority",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round5-final-clang"
+        }
+      ]
+    },
+    {
+      "backtrace" : 59,
+      "name" : "s3c2400_lcd",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round5-final-clang"
+        }
+      ]
+    },
+    {
+      "backtrace" : 61,
+      "name" : "s3c2400_scanout",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round5-final-clang"
+        }
+      ]
+    },
+    {
+      "backtrace" : 63,
+      "name" : "s3c2400_pwm",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round5-final-clang"
+        }
+      ]
+    },
+    {
+      "backtrace" : 65,
+      "name" : "s3c2400_pwm_model",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round5-final-clang"
+        }
+      ]
+    },
+    {
+      "backtrace" : 67,
+      "name" : "s3c2400_pwm_state",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round5-final-clang"
+        }
+      ]
+    },
+    {
+      "backtrace" : 69,
+      "name" : "s3c2400_gpio",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round5-final-clang"
+        }
+      ]
+    },
+    {
+      "backtrace" : 71,
+      "name" : "s3c2400_state",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round5-final-clang"
+        }
+      ]
+    },
+    {
+      "backtrace" : 73,
+      "name" : "s3c2400_fastmem",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round5-final-clang"
+        }
+      ]
+    },
+    {
+      "backtrace" : 75,
+      "name" : "gp32_pcm",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round5-final-clang"
+        }
+      ]
+    },
+    {
+      "backtrace" : 77,
+      "name" : "gp32_timer",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round5-final-clang"
+        }
+      ]
+    },
+    {
+      "backtrace" : 79,
+      "name" : "gp32_callback",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round5-final-clang"
+        }
+      ]
+    },
+    {
+      "backtrace" : 81,
+      "name" : "gp32_swi_1ff",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round5-final-clang"
+        }
+      ]
+    },
+    {
+      "backtrace" : 83,
+      "name" : "gp32_wait",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round5-final-clang"
+        }
+      ]
+    },
+    {
+      "backtrace" : 85,
+      "name" : "gp32_file",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round5-final-clang"
+        }
+      ]
+    },
+    {
+      "backtrace" : 87,
+      "name" : "gp32_hle_memory",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round5-final-clang"
+        }
+      ]
+    },
+    {
+      "backtrace" : 89,
+      "name" : "gp32_bios_reload",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round5-final-clang"
+        }
+      ]
+    },
+    {
+      "backtrace" : 91,
+      "name" : "s3c2400_bios_load",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round5-final-clang"
+        }
+      ]
+    },
+    {
+      "backtrace" : 93,
+      "name" : "arm_external_write",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round5-final-clang"
+        }
+      ]
+    },
+    {
+      "backtrace" : 95,
+      "name" : "gp32_codec",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round5-final-clang"
+        }
+      ]
+    },
+    {
+      "backtrace" : 97,
+      "name" : "gp32_eeprom",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round5-final-clang"
+        }
+      ]
+    },
+    {
+      "backtrace" : 99,
+      "name" : "gp32_shadow",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round5-final-clang"
+        }
+      ]
+    },
+    {
+      "backtrace" : 101,
+      "name" : "gp32_game_fix",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round5-final-clang"
+        }
+      ]
+    },
+    {
+      "backtrace" : 103,
+      "name" : "gp32_pinball_fix",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round5-final-clang"
+        }
+      ]
+    },
+    {
+      "backtrace" : 105,
+      "name" : "gp32_fast_load",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round5-final-clang"
+        }
+      ]
+    },
+    {
+      "backtrace" : 107,
+      "name" : "gp32_state",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round5-final-clang"
+        }
+      ]
+    },
+    {
+      "backtrace" : 109,
+      "name" : "gp32_state_speed",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round5-final-clang"
+        }
+      ]
+    },
+    {
+      "backtrace" : 111,
+      "name" : "gp32_media_png",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round5-final-clang"
+        }
+      ]
+    },
+    {
+      "backtrace" : 113,
+      "name" : "smartmedia",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round5-final-clang"
+        }
+      ]
+    },
+    {
+      "backtrace" : 115,
+      "name" : "smartmedia_capacity",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round5-final-clang"
+        }
+      ]
+    },
+    {
+      "backtrace" : 117,
+      "name" : "savestate_session",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round5-final-clang"
+        }
+      ]
+    },
+    {
+      "backtrace" : 119,
+      "name" : "atomic_save",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round5-final-clang"
+        }
+      ]
+    },
+    {
+      "backtrace" : 121,
+      "name" : "arm_jit_recycle",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round5-final-clang"
+        }
+      ]
+    },
+    {
+      "backtrace" : 123,
+      "name" : "arm_jit_policy",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round5-final-clang"
+        }
+      ]
+    },
+    {
+      "backtrace" : 125,
+      "name" : "arm_jit_io_mapping",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round5-final-clang"
+        }
+      ]
+    },
+    {
+      "backtrace" : 127,
+      "name" : "arm_alu_differential",
+      "properties" : 
+      [
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/gp32-round5-final-clang"
+        }
+      ]
+    }
+  ],
+  "version" : 
+  {
+    "major" : 1,
+    "minor" : 0
+  }
+}

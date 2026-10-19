@@ -1,0 +1,832 @@
+
+/tmp/gp32-round4-build-aarch64/CMakeFiles/gp32emu.dir/src/audio/gp32_audio_resampler.c.o:     file format elf64-littleaarch64
+
+
+Disassembly of section .text:
+
+0000000000000bc0 <gp32_audio_resampler_process>:
+     bc0:	a9b67bfd 	stp	x29, x30, [sp, #-160]!
+     bc4:	90000008 	adrp	x8, 0 <__stack_chk_guard>
+			bc4: R_AARCH64_ADR_GOT_PAGE	__stack_chk_guard
+     bc8:	f9400108 	ldr	x8, [x8]
+			bc8: R_AARCH64_LD64_GOT_LO12_NC	__stack_chk_guard
+     bcc:	910003fd 	mov	x29, sp
+     bd0:	a90153f3 	stp	x19, x20, [sp, #16]
+     bd4:	aa0003f3 	mov	x19, x0
+     bd8:	f100027f 	cmp	x19, #0x0
+     bdc:	a90363f7 	stp	x23, x24, [sp, #48]
+     be0:	d10643ff 	sub	sp, sp, #0x190
+     be4:	fa401824 	ccmp	x1, #0x0, #0x4, ne	// ne = any
+     be8:	f9400100 	ldr	x0, [x8]
+     bec:	f900c7e0 	str	x0, [sp, #392]
+     bf0:	d2800000 	mov	x0, #0x0                   	// #0
+     bf4:	a9039be2 	stp	x2, x6, [sp, #56]
+     bf8:	540001a0 	b.eq	c2c <gp32_audio_resampler_process+0x6c>  // b.none
+     bfc:	f10000df 	cmp	x6, #0x0
+     c00:	fa401844 	ccmp	x2, #0x0, #0x4, ne	// ne = any
+     c04:	54000140 	b.eq	c2c <gp32_audio_resampler_process+0x6c>  // b.none
+     c08:	7100007f 	cmp	w3, #0x0
+     c0c:	a91b5bf5 	stp	x21, x22, [sp, #432]
+     c10:	7a401884 	ccmp	w4, #0x0, #0x4, ne	// ne = any
+     c14:	2a0303f5 	mov	w21, w3
+     c18:	2a0403f6 	mov	w22, w4
+     c1c:	aa0703f7 	mov	x23, x7
+     c20:	fa4018e4 	ccmp	x7, #0x0, #0x4, ne	// ne = any
+     c24:	54000081 	b.ne	c34 <gp32_audio_resampler_process+0x74>  // b.any
+     c28:	a95b5bf5 	ldp	x21, x22, [sp, #432]
+     c2c:	d2800017 	mov	x23, #0x0                   	// #0
+     c30:	140002a1 	b	16b4 <gp32_audio_resampler_process+0xaf4>
+     c34:	b9401678 	ldr	w24, [x19, #20]
+     c38:	aa0103f4 	mov	x20, x1
+     c3c:	a91d6bf9 	stp	x25, x26, [sp, #464]
+     c40:	2a0503e0 	mov	w0, w5
+     c44:	b9400261 	ldr	w1, [x19]
+     c48:	a91e73fb 	stp	x27, x28, [sp, #480]
+     c4c:	fd0103ea 	str	d10, [sp, #512]
+     c50:	fd0107eb 	str	d11, [sp, #520]
+     c54:	34001b58 	cbz	w24, fbc <gp32_audio_resampler_process+0x3fc>
+     c58:	7100003f 	cmp	w1, #0x0
+     c5c:	7a411064 	ccmp	w3, w1, #0x4, ne	// ne = any
+     c60:	54001ae0 	b.eq	fbc <gp32_audio_resampler_process+0x3fc>  // b.none
+     c64:	b9400662 	ldr	w2, [x19, #4]
+     c68:	6b02009f 	cmp	w4, w2
+     c6c:	54001aa1 	b.ne	fc0 <gp32_audio_resampler_process+0x400>  // b.any
+     c70:	52800026 	mov	w6, #0x1                   	// #1
+     c74:	6d1f27e8 	stp	d8, d9, [sp, #496]
+     c78:	fd010bec 	str	d12, [sp, #528]
+     c7c:	fd010fed 	str	d13, [sp, #536]
+     c80:	fd0113ee 	str	d14, [sp, #544]
+     c84:	fd0117ef 	str	d15, [sp, #552]
+     c88:	f9400662 	ldr	x2, [x19, #8]
+     c8c:	2a0103e1 	mov	w1, w1
+     c90:	2a1503e3 	mov	w3, w21
+     c94:	29005a75 	stp	w21, w22, [x19]
+     c98:	9ac10845 	udiv	x5, x2, x1
+     c9c:	9b0188a2 	msub	x2, x5, x1, x2
+     ca0:	9b037c42 	mul	x2, x2, x3
+     ca4:	9ac10842 	udiv	x2, x2, x1
+     ca8:	aa2203e4 	mvn	x4, x2
+     cac:	9b0308a2 	madd	x2, x5, x3, x2
+     cb0:	9ac30884 	udiv	x4, x4, x3
+     cb4:	eb0400bf 	cmp	x5, x4
+     cb8:	da9f9042 	csinv	x2, x2, xzr, ls	// ls = plast
+     cbc:	f9000662 	str	x2, [x19, #8]
+     cc0:	34001666 	cbz	w6, f8c <gp32_audio_resampler_process+0x3cc>
+     cc4:	d370bc21 	lsl	x1, x1, #16
+     cc8:	eb01007f 	cmp	x3, x1
+     ccc:	54005608 	b.hi	178c <gp32_audio_resampler_process+0xbcc>  // b.pmore
+     cd0:	9ac3082d 	udiv	x13, x1, x3
+     cd4:	aa0d03ec 	mov	x12, x13
+     cd8:	f14041bf 	cmp	x13, #0x10, lsl #12
+     cdc:	54005669 	b.ls	17a8 <gp32_audio_resampler_process+0xbe8>  // b.plast
+     ce0:	d29fffe5 	mov	x5, #0xffff                	// #65535
+     ce4:	8b0501ab 	add	x11, x13, x5
+     ce8:	52800101 	mov	w1, #0x8                   	// #8
+     cec:	52800025 	mov	w5, #0x1                   	// #1
+     cf0:	d350fd6b 	lsr	x11, x11, #16
+     cf4:	6b01017f 	cmp	w11, w1
+     cf8:	1a81916b 	csel	w11, w11, w1, ls	// ls = plast
+     cfc:	4b0b00a5 	sub	w5, w5, w11
+     d00:	2a0b03fe 	mov	w30, w11
+     d04:	531f7961 	lsl	w1, w11, #1
+     d08:	531f796b 	lsl	w11, w11, #1
+     d0c:	0b050021 	add	w1, w1, w5
+     d10:	d14041a9 	sub	x9, x13, #0x10, lsl #12
+     d14:	9101c3fb 	add	x27, sp, #0x70
+     d18:	910403e8 	add	x8, sp, #0x100
+     d1c:	91402272 	add	x18, x19, #0x8, lsl #12
+     d20:	2a1503e7 	mov	w7, w21
+     d24:	d280002e 	mov	x14, #0x1                   	// #1
+     d28:	d28007f1 	mov	x17, #0x3f                  	// #63
+     d2c:	d29fffea 	mov	x10, #0xffff                	// #65535
+     d30:	d2800802 	mov	x2, #0x40                  	// #64
+     d34:	d2a00030 	mov	x16, #0x10000               	// #65536
+     d38:	92a0002f 	mov	x15, #0xfffffffffffeffff    	// #-65537
+     d3c:	f90007ed 	str	x13, [sp, #8]
+     d40:	b90013f8 	str	w24, [sp, #16]
+     d44:	2a0503e4 	mov	w4, w5
+     d48:	d2800015 	mov	x21, #0x0                   	// #0
+     d4c:	d2800018 	mov	x24, #0x0                   	// #0
+     d50:	93407c83 	sxtw	x3, w4
+     d54:	9b0c7c63 	mul	x3, x3, x12
+     d58:	9acb0c63 	sdiv	x3, x3, x11
+     d5c:	ab090063 	adds	x3, x3, x9
+     d60:	54004ca4 	b.mi	16f4 <gp32_audio_resampler_process+0xb34>  // b.first
+     d64:	d350fc79 	lsr	x25, x3, #16
+     d68:	f100ff3f 	cmp	x25, #0x3f
+     d6c:	54004ee8 	b.hi	1748 <gp32_audio_resampler_process+0xb88>  // b.pmore
+     d70:	cb19022d 	sub	x13, x17, x25
+     d74:	92403c63 	and	x3, x3, #0xffff
+     d78:	8b0d066d 	add	x13, x19, x13, lsl #1
+     d7c:	914021ad 	add	x13, x13, #0x8, lsl #12
+     d80:	79c461a6 	ldrsh	w6, [x13, #560]
+     d84:	b4004eb9 	cbz	x25, 1758 <gp32_audio_resampler_process+0xb98>
+     d88:	cb190059 	sub	x25, x2, x25
+     d8c:	8b190679 	add	x25, x19, x25, lsl #1
+     d90:	91402339 	add	x25, x25, #0x8, lsl #12
+     d94:	79c4633a 	ldrsh	w26, [x25, #560]
+     d98:	79c56339 	ldrsh	w25, [x25, #688]
+     d9c:	4b1a00c6 	sub	w6, w6, w26
+     da0:	93407cc6 	sxtw	x6, w6
+     da4:	9b037cc6 	mul	x6, x6, x3
+     da8:	f10000df 	cmp	x6, #0x0
+     dac:	8b0a00dc 	add	x28, x6, x10
+     db0:	9a86b386 	csel	x6, x28, x6, lt	// lt = tstop
+     db4:	9350fcc6 	asr	x6, x6, #16
+     db8:	0b06035a 	add	w26, w26, w6
+     dbc:	79c561a6 	ldrsh	w6, [x13, #688]
+     dc0:	4b1900c6 	sub	w6, w6, w25
+     dc4:	8b3ac318 	add	x24, x24, w26, sxtw
+     dc8:	93407cc6 	sxtw	x6, w6
+     dcc:	9b037cc3 	mul	x3, x6, x3
+     dd0:	f100007f 	cmp	x3, #0x0
+     dd4:	8b0a0066 	add	x6, x3, x10
+     dd8:	9a83b0c3 	csel	x3, x6, x3, lt	// lt = tstop
+     ddc:	9350fc63 	asr	x3, x3, #16
+     de0:	0b030339 	add	w25, w25, w3
+     de4:	8b39c2b5 	add	x21, x21, w25, sxtw
+     de8:	11000884 	add	w4, w4, #0x2
+     dec:	6b01009f 	cmp	w4, w1
+     df0:	54fffb01 	b.ne	d50 <gp32_audio_resampler_process+0x190>  // b.any
+     df4:	9ade0f18 	sdiv	x24, x24, x30
+     df8:	d37ff9c3 	lsl	x3, x14, #1
+     dfc:	8b030364 	add	x4, x27, x3
+     e00:	8b030103 	add	x3, x8, x3
+     e04:	9ade0eb5 	sdiv	x21, x21, x30
+     e08:	910005ce 	add	x14, x14, #0x1
+     e0c:	f94007e6 	ldr	x6, [sp, #8]
+     e10:	781fe098 	sturh	w24, [x4, #-2]
+     e14:	781fe075 	sturh	w21, [x3, #-2]
+     e18:	8b060129 	add	x9, x9, x6
+     e1c:	f10109df 	cmp	x14, #0x42
+     e20:	54fff921 	b.ne	d44 <gp32_audio_resampler_process+0x184>  // b.any
+     e24:	910803e3 	add	x3, sp, #0x200
+     e28:	7940e3e4 	ldrh	w4, [sp, #112]
+     e2c:	3cc723ec 	ldur	q12, [sp, #114]
+     e30:	79002264 	strh	w4, [x19, #16]
+     e34:	3cd0206a 	ldur	q10, [x3, #-254]
+     e38:	2a0703f5 	mov	w21, w7
+     e3c:	3cd12062 	ldur	q2, [x3, #-238]
+     e40:	5287cfe2 	mov	w2, #0x3e7f                	// #15999
+     e44:	3cd22064 	ldur	q4, [x3, #-222]
+     e48:	52800201 	mov	w1, #0x10                  	// #16
+     e4c:	3cd3206e 	ldur	q14, [x3, #-206]
+     e50:	3cd42070 	ldur	q16, [x3, #-190]
+     e54:	3cd52072 	ldur	q18, [x3, #-174]
+     e58:	910983e3 	add	x3, sp, #0x260
+     e5c:	3cc823e8 	ldur	q8, [sp, #130]
+     e60:	3cd02066 	ldur	q6, [x3, #-254]
+     e64:	90000003 	adrp	x3, 0 <poly_gather>
+			e64: R_AARCH64_ADR_PREL_PG_HI21	.rodata.cst16
+     e68:	3cc923fc 	ldur	q28, [sp, #146]
+     e6c:	3cca23f4 	ldur	q20, [sp, #162]
+     e70:	3ccb23fa 	ldur	q26, [sp, #178]
+     e74:	3ccc23f8 	ldur	q24, [sp, #194]
+     e78:	3ccd23f6 	ldur	q22, [sp, #210]
+     e7c:	3dc00060 	ldr	q0, [x3]
+			e7c: R_AARCH64_LDST128_ABS_LO12_NC	.rodata.cst16
+     e80:	4ea41c85 	mov	v5.16b, v4.16b
+     e84:	794203e3 	ldrh	w3, [sp, #256]
+     e88:	4eae1dcf 	mov	v15.16b, v14.16b
+     e8c:	79002663 	strh	w3, [x19, #18]
+     e90:	4eb01e11 	mov	v17.16b, v16.16b
+     e94:	910983e3 	add	x3, sp, #0x260
+     e98:	4eb21e53 	mov	v19.16b, v18.16b
+     e9c:	b94013f8 	ldr	w24, [sp, #16]
+     ea0:	4ea61cc7 	mov	v7.16b, v6.16b
+     ea4:	4eac1d8d 	mov	v13.16b, v12.16b
+     ea8:	4ea81d09 	mov	v9.16b, v8.16b
+     eac:	4ebc1f9d 	mov	v29.16b, v28.16b
+     eb0:	4eb41e95 	mov	v21.16b, v20.16b
+     eb4:	4eba1f5b 	mov	v27.16b, v26.16b
+     eb8:	4eb81f19 	mov	v25.16b, v24.16b
+     ebc:	4eb61ed7 	mov	v23.16b, v22.16b
+     ec0:	4ea21c43 	mov	v3.16b, v2.16b
+     ec4:	4e002084 	tbl	v4.16b, {v4.16b-v5.16b}, v0.16b
+     ec8:	4e0021ce 	tbl	v14.16b, {v14.16b-v15.16b}, v0.16b
+     ecc:	4e002210 	tbl	v16.16b, {v16.16b-v17.16b}, v0.16b
+     ed0:	4e002252 	tbl	v18.16b, {v18.16b-v19.16b}, v0.16b
+     ed4:	4e0020c6 	tbl	v6.16b, {v6.16b-v7.16b}, v0.16b
+     ed8:	4e00218c 	tbl	v12.16b, {v12.16b-v13.16b}, v0.16b
+     edc:	4e002108 	tbl	v8.16b, {v8.16b-v9.16b}, v0.16b
+     ee0:	4e00239c 	tbl	v28.16b, {v28.16b-v29.16b}, v0.16b
+     ee4:	4e002294 	tbl	v20.16b, {v20.16b-v21.16b}, v0.16b
+     ee8:	4e00235a 	tbl	v26.16b, {v26.16b-v27.16b}, v0.16b
+     eec:	4e002318 	tbl	v24.16b, {v24.16b-v25.16b}, v0.16b
+     ef0:	4e0022d6 	tbl	v22.16b, {v22.16b-v23.16b}, v0.16b
+     ef4:	4e002042 	tbl	v2.16b, {v2.16b-v3.16b}, v0.16b
+     ef8:	3da0aa6c 	str	q12, [x19, #33440]
+     efc:	3da09a7a 	str	q26, [x19, #33376]
+     f00:	3da09276 	str	q22, [x19, #33344]
+     f04:	3da09678 	str	q24, [x19, #33360]
+     f08:	3da09e74 	str	q20, [x19, #33392]
+     f0c:	3da0a27c 	str	q28, [x19, #33408]
+     f10:	3da0a668 	str	q8, [x19, #33424]
+     f14:	3da0b266 	str	q6, [x19, #33472]
+     f18:	3da0b672 	str	q18, [x19, #33488]
+     f1c:	3da0ba70 	str	q16, [x19, #33504]
+     f20:	3da0be6e 	str	q14, [x19, #33520]
+     f24:	4eaa1d4b 	mov	v11.16b, v10.16b
+     f28:	3da0c264 	str	q4, [x19, #33536]
+     f2c:	3da0c662 	str	q2, [x19, #33552]
+     f30:	3cd12062 	ldur	q2, [x3, #-238]
+     f34:	4e00214a 	tbl	v10.16b, {v10.16b-v11.16b}, v0.16b
+     f38:	3cce23e4 	ldur	q4, [sp, #226]
+     f3c:	4ea21c43 	mov	v3.16b, v2.16b
+     f40:	3da0ca6a 	str	q10, [x19, #33568]
+     f44:	4ea41c85 	mov	v5.16b, v4.16b
+     f48:	4e002042 	tbl	v2.16b, {v2.16b-v3.16b}, v0.16b
+     f4c:	4e002084 	tbl	v4.16b, {v4.16b-v5.16b}, v0.16b
+     f50:	3da0ae62 	str	q2, [x19, #33456]
+     f54:	3da08e64 	str	q4, [x19, #33328]
+     f58:	6b0202df 	cmp	w22, w2
+     f5c:	54000109 	b.ls	f7c <gp32_audio_resampler_process+0x3bc>  // b.plast
+     f60:	5289ba61 	mov	w1, #0x4dd3                	// #19923
+     f64:	52800c02 	mov	w2, #0x60                  	// #96
+     f68:	72a20c41 	movk	w1, #0x1062, lsl #16
+     f6c:	9ba17ec1 	umull	x1, w22, w1
+     f70:	d366fc21 	lsr	x1, x1, #38
+     f74:	6b02003f 	cmp	w1, w2
+     f78:	1a829021 	csel	w1, w1, w2, ls	// ls = plast
+     f7c:	b9402262 	ldr	w2, [x19, #32]
+     f80:	6b01005f 	cmp	w2, w1
+     f84:	54000042 	b.cs	f8c <gp32_audio_resampler_process+0x3cc>  // b.hs, b.nlast
+     f88:	29040661 	stp	w1, w1, [x19, #32]
+     f8c:	6d5f27e8 	ldp	d8, d9, [sp, #496]
+     f90:	fd410bec 	ldr	d12, [sp, #528]
+     f94:	fd410fed 	ldr	d13, [sp, #536]
+     f98:	fd4113ee 	ldr	d14, [sp, #544]
+     f9c:	fd4117ef 	ldr	d15, [sp, #552]
+     fa0:	b9402a61 	ldr	w1, [x19, #40]
+     fa4:	6b15003f 	cmp	w1, w21
+     fa8:	540001a1 	b.ne	fdc <gp32_audio_resampler_process+0x41c>  // b.any
+     fac:	b9402e62 	ldr	w2, [x19, #44]
+     fb0:	6b16005f 	cmp	w2, w22
+     fb4:	54000181 	b.ne	fe4 <gp32_audio_resampler_process+0x424>  // b.any
+     fb8:	1400001d 	b	102c <gp32_audio_resampler_process+0x46c>
+     fbc:	35004161 	cbnz	w1, 17e8 <gp32_audio_resampler_process+0xc28>
+     fc0:	b9402a61 	ldr	w1, [x19, #40]
+     fc4:	52800018 	mov	w24, #0x0                   	// #0
+     fc8:	29005a75 	stp	w21, w22, [x19]
+     fcc:	f900067f 	str	xzr, [x19, #8]
+     fd0:	b900167f 	str	wzr, [x19, #20]
+     fd4:	6b0102bf 	cmp	w21, w1
+     fd8:	54001160 	b.eq	1204 <gp32_audio_resampler_process+0x644>  // b.none
+     fdc:	340016c1 	cbz	w1, 12b4 <gp32_audio_resampler_process+0x6f4>
+     fe0:	b9402e62 	ldr	w2, [x19, #44]
+     fe4:	90000003 	adrp	x3, 0 <poly_gather>
+			fe4: R_AARCH64_ADR_PREL_PG_HI21	.rodata.cst8
+     fe8:	6b1602bf 	cmp	w21, w22
+     fec:	1e6302a0 	ucvtf	d0, w21
+     ff0:	fd400061 	ldr	d1, [x3]
+			ff0: R_AARCH64_LDST64_ABS_LO12_NC	.rodata.cst8
+     ff4:	1a9692a3 	csel	w3, w21, w22, ls	// ls = plast
+     ff8:	1e630066 	ucvtf	d6, w3
+     ffc:	1e6108c6 	fmul	d6, d6, d1
+    1000:	1e6018ca 	fdiv	d10, d6, d0
+    1004:	34002b22 	cbz	w2, 1568 <gp32_audio_resampler_process+0x9a8>
+    1008:	6b02003f 	cmp	w1, w2
+    100c:	1e630022 	ucvtf	d2, w1
+    1010:	1a829021 	csel	w1, w1, w2, ls	// ls = plast
+    1014:	1e630020 	ucvtf	d0, w1
+    1018:	1e610800 	fmul	d0, d0, d1
+    101c:	1e621800 	fdiv	d0, d0, d2
+    1020:	1e6a2000 	fcmp	d0, d10
+    1024:	54002a21 	b.ne	1568 <gp32_audio_resampler_process+0x9a8>  // b.any
+    1028:	29055a75 	stp	w21, w22, [x19, #40]
+    102c:	f9401fe1 	ldr	x1, [sp, #56]
+    1030:	91000421 	add	x1, x1, #0x1
+    1034:	34000ef8 	cbz	w24, 1210 <gp32_audio_resampler_process+0x650>
+    1038:	f9401fe2 	ldr	x2, [sp, #56]
+    103c:	d100045b 	sub	x27, x2, #0x1
+    1040:	d37ef45c 	lsl	x28, x2, #2
+    1044:	d1000b9a 	sub	x26, x28, #0x2
+    1048:	d37ef779 	lsl	x25, x27, #2
+    104c:	f100043f 	cmp	x1, #0x1
+    1050:	54003e49 	b.ls	1818 <gp32_audio_resampler_process+0xc58>  // b.plast
+    1054:	52986a02 	mov	w2, #0xc350                	// #50000
+    1058:	6b02001f 	cmp	w0, w2
+    105c:	1a82d000 	csel	w0, w0, w2, le
+    1060:	129869e3 	mov	w3, #0xffff3cb0            	// #-50000
+    1064:	6b03001f 	cmp	w0, w3
+    1068:	d2d09002 	mov	x2, #0x848000000000        	// #145685290680320
+    106c:	1a83a000 	csel	w0, w0, w3, ge	// ge = tcont
+    1070:	f2e825c2 	movk	x2, #0x412e, lsl #48
+    1074:	9e670041 	fmov	d1, x2
+    1078:	1e6e1003 	fmov	d3, #1.000000000000000000e+00
+    107c:	1e620000 	scvtf	d0, w0
+    1080:	1e6c1002 	fmov	d2, #5.000000000000000000e-01
+    1084:	d1000421 	sub	x1, x1, #0x1
+    1088:	d3607c3c 	lsl	x28, x1, #32
+    108c:	1e611800 	fdiv	d0, d0, d1
+    1090:	1e632800 	fadd	d0, d0, d3
+    1094:	1e622010 	fcmpe	d0, d2
+    1098:	540010a4 	b.mi	12ac <gp32_audio_resampler_process+0x6ec>  // b.first
+    109c:	1e6302c1 	ucvtf	d1, w22
+    10a0:	1e6e1002 	fmov	d2, #1.000000000000000000e+00
+    10a4:	1e600821 	fmul	d1, d1, d0
+    10a8:	1e622030 	fcmpe	d1, d2
+    10ac:	54000fc9 	b.ls	12a4 <gp32_audio_resampler_process+0x6e4>  // b.plast
+    10b0:	1e6302a0 	ucvtf	d0, w21
+    10b4:	d2e83e00 	mov	x0, #0x41f0000000000000    	// #4751297606875873280
+    10b8:	9e670002 	fmov	d2, x0
+    10bc:	1e6c1003 	fmov	d3, #5.000000000000000000e-01
+    10c0:	f940066e 	ldr	x14, [x19, #8]
+    10c4:	1e620800 	fmul	d0, d0, d2
+    10c8:	79c03276 	ldrsh	w22, [x19, #24]
+    10cc:	79c03675 	ldrsh	w21, [x19, #26]
+    10d0:	2943ee6c 	ldp	w12, w27, [x19, #28]
+    10d4:	1e611800 	fdiv	d0, d0, d1
+    10d8:	b9402668 	ldr	w8, [x19, #36]
+    10dc:	1e632800 	fadd	d0, d0, d3
+    10e0:	9e79000f 	fcvtzu	x15, d0
+    10e4:	f10001ff 	cmp	x15, #0x0
+    10e8:	9a9f15ef 	csinc	x15, x15, xzr, ne	// ne = any
+    10ec:	eb0e039f 	cmp	x28, x14
+    10f0:	54002fc9 	b.ls	16e8 <gp32_audio_resampler_process+0xb28>  // b.plast
+    10f4:	7100011f 	cmp	w8, #0x0
+    10f8:	7a401b64 	ccmp	w27, #0x0, #0x4, ne	// ne = any
+    10fc:	54003400 	b.eq	177c <gp32_audio_resampler_process+0xbbc>  // b.none
+    1100:	f94023f2 	ldr	x18, [sp, #64]
+    1104:	1100050b 	add	w11, w8, #0x1
+    1108:	11000508 	add	w8, w8, #0x1
+    110c:	aa1303e0 	mov	x0, x19
+    1110:	aa1403e1 	mov	x1, x20
+    1114:	aa1203f3 	mov	x19, x18
+    1118:	9101a3e6 	add	x6, sp, #0x68
+    111c:	910183e5 	add	x5, sp, #0x60
+    1120:	2a0c03f4 	mov	w20, w12
+    1124:	aa0e03f2 	mov	x18, x14
+    1128:	a900ebf9 	stp	x25, x26, [sp, #8]
+    112c:	2a1803f9 	mov	w25, w24
+    1130:	aa0f03fa 	mov	x26, x15
+    1134:	aa0803f8 	mov	x24, x8
+    1138:	14000017 	b	1194 <gp32_audio_resampler_process+0x5d4>
+    113c:	cb35c084 	sub	x4, x4, w21, sxtw
+    1140:	cb36c063 	sub	x3, x3, w22, sxtw
+    1144:	12003eb5 	and	w21, w21, #0xffff
+    1148:	12003ed6 	and	w22, w22, #0xffff
+    114c:	9b037d82 	mul	x2, x12, x3
+    1150:	8b1a0252 	add	x18, x18, x26
+    1154:	9b047d83 	mul	x3, x12, x4
+    1158:	f10006f7 	subs	x23, x23, #0x1
+    115c:	5100077b 	sub	w27, w27, #0x1
+    1160:	fa521380 	ccmp	x28, x18, #0x0, ne	// ne = any
+    1164:	91001273 	add	x19, x19, #0x4
+    1168:	9ad80c42 	sdiv	x2, x2, x24
+    116c:	9ad80c63 	sdiv	x3, x3, x24
+    1170:	0b0202d6 	add	w22, w22, w2
+    1174:	0b0302b5 	add	w21, w21, w3
+    1178:	13003ed6 	sxth	w22, w22
+    117c:	781fc276 	sturh	w22, [x19, #-4]
+    1180:	13003eb5 	sxth	w21, w21
+    1184:	781fe275 	sturh	w21, [x19, #-2]
+    1188:	54002ee9 	b.ls	1764 <gp32_audio_resampler_process+0xba4>  // b.plast
+    118c:	52800034 	mov	w20, #0x1                   	// #1
+    1190:	34001f9b 	cbz	w27, 1580 <gp32_audio_resampler_process+0x9c0>
+    1194:	2a1203e4 	mov	w4, w18
+    1198:	d360fe43 	lsr	x3, x18, #32
+    119c:	2a1903e2 	mov	w2, w25
+    11a0:	a90187e0 	stp	x0, x1, [sp, #24]
+    11a4:	b9002beb 	str	w11, [sp, #40]
+    11a8:	97fffb96 	bl	0 <poly_gather>
+    11ac:	a94613e3 	ldp	x3, x4, [sp, #96]
+    11b0:	928fffea 	mov	x10, #0xffffffffffff8000    	// #-32768
+    11b4:	d28fffe9 	mov	x9, #0x7fff                	// #32767
+    11b8:	b9402beb 	ldr	w11, [sp, #40]
+    11bc:	a94187e0 	ldp	x0, x1, [sp, #24]
+    11c0:	4b1b016c 	sub	w12, w11, w27
+    11c4:	91401063 	add	x3, x3, #0x4, lsl #12
+    11c8:	91401084 	add	x4, x4, #0x4, lsl #12
+    11cc:	934ffc63 	asr	x3, x3, #15
+    11d0:	934ffc84 	asr	x4, x4, #15
+    11d4:	b140207f 	cmn	x3, #0x8, lsl #12
+    11d8:	9a8aa063 	csel	x3, x3, x10, ge	// ge = tcont
+    11dc:	eb09007f 	cmp	x3, x9
+    11e0:	9a89d063 	csel	x3, x3, x9, le
+    11e4:	eb0a009f 	cmp	x4, x10
+    11e8:	9a8aa084 	csel	x4, x4, x10, ge	// ge = tcont
+    11ec:	eb09009f 	cmp	x4, x9
+    11f0:	9a89d084 	csel	x4, x4, x9, le
+    11f4:	35fffa54 	cbnz	w20, 113c <gp32_audio_resampler_process+0x57c>
+    11f8:	52800016 	mov	w22, #0x0                   	// #0
+    11fc:	52800015 	mov	w21, #0x0                   	// #0
+    1200:	17ffffd3 	b	114c <gp32_audio_resampler_process+0x58c>
+    1204:	b9402e62 	ldr	w2, [x19, #44]
+    1208:	6b0202df 	cmp	w22, w2
+    120c:	54ffeec1 	b.ne	fe4 <gp32_audio_resampler_process+0x424>  // b.any
+    1210:	d2906601 	mov	x1, #0x8330                	// #33584
+    1214:	8b010261 	add	x1, x19, x1
+    1218:	91001283 	add	x3, x20, #0x4
+    121c:	eb01029f 	cmp	x20, x1
+    1220:	d2905602 	mov	x2, #0x82b0                	// #33456
+    1224:	8b020262 	add	x2, x19, x2
+    1228:	fa433042 	ccmp	x2, x3, #0x2, cc	// cc = lo, ul, last
+    122c:	d2904604 	mov	x4, #0x8230                	// #33328
+    1230:	8b040261 	add	x1, x19, x4
+    1234:	1a9f37e4 	cset	w4, cs	// cs = hs, nlast
+    1238:	eb02029f 	cmp	x20, x2
+    123c:	fa413060 	ccmp	x3, x1, #0x0, cc	// cc = lo, ul, last
+    1240:	1a9f87e3 	cset	w3, ls	// ls = plast
+    1244:	6a03009f 	tst	w4, w3
+    1248:	54001720 	b.eq	152c <gp32_audio_resampler_process+0x96c>  // b.none
+    124c:	79c00681 	ldrsh	w1, [x20, #2]
+    1250:	4d40c681 	ld1r	{v1.8h}, [x20]
+    1254:	4e020c20 	dup	v0.8h, w1
+    1258:	3da08e61 	str	q1, [x19, #33328]
+    125c:	3da09261 	str	q1, [x19, #33344]
+    1260:	3da09661 	str	q1, [x19, #33360]
+    1264:	3da09a61 	str	q1, [x19, #33376]
+    1268:	3da09e61 	str	q1, [x19, #33392]
+    126c:	3da0a261 	str	q1, [x19, #33408]
+    1270:	3da0a661 	str	q1, [x19, #33424]
+    1274:	3da0aa61 	str	q1, [x19, #33440]
+    1278:	3da0ae60 	str	q0, [x19, #33456]
+    127c:	3da0b260 	str	q0, [x19, #33472]
+    1280:	3da0b660 	str	q0, [x19, #33488]
+    1284:	3da0ba60 	str	q0, [x19, #33504]
+    1288:	3da0be60 	str	q0, [x19, #33520]
+    128c:	3da0c260 	str	q0, [x19, #33536]
+    1290:	3da0c660 	str	q0, [x19, #33552]
+    1294:	3da0ca60 	str	q0, [x19, #33568]
+    1298:	52800018 	mov	w24, #0x0                   	// #0
+    129c:	f9401fe1 	ldr	x1, [sp, #56]
+    12a0:	17ffff66 	b	1038 <gp32_audio_resampler_process+0x478>
+    12a4:	1e604041 	fmov	d1, d2
+    12a8:	17ffff82 	b	10b0 <gp32_audio_resampler_process+0x4f0>
+    12ac:	1e604040 	fmov	d0, d2
+    12b0:	17ffff7b 	b	109c <gp32_audio_resampler_process+0x4dc>
+    12b4:	90000001 	adrp	x1, 0 <poly_gather>
+			12b4: R_AARCH64_ADR_PREL_PG_HI21	.rodata.cst8
+    12b8:	6b1602bf 	cmp	w21, w22
+    12bc:	1e6302a0 	ucvtf	d0, w21
+    12c0:	6d1f27e8 	stp	d8, d9, [sp, #496]
+    12c4:	fd400021 	ldr	d1, [x1]
+			12c4: R_AARCH64_LDST64_ABS_LO12_NC	.rodata.cst8
+    12c8:	1a9692a1 	csel	w1, w21, w22, ls	// ls = plast
+    12cc:	fd010bec 	str	d12, [sp, #528]
+    12d0:	fd010fed 	str	d13, [sp, #536]
+    12d4:	1e630026 	ucvtf	d6, w1
+    12d8:	fd0113ee 	str	d14, [sp, #544]
+    12dc:	fd0117ef 	str	d15, [sp, #552]
+    12e0:	1e6108c6 	fmul	d6, d6, d1
+    12e4:	1e6018ca 	fdiv	d10, d6, d0
+    12e8:	90000002 	adrp	x2, 0 <poly_gather>
+			12e8: R_AARCH64_ADR_PREL_PG_HI21	.rodata.cst8+0x8
+    12ec:	1e649006 	fmov	d6, #1.000000000000000000e+01
+    12f0:	1e645001 	fmov	d1, #9.000000000000000000e+00
+    12f4:	52800021 	mov	w1, #0x1                   	// #1
+    12f8:	fd400042 	ldr	d2, [x2]
+			12f8: R_AARCH64_LDST64_ABS_LO12_NC	.rodata.cst8+0x8
+    12fc:	1e611003 	fmov	d3, #3.000000000000000000e+00
+    1300:	14000009 	b	1324 <gp32_audio_resampler_process+0x764>
+    1304:	1e620020 	scvtf	d0, w1
+    1308:	1e601860 	fdiv	d0, d3, d0
+    130c:	1e600800 	fmul	d0, d0, d0
+    1310:	1e600821 	fmul	d1, d1, d0
+    1314:	1e6128c6 	fadd	d6, d6, d1
+    1318:	1e6208c0 	fmul	d0, d6, d2
+    131c:	1e602030 	fcmpe	d1, d0
+    1320:	54000089 	b.ls	1330 <gp32_audio_resampler_process+0x770>  // b.plast
+    1324:	11000421 	add	w1, w1, #0x1
+    1328:	7100c43f 	cmp	w1, #0x31
+    132c:	54fffec1 	b.ne	1304 <gp32_audio_resampler_process+0x744>  // b.any
+    1330:	d2e80801 	mov	x1, #0x4040000000000000    	// #4629700416936869888
+    1334:	9e670029 	fmov	d9, x1
+    1338:	d2e81c01 	mov	x1, #0x40e0000000000000    	// #4674736413210574848
+    133c:	f90013e1 	str	x1, [sp, #32]
+    1340:	90000001 	adrp	x1, 0 <poly_gather>
+			1340: R_AARCH64_ADR_PREL_PG_HI21	.rodata.cst8+0x8
+    1344:	9100c279 	add	x25, x19, #0x30
+    1348:	d2e7ee02 	mov	x2, #0x3f70000000000000    	// #4571153621781053440
+    134c:	f90027f4 	str	x20, [sp, #72]
+    1350:	fd40002e 	ldr	d14, [x1]
+			1350: R_AARCH64_LDST64_ABS_LO12_NC	.rodata.cst8+0x8
+    1354:	aa1903f4 	mov	x20, x25
+    1358:	aa1703f9 	mov	x25, x23
+    135c:	5280001c 	mov	w28, #0x0                   	// #0
+    1360:	1e7e100b 	fmov	d11, #-1.000000000000000000e+00
+    1364:	1e6e100f 	fmov	d15, #1.000000000000000000e+00
+    1368:	1e6c100c 	fmov	d12, #5.000000000000000000e-01
+    136c:	128ffffb 	mov	w27, #0xffff8000            	// #-32768
+    1370:	528ffffa 	mov	w26, #0x7fff                	// #32767
+    1374:	f9001be2 	str	x2, [sp, #48]
+    1378:	d2e7f402 	mov	x2, #0x3fa0000000000000    	// #4584664420663164928
+    137c:	9e670048 	fmov	d8, x2
+    1380:	290a57f8 	stp	w24, w21, [sp, #80]
+    1384:	290b03f6 	stp	w22, w0, [sp, #88]
+    1388:	fd0017e6 	str	d6, [sp, #40]
+    138c:	d503201f 	nop
+    1390:	1e620385 	scvtf	d5, w28
+    1394:	fd401be0 	ldr	d0, [sp, #48]
+    1398:	d2800015 	mov	x21, #0x0                   	// #0
+    139c:	52800017 	mov	w23, #0x0                   	// #0
+    13a0:	52b00018 	mov	w24, #0x80000000            	// #-2147483648
+    13a4:	52800016 	mov	w22, #0x0                   	// #0
+    13a8:	1e6008a5 	fmul	d5, d5, d0
+    13ac:	d503201f 	nop
+    13b0:	1e6202a4 	scvtf	d4, w21
+    13b4:	1e693884 	fsub	d4, d4, d9
+    13b8:	1e652884 	fadd	d4, d4, d5
+    13bc:	1e680880 	fmul	d0, d4, d8
+    13c0:	1e6b2010 	fcmpe	d0, d11
+    13c4:	540003ec 	b.gt	1440 <gp32_audio_resampler_process+0x880>
+    13c8:	52800000 	mov	w0, #0x0                   	// #0
+    13cc:	52800001 	mov	w1, #0x0                   	// #0
+    13d0:	6b00031f 	cmp	w24, w0
+    13d4:	78357a81 	strh	w1, [x20, x21, lsl #1]
+    13d8:	1a95a2f7 	csel	w23, w23, w21, ge	// ge = tcont
+    13dc:	910006b5 	add	x21, x21, #0x1
+    13e0:	1a80a318 	csel	w24, w24, w0, ge	// ge = tcont
+    13e4:	f10106bf 	cmp	x21, #0x41
+    13e8:	54fffe41 	b.ne	13b0 <gp32_audio_resampler_process+0x7f0>  // b.any
+    13ec:	2a1703e4 	mov	w4, w23
+    13f0:	4b160361 	sub	w1, w27, w22
+    13f4:	91020a94 	add	x20, x20, #0x82
+    13f8:	9bb51380 	umaddl	x0, w28, w21, x4
+    13fc:	1100079c 	add	w28, w28, #0x1
+    1400:	8b000660 	add	x0, x19, x0, lsl #1
+    1404:	79406002 	ldrh	w2, [x0, #48]
+    1408:	0b020021 	add	w1, w1, w2
+    140c:	79006001 	strh	w1, [x0, #48]
+    1410:	7104039f 	cmp	w28, #0x100
+    1414:	54fffbe1 	b.ne	1390 <gp32_audio_resampler_process+0x7d0>  // b.any
+    1418:	f94027f4 	ldr	x20, [sp, #72]
+    141c:	aa1903f7 	mov	x23, x25
+    1420:	6d5f27e8 	ldp	d8, d9, [sp, #496]
+    1424:	fd410bec 	ldr	d12, [sp, #528]
+    1428:	fd410fed 	ldr	d13, [sp, #536]
+    142c:	fd4113ee 	ldr	d14, [sp, #544]
+    1430:	fd4117ef 	ldr	d15, [sp, #552]
+    1434:	294a57f8 	ldp	w24, w21, [sp, #80]
+    1438:	294b03f6 	ldp	w22, w0, [sp, #88]
+    143c:	17fffefb 	b	1028 <gp32_audio_resampler_process+0x468>
+    1440:	1e6f2010 	fcmpe	d0, d15
+    1444:	54000044 	b.mi	144c <gp32_audio_resampler_process+0x88c>  // b.first
+    1448:	17ffffe0 	b	13c8 <gp32_audio_resampler_process+0x808>
+    144c:	1e600803 	fmul	d3, d0, d0
+    1450:	1e631000 	fmov	d0, #6.000000000000000000e+00
+    1454:	1e6339e3 	fsub	d3, d15, d3
+    1458:	1e61c063 	fsqrt	d3, d3
+    145c:	1e600863 	fmul	d3, d3, d0
+    1460:	1e6c0863 	fmul	d3, d3, d12
+    1464:	1e630861 	fmul	d1, d3, d3
+    1468:	1e6f2822 	fadd	d2, d1, d15
+    146c:	1e6e0840 	fmul	d0, d2, d14
+    1470:	1e612010 	fcmpe	d0, d1
+    1474:	540001ca 	b.ge	14ac <gp32_audio_resampler_process+0x8ec>  // b.tcont
+    1478:	52800020 	mov	w0, #0x1                   	// #1
+    147c:	14000009 	b	14a0 <gp32_audio_resampler_process+0x8e0>
+    1480:	1e620000 	scvtf	d0, w0
+    1484:	1e601860 	fdiv	d0, d3, d0
+    1488:	1e600800 	fmul	d0, d0, d0
+    148c:	1e600821 	fmul	d1, d1, d0
+    1490:	1e612842 	fadd	d2, d2, d1
+    1494:	1e6e0840 	fmul	d0, d2, d14
+    1498:	1e602030 	fcmpe	d1, d0
+    149c:	54000089 	b.ls	14ac <gp32_audio_resampler_process+0x8ec>  // b.plast
+    14a0:	11000400 	add	w0, w0, #0x1
+    14a4:	7100c41f 	cmp	w0, #0x31
+    14a8:	54fffec1 	b.ne	1480 <gp32_audio_resampler_process+0x8c0>  // b.any
+    14ac:	1e6a2941 	fadd	d1, d10, d10
+    14b0:	fd4017e0 	ldr	d0, [sp, #40]
+    14b4:	1e60184d 	fdiv	d13, d2, d0
+    14b8:	1e610884 	fmul	d4, d4, d1
+    14bc:	1e602088 	fcmp	d4, #0.0
+    14c0:	54000180 	b.eq	14f0 <gp32_audio_resampler_process+0x930>  // b.none
+    14c4:	90000000 	adrp	x0, 0 <poly_gather>
+			14c4: R_AARCH64_ADR_PREL_PG_HI21	.rodata.cst8+0x10
+    14c8:	fd000fe1 	str	d1, [sp, #24]
+    14cc:	fd400000 	ldr	d0, [x0]
+			14cc: R_AARCH64_LDST64_ABS_LO12_NC	.rodata.cst8+0x10
+    14d0:	1e600884 	fmul	d4, d4, d0
+    14d4:	1e604080 	fmov	d0, d4
+    14d8:	6d0097e4 	stp	d4, d5, [sp, #8]
+    14dc:	94000000 	bl	0 <sin>
+			14dc: R_AARCH64_CALL26	sin
+    14e0:	6d4097e4 	ldp	d4, d5, [sp, #8]
+    14e4:	fd400fe1 	ldr	d1, [sp, #24]
+    14e8:	1e641800 	fdiv	d0, d0, d4
+    14ec:	1e600821 	fmul	d1, d1, d0
+    14f0:	1e6109a2 	fmul	d2, d13, d1
+    14f4:	fd4013e0 	ldr	d0, [sp, #32]
+    14f8:	1e602058 	fcmpe	d2, #0.0
+    14fc:	1e600842 	fmul	d2, d2, d0
+    1500:	1e7c1000 	fmov	d0, #-5.000000000000000000e-01
+    1504:	1e6c4c00 	fcsel	d0, d0, d12, mi	// mi = first
+    1508:	1e602842 	fadd	d2, d2, d0
+    150c:	1e780040 	fcvtzs	w0, d2
+    1510:	3140201f 	cmn	w0, #0x8, lsl #12
+    1514:	1a9ba000 	csel	w0, w0, w27, ge	// ge = tcont
+    1518:	6b1a001f 	cmp	w0, w26
+    151c:	1a9ad000 	csel	w0, w0, w26, le
+    1520:	0b0002d6 	add	w22, w22, w0
+    1524:	13003c01 	sxth	w1, w0
+    1528:	17ffffaa 	b	13d0 <gp32_audio_resampler_process+0x810>
+    152c:	79c00283 	ldrsh	w3, [x20]
+    1530:	91000821 	add	x1, x1, #0x2
+    1534:	781fe023 	sturh	w3, [x1, #-2]
+    1538:	79c00683 	ldrsh	w3, [x20, #2]
+    153c:	7900fc23 	strh	w3, [x1, #126]
+    1540:	eb02003f 	cmp	x1, x2
+    1544:	54ffeaa0 	b.eq	1298 <gp32_audio_resampler_process+0x6d8>  // b.none
+    1548:	79c00283 	ldrsh	w3, [x20]
+    154c:	91000821 	add	x1, x1, #0x2
+    1550:	781fe023 	sturh	w3, [x1, #-2]
+    1554:	79c00683 	ldrsh	w3, [x20, #2]
+    1558:	7900fc23 	strh	w3, [x1, #126]
+    155c:	eb02003f 	cmp	x1, x2
+    1560:	54fffe61 	b.ne	152c <gp32_audio_resampler_process+0x96c>  // b.any
+    1564:	17ffff4d 	b	1298 <gp32_audio_resampler_process+0x6d8>
+    1568:	6d1f27e8 	stp	d8, d9, [sp, #496]
+    156c:	fd010bec 	str	d12, [sp, #528]
+    1570:	fd010fed 	str	d13, [sp, #536]
+    1574:	fd0113ee 	str	d14, [sp, #544]
+    1578:	fd0117ef 	str	d15, [sp, #552]
+    157c:	17ffff5b 	b	12e8 <gp32_audio_resampler_process+0x728>
+    1580:	2a1903f8 	mov	w24, w25
+    1584:	aa1a03ef 	mov	x15, x26
+    1588:	a940ebf9 	ldp	x25, x26, [sp, #8]
+    158c:	aa1203ee 	mov	x14, x18
+    1590:	aa0103f4 	mov	x20, x1
+    1594:	aa1303f2 	mov	x18, x19
+    1598:	aa0003f3 	mov	x19, x0
+    159c:	a900ebf9 	stp	x25, x26, [sp, #8]
+    15a0:	aa1303f9 	mov	x25, x19
+    15a4:	aa1403fa 	mov	x26, x20
+    15a8:	aa1203f3 	mov	x19, x18
+    15ac:	aa0f03f4 	mov	x20, x15
+    15b0:	aa0e03f2 	mov	x18, x14
+    15b4:	2a1203e4 	mov	w4, w18
+    15b8:	d360fe43 	lsr	x3, x18, #32
+    15bc:	2a1803e2 	mov	w2, w24
+    15c0:	aa1a03e1 	mov	x1, x26
+    15c4:	aa1903e0 	mov	x0, x25
+    15c8:	97fffa8e 	bl	0 <poly_gather>
+    15cc:	a9460fe4 	ldp	x4, x3, [sp, #96]
+    15d0:	928fffe9 	mov	x9, #0xffffffffffff8000    	// #-32768
+    15d4:	d28fffe8 	mov	x8, #0x7fff                	// #32767
+    15d8:	8b140252 	add	x18, x18, x20
+    15dc:	91001273 	add	x19, x19, #0x4
+    15e0:	91401084 	add	x4, x4, #0x4, lsl #12
+    15e4:	91401063 	add	x3, x3, #0x4, lsl #12
+    15e8:	934ffc84 	asr	x4, x4, #15
+    15ec:	934ffc63 	asr	x3, x3, #15
+    15f0:	b140209f 	cmn	x4, #0x8, lsl #12
+    15f4:	9a89a084 	csel	x4, x4, x9, ge	// ge = tcont
+    15f8:	eb08009f 	cmp	x4, x8
+    15fc:	9a88d084 	csel	x4, x4, x8, le
+    1600:	eb09007f 	cmp	x3, x9
+    1604:	9a89a063 	csel	x3, x3, x9, ge	// ge = tcont
+    1608:	eb08007f 	cmp	x3, x8
+    160c:	13003c96 	sxth	w22, w4
+    1610:	9a88d063 	csel	x3, x3, x8, le
+    1614:	781fc276 	sturh	w22, [x19, #-4]
+    1618:	f10006f7 	subs	x23, x23, #0x1
+    161c:	13003c75 	sxth	w21, w3
+    1620:	781fe275 	sturh	w21, [x19, #-2]
+    1624:	fa521380 	ccmp	x28, x18, #0x0, ne	// ne = any
+    1628:	54fffc68 	b.hi	15b4 <gp32_audio_resampler_process+0x9f4>  // b.pmore
+    162c:	aa1203ee 	mov	x14, x18
+    1630:	aa1a03f4 	mov	x20, x26
+    1634:	aa1303f2 	mov	x18, x19
+    1638:	aa1903f3 	mov	x19, x25
+    163c:	f94023e0 	ldr	x0, [sp, #64]
+    1640:	52800021 	mov	w1, #0x1                   	// #1
+    1644:	79003276 	strh	w22, [x19, #24]
+    1648:	cb000252 	sub	x18, x18, x0
+    164c:	79003675 	strh	w21, [x19, #26]
+    1650:	2903ee61 	stp	w1, w27, [x19, #28]
+    1654:	d37ffe40 	lsr	x0, x18, #63
+    1658:	8b920412 	add	x18, x0, x18, asr #1
+    165c:	d2800000 	mov	x0, #0x0                   	// #0
+    1660:	a940ebf9 	ldp	x25, x26, [sp, #8]
+    1664:	9341fe57 	asr	x23, x18, #1
+    1668:	eb0e039f 	cmp	x28, x14
+    166c:	54000409 	b.ls	16ec <gp32_audio_resampler_process+0xb2c>  // b.plast
+    1670:	f9401fe2 	ldr	x2, [sp, #56]
+    1674:	f9000660 	str	x0, [x19, #8]
+    1678:	aa1403e1 	mov	x1, x20
+    167c:	aa1303e0 	mov	x0, x19
+    1680:	2a1803e3 	mov	w3, w24
+    1684:	97fffb9f 	bl	500 <poly_history_advance>
+    1688:	78f96a81 	ldrsh	w1, [x20, x25]
+    168c:	52800020 	mov	w0, #0x1                   	// #1
+    1690:	79002261 	strh	w1, [x19, #16]
+    1694:	a95b5bf5 	ldp	x21, x22, [sp, #432]
+    1698:	78fa6a81 	ldrsh	w1, [x20, x26]
+    169c:	a95d6bf9 	ldp	x25, x26, [sp, #464]
+    16a0:	79002661 	strh	w1, [x19, #18]
+    16a4:	a95e73fb 	ldp	x27, x28, [sp, #480]
+    16a8:	fd4103ea 	ldr	d10, [sp, #512]
+    16ac:	fd4107eb 	ldr	d11, [sp, #520]
+    16b0:	b9001660 	str	w0, [x19, #20]
+    16b4:	90000000 	adrp	x0, 0 <__stack_chk_guard>
+			16b4: R_AARCH64_ADR_GOT_PAGE	__stack_chk_guard
+    16b8:	f9400000 	ldr	x0, [x0]
+			16b8: R_AARCH64_LD64_GOT_LO12_NC	__stack_chk_guard
+    16bc:	f940c7e2 	ldr	x2, [sp, #392]
+    16c0:	f9400001 	ldr	x1, [x0]
+    16c4:	eb010042 	subs	x2, x2, x1
+    16c8:	d2800001 	mov	x1, #0x0                   	// #0
+    16cc:	54000781 	b.ne	17bc <gp32_audio_resampler_process+0xbfc>  // b.any
+    16d0:	910643ff 	add	sp, sp, #0x190
+    16d4:	aa1703e0 	mov	x0, x23
+    16d8:	a94153f3 	ldp	x19, x20, [sp, #16]
+    16dc:	a94363f7 	ldp	x23, x24, [sp, #48]
+    16e0:	a8ca7bfd 	ldp	x29, x30, [sp], #160
+    16e4:	d65f03c0 	ret
+    16e8:	d2800017 	mov	x23, #0x0                   	// #0
+    16ec:	cb1c01c0 	sub	x0, x14, x28
+    16f0:	17ffffe0 	b	1670 <gp32_audio_resampler_process+0xab0>
+    16f4:	79802279 	ldrsh	x25, [x19, #16]
+    16f8:	eb0f007f 	cmp	x3, x15
+    16fc:	79800286 	ldrsh	x6, [x20]
+    1700:	da83d603 	csneg	x3, x16, x3, le
+    1704:	7980266d 	ldrsh	x13, [x19, #18]
+    1708:	7980069a 	ldrsh	x26, [x20, #2]
+    170c:	cb1900c6 	sub	x6, x6, x25
+    1710:	cb0d035a 	sub	x26, x26, x13
+    1714:	9b037cc6 	mul	x6, x6, x3
+    1718:	9b037f43 	mul	x3, x26, x3
+    171c:	f10000df 	cmp	x6, #0x0
+    1720:	8b0a00da 	add	x26, x6, x10
+    1724:	9a86b35a 	csel	x26, x26, x6, lt	// lt = tstop
+    1728:	8b0a0066 	add	x6, x3, x10
+    172c:	f100007f 	cmp	x3, #0x0
+    1730:	9a83b0c3 	csel	x3, x6, x3, lt	// lt = tstop
+    1734:	8b9a433a 	add	x26, x25, x26, asr #16
+    1738:	8b1a0318 	add	x24, x24, x26
+    173c:	8b8341a3 	add	x3, x13, x3, asr #16
+    1740:	8b0302b5 	add	x21, x21, x3
+    1744:	17fffda9 	b	de8 <gp32_audio_resampler_process+0x228>
+    1748:	79846243 	ldrsh	x3, [x18, #560]
+    174c:	79c56259 	ldrsh	w25, [x18, #688]
+    1750:	8b030318 	add	x24, x24, x3
+    1754:	17fffda4 	b	de4 <gp32_audio_resampler_process+0x224>
+    1758:	79c0227a 	ldrsh	w26, [x19, #16]
+    175c:	79c02679 	ldrsh	w25, [x19, #18]
+    1760:	17fffd8f 	b	d9c <gp32_audio_resampler_process+0x1dc>
+    1764:	aa1203ee 	mov	x14, x18
+    1768:	2a1903f8 	mov	w24, w25
+    176c:	aa1303f2 	mov	x18, x19
+    1770:	aa0103f4 	mov	x20, x1
+    1774:	aa0003f3 	mov	x19, x0
+    1778:	17ffffb1 	b	163c <gp32_audio_resampler_process+0xa7c>
+    177c:	f94023f2 	ldr	x18, [sp, #64]
+    1780:	9101a3e6 	add	x6, sp, #0x68
+    1784:	910183e5 	add	x5, sp, #0x60
+    1788:	17ffff85 	b	159c <gp32_audio_resampler_process+0x9dc>
+    178c:	d280003e 	mov	x30, #0x1                   	// #1
+    1790:	d280004b 	mov	x11, #0x2                   	// #2
+    1794:	aa1e03ec 	mov	x12, x30
+    1798:	aa1e03ed 	mov	x13, x30
+    179c:	2a0b03e1 	mov	w1, w11
+    17a0:	52800005 	mov	w5, #0x0                   	// #0
+    17a4:	17fffd5a 	b	d0c <gp32_audio_resampler_process+0x14c>
+    17a8:	d280004b 	mov	x11, #0x2                   	// #2
+    17ac:	52800005 	mov	w5, #0x0                   	// #0
+    17b0:	2a0b03e1 	mov	w1, w11
+    17b4:	d280003e 	mov	x30, #0x1                   	// #1
+    17b8:	17fffd55 	b	d0c <gp32_audio_resampler_process+0x14c>
+    17bc:	a91b5bf5 	stp	x21, x22, [sp, #432]
+    17c0:	a91d6bf9 	stp	x25, x26, [sp, #464]
+    17c4:	a91e73fb 	stp	x27, x28, [sp, #480]
+    17c8:	6d1f27e8 	stp	d8, d9, [sp, #496]
+    17cc:	fd0103ea 	str	d10, [sp, #512]
+    17d0:	fd0107eb 	str	d11, [sp, #520]
+    17d4:	fd010bec 	str	d12, [sp, #528]
+    17d8:	fd010fed 	str	d13, [sp, #536]
+    17dc:	fd0113ee 	str	d14, [sp, #544]
+    17e0:	fd0117ef 	str	d15, [sp, #552]
+    17e4:	94000000 	bl	0 <__stack_chk_fail>
+			17e4: R_AARCH64_CALL26	__stack_chk_fail
+    17e8:	b9400662 	ldr	w2, [x19, #4]
+    17ec:	6b16005f 	cmp	w2, w22
+    17f0:	54ffbe81 	b.ne	fc0 <gp32_audio_resampler_process+0x400>  // b.any
+    17f4:	52800006 	mov	w6, #0x0                   	// #0
+    17f8:	6b0102bf 	cmp	w21, w1
+    17fc:	54ffbd20 	b.eq	fa0 <gp32_audio_resampler_process+0x3e0>  // b.none
+    1800:	6d1f27e8 	stp	d8, d9, [sp, #496]
+    1804:	fd010bec 	str	d12, [sp, #528]
+    1808:	fd010fed 	str	d13, [sp, #536]
+    180c:	fd0113ee 	str	d14, [sp, #544]
+    1810:	fd0117ef 	str	d15, [sp, #552]
+    1814:	17fffd1d 	b	c88 <gp32_audio_resampler_process+0xc8>
+    1818:	aa1403e1 	mov	x1, x20
+    181c:	aa1303e0 	mov	x0, x19
+    1820:	2a1803e3 	mov	w3, w24
+    1824:	97fffb37 	bl	500 <poly_history_advance>
+    1828:	78f96a80 	ldrsh	w0, [x20, x25]
+    182c:	d2800017 	mov	x23, #0x0                   	// #0
+    1830:	79002260 	strh	w0, [x19, #16]
+    1834:	a95b5bf5 	ldp	x21, x22, [sp, #432]
+    1838:	52800020 	mov	w0, #0x1                   	// #1
+    183c:	78fa6a81 	ldrsh	w1, [x20, x26]
+    1840:	a95d6bf9 	ldp	x25, x26, [sp, #464]
+    1844:	79002661 	strh	w1, [x19, #18]
+    1848:	a95e73fb 	ldp	x27, x28, [sp, #480]
+    184c:	fd4103ea 	ldr	d10, [sp, #512]
+    1850:	fd4107eb 	ldr	d11, [sp, #520]
+    1854:	b9001660 	str	w0, [x19, #20]
+    1858:	17ffff97 	b	16b4 <gp32_audio_resampler_process+0xaf4>

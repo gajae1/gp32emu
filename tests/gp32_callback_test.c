@@ -99,7 +99,7 @@ static void check_refill(int jit, int final_probe, const char *path) {
     CHECK(gp32_run_cycles(g, 5u) == GP32_OK && g->direct_hle_callback_running, "suspend within real filler");
     size_t size = 0;
     uint8_t *image = save(g, &size);
-    CHECK(image && !memcmp(image, "GP32STATEv0015", 14u), "v15 writer");
+    CHECK(image && !memcmp(image, "GP32STATEv0017", 14u), "v17 writer");
     if (image) {
         CHECK(gp32_load_state_data(clone, image, size) == GP32_OK, "load active refill");
         CHECK(gp32_save_state(g, path) == GP32_OK && gp32_load_state(clone, path) == GP32_OK, "file continuation roundtrip");
@@ -286,6 +286,7 @@ static void check_task_switch(int jit) {
     s3c2400_write32(g->soc, 0x15100000u, 0u);
     s3c2400_write32(g->soc, 0x15100004u, 0u);
     s3c2400_write32(g->soc, 0x1510000cu, 9u);
+    s3c2400_write32(g->soc, 0x15100008u, 2u); /* Explicit one-shot counter load. */
     s3c2400_write32(g->soc, 0x15100008u, 1u);
     gp32_status_t status = GP32_OK;
     for (unsigned i = 0; i < 1000u && status == GP32_OK &&

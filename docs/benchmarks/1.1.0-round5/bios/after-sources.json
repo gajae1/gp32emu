@@ -1,0 +1,9 @@
+{
+  "base_commit": "c871331890c23c296cf8b25be90971b73f8b3546",
+  "files": {
+    "src/gp32.c": "d6f009a0b41284b7ae9dfc04159020b791d0610d1162ce8bddc02ab5887e57e5",
+    "src/s3c2400.c": "a6af726b033ce7d8e9a7fff8d76827dbe11b96ca3ae6e104076d1fae65c18efc",
+    "tests/gp32_bios_reload_test.c": "cbcfae5f1d3771049e13094b4d68e6aba712967c7bd3c485c29dc714984a7c16",
+    "tests/s3c2400_bios_load_test.c": "12ba7a7d33ba593622fed476538402abb726a33b6446f775cd5fbf915c3fad34"
+  }
+}

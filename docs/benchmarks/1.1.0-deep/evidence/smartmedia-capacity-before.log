@@ -1,0 +1,21 @@
+FAIL[128 MiB raw card]: reject a raw card one page above the supported data capacity
+FAIL[128 MiB raw card]: reload this card's complete compact state
+FAIL[128 MiB raw card]: restored last page data byte at the highest row address
+FAIL[128 MiB raw card]: restored final spare byte of the image
+FAIL[128 MiB raw card]: reload this card's compact persistent save
+FAIL[128 MiB raw card]: restored last page data byte at the highest row address
+FAIL[128 MiB raw card]: restored final spare byte of the image
+FAIL[128 MiB raw card]: reload this card's full state
+FAIL[128 MiB raw card]: restored last page data byte at the highest row address
+FAIL[128 MiB raw card]: restored final spare byte of the image
+FAIL[128 MiB raw card]: restored last page data byte at the highest row address
+FAIL[128 MiB raw card]: restored final spare byte of the image
+FAIL[128 MiB format-2 card]: reload this card's complete compact state
+FAIL[128 MiB format-2 card]: restored last page data byte at the highest row address
+FAIL[128 MiB format-2 card]: restored final spare byte of the image
+FAIL[128 MiB format-2 card]: reload this card's compact persistent save
+FAIL[128 MiB format-2 card]: restored last page data byte at the highest row address
+FAIL[128 MiB format-2 card]: restored final spare byte of the image
+FAIL[128 MiB format-2 card]: restored last page data byte at the highest row address
+FAIL[128 MiB format-2 card]: restored final spare byte of the image
+SmartMedia capacity: FAIL (20 failures)

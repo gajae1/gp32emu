@@ -1,0 +1,10 @@
+{
+  "emissions": 0,
+  "normalized_sites": 0,
+  "categories": {},
+  "all_warning_sites_predate_round4": true,
+  "warnings": [],
+  "unparsed_warning_lines": 0,
+  "build_log_scope": "incremental: only the two repaired fixtures were recompiled",
+  "compile_steps_in_captured_log": 2
+}
