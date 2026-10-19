@@ -1,7 +1,10 @@
 /* A supported 128 MiB data card has another 4 MiB of NAND spare bytes.
  * Its own saved state and compact persistent save must both load again.
  * The image is synthetic; the test uses real public mount/command/save APIs. */
-#include "../src/smartmedia.c"
+#ifndef SMARTMEDIA_SOURCE
+#define SMARTMEDIA_SOURCE "../src/smartmedia.c"
+#endif
+#include SMARTMEDIA_SOURCE
 
 static int failures;
 static const char *current_case;
@@ -9,6 +12,7 @@ static const char *current_case;
 
 enum { CARD_PAGES = 262144u, PAGE_BYTES = 528u, BLOCK_PAGES = 32u };
 
+#ifndef GP32EMU_WASM
 static void row_address(smc_t *s, uint32_t page) {
     smc_address_w(s, (uint8_t)page);
     smc_address_w(s, (uint8_t)(page >> 8));
@@ -145,10 +149,84 @@ done:
     remove(path);
     free(saved); free(image); smc_destroy(s);
 }
+#endif
 
+/* The stream owns the geometry used by later NAND commands. A corrupt shift
+ * count must be rejected before replacing any live bytes or command state. */
+static void check_state_geometry(void) {
+    current_case = "saved geometry validation";
+    uint8_t image[32u * PAGE_BYTES] = {0};
+    smc_t *s = smc_create();
+    char err[128] = {0};
+    CHECK(s && smc_load_buffer(s, image, sizeof(image), err, sizeof(err)), "mount geometry fixture");
+    if (!s || !smc_is_present(s)) { smc_destroy(s); return; }
+    state_io_t count = state_io_counter();
+    CHECK(smc_state_save_io(s, &count), "count geometry fixture state");
+    uint8_t *saved = malloc(count.pos), *trial = malloc(count.pos), *after = malloc(count.pos);
+    if (!saved || !trial || !after) exit(2);
+    state_io_t io = state_io_writer(saved, count.pos);
+    CHECK(smc_state_save_io(s, &io), "save geometry fixture state");
+    for (unsigned which = 0; which < 6u; ++which) {
+        memcpy(trial, saved, count.pos);
+        smc_state_image_t st;
+        memcpy(&st, trial, sizeof(st));
+        if (which == 0u) st.log2_pages_per_block = 32u;
+        else if (which == 1u) st.col_address_cycles = 5u;
+        else if (which == 2u) st.row_address_cycles = 5u;
+        else if (which == 3u) st.page_data_size = st.page_total_size + 1u;
+        else if (which == 4u) st.num_pages = 0x10000020u; /* a 32-bit product wraps to 32 pages */
+        memcpy(trial, &st, sizeof(st));
+        if (which == 5u) trial[offsetof(smc_state_image_t, mode_3065)] = 2u;
+        io = state_io_reader(trial, count.pos);
+        CHECK(!smc_state_load_io(s, &io, SMC_STATE_FORMAT_V14), "reject invalid saved NAND geometry");
+        io = state_io_writer(after, count.pos);
+        CHECK(smc_state_save_io(s, &io) && !memcmp(after, saved, count.pos),
+              "rejected geometry preserves live card and command state");
+        io = state_io_reader(saved, count.pos);
+        CHECK(smc_state_load_io(s, &io, SMC_STATE_FORMAT_V14), "valid geometry still loads");
+    }
+    /* A row outside this card must never wrap into its data on a 32-bit
+     * host. Three row cycles are also used by ordinary larger cards. */
+    memcpy(trial, saved, count.pos);
+    smc_state_image_t st;
+    memcpy(&st, trial, sizeof(st));
+    st.row_address_cycles = 3u;
+    memcpy(trial, &st, sizeof(st));
+    io = state_io_reader(trial, count.pos);
+    CHECK(smc_state_load_io(s, &io, SMC_STATE_FORMAT_V14), "accept bounded three-cycle row geometry");
+    smc_command_w(s, 0x60u);
+    smc_address_w(s, 0x20u); smc_address_w(s, 0x1fu); smc_address_w(s, 0x7cu);
+    smc_command_w(s, 0xd0u); /* Aligned 0x7c1f20 * 528 wraps to byte 12800 on wasm32. */
+    CHECK(s->data_size == sizeof(image) && !memcmp(s->data, image, sizeof(image)),
+          "out-of-range erase leaves every card byte unchanged");
+    /* The block byte count can itself exceed size_t even for a bounded
+     * shift. Clamp in the wide domain before converting back to size_t. */
+    st.log2_pages_per_block = 29u;
+    memcpy(trial, &st, sizeof(st));
+    io = state_io_reader(trial, count.pos);
+    CHECK(smc_state_load_io(s, &io, SMC_STATE_FORMAT_V14), "accept bounded large-block shift");
+    smc_command_w(s, 0x60u);
+    smc_address_w(s, 0u); smc_address_w(s, 0u); smc_address_w(s, 0u);
+    smc_command_w(s, 0xd0u);
+    for (size_t i = 0; i < sizeof(image); ++i) {
+        if (s->data[i] != 0xffu) { CHECK(0, "large block erases the bounded card extent"); break; }
+    }
+    free(saved); free(trial); free(after); smc_destroy(s);
+}
+
+#ifdef GP32EMU_WASM
+__attribute__((export_name("test_smc_state_geometry")))
+uint32_t test_smc_state_geometry(void) {
+    failures = 0;
+    check_state_geometry();
+    return (uint32_t)failures;
+}
+#else
 int main(void) {
+    check_state_geometry();
     check_capacity(false);
     check_capacity(true);
     printf("SmartMedia capacity: %s (%d failures)\n", failures ? "FAIL" : "PASS", failures);
     return failures != 0;
 }
+#endif

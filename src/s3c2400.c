@@ -173,6 +173,11 @@ struct s3c2400 {
     /* Host statistic: NAND data bytes read through the GPIO lines. Never
      * serialized; readers use deltas and tolerate it moving backwards. */
     uint64_t smc_bytes_read;
+    /* Transient cancellation tokens for synchronous, possibly nested DMA
+     * bus writes. STOP can be followed by re-enable before an outer write
+     * returns, so ON/STOP bits alone cannot identify its old operation.
+     * Compared only within an active trigger; never part of the state image. */
+    uint64_t dma_stop_epoch[4];
 };
 
 #if defined(_MSC_VER)
@@ -370,6 +375,7 @@ void s3c2400_reset(s3c2400_t *s) {
     memset(s->irq, 0, sizeof(s->irq));
     s->irq[3] = 0x7fu; /* All seven priority arbiters rotate after reset. */
     memset(s->dma, 0, sizeof(s->dma));
+    memset(s->dma_stop_epoch, 0, sizeof(s->dma_stop_epoch));
     memset(s->clkpow, 0, sizeof(s->clkpow));
     clock_refresh_values(s);
     s->cpu_run_active = s->cpu_run_clock_written = 0;
@@ -1117,6 +1123,8 @@ static uint32_t dma_request_iis_fast_count(s3c2400_t *s, uint32_t requests) {
 static void dma_trigger(s3c2400_t *s, int ch) {
     uint32_t *r = &s->dma[ch << 3];
     if (ch == 2 && dma_iis_fast_trigger(s, r)) return;
+    uint64_t stop_epoch = s->dma_stop_epoch[ch];
+    int stopped = 0;
     uint32_t tc = r[3] & 0x000fffffu;
     uint32_t src = r[4] & 0x1fffffffu;
     uint32_t dst = r[5] & 0x1fffffffu;
@@ -1151,6 +1159,9 @@ static void dma_trigger(s3c2400_t *s, int ch) {
         else { uint32_t v = s3c2400_read32(s, src); s3c2400_write32(s, dst, v); }
         if (inc_src) src += 1u << dsz;
         if (inc_dst) dst += 1u << dsz;
+        /* Finish this bus unit, but do not let its stale local cursor resume
+         * an operation that it or a nested DMA stopped (even if re-enabled). */
+        if (s->dma_stop_epoch[ch] != stop_epoch) { stopped = 1; break; }
         if (!service) break;
     }
     /* A RAM destination may hold code: the CPU must not keep running blocks
@@ -1159,6 +1170,7 @@ static void dma_trigger(s3c2400_t *s, int ch) {
      * as the IIS FIFO lie outside RAM and cost nothing. */
     if (moved && s->cpu_irq_sink)
         arm920t_invalidate_icache_range(s->cpu_irq_sink, dst0, inc_dst ? moved << dsz : (dsz >= 2u ? 4u : 1u << dsz));
+    if (stopped) return; /* Keep STOP/new-operation registers; no old TC IRQ. */
     r[4] = (r[4] & ~0x1fffffffu) | src;
     r[5] = (r[5] & ~0x1fffffffu) | dst;
     r[3] = (r[3] & ~0x000fffffu) | tc;
@@ -1502,6 +1514,7 @@ static void io_write32(s3c2400_t *s, uint32_t addr, uint32_t value, uint32_t mas
             uint32_t *dr = &s->dma[ch << 3];
             uint32_t now = dr[6];
             if ((mask & 4u) && (now & 4u)) {
+                ++s->dma_stop_epoch[ch];
                 /* DMASKTRIG[2] STOP forces the channel off after the current
                  * atomic transfer. DMA transfers are modeled atomically here,
                  * so complete the stop immediately and clear the current
@@ -2622,8 +2635,10 @@ static void pwm_tick(s3c2400_t *s, uint32_t cpu_cycles) {
     }
 }
 
-void s3c2400_tick(s3c2400_t *s, uint32_t cpu_cycles) {
-    if (!s || !cpu_cycles) return;
+/* Retain the established one-cycle ordering: LCD, IIS, then PWM. A caller
+ * may batch this only while no device can observe or change another device's
+ * progress. PWM still orders its own sub-cycle edges and same-edge latches. */
+static void soc_tick_ordered(s3c2400_t *s, uint32_t cpu_cycles) {
     uint64_t lcd_frame_cycles = lcd_panel_frame_cycles(s);
     int lcd_frame_ready = 0;
     if (lcd_is_tft(s->lcd_regs)) {
@@ -2698,6 +2713,122 @@ void s3c2400_tick(s3c2400_t *s, uint32_t cpu_cycles) {
     pwm_tick(s, cpu_cycles);
 }
 
+static int iis_dma_enabled(const s3c2400_t *s) {
+    const uint32_t *r = &s->dma[2u << 3];
+    return (s->iis[0] & 1u) && (r[6] & 2u) &&
+           GP32_BIT(r[2], 23) && GP32_BITS(r[2], 25, 24) == 0u;
+}
+
+static int dma_source_is_ram(s3c2400_t *s, uint32_t source, uint32_t units,
+                             unsigned width, int fixed) {
+    if (!units) return 1;
+    uint64_t bytes = fixed ? width : (uint64_t)units * width;
+    return bytes <= SIZE_MAX && ram_ptr(s, source, (size_t)bytes) != NULL;
+}
+
+/* Only RAM reads into the fixed transmit FIFO commute with a quiet interval.
+ * Prove both the current cursor and every possible reload, including fixed
+ * sources and the actual byte/halfword/word width. A partial RAM span or a
+ * later MMIO reload must retain every request's time, even while muted. */
+static int iis_dma_batch_safe(s3c2400_t *s) {
+    const uint32_t *r = &s->dma[2u << 3];
+    unsigned dsz = GP32_BITS(r[2], 21, 20);
+    if (!GP32_BIT(r[1], 29) || (r[5] & 0x1fffffffu) != 0x15508010u || dsz > 2u)
+        return 0;
+    unsigned width = 1u << dsz;
+    int fixed = GP32_BIT(r[0], 29);
+    if (!dma_source_is_ram(s, r[4] & 0x1fffffffu, r[3] & 0xfffffu, width, fixed)) return 0;
+    return GP32_BIT(r[2], 22) ||
+           ((r[1] & 0x1fffffffu) == 0x15508010u &&
+            dma_source_is_ram(s, r[0] & 0x1fffffffu, r[2] & 0xfffffu, width, fixed));
+}
+
+static uint32_t iis_dma_frames_to_irq(const s3c2400_t *s) {
+    const uint32_t *r = &s->dma[2u << 3];
+    uint32_t count = r[3] & 0x000fffffu;
+    uint32_t frames = iis_dma_transfers_per_frame(s) == 2u ? (count + 1u) / 2u : count;
+    /* Whole-service and zero-count channels complete on the next request. */
+    return !frames || GP32_BIT(r[2], 26) ? 1u : frames;
+}
+
+static uint64_t iis_frame_deadline(s3c2400_t *s, uint32_t frames) {
+    iis_refresh_clock_cache(s);
+    uint64_t terminal = (uint64_t)frames * s->iis_cached_run_hz;
+    if (terminal <= s->iis_accum) return 1u;
+    uint64_t phase = terminal - s->iis_accum;
+    return (phase + s->iis_cached_rate_hz - 1u) / s->iis_cached_rate_hz;
+}
+
+static uint64_t lcd_frame_deadline(s3c2400_t *s, uint32_t budget) {
+    uint64_t frame = lcd_panel_frame_cycles(s);
+    if (!lcd_is_tft(s->lcd_regs)) return frame - s->lcd_line_accum % frame;
+    if (s->lcd_line_accum >= frame) return 1u;
+    uint32_t run = s3c2400_run_clock_hz(s), hclk = s3c2400_hclk_hz(s);
+    uint64_t remaining = frame - s->lcd_line_accum;
+    uint64_t available = (uint64_t)budget * hclk + s->lcd_hclk_remainder;
+    /* A maximum TFT frame times RUN can overflow uint64_t. Multiply only
+     * after proving its distance fits this bounded interval's progress. */
+    if (remaining > available / run) return (uint64_t)budget + 1u;
+    uint64_t phase = remaining * run - s->lcd_hclk_remainder;
+    return (phase + hclk - 1u) / hclk;
+}
+
+static uint64_t soc_event_deadline(s3c2400_t *s, uint32_t budget) {
+    uint64_t next = (uint64_t)budget + 1u;
+    int pwm_bus = 0, iis_bus = 0;
+    if (s->pwm[2] & 0x111101u) {
+        pwm_refresh_clock_cache(s);
+        unsigned dma_timer = GP32_BITS(s->pwm[1], 23, 20);
+        if (dma_timer >= 1u && dma_timer <= 5u &&
+            pwm_next_event(s, dma_timer - 1u) != UINT64_MAX)
+            pwm_bus = pwm_dma_enabled(s);
+        for (unsigned t = 0u; t < 5u; ++t) {
+            if (dma_timer == t + 1u ? !pwm_bus : !!(s->irq[0] & (1u << (INT_TIMER0 + t)))) continue;
+            uint64_t phase = pwm_next_event(s, t);
+            if (phase == UINT64_MAX) continue;
+            uint64_t until = (phase + s->pwm_pclk_hz - 1u) / s->pwm_pclk_hz;
+            if (until < next) next = until;
+        }
+    }
+    if (iis_dma_enabled(s)) {
+        iis_bus = !iis_dma_batch_safe(s);
+        if (iis_bus || (GP32_BIT(s->dma[(2u << 3) + 2u], 28) &&
+                        !(s->irq[0] & (1u << INT_DMA2)))) {
+            uint64_t until = iis_frame_deadline(s, iis_bus ? 1u : iis_dma_frames_to_irq(s));
+            if (until < next) next = until;
+        }
+    }
+    /* Keep the existing coalesced render-generation policy for quiet large
+     * ticks. During possible DMA interaction the actual frame boundary must
+     * see the VRAM/palette and timing that precede that boundary's bus writes. */
+    if ((pwm_bus || iis_bus) && (s->lcd_regs[0] & 1u)) {
+        uint64_t until = lcd_frame_deadline(s, budget);
+        if (until < next) next = until;
+    }
+    return next;
+}
+
+void s3c2400_tick(s3c2400_t *s, uint32_t cpu_cycles) {
+    if (!s || !cpu_cycles) return;
+    if (cpu_cycles == 1u) { soc_tick_ordered(s, 1u); return; }
+    while (cpu_cycles) {
+        uint64_t until = soc_event_deadline(s, cpu_cycles);
+        if (until > cpu_cycles) { soc_tick_ordered(s, cpu_cycles); return; }
+        /* Merely ending a large batch on the event is insufficient: IIS would
+         * still read PWM's old count for that entire batch. Settle the quiet
+         * prefix first, then use exactly the existing one-cycle bus ordering. */
+        if (until > 1u) {
+            uint32_t prefix = (uint32_t)until - 1u;
+            soc_tick_ordered(s, prefix);
+            cpu_cycles -= prefix;
+        }
+        soc_tick_ordered(s, 1u);
+        --cpu_cycles;
+        /* Any accepted DMA may have changed clocks, counts, source spans,
+         * enables or pending IRQs. Derive the remaining schedule afresh. */
+    }
+}
+
 static uint32_t pwm_event_budget(s3c2400_t *s, uint32_t budget) {
     if (!(s->pwm[2] & 0x111101u)) return budget;
     pwm_refresh_clock_cache(s);
@@ -2712,20 +2843,17 @@ static uint32_t pwm_event_budget(s3c2400_t *s, uint32_t budget) {
 
 static uint32_t iis_dma_irq_budget(s3c2400_t *s, uint32_t budget) {
     const uint32_t *r = &s->dma[2u << 3];
-    if (!(s->iis[0] & 1u) || !(r[6] & 2u) || !GP32_BIT(r[2], 28) ||
-        !GP32_BIT(r[2], 23) || GP32_BITS(r[2], 25, 24) != 0u) return budget;
-    iis_refresh_clock_cache(s);
-    uint32_t count = r[3] & 0x000fffffu;
-    uint32_t frames = iis_dma_transfers_per_frame(s) == 2u ? (count + 1u) / 2u : count;
-    /* Whole-service mode drains its count on the next request. A zero count
-     * also reloads/disables and requests the IRQ on that first request. */
-    if (!frames || GP32_BIT(r[2], 26)) frames = 1u;
-    uint64_t terminal = (uint64_t)frames * s->iis_cached_run_hz;
-    uint64_t progress = s->iis_accum + (uint64_t)budget * s->iis_cached_rate_hz;
-    if (progress < terminal) return budget;
-    if (terminal <= s->iis_accum) return 1u;
-    uint64_t remaining = terminal - s->iis_accum;
-    return (uint32_t)((remaining + s->iis_cached_rate_hz - 1u) / s->iis_cached_rate_hz);
+    if (!iis_dma_enabled(s)) return budget;
+    uint32_t frames = 1u;
+    if (iis_dma_batch_safe(s)) {
+        if (!GP32_BIT(r[2], 28)) return budget;
+        frames = iis_dma_frames_to_irq(s);
+    }
+    /* MMIO/RAM destinations can unmask IRQs, change clocks or replace code
+     * even without a DMA terminal IRQ. Let the CPU observe their first bus
+     * action before it executes the rest of the host's requested slice. */
+    uint64_t remaining = iis_frame_deadline(s, frames);
+    return remaining < budget ? (uint32_t)remaining : budget;
 }
 
 uint32_t s3c2400_run_cpu(s3c2400_t *s, uint32_t cpu_cycles) {
@@ -3111,6 +3239,7 @@ static int s3c2400_state_load_image(s3c2400_t *s, state_io_t *io, s3c2400_state_
         uint32_t pclk = (st->clkpow[5] & 1u) ? hclk / 2u : hclk;
         pwm_state_migrate(st, runclk, pclk, &pwm);
     }
+    if (!state_io_validate_tail(io)) goto bad_audio;
     smc_state_stage_commit(s->smc, card);
     free(s->ram);
     free(s->audio);

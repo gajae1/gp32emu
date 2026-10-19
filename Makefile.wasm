@@ -17,7 +17,7 @@ WASM_CFLAGS := --target=wasm32-unknown-unknown -O3 -g0 $(GP32EMU_C_STD_FLAG) -DG
   -Wno-builtin-macro-redefined -ffunction-sections -fdata-sections
 WASM_LDFLAGS := --no-entry --export-memory --initial-memory=134217728 --max-memory=268435456 --allow-undefined --gc-sections
 WASM_EXPORTS := \
-  --export=gp32_wasm_version --export=gp32_wasm_malloc --export=gp32_wasm_heap_used --export=gp32_wasm_reset_heap --export=gp32_wasm_init \
+  --export=gp32_wasm_version --export=gp32_wasm_malloc --export=gp32_wasm_free --export=gp32_wasm_heap_used --export=gp32_wasm_reset_heap --export=gp32_wasm_init \
   --export=gp32_wasm_load_bios --export=gp32_wasm_load_media --export=gp32_wasm_start --export=gp32_wasm_soft_reset --export=gp32_wasm_frame --export=gp32_wasm_run_frames \
   --export=gp32_wasm_set_input --export=gp32_wasm_set_video_effects --export=gp32_wasm_save_state --export=gp32_wasm_get_save_ptr --export=gp32_wasm_get_save_size --export=gp32_wasm_load_state \
   --export=gp32_wasm_get_status --export=gp32_wasm_get_error --export=gp32_wasm_get_error_ptr \
@@ -43,7 +43,9 @@ CORE_SRCS := \
 OBJS := $(patsubst %.c,$(BUILD_DIR)/%.o,$(CORE_SRCS))
 WASM_TEST := $(BUILD_DIR)/wasm_runtime_test.wasm
 WASM_TEST_OBJ := $(BUILD_DIR)/tests/wasm_runtime_test.o
-WASM_TEST_OBJS := $(OBJS) $(WASM_TEST_OBJ)
+# The capacity fixture includes the real SmartMedia implementation so its
+# saved geometry is checked on wasm32 without duplicating the native layout.
+WASM_TEST_OBJS := $(filter-out $(BUILD_DIR)/src/smartmedia.o,$(OBJS)) $(WASM_TEST_OBJ) $(BUILD_DIR)/tests/smartmedia_capacity_test.o
 
 .PHONY: all build clean serve test
 all: build
@@ -53,9 +55,12 @@ build: $(OUT_WASM)
 # WebAssembly engine. No browser, BIOS, game image or npm packages are needed.
 test: $(WASM_TEST)
 	$(NODE) tests/wasm_runtime_test.mjs $(WASM_TEST)
+	$(NODE) tests/wasm_frontend_state_test.mjs
 
 $(WASM_TEST): $(WASM_TEST_OBJS)
 	$(WASM_LD) $(WASM_LDFLAGS) $(WASM_EXPORTS) -o $@ $(WASM_TEST_OBJS)
+
+$(BUILD_DIR)/tests/smartmedia_capacity_test.o: src/smartmedia.c
 
 $(OUT_WASM): $(OBJS) | $(OUT_DIR)
 	$(WASM_LD) $(WASM_LDFLAGS) $(WASM_EXPORTS) -o $@ $(OBJS)
