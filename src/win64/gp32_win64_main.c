@@ -43,6 +43,7 @@ static_assert(sizeof(void *) == 8, "The Windows frontend supports 64-bit targets
 #define IDM_FILE_QUICK_SAVE      1012
 #define IDM_FILE_QUICK_LOAD      1013
 #define IDM_FILE_RECENT_CLEAR    1014
+#define IDM_FILE_LOAD_LATEST     1015
 #define IDM_FILE_RECENT_FIRST    1020 /* GP32_RECENT_MAX entries */
 #define IDM_STATE_SLOT_FIRST     1040 /* GP32_STATE_SLOTS entries */
 #define IDM_EMU_RUN              1101
@@ -663,6 +664,66 @@ static void app_quick_load(app_state_t *a) {
     app_set_status(a, msg);
 }
 
+static void app_load_latest_state(app_state_t *a) {
+    if (!a || !a->emu || !app_game_file(a)) return;
+    int latest_slot = 0;
+    char latest_path[MAX_PATH] = {0};
+    FILETIME latest_time = {0};
+
+    for (int slot = 1; slot <= GP32_STATE_SLOTS; ++slot) {
+        char path[MAX_PATH];
+        WIN32_FILE_ATTRIBUTE_DATA info;
+        if (!app_slot_path(a, slot, path) ||
+            !GetFileAttributesExA(path, GetFileExInfoStandard, &info) ||
+            (info.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) ||
+            (!info.nFileSizeHigh && !info.nFileSizeLow)) continue;
+        LONG order = latest_slot ? CompareFileTime(&info.ftLastWriteTime, &latest_time) : 0;
+        if (!latest_slot || order > 0 || (order == 0 && slot > latest_slot)) {
+            latest_slot = slot;
+            latest_time = info.ftLastWriteTime;
+            snprintf(latest_path, sizeof(latest_path), "%s", path);
+        }
+    }
+
+    const char *title = GP32_TR("Load Latest State", "최신 상태 불러오기");
+    if (!latest_slot) {
+        MessageBoxA(a->hwnd, GP32_TR("No saved states were found for the current game.",
+                                     "현재 게임의 저장 상태가 없습니다."),
+                    title, MB_OK | MB_ICONINFORMATION);
+        return;
+    }
+
+    char date[64] = "", time[64] = "";
+    FILETIME local_time;
+    SYSTEMTIME local_system;
+    if (FileTimeToLocalFileTime(&latest_time, &local_time) &&
+        FileTimeToSystemTime(&local_time, &local_system)) {
+        snprintf(date, sizeof(date), "%04u-%02u-%02u", local_system.wYear, local_system.wMonth, local_system.wDay);
+        snprintf(time, sizeof(time), "%02u:%02u", local_system.wHour, local_system.wMinute);
+    } else {
+        snprintf(date, sizeof(date), GP32_TR("unknown", "알 수 없음"));
+    }
+
+    char text[1024];
+    snprintf(text, sizeof(text), GP32_TR(
+        "Load the latest saved state for the current game from slot %d?\n\nSaved: %s %s\n\nCurrent progress since that state will be lost.",
+        "현재 게임의 슬롯 %d에 저장된 최신 상태를 불러올까요?\n\n저장 시각: %s %s\n\n그 상태 이후의 진행 상황은 사라집니다."),
+        latest_slot, date, time);
+    if (MessageBoxA(a->hwnd, text, title, MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2) != IDYES) return;
+
+    if (gp32_load_state(a->emu, latest_path) != GP32_OK) {
+        app_set_status(a, gp32_get_error(a->emu));
+        return;
+    }
+    app_after_state_load(a);
+    a->state_slot = latest_slot;
+    app_save_config(a);
+    update_menu_checks(a);
+    char msg[96];
+    snprintf(msg, sizeof(msg), GP32_TR("Loaded latest state from slot %d", "슬롯 %d의 최신 상태를 불러왔습니다"), latest_slot);
+    app_set_status(a, msg);
+}
+
 static void app_select_slot(app_state_t *a, int slot) {
     char path[MAX_PATH], msg[96];
     a->state_slot = slot;
@@ -735,6 +796,8 @@ static void update_menu_checks(app_state_t *a) {
     };
     for (size_t i = 0; i < sizeof(need_machine) / sizeof(need_machine[0]); ++i)
         EnableMenuItem(a->menu, need_machine[i], MF_BYCOMMAND | (a->emu ? MF_ENABLED : MF_GRAYED));
+    EnableMenuItem(a->menu, IDM_FILE_LOAD_LATEST, MF_BYCOMMAND |
+                   (a->emu && app_game_file(a) ? MF_ENABLED : MF_GRAYED));
     CheckMenuItem(a->menu, IDM_EMU_RUN, MF_BYCOMMAND | (a->emu && !a->running ? MF_CHECKED : MF_UNCHECKED));
     CheckMenuItem(a->menu, IDM_EMU_FAST_FORWARD, MF_BYCOMMAND | (a->fast_toggle ? MF_CHECKED : MF_UNCHECKED));
     CheckMenuItem(a->menu, IDM_EMU_JIT, MF_BYCOMMAND | (a->jit ? MF_CHECKED : MF_UNCHECKED));
@@ -781,6 +844,7 @@ static HMENU create_menu(app_state_t *a) {
     AppendMenuA(file, MF_SEPARATOR, 0, NULL);
     AppendMenuA(file, MF_STRING, IDM_FILE_QUICK_SAVE, GP32_TR("&Save State\tF5", "상태 저장(&S)\tF5"));
     AppendMenuA(file, MF_STRING, IDM_FILE_QUICK_LOAD, GP32_TR("&Load State\tF8", "상태 불러오기(&L)\tF8"));
+    AppendMenuA(file, MF_STRING, IDM_FILE_LOAD_LATEST, GP32_TR("Load Latest &State...", "최신 상태 불러오기(&N)..."));
     HMENU slots = CreatePopupMenu();
     for (int i = 0; i < GP32_STATE_SLOTS; ++i) {
         char label[32];
@@ -980,6 +1044,7 @@ static void app_command(app_state_t *a, UINT id) {
         break;
     case IDM_FILE_QUICK_SAVE: app_quick_save(a); break;
     case IDM_FILE_QUICK_LOAD: app_quick_load(a); break;
+    case IDM_FILE_LOAD_LATEST: app_load_latest_state(a); break;
     case IDM_FILE_SAVE_STATE: app_save_state_dialog(a); break;
     case IDM_FILE_LOAD_STATE: app_load_state_dialog(a); break;
     case IDM_FILE_SCREENSHOT: app_screenshot_dialog(a); break;
