@@ -275,3 +275,37 @@ Windows/Mac/H700의 성능과 화면·오디오는 로컬 검증 대상으로 �
 DMA의 기존 TSZ[27] 4-unit burst 모델은 generic/IIS 양쪽에서 구현되지 않은
 별도 과제로 확인했다. 이번 STOP 검사는 기존 byte/halfword/word 전송 단위의
 취소를 다루며, 기존 TSZ 동작을 실기 하드웨어의 정답으로 인정하는 검사가 아니다.
+
+## 로컬 통합 검증과 추가 수정
+
+전달 패치를 적용한 tree가 `a3a5e986b0baf56aecb42d64a0fc80cf573cde2b`와
+일치함을 확인했다. 해당 코드의 native Apple ARM64 Release 검사 64/64가 통과했다.
+Windows x64와 Apple ARM64에서 ASR, Blue Angelo, Little Girl Mill, Princess Maker 2의
+동일 저장 장면을 실행했으며, 이전 PR과 이번 패치 사이의 영상·PCM 해시 및
+각 revision의 interpreter/JIT 결과가 일치했다. 새로 만든 v16 상태를 v17 코어로
+읽은 뒤 저장·복원 재실행도 네 게임에서 일치했다.
+
+libretro 추가 상태 검토에서 이전부터 남아 있던 두 경계 오류를 재현해 수정했다.
+`audio_gap_left`가 출력 복구용 고정 버퍼보다 큰 상태를 거절하고, `LRST` magic의
+1–3바이트만 남은 상태도 guest commit 전에 거절한다. 정상 최대 복구 길이,
+guest-only 상태, 짧은 zero padding은 계속 허용한다. 새 거절 사례 네 개에서
+수정 전 거절/상태 보존 assertion 8개가 실패했고 수정 후 모두 통과했다.
+
+최종 추가 수정 후에는 영향받는 `libretro_audio`와 `libretro_runahead` 검사를
+다시 실행해 2/2 통과했다. libretro 구현을 포함하는 오디오 검사 translation unit을
+ASan·UBSan으로 빌드해 통과했으며, 링크한 공통 코어는 Release 빌드였다.
+따라서 이 집중 검사를 전체 코어 sanitizer 검증으로 확대하지 않는다.
+누수 검사는 활성화하지 않았다. Windows의 실제 libretro DLL과 네 게임으로도
+v17 복원·영상/PCM 재실행·잘린 LRST 거절 시 전체 직렬화 상태 보존·정상 재시도를
+확인했다. synthetic PCM 원천으로 대체하지 않은 실행이다.
+
+실물 Cortex-A53 Linux의 JIT 비교에서는 기존 PR 대비 처리 시간이 네 장면에서
+약 1.1–5.1% 증가했다. 세 쌍의 시작·종료 클럭은 1.512GHz였고, 각 장면 300개
+host interval을 측정한 유효 표본에서 16.67ms 초과는 없었다. 이 값은 화면 FPS나
+게임 전체 진행의 성능 보장이 아니다. Windows의 초기 짧은 표본은 변동이 컸으며,
+ASR interpreter와 LGM JIT를 affinity를 고정한 더 긴 구간으로 비교했을 때
+각각 +2.44%, -1.44%였다. 실행 구간도 달라졌으므로 두 결과를 직접 평균내지 않는다.
+
+실제 스피커·AudioWorklet 재생, GUI pause/resume, 실제 RetroArch 되감기와
+run-ahead 사용감은 여전히 별도 확인 대상이다. 여기서 확인한 libretro callbacks와
+저장 상태 일치는 물리 오디오 장치나 UI 입력 지연의 검증을 대신하지 않는다.

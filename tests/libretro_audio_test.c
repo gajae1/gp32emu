@@ -664,7 +664,9 @@ static void test_delivery_rejection_atomic(void) {
     if (!incoming || !before || !after || !retro_serialize(incoming, size)) exit(2);
     lrst_header_t valid;
     memcpy(&valid, incoming + guest, sizeof(valid));
-    for (unsigned which = 0; which < 7u; ++which) {
+    lrst_body_t valid_body;
+    memcpy(&valid_body, incoming + guest + sizeof(valid), sizeof(valid_body));
+    for (unsigned which = 0; which < 11u; ++which) {
         CHECK(retro_unserialize(incoming, size), "restore input for trailer rejection fixture");
         CHECK(gp32_set_buttons(emu, GP32_BUTTON_A) == GP32_OK, "change current guest input");
         reset_audio();
@@ -685,6 +687,11 @@ static void test_delivery_rejection_atomic(void) {
         else if (which == 3u) head.flags |= 0x80000000u;
         else if (which == 4u) head.pending_frames = GP32_AUDIO_QUEUE_LIMIT + 1u;
         else if (which == 5u) head.total_size--;
+        else if (which == 7u) {
+            lrst_body_t body = valid_body;
+            body.audio_gap_left = GP32_AUDIO_GAP_FRAMES + 1u;
+            memcpy(incoming + guest + sizeof(head), &body, sizeof(body));
+        } else if (which >= 8u) cut = guest + which - 7u;
         memcpy(incoming + guest, &head, sizeof(head));
         fail_delivery_allocation = which == 6u;
         CHECK(!retro_unserialize(incoming, cut), "reject malformed or unallocatable delivery section");
@@ -692,7 +699,19 @@ static void test_delivery_rejection_atomic(void) {
         CHECK(retro_serialize(after, size) && !memcmp(before, after, size),
               "rejected delivery section preserves the complete live state");
         memcpy(incoming + guest, &valid, sizeof(valid));
+        memcpy(incoming + guest + sizeof(valid), &valid_body, sizeof(valid_body));
     }
+    valid_body.audio_gap_left = GP32_AUDIO_GAP_FRAMES;
+    memcpy(incoming + guest + sizeof(valid), &valid_body, sizeof(valid_body));
+    CHECK(retro_unserialize(incoming, size), "maximum valid recovery length must load");
+    allowance = SIZE_MAX;
+    captured_frames = 0;
+    flush_audio();
+    CHECK(!audio_gap_left && !audio_pending_frames && captured_frames == valid.pending_frames,
+          "restored maximum recovery length drains the complete audio queue");
+    CHECK(retro_unserialize(incoming, guest), "legacy guest-only state must still load");
+    memset(incoming + guest, 0, 3u);
+    CHECK(retro_unserialize(incoming, guest + 3u), "short zero padding on a legacy state remains valid");
     free(incoming); free(before); free(after);
 }
 
