@@ -599,7 +599,11 @@ static int lrst_prepare(void *user, const void *data, size_t room) {
     const uint8_t *src = data;
     lrst_header_t head;
     lrst_body_t body;
-    if (!src || room < sizeof(head.magic) || memcmp(src, LRST_MAGIC, sizeof(head.magic)) != 0) return 1;
+    if (!src || !room) return 1;
+    /* Legacy guest-only states may have padding. A partial known magic is a
+     * truncated delivery section, not permission to commit without it. */
+    if (room < sizeof(head.magic)) return memcmp(src, LRST_MAGIC, room) != 0;
+    if (memcmp(src, LRST_MAGIC, sizeof(head.magic)) != 0) return 1;
     if (room < sizeof(head)) return 0;
     memcpy(&head, src, sizeof(head));
     if (head.version != LRST_VERSION) {
@@ -619,6 +623,8 @@ static int lrst_prepare(void *user, const void *data, size_t room) {
     if (body.last_video_source != LRST_VIDEO_NONE && body.last_video_source != LRST_VIDEO_FRAME &&
         body.last_video_source != LRST_VIDEO_EFFECT) return 0;
     if (body.audio_have_raw_tail != 0 && body.audio_have_raw_tail != 1) return 0;
+    /* flush_audio uses this count to index its fixed-size recovery buffer. */
+    if (body.audio_gap_left > GP32_AUDIO_GAP_FRAMES) return 0;
     if (audio_resample_cap < head.pending_frames) {
         stage->grown = malloc((size_t)head.pending_frames * 2u * sizeof(int16_t));
         if (!stage->grown) {
