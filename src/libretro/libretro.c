@@ -587,7 +587,7 @@ static size_t lrst_write(uint8_t *dst, size_t room) {
 typedef struct lrst_stage {
     lrst_header_t head;
     lrst_body_t body;
-    const uint8_t *payload;
+    uint8_t *payload;
     int16_t *grown;
     int present;
 } lrst_stage_t;
@@ -632,9 +632,20 @@ static int lrst_prepare(void *user, const void *data, size_t room) {
             return 0;
         }
     }
+    /* The guest commit may rewrite or free RAM/card storage that supplied
+     * this input. Own the delivery bytes until lrst_apply, which runs after
+     * gp32_load_state_data_checked returns. Header/body are already copies. */
+    size_t payload_bytes = (size_t)head.total_size - sizeof(head) - sizeof(body);
+    if (payload_bytes) {
+        stage->payload = malloc(payload_bytes);
+        if (!stage->payload) {
+            lr_log(RETRO_LOG_ERROR, "[gp32emu] savestate delivery staging failed.\n");
+            return 0;
+        }
+        memcpy(stage->payload, p, payload_bytes);
+    }
     stage->head = head;
     stage->body = body;
-    stage->payload = p;
     stage->present = 1;
     return 1;
 }
@@ -1305,26 +1316,26 @@ void retro_unload_game(void) {
 }
 unsigned retro_get_region(void) { return RETRO_REGION_NTSC; }
 bool retro_load_game_special(unsigned game_type, const struct retro_game_info *info, size_t num_info) { (void)game_type; (void)info; (void)num_info; return false; }
-size_t retro_serialize_size(void) {
-    if (!emu) return 0;
+static size_t retro_state_capacity(size_t guest) {
     /* Libretro must never report a smaller size than the core then writes.
      * Normal retro_run drains captured PCM and the SmartMedia delta pads to a
      * per-session budget, so one game serializes to one size; the single case
      * that grows is a guest that rewrites more card pages than the budget
      * holds, which puts the whole image back into the section. Take the largest
      * value seen so a frontend buffer always fits what we write. */
-    size_t guest = gp32_state_size(emu);
-    if (!guest) return 0;
+    if (!guest || guest > SIZE_MAX - lrst_capacity()) return 0;
     size_t size = guest + lrst_capacity();
     if (size > state_capacity) state_capacity = size;
     return state_capacity;
 }
+size_t retro_serialize_size(void) {
+    return emu ? retro_state_capacity(gp32_state_size(emu)) : 0;
+}
 bool retro_serialize(void *data, size_t size) {
     if (!emu || !data) return false;
-    size_t capacity = retro_serialize_size();
-    if (!capacity || size < capacity) return false;
     size_t guest = gp32_state_size(emu);
-    if (!guest || guest > size) return false;
+    size_t capacity = retro_state_capacity(guest);
+    if (!capacity || size < capacity) return false;
     if (gp32_save_state_data(emu, data, guest) != GP32_OK) return false;
     /* The frontend delivery section follows the guest payload; old loaders
      * stop after the guest sections and ignore it. */
@@ -1339,6 +1350,7 @@ bool retro_unserialize(const void *data, size_t size) {
     lrst_stage_t stage = {0};
     if (gp32_load_state_data_checked(emu, data, size, lrst_prepare, &stage) != GP32_OK) {
         free(stage.grown);
+        free(stage.payload);
         return false;
     }
     /* State from before the delivery section, or one this build cannot read:
@@ -1348,6 +1360,7 @@ bool retro_unserialize(const void *data, size_t size) {
     if (stage.present) lrst_apply(&stage);
     else reset_loaded_delivery_state();
     free(stage.grown);
+    free(stage.payload);
     return true;
 }
 void *retro_get_memory_data(unsigned id) { (void)id; return NULL; }

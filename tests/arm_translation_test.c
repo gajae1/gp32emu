@@ -268,11 +268,106 @@ static void case_fine_page_tables(void) {
     }
 }
 
+
+/* A restore always discards decoded/native instructions, including a stale
+ * I-cache view, while restoring the resident I/D mappings independently of
+ * the current page tables. The saved CPU image is an exact byte oracle;
+ * explicit MOV results establish that post-load execution fetches new code. */
+static void case_state_commit_execution(void) {
+    const uint32_t va=0x10001000u,code=RAM_BASE+0x10000u;
+    const uint32_t other=RAM_BASE+0x20000u,ttb=RAM_BASE+0x4000u,l2=RAM_BASE+0x8000u;
+    for(unsigned native=0;native<2u;++native)for(unsigned mmu=0;mmu<2u;++mmu)
+    for(unsigned icache=0;icache<2u;++icache) {
+        current_case="state commit restores code and independent resident mappings";
+        setup_pair();
+        arm920t_t *c=native?cpu_jit:cpu_ref;
+        uint32_t pc=mmu?va:code;
+        c->cp15[1]=(mmu?1u:0u)|(icache?0x1000u:0u);c->cp15[2]=ttb;
+        c->r[15]=pc;
+        set_mem_both(ttb+0x400u,l2|1u);set_mem_both(l2+4u,code|2u);
+        set_mem_both(code,0xe3a00011u); /* MOV r0,#0x11 */
+        set_mem_both(code+4u,0xe2844001u); /* ADD r4,r4,#1 */
+        set_mem_both(code+8u,cache_branch(pc+8u,pc,0));
+        set_mem_both(other,0xe3a00033u); /* MOV r0,#0x33 */
+        set_mem_both(other+4u,0xe2844001u);
+        set_mem_both(other+8u,cache_branch(pc+8u,pc,0));
+        if(mmu) {
+            CHECK(instruction_translate(c,pc)==code,"prime original I mapping");
+            CHECK(mmu_translate(c,pc)==code,"prime original D mapping");
+            c->itlb_control=0x08000000u;c->dtlb_control=0x04000000u;
+            c->itlb_preserved=c->dtlb_preserved=1u;
+        }
+        state_io_t count=state_io_counter();CHECK(arm920t_state_save_io(c,&count),"count CPU state");
+        uint8_t *saved=malloc(count.pos),*check=malloc(count.pos),*live=malloc(count.pos);
+        CHECK(saved && check && live,"allocate CPU state fixtures");
+        if(!saved || !check || !live) {free(saved);free(check);free(live);teardown_pair();return;}
+        state_io_t io=state_io_writer(saved,count.pos);
+        CHECK(arm920t_state_save_io(c,&io),"capture resident CPU state");
+        CHECK(prepared_native_run(c,300u)==300u && c->r[0]==0x11u,"execute original code");
+        if(native && ARM920T_NATIVE_BACKEND)CHECK(c->prof.native_arm_insns>0u,"fixture executes native instructions");
+        /* This is an actual CPU data write. CP15.I=1 deliberately retains the
+         * previously decoded instruction until the state-load boundary. */
+        wb32(c,pc,0xe3a00022u);
+        c->r[15]=pc;
+        CHECK(arm920t_run(c,300u)==300u && c->r[0]==(icache?0x11u:0x22u),
+              "CPU write respects the current I-cache setting before restore");
+        io=state_io_writer(live,count.pos);CHECK(arm920t_state_save_io(c,&io),"capture live state before rejection");
+        uint64_t rejected_invalidations=c->prof.jit_inv_state_load;
+        uint64_t rejected_code=c->jit_code_used;
+        io=state_io_reader(saved,count.pos-1u);
+        CHECK(!arm920t_state_load_io(c,&io),"truncated CPU state rejected");
+        io=state_io_writer(check,count.pos);
+        CHECK(arm920t_state_save_io(c,&io) && !memcmp(live,check,count.pos),"rejection preserves exact CPU bytes");
+        CHECK(c->prof.jit_inv_state_load==rejected_invalidations && c->jit_code_used==rejected_code,
+              "rejection preserves the live code cache");
+        arm920t_reset_cpu_profile(c);
+        io=state_io_reader(saved,count.pos);
+        CHECK(arm920t_state_load_io(c,&io) && io.pos==count.pos,"commit complete CPU state");
+        CHECK(c->prof.jit_inv_state_load==2u,"complete CPU restore invalidates prefix and translation");
+        CHECK(!c->jit_ram_base && !c->jit_ram_write_base && !c->jit_bios_base && !c->jit_code_used,
+              "successful restore discards all cached memory windows and native code");
+        io=state_io_writer(check,count.pos);
+        CHECK(arm920t_state_save_io(c,&io) && !memcmp(saved,check,count.pos),"restore preserves complete serialized CPU image");
+        CHECK(prepared_native_run(c,300u)==300u && c->r[0]==0x22u,
+              "post-restore execution fetches modified code even with I-cache enabled");
+        if(native && ARM920T_NATIVE_BACKEND)CHECK(c->prof.native_arm_insns>0u,"restored code executes natively");
+        if(mmu) {
+            /* Change both live mappings, then recover the saved old residents.
+             * RAM/page-table bytes themselves are deliberately not rolled back. */
+            set_mem_both(l2+4u,other|2u);
+            cp15_write(c,8u,5u,0u,1u,pc);cp15_write(c,8u,6u,0u,1u,pc);
+            c->r[15]=pc;
+            CHECK(prepared_native_run(c,300u)==300u && c->r[0]==0x33u,"execute remapped code before restore");
+            CHECK(mmu_translate(c,pc)==other,"live D mapping moved too");
+            arm920t_reset_cpu_profile(c);io=state_io_reader(saved,count.pos);
+            CHECK(arm920t_state_load_io(c,&io),"restore saved mapping over changed tables");
+            CHECK(c->prof.jit_inv_state_load==2u,"remapped restore invalidates prefix and translation");
+            io=state_io_writer(check,count.pos);
+            CHECK(arm920t_state_save_io(c,&io) && !memcmp(saved,check,count.pos),"restore preserves lockdown, victim order and residents");
+            CHECK(mmu_translate(c,pc)==code,"restored D residency precedes current page tables");
+            CHECK(prepared_native_run(c,300u)==300u && c->r[0]==0x22u,"restored I residency precedes current page tables");
+            /* The standalone translation apply still owns its invalidation;
+             * restoring only translations must not modify architectural registers. */
+            arm920t_translation_state_image_t translation;
+            memcpy(&translation,saved+sizeof(arm920t_state_image_t),sizeof(translation));
+            arm920t_register_context_t before,after;
+            arm920t_get_register_context(c,&before);
+            arm920t_reset_cpu_profile(c);arm920t_translation_state_apply(c,&translation);
+            arm920t_get_register_context(c,&after);
+            CHECK(!memcmp(&before,&after,sizeof(before)) && c->prof.jit_inv_state_load==1u,
+                  "standalone translation apply keeps register state and invalidates once");
+        }
+        printf("state_commit native=%u mmu=%u icache=%u failures=%d\n",native,mmu,icache,failures);
+        free(saved);free(check);free(live);teardown_pair();
+    }
+}
+
 int main(void) {
     case_conflicting_refill(); case_walk_callback(); case_restored_minimum();
     reachable_ranges(); bounds_and_history(); same_descriptor_refill();
     case_instruction_lookup_invalidation();
     case_fine_page_tables();
+    case_state_commit_execution();
     printf("translation regression failures=%d\n",failures);
     return failures?1:0;
 }

@@ -74,6 +74,15 @@ static inline int state_io_validate_tail(state_io_t *io) {
     return 1;
 }
 
+/* Count a known wire span without constructing its data. Only count streams
+ * accept this operation; memory/file writers must still supply real bytes. */
+static inline int state_io_count_bytes(state_io_t *io, size_t bytes) {
+    if (!io || io->failed || io->mode != STATE_IO_COUNT || bytes > SIZE_MAX - io->pos)
+        return state_io_fail(io);
+    io->pos += bytes;
+    return 1;
+}
+
 static inline int state_io_write(state_io_t *io, const void *data, size_t bytes) {
     if (!io || io->failed || bytes > SIZE_MAX - io->pos) return state_io_fail(io);
     if (bytes && !data) return state_io_fail(io);

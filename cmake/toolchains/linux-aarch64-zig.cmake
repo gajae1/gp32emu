@@ -4,6 +4,8 @@
 # The target's glibc must be >= 2.17. This is not an Android toolchain.
 set(CMAKE_SYSTEM_NAME Linux)
 set(CMAKE_SYSTEM_PROCESSOR aarch64)
+# Preserve an explicit -DGP32_ZIG path in CMake's compiler probe projects.
+list(APPEND CMAKE_TRY_COMPILE_PLATFORM_VARIABLES GP32_ZIG)
 find_program(GP32_ZIG zig REQUIRED)
 set(CMAKE_C_COMPILER "${GP32_ZIG}")
 set(CMAKE_C_COMPILER_ARG1 "cc -target aarch64-linux-gnu.2.17 -mcpu=cortex_a53")
