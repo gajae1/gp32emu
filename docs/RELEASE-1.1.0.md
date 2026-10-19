@@ -1,8 +1,8 @@
-# GP32emu 1.1.0 development notes
+# GP32emu 1.1.0
 
-**1.1.0 is not publicly released.** The current public release is
-[1.0.1](RELEASE-1.0.1.md). Android APK and unsigned iOS IPA candidates have been
-built for testing; this does not replace the existing public downloads.
+This release adds an experimental iPhone/iPad app, ten per-game save-state
+slots in the standalone apps, and shared CPU, DMA and save-state corrections.
+Each platform is available as a separate download.
 
 ## iPhone and iPad
 
@@ -28,10 +28,12 @@ The menu can request StikDebug activation on supported TXM devices. Local
 Xcode/LLDB activation is also available. Complete StikDebug app-to-app activation
 and automatic setup on non-TXM devices remain unverified.
 
-Targeted physical-device checks matched interpreter/JIT video, audio and complete
+Earlier physical-device checks matched interpreter/JIT video, audio and complete
 save-state output for Blue Angelo and Astonishia Story R, including repeated
-JIT code-cache reuse. These checks do not establish compatibility or full speed
-across the entire game library.
+JIT code-cache reuse. The final ten-slot and v17 state flow was checked in
+Simulator; physical iPhone revalidation of the final build remains outstanding.
+These checks do not establish compatibility or full speed across the entire
+game library.
 
 Audio and lifecycle changes include:
 
