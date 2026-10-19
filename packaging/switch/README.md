@@ -1,8 +1,5 @@
 # GP32emu 1.1.0 for Nintendo Switch
 
-This guide is the packaging template for unreleased 1.1.0 builds.
-The current public downloads remain 1.0.1.
-
 Experimental RetroArch core, built with devkitPro devkitA64/libnx and linked
 with RetroArch 1.22.2. This build has not been tested on a Switch console.
 ARM64 JIT is enabled when the homebrew loader permits it. If executable

@@ -1,7 +1,0 @@
-PASS: patch applies to an isolated index of frozen base
-base_commit=06c4d879543f90d1003d174718d738e27a8ed6b8
-base_tree=1fd43d466c20f9dd3e470a6a1f065f3ca283f70e
-applied_tree=b3d73eff1c761e69f6239e78a733bf6b4fed914b
-expected_candidate_tree=b3d73eff1c761e69f6239e78a733bf6b4fed914b
-PASS: applied tree exactly matches tested candidate
-PASS: patch changes only src/arm920t_jit_a64.inc and tests/arm_chain_way_test.c

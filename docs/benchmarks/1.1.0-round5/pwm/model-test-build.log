@@ -1,2 +1,0 @@
-$ gcc-13 -std=c2x -O2 -Wall -Wextra -Isrc -Iinclude tests/s3c2400_pwm_model_test.c /tmp/gp32-round5-build-pwm/gcc/libgp32emu.a -lm -pthread -o /tmp/gp32-round5-build-pwm/pwm-model
-exit=0

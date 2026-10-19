@@ -65,17 +65,10 @@ covers only `arm64-v8a` and `armeabi-v7a`; its `-Abi` parameter accepts those tw
 and the release packages them. For `x86_64`, configure CMake manually with
 `-DANDROID_ABI=x86_64` or use the `ndk-build` route above, which builds all three.
 
-## Validation limits
+## Target compatibility
 
 The standalone app requires API 23; the separate libretro cores target API 21.
 Do not package the app's API 23 native libraries as API 21 core downloads.
 ARM64 has a native JIT; ARMv7 uses the interpreter.
 
-Android 11 AVD checks cover input mapping, persistence, rotation and pause.
-Emulator checks do not establish native ARM performance or audible quality.
-LG V50 (Android 12, ARM64) checks cover installation, input/rotation/menu
-regressions and BIOS/Blue Angelo startup. The API 26+ hardware-canvas path
-avoids a measured software-scaling bottleneck on its high-resolution display.
-Broader gameplay, audible quality, ARMv7 runtime, Android RetroArch integration
-and 16 KB-page devices still need runtime validation. BIOS and games are not
-included in the app, core or instrumentation package.
+BIOS and games are not included in the app, core or instrumentation package.

@@ -1,1 +1,0 @@
-['clang-18', '-std=c23', '-O3', '-DNDEBUG', '-D_XOPEN_SOURCE=700', '-DGP32EMU_CPU_PROFILE=1', '-DCORE_UNDER_TEST="/tmp/gp32-round5-jit-condition-study/after/arm920t.c"', '-Isrc', '-Iinclude', 'scripts/bench_native_predicates.c', '-o', '/tmp/gp32-round5-jit-condition-study/after-clang-p1']

@@ -1,9 +1,0 @@
-Test project /tmp/gp32-round4-build-ubsan
-    Start  8: arm_poll
-    Start 15: arm_exception
-1/2 Test  #8: arm_poll .........................   Passed    1.00 sec
-2/2 Test #15: arm_exception ....................   Passed    1.54 sec
-
-100% tests passed out of 2
-
-Total Test time (real) =   1.54 sec

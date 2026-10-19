@@ -1,4 +1,0 @@
-arm_nonram_code_write_test: 10596 cases, 0 failures
-mode 0: 476 cases, 0 failures
-mode 1: 5060 cases, 0 failures
-mode 2: 5060 cases, 0 failures

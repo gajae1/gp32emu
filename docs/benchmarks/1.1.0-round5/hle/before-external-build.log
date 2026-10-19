@@ -1,8 +1,0 @@
--- Requesting C23 dialect (GNU 13.3.0)
--- Configuring done (0.0s)
--- Generating done (0.1s)
--- Build files have been written to: /tmp/gp32-round5-build-root
-[ 86%] Built target gp32emu
-[ 93%] Building C object CMakeFiles/arm_external_write_test.dir/tests/arm_external_write_test.c.o
-[100%] Linking C executable arm_external_write_test
-[100%] Built target arm_external_write_test

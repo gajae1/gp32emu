@@ -1,1 +1,0 @@
-argv=['gcc-13', '-std=c2x', '-O3', '-DNDEBUG', '-D_XOPEN_SOURCE=700', '-DGP32EMU_CPU_PROFILE=1', '-DCORE_UNDER_TEST="/tmp/gp32-round5-jit-wrong-write-proof/arm920t.c"', '-Isrc', '-Iinclude', 'tests/arm_jit_io_mapping_test.c', '-o', '/tmp/gp32-round5-jit-wrong-write-proof/test']

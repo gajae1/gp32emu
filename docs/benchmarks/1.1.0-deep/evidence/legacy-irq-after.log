@@ -1,9 +1,0 @@
-Test project /tmp/gp32-deep-soc-build
-    Start 20: s3c2400_irq
-    Start 25: s3c2400_state
-1/2 Test #25: s3c2400_state ....................   Passed    0.01 sec
-2/2 Test #20: s3c2400_irq ......................   Passed    0.03 sec
-
-100% tests passed out of 2
-
-Total Test time (real) =   0.03 sec

@@ -1,5 +1,0 @@
-
-/tmp/gp32-round4-build-aarch64/CMakeFiles/gp32emu.dir/src/audio/gp32_audio_resampler.c.o:     file format elf64-littleaarch64
-
-Contents of section .rodata.cst16:
- 0000 0e0f0c0d 0a0b0809 06070405 02030001  ................

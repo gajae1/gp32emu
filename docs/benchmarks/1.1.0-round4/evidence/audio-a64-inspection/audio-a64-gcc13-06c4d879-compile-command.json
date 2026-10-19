@@ -1,6 +1,0 @@
-{
-  "directory": "/tmp/gp32-round4-build-aarch64",
-  "command": "/usr/bin/aarch64-linux-gnu-gcc -DGP32EMU_CPU_PROFILE=1 -DGP32EMU_ENABLE_THREADS=1 -DZIP_ENABLE_DEFLATE=0 -DZIP_HAVE_SYMLINK=0 -D_FILE_OFFSET_BITS=64 -D_XOPEN_SOURCE=700 -I/tmp/gp32-round4/include -I/tmp/gp32-round4/src -O3 -DNDEBUG -std=c2x -fPIC -Wall -Wextra -Wpedantic -o CMakeFiles/gp32emu.dir/src/audio/gp32_audio_resampler.c.o -c /tmp/gp32-round4/src/audio/gp32_audio_resampler.c",
-  "file": "/tmp/gp32-round4/src/audio/gp32_audio_resampler.c",
-  "output": "CMakeFiles/gp32emu.dir/src/audio/gp32_audio_resampler.c.o"
-}
