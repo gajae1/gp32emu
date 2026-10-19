@@ -15,12 +15,14 @@ per game in the standalone apps, and updates to controls, audio and saving.
   automatically. On iOS, choose previously imported games from the game library
   without importing them again.
 - **Mobile controls:** a top-aligned landscape picture, separate shoulder and
-  Start/Select rows, a menu button that hides
-  during play, and more screen space when touch controls are disabled.
+  Start/Select rows in portrait, a menu button that hides during landscape play,
+  and more screen space when touch controls are disabled.
 - **Audio and emulation:** updates to CPU, DMA, timer and audio handling. Save
   states retain all four PCM channels and their playback positions.
 - **Loading and saving:** damaged or mismatched states are rejected without
   replacing the running game. Restored states include the saved audio state.
+  Save-state processing uses less work, and loading a state no longer causes
+  unnecessary growth when it is saved again.
 
 ## Updating
 

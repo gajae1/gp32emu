@@ -26,8 +26,7 @@ requires a computer for initial setup (Windows, macOS or Linux); later installs
 and refreshes can run on the device with its required Wi-Fi/VPN setup. On iOS 16
 and later, development-signed apps also require
 [Developer Mode](https://developer.apple.com/documentation/xcode/enabling-developer-mode-on-a-device).
-The interpreter does not remove these installation requirements. If your signing
-tool cannot sign in to Apple, resolve that with the tool before installing the IPA.
+The interpreter does not remove these installation requirements.
 
 To update, install over the existing app using the same signing account and app
 identifier. Do not uninstall first: removing the app also removes its local data.

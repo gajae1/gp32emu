@@ -53,8 +53,7 @@ iOS 지원은 실험적이며, 서명 방식·기기·iOS 버전에 따라 기�
 서명 없는 IPA는 다운로드만으로 설치·실행되지 않습니다. SideStore 최초 설정에는
 Windows·Mac·Linux 컴퓨터가 필요하며, 이후에는 필요한 Wi-Fi·VPN 설정을 갖춘 기기에서
 설치·갱신할 수 있습니다. iOS 16 이상에서 개발 서명 앱을 실행하려면 개발자 모드도
-켜야 합니다. 인터프리터로 실행하더라도 이 설치 조건은 동일합니다. 서명 도구의 Apple
-로그인이 실패하면 해당 도구의 문제를 해결한 뒤 설치해야 합니다.
+켜야 합니다. 인터프리터로 실행하더라도 이 설치 조건은 동일합니다.
 
 1. [SideStore 공식 안내](https://docs.sidestore.io/docs/installation/prerequisites)에 따라
    SideStore를 준비하고, IPA를 가져와 본인 계정으로 서명·설치합니다.
