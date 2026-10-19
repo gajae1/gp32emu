@@ -1,0 +1,25 @@
+$ gcc-13 -std=c2x -O2 -DGP32EMU_CPU_PROFILE=1 -Isrc -Iinclude /tmp/gp32-round5-build-pwm/same-speed-pwm-probe.c /tmp/gp32-round5-build-pwm/gcc/libgp32emu.a -lm -pthread -o /tmp/gp32-round5-build-pwm/same-speed-pwm-probe
+exit=0
+$ /tmp/gp32-round5-build-pwm/same-speed-pwm-probe
+FAIL: same-speed source continuation 133: saved and live full phases equal (84)
+FAIL: same-speed source continuation 133: continued timer edge is identical (16)
+FAIL: same-speed source continuation 133: continued timer edge is identical (16)
+FAIL: same-speed source continuation 133: continued timer edge is identical (16)
+FAIL: same-speed source continuation 133: continued timer edge is identical (16)
+FAIL: same-speed source continuation 133: continued timer edge is identical (16)
+FAIL: same-speed source continuation 133: continued timer edge is identical (16)
+FAIL: same-speed source continuation 133: continued timer edge is identical (16)
+FAIL: same-speed source continuation 133: continued timer edge is identical (16)
+FAIL: same-speed source continuation 133: continued timer edge is identical (16)
+FAIL: same-speed source continuation 133: continued timer edge is identical (16)
+FAIL: same-speed source continuation 133: continued timer edge is identical (16)
+FAIL: same-speed source continuation 133: continued timer edge is identical (16)
+FAIL: same-speed source continuation 133: continued timer edge is identical (16)
+FAIL: same-speed source continuation 133: continued timer edge is identical (16)
+FAIL: same-speed source continuation 133: continued timer edge is identical (16)
+FAIL: same-speed source continuation 150: saved and live full phases equal (84)
+same-speed probe failures=17
+exit=1
+sha256 a8a300add8301da4444bb582b0e96a02151a1eddab1c70cd710a084f3fb1c96c /tmp/gp32-round5-pwm/docs/benchmarks/1.1.0-round5/pwm/same-speed-probe.c
+sha256 cf0daf02558bdaaaa4b7ce4f5d934b9d2c11ae9ff6384de983d7a3e8dc1959fe /tmp/gp32-round5-build-pwm/same-speed-pwm-probe
+sha256 f98bebc331b9efbc617fa4d4895487755668f5e2cbaf695b09b685181036937a /tmp/gp32-round5-build-pwm/source/pre-exact-phase-libgp32emu.a

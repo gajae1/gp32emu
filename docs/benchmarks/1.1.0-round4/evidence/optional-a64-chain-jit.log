@@ -1,0 +1,169 @@
+conditional coverage op=0 calls=1 hops=3 native=10
+conditional coverage op=1 calls=3 hops=1 native=10
+conditional coverage op=2 calls=3 hops=1 native=10
+conditional coverage op=3 calls=3 hops=1 native=10
+conditional coverage op=4 calls=3 hops=1 native=10
+conditional coverage op=5 calls=3 hops=1 native=10
+predicated-stop cases=60
+io-direct identity ldr insn=e5942000 addr=14000000 wb=12345678 r2=8877ff80
+io-direct identity ldr-wb insn=e5b42004 addr=14000004 wb=14000004 r2=8877ff80
+io-direct identity ldr-wb insn=e4942004 addr=14000000 wb=14000004 r2=8877ff80
+io-direct identity str insn=e5842000 addr=14000000 wb=12345678 r2=abcdef01
+io-direct identity str-wb insn=e5a42004 addr=14000004 wb=14000004 r2=abcdef01
+io-direct identity str-wb insn=e4842004 addr=14000000 wb=14000004 r2=abcdef01
+io-direct identity str insn=e7842081 addr=14000004 wb=12345678 r2=abcdef01
+io-direct mapped ldr insn=e5942000 addr=14000000 wb=12345678 r2=8877ff80
+io-direct mapped ldr-wb insn=e5b42004 addr=14000004 wb=10008004 r2=8877ff80
+io-direct mapped ldr-wb insn=e4942004 addr=14000000 wb=10008004 r2=8877ff80
+io-direct mapped str insn=e5842000 addr=14000000 wb=12345678 r2=abcdef01
+io-direct mapped str-wb insn=e5a42004 addr=14000004 wb=10008004 r2=abcdef01
+io-direct mapped str-wb insn=e4842004 addr=14000000 wb=10008004 r2=abcdef01
+io-direct mapped str insn=e7842081 addr=14000004 wb=12345678 r2=abcdef01
+io-direct tiny ldr insn=e5942000 addr=14000000 wb=12345678 r2=8877ff80
+io-direct tiny ldr-wb insn=e5b42004 addr=14000004 wb=10008004 r2=8877ff80
+io-direct tiny ldr-wb insn=e4942004 addr=14000000 wb=10008004 r2=8877ff80
+io-direct tiny str insn=e5842000 addr=14000000 wb=12345678 r2=abcdef01
+io-direct tiny str-wb insn=e5a42004 addr=14000004 wb=10008004 r2=abcdef01
+io-direct tiny str-wb insn=e4842004 addr=14000000 wb=10008004 r2=abcdef01
+io-direct tiny str insn=e7842081 addr=14000004 wb=12345678 r2=abcdef01
+io-direct cold-tlb addr=10008000 r2=8877ff80
+io-direct mapped non-IO ldr insn=e5942000 addr=13000000 r2=8877ff80
+io-direct mapped non-IO str insn=e5842000 addr=13000000 r2=abcdef01
+io-direct irq-write pc=00000404 wb=14000004 captured=00000000
+poll-countdown native=0 portable=16 skipped=496
+poll-add-wrap native=512 portable=0 skipped=0
+poll-sub-wrap native=512 portable=0 skipped=0
+poll-adds native=512 portable=0 skipped=0
+poll-subs native=512 portable=0 skipped=0
+poll-rotated-step native=512 portable=0 skipped=0
+poll-load-alias native=512 portable=0 skipped=0
+poll-conditional-backedge native=504 portable=8 skipped=0
+callback-irq transfer=e4942004 captured=00000000 pc=00000404 wb=14000004 native_calls=1
+callback-irq transfer=e4d42004 captured=00000000 pc=00000404 wb=14000004 native_calls=1
+callback-irq transfer=e0d420b4 captured=00000000 pc=00000404 wb=14000004 native_calls=1
+callback-irq transfer=e0d420d4 captured=00000000 pc=00000404 wb=14000004 native_calls=1
+callback-irq transfer=e0d420f4 captured=00000000 pc=00000404 wb=14000004 native_calls=1
+callback-irq transfer=e4842004 captured=00000000 pc=00000404 wb=14000004 native_calls=1
+callback-irq transfer=e4c42004 captured=00000000 pc=00000404 wb=14000004 native_calls=1
+callback-irq transfer=e0c420b4 captured=00000000 pc=00000404 wb=14000004 native_calls=1
+block-exit effect=1 insn=e8240007 lane=1 count=3 r6=1 wb=13fffffc native_calls=2
+block-exit effect=1 insn=e8240007 lane=3 count=3 r6=1 wb=13fffffc native_calls=2
+block-exit effect=1 insn=e9240007 lane=1 count=3 r6=1 wb=14000000 native_calls=2
+block-exit effect=1 insn=e9240007 lane=3 count=3 r6=1 wb=14000000 native_calls=2
+block-exit effect=1 insn=e8a40007 lane=1 count=3 r6=1 wb=1400000c native_calls=2
+block-exit effect=1 insn=e8a40007 lane=3 count=3 r6=1 wb=1400000c native_calls=2
+block-exit effect=1 insn=e9a40007 lane=1 count=3 r6=1 wb=14000008 native_calls=2
+block-exit effect=1 insn=e9a40007 lane=3 count=3 r6=1 wb=14000008 native_calls=2
+block-exit effect=1 insn=e8340007 lane=1 count=3 r6=1 wb=13fffffc native_calls=2
+block-exit effect=1 insn=e8340007 lane=3 count=3 r6=1 wb=13fffffc native_calls=2
+block-exit effect=1 insn=e9340007 lane=1 count=3 r6=1 wb=14000000 native_calls=2
+block-exit effect=1 insn=e9340007 lane=3 count=3 r6=1 wb=14000000 native_calls=2
+block-exit effect=1 insn=e8b40007 lane=1 count=3 r6=1 wb=1400000c native_calls=2
+block-exit effect=1 insn=e8b40007 lane=3 count=3 r6=1 wb=1400000c native_calls=2
+block-exit effect=1 insn=e9b40007 lane=1 count=3 r6=1 wb=14000008 native_calls=2
+block-exit effect=1 insn=e9b40007 lane=3 count=3 r6=1 wb=14000008 native_calls=2
+block-exit effect=2 insn=e8240007 lane=1 count=3 r6=119 wb=13fffffc native_calls=2
+block-exit effect=2 insn=e8240007 lane=3 count=3 r6=119 wb=13fffffc native_calls=2
+block-exit effect=2 insn=e9240007 lane=1 count=3 r6=119 wb=14000000 native_calls=2
+block-exit effect=2 insn=e9240007 lane=3 count=3 r6=119 wb=14000000 native_calls=2
+block-exit effect=2 insn=e8a40007 lane=1 count=3 r6=119 wb=1400000c native_calls=2
+block-exit effect=2 insn=e8a40007 lane=3 count=3 r6=119 wb=1400000c native_calls=2
+block-exit effect=2 insn=e9a40007 lane=1 count=3 r6=119 wb=14000008 native_calls=2
+block-exit effect=2 insn=e9a40007 lane=3 count=3 r6=119 wb=14000008 native_calls=2
+block-exit effect=2 insn=e8340007 lane=1 count=3 r6=119 wb=13fffffc native_calls=2
+block-exit effect=2 insn=e8340007 lane=3 count=3 r6=119 wb=13fffffc native_calls=2
+block-exit effect=2 insn=e9340007 lane=1 count=3 r6=119 wb=14000000 native_calls=2
+block-exit effect=2 insn=e9340007 lane=3 count=3 r6=119 wb=14000000 native_calls=2
+block-exit effect=2 insn=e8b40007 lane=1 count=3 r6=119 wb=1400000c native_calls=2
+block-exit effect=2 insn=e8b40007 lane=3 count=3 r6=119 wb=1400000c native_calls=2
+block-exit effect=2 insn=e9b40007 lane=1 count=3 r6=119 wb=14000008 native_calls=2
+block-exit effect=2 insn=e9b40007 lane=3 count=3 r6=119 wb=14000008 native_calls=2
+block-exit effect=3 insn=e8240007 lane=1 count=3 r6=119 wb=13fffffc native_calls=1
+block-exit effect=3 insn=e8240007 lane=3 count=3 r6=119 wb=13fffffc native_calls=1
+block-exit effect=3 insn=e9240007 lane=1 count=3 r6=119 wb=14000000 native_calls=1
+block-exit effect=3 insn=e9240007 lane=3 count=3 r6=119 wb=14000000 native_calls=1
+block-exit effect=3 insn=e8a40007 lane=1 count=3 r6=119 wb=1400000c native_calls=1
+block-exit effect=3 insn=e8a40007 lane=3 count=3 r6=119 wb=1400000c native_calls=1
+block-exit effect=3 insn=e9a40007 lane=1 count=3 r6=119 wb=14000008 native_calls=1
+block-exit effect=3 insn=e9a40007 lane=3 count=3 r6=119 wb=14000008 native_calls=1
+block-exit effect=3 insn=e8340007 lane=1 count=3 r6=119 wb=13fffffc native_calls=1
+block-exit effect=3 insn=e8340007 lane=3 count=3 r6=119 wb=13fffffc native_calls=1
+block-exit effect=3 insn=e9340007 lane=1 count=3 r6=119 wb=14000000 native_calls=1
+block-exit effect=3 insn=e9340007 lane=3 count=3 r6=119 wb=14000000 native_calls=1
+block-exit effect=3 insn=e8b40007 lane=1 count=3 r6=119 wb=1400000c native_calls=1
+block-exit effect=3 insn=e8b40007 lane=3 count=3 r6=119 wb=1400000c native_calls=1
+block-exit effect=3 insn=e9b40007 lane=1 count=3 r6=119 wb=14000008 native_calls=1
+block-exit effect=3 insn=e9b40007 lane=3 count=3 r6=119 wb=14000008 native_calls=1
+block callback cases=48
+checked-access 0 insn=e4942004 effect=1 cycles=1
+checked-access 1 insn=e4d42004 effect=2 cycles=32
+checked-access 2 insn=e0d420f4 effect=3 cycles=32
+checked-access 3 insn=e5d42000 effect=4 cycles=32
+checked-access 4 insn=e7a42081 effect=5 cycles=32
+checked-access 5 insn=e5642001 effect=6 cycles=32
+checked-access 6 insn=e0c420b4 effect=7 cycles=32
+checked-access 7 insn=e13440b1 effect=8 cycles=32
+checked-access 8 insn=e1d420d0 effect=9 cycles=32
+checked-access 9 insn=e5942000 effect=0 cycles=32
+checked-access 10 insn=e0d420b4 effect=1 cycles=1
+checked-access 11 insn=e4842004 effect=1 cycles=1
+callback-irq transfer=e4942004 captured=00000000 pc=00000404 wb=14000004 native_calls=0
+callback-irq transfer=e4d42004 captured=00000000 pc=00000404 wb=14000004 native_calls=0
+callback-irq transfer=e0d420b4 captured=00000000 pc=00000404 wb=14000004 native_calls=0
+callback-irq transfer=e0d420d4 captured=00000000 pc=00000404 wb=14000004 native_calls=0
+callback-irq transfer=e0d420f4 captured=00000000 pc=00000404 wb=14000004 native_calls=0
+callback-irq transfer=e4842004 captured=00000000 pc=00000404 wb=14000004 native_calls=0
+callback-irq transfer=e4c42004 captured=00000000 pc=00000404 wb=14000004 native_calls=0
+callback-irq transfer=e0c420b4 captured=00000000 pc=00000404 wb=14000004 native_calls=0
+block-exit effect=1 insn=e8240007 lane=1 count=3 r6=1 wb=13fffffc native_calls=0
+block-exit effect=1 insn=e8240007 lane=3 count=3 r6=1 wb=13fffffc native_calls=0
+block-exit effect=1 insn=e9240007 lane=1 count=3 r6=1 wb=14000000 native_calls=0
+block-exit effect=1 insn=e9240007 lane=3 count=3 r6=1 wb=14000000 native_calls=0
+block-exit effect=1 insn=e8a40007 lane=1 count=3 r6=1 wb=1400000c native_calls=0
+block-exit effect=1 insn=e8a40007 lane=3 count=3 r6=1 wb=1400000c native_calls=0
+block-exit effect=1 insn=e9a40007 lane=1 count=3 r6=1 wb=14000008 native_calls=0
+block-exit effect=1 insn=e9a40007 lane=3 count=3 r6=1 wb=14000008 native_calls=0
+block-exit effect=1 insn=e8340007 lane=1 count=3 r6=1 wb=13fffffc native_calls=0
+block-exit effect=1 insn=e8340007 lane=3 count=3 r6=1 wb=13fffffc native_calls=0
+block-exit effect=1 insn=e9340007 lane=1 count=3 r6=1 wb=14000000 native_calls=0
+block-exit effect=1 insn=e9340007 lane=3 count=3 r6=1 wb=14000000 native_calls=0
+block-exit effect=1 insn=e8b40007 lane=1 count=3 r6=1 wb=1400000c native_calls=0
+block-exit effect=1 insn=e8b40007 lane=3 count=3 r6=1 wb=1400000c native_calls=0
+block-exit effect=1 insn=e9b40007 lane=1 count=3 r6=1 wb=14000008 native_calls=0
+block-exit effect=1 insn=e9b40007 lane=3 count=3 r6=1 wb=14000008 native_calls=0
+block-exit effect=2 insn=e8240007 lane=1 count=3 r6=119 wb=13fffffc native_calls=0
+block-exit effect=2 insn=e8240007 lane=3 count=3 r6=119 wb=13fffffc native_calls=0
+block-exit effect=2 insn=e9240007 lane=1 count=3 r6=119 wb=14000000 native_calls=0
+block-exit effect=2 insn=e9240007 lane=3 count=3 r6=119 wb=14000000 native_calls=0
+block-exit effect=2 insn=e8a40007 lane=1 count=3 r6=119 wb=1400000c native_calls=0
+block-exit effect=2 insn=e8a40007 lane=3 count=3 r6=119 wb=1400000c native_calls=0
+block-exit effect=2 insn=e9a40007 lane=1 count=3 r6=119 wb=14000008 native_calls=0
+block-exit effect=2 insn=e9a40007 lane=3 count=3 r6=119 wb=14000008 native_calls=0
+block-exit effect=2 insn=e8340007 lane=1 count=3 r6=119 wb=13fffffc native_calls=0
+block-exit effect=2 insn=e8340007 lane=3 count=3 r6=119 wb=13fffffc native_calls=0
+block-exit effect=2 insn=e9340007 lane=1 count=3 r6=119 wb=14000000 native_calls=0
+block-exit effect=2 insn=e9340007 lane=3 count=3 r6=119 wb=14000000 native_calls=0
+block-exit effect=2 insn=e8b40007 lane=1 count=3 r6=119 wb=1400000c native_calls=0
+block-exit effect=2 insn=e8b40007 lane=3 count=3 r6=119 wb=1400000c native_calls=0
+block-exit effect=2 insn=e9b40007 lane=1 count=3 r6=119 wb=14000008 native_calls=0
+block-exit effect=2 insn=e9b40007 lane=3 count=3 r6=119 wb=14000008 native_calls=0
+block-exit effect=3 insn=e8240007 lane=1 count=3 r6=119 wb=13fffffc native_calls=0
+block-exit effect=3 insn=e8240007 lane=3 count=3 r6=119 wb=13fffffc native_calls=0
+block-exit effect=3 insn=e9240007 lane=1 count=3 r6=119 wb=14000000 native_calls=0
+block-exit effect=3 insn=e9240007 lane=3 count=3 r6=119 wb=14000000 native_calls=0
+block-exit effect=3 insn=e8a40007 lane=1 count=3 r6=119 wb=1400000c native_calls=0
+block-exit effect=3 insn=e8a40007 lane=3 count=3 r6=119 wb=1400000c native_calls=0
+block-exit effect=3 insn=e9a40007 lane=1 count=3 r6=119 wb=14000008 native_calls=0
+block-exit effect=3 insn=e9a40007 lane=3 count=3 r6=119 wb=14000008 native_calls=0
+block-exit effect=3 insn=e8340007 lane=1 count=3 r6=119 wb=13fffffc native_calls=0
+block-exit effect=3 insn=e8340007 lane=3 count=3 r6=119 wb=13fffffc native_calls=0
+block-exit effect=3 insn=e9340007 lane=1 count=3 r6=119 wb=14000000 native_calls=0
+block-exit effect=3 insn=e9340007 lane=3 count=3 r6=119 wb=14000000 native_calls=0
+block-exit effect=3 insn=e8b40007 lane=1 count=3 r6=119 wb=1400000c native_calls=0
+block-exit effect=3 insn=e8b40007 lane=3 count=3 r6=119 wb=1400000c native_calls=0
+block-exit effect=3 insn=e9b40007 lane=1 count=3 r6=119 wb=14000008 native_calls=0
+block-exit effect=3 insn=e9b40007 lane=3 count=3 r6=119 wb=14000008 native_calls=0
+block callback cases=48
+loop-flush native_calls=3 native_insns=786
+loop-framed native_calls=2 native_insns=1182
+PASS: arm jit differential (flags/shift/branch/mem/half/block/mul/seeded/budget/loop-fences), jit events=114832 fallbacks=0

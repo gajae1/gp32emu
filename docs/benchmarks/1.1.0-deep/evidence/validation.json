@@ -1,0 +1,181 @@
+{
+  "validated_local_source_commit": "a3e7d248814753edb8ec5ba454e32f730b19c019",
+  "equivalent_public_source_commit": "252db3e1863035b407783021d611d1bb3c521886",
+  "source_tree": "b93fd183586c0c129ef917a5c91f3f262bcc752c",
+  "validation_date_utc": "2026-10-18",
+  "source_sha256": {
+    "src/arm920t.c": "90ab0dd8dfdc8e747065df4cb15cf68888878e3164cf321b298b4de1e3a6418a",
+    "src/s3c2400.c": "f9b6bb4ff0be243dc3ec096e71bedeb6e398cee2779c72d776b93e2163dec617",
+    "src/smartmedia.c": "3969005e1a664139e98e7ec0faccede3b64655759610429084a39f6bf903a36b",
+    "CMakeLists.txt": "526e1003a42f285cfbc3b7fa63a7f82aa6324512ecaae9d821037375d1ae522c",
+    "scripts/bench_code_revalidation.c": "af76e0014b7d0ee548d011d092c48130bf988e23ecbb22fca24db2fefe63b842",
+    "scripts/bench_code_revalidation.py": "5b7b3bbd12739b40b4540bcc953ba1f8ea2ddfba8157a5b8030d0c6d9be9a8a6",
+    "scripts/bench_s3c2400_dma.c": "2488e03600a19ac9e712dc07a44d43ab492ab62017c157a9267c4fba39c1f685",
+    "scripts/bench_s3c2400_dma.py": "5c8e01185ca2539aff0db972d1afdac45edc4f10450e8106beebb74e3b9bb2ea"
+  },
+  "cmake_common": {
+    "GP32EMU_REQUIRE_C23": true,
+    "GP32EMU_BUILD_TESTS": true,
+    "GP32EMU_BUILD_LIBRETRO": true,
+    "GP32EMU_CPU_PROFILE": true,
+    "ctest_parallelism": 2
+  },
+  "ctest": [
+    {
+      "log": "ctest-gcc.log",
+      "compiler": "GCC 13.3",
+      "host": "x86-64",
+      "configuration": "Release",
+      "dialect": "-std=c2x",
+      "passed": 49,
+      "total": 49,
+      "seconds": 7.59,
+      "exit_code": 0
+    },
+    {
+      "log": "ctest-clang.log",
+      "compiler": "Clang 18.1.3",
+      "host": "x86-64",
+      "configuration": "Release",
+      "dialect": "-std=c23",
+      "passed": 49,
+      "total": 49,
+      "seconds": 6.88,
+      "exit_code": 0
+    },
+    {
+      "log": "ctest-aarch64-qemu.log",
+      "compiler": "AArch64 GCC 13.3",
+      "runner": "qemu-aarch64 -L /usr/aarch64-linux-gnu",
+      "configuration": "Release",
+      "dialect": "-std=c2x",
+      "passed": 49,
+      "total": 49,
+      "seconds": 60.31,
+      "exit_code": 0
+    },
+    {
+      "log": "ctest-ubsan.log",
+      "compiler": "GCC 13.3",
+      "host": "x86-64",
+      "configuration": "RelWithDebInfo",
+      "dialect": "-std=c2x",
+      "flags": "-fsanitize=undefined -fno-sanitize-recover=all -fno-omit-frame-pointer",
+      "passed": 49,
+      "total": 49,
+      "seconds": 8.81,
+      "exit_code": 0
+    }
+  ],
+  "wasm": {
+    "log": "wasm-runtime.log",
+    "command": "make -f Makefile.wasm build test GP32EMU_REQUIRE_C23=1 WASM_CC=clang-18 WASM_LD=wasm-ld-18 -j2",
+    "exit_code": 0,
+    "repeated_saves": 32,
+    "state_bytes": 9290562,
+    "stable_allocator_heap_used": 38340656,
+    "browser_or_device_test": false
+  },
+  "optional_patch_aarch64": {
+    "default_core": false,
+    "compiler": "AArch64 GCC 13.3",
+    "flags": "-std=c2x -O1 -g",
+    "qemu": "8.2.2",
+    "cpu_cases": 90,
+    "cpu_failures": 0,
+    "metadata_passed": 954,
+    "metadata_total": 954,
+    "metadata_final_seed": "cd3018d4",
+    "wrong_order_mutant_passed": 697,
+    "wrong_order_mutant_mismatches": 257,
+    "wrong_order_mutant_exit_code": 1,
+    "wrong_order_detected_by": "metadata oracle; CPU 90 scenarios alone do not reject this mutant"
+  },
+  "artifacts": [
+    {
+      "path": "thumb-transfer-before.log",
+      "bytes": 1981,
+      "sha256": "158ac01694230b99ebfda8457d57acf03846ab85b8d3a73986be6b5ae7794ca2"
+    },
+    {
+      "path": "irq-latch-before.log",
+      "bytes": 1208,
+      "sha256": "6bfc993d1cf9ea5f1c1d15187395109667783163e703e34297b99222de76cbc1"
+    },
+    {
+      "path": "irq-latch-after.log",
+      "bytes": 89,
+      "sha256": "49aa7b063326b3b4e0e55474640706c813c37b2bbad055145fe2bdc8b83a687d"
+    },
+    {
+      "path": "legacy-irq-before.log",
+      "bytes": 408,
+      "sha256": "1e886be456b90cc2881f5b8685ebf03f4c4cb611a911d7b1df1c098a0aa319c4"
+    },
+    {
+      "path": "legacy-irq-after.log",
+      "bytes": 297,
+      "sha256": "e82fadfb1ee92eee20ea089b237be15f72e76d8713d27668bce8d3007f84ca27"
+    },
+    {
+      "path": "legacy-irq-probe-after.log",
+      "bytes": 358,
+      "sha256": "a89ec51ec64b17b7d55eb90e065576220fdb360db426a2b3b3fb2020cfac616c"
+    },
+    {
+      "path": "legacy-irq-probe.c",
+      "bytes": 1859,
+      "sha256": "6ace0e31f34deafc78b45b3889905208f7e3e1a50bea951b2984f5b6dc9ef2ab"
+    },
+    {
+      "path": "smartmedia-capacity-before.log",
+      "bytes": 1486,
+      "sha256": "1c1e590c51ff4c3838caebee32251e18e4168a25fa00c95c854805ab70c2684e"
+    },
+    {
+      "path": "smartmedia-capacity-after.log",
+      "bytes": 39,
+      "sha256": "36233b2ef8b004001c972979317d5bcdfb0c77398f284760283f59813cbc6c4c"
+    },
+    {
+      "path": "ctest-gcc.log",
+      "bytes": 5114,
+      "sha256": "d7a2fc7390840566a51a4f05d85336485067d9456cb4afcfcaa4c32126809a81"
+    },
+    {
+      "path": "ctest-clang.log",
+      "bytes": 5116,
+      "sha256": "103faa79f1dd3e60d48314ffa590731850dc819759b63ce11620635670ba5f0b"
+    },
+    {
+      "path": "ctest-aarch64-qemu.log",
+      "bytes": 5118,
+      "sha256": "8548f24e30c9a086ed45d44f89cc4bd70eef2c2495daff53616f0451699a959c"
+    },
+    {
+      "path": "ctest-ubsan.log",
+      "bytes": 5120,
+      "sha256": "420b7f461baacb525ac4af7c19532d433b191447e47194233ad9ac7944185405"
+    },
+    {
+      "path": "wasm-runtime.log",
+      "bytes": 5143,
+      "sha256": "fddac1406070f0b83f0fc903fe2375cc6825b0be9e225f4ad56b6ad064823df2"
+    },
+    {
+      "path": "optional-aarch64-cpu.log",
+      "bytes": 35,
+      "sha256": "478e59cdb8f91f1afd10312dcc02fb732322def4a8326599c0c418135fd119ce"
+    },
+    {
+      "path": "optional-aarch64-tracking.log",
+      "bytes": 50,
+      "sha256": "199615aa92d70857e245db88151c0ae6e15bf397a2613c3d04be9ee57502ac5f"
+    },
+    {
+      "path": "optional-aarch64-wrong-order.log",
+      "bytes": 18080,
+      "sha256": "b35d3205c52bd51e7e616c3357c317a9b08a95beaa8712a40a238665512b139f"
+    }
+  ]
+}

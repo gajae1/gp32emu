@@ -257,13 +257,13 @@ function errorText() {
 function wasmU8() { return new Uint8Array(memory.buffer); }
 function copyToWasm(bytes) {
   const p = exp.gp32_wasm_malloc(bytes.byteLength || 1);
+  if (!p) throw new Error('Not enough WASM memory for this file.');
   new Uint8Array(memory.buffer, p, bytes.byteLength).set(bytes);
   return p;
 }
 function copyStringToWasm(s) {
   const bytes = new TextEncoder().encode(s || '');
-  const p = exp.gp32_wasm_malloc(bytes.byteLength || 1);
-  new Uint8Array(memory.buffer, p, bytes.byteLength).set(bytes);
+  const p = copyToWasm(bytes);
   return { ptr: p, len: bytes.byteLength };
 }
 async function fileBytes(file) {
@@ -313,9 +313,13 @@ function stateExportName() {
 
 function looksLikeGp32State(bytes) {
   if (!bytes || bytes.byteLength < 16) return false;
-  const magic = [0x47, 0x50, 0x33, 0x32, 0x53, 0x54, 0x41, 0x54, 0x45, 0x76, 0x30, 0x30, 0x30, 0x32, 0x00, 0x00];
-  for (let i = 0; i < magic.length; i++) if (bytes[i] !== magic[i]) return false;
-  return true;
+  const prefix = [0x47, 0x50, 0x33, 0x32, 0x53, 0x54, 0x41, 0x54, 0x45, 0x76, 0x30, 0x30];
+  for (let i = 0; i < prefix.length; i++) if (bytes[i] !== prefix[i]) return false;
+  const tens = bytes[12] - 0x30, ones = bytes[13] - 0x30;
+  if (tens < 0 || tens > 9 || ones < 0 || ones > 9 || bytes[14] !== 0 || bytes[15] !== 0) return false;
+  const version = tens * 10 + ones;
+  /* Match the core's supported magic values; v13 was never accepted. */
+  return version >= 2 && version <= 17 && version !== 13;
 }
 
 function openDb() {
@@ -415,7 +419,7 @@ async function initWasm() {
   applyVideoSettings();
   updateTouchControlsAvailability();
   updateFullscreenButton();
-  const imports = { pcfx: { read_host_file: () => 0 } };
+  const imports = { pcfx: { read_host_file: () => 0, sin: Math.sin, now_ms: () => performance.now() } };
   const res = await fetch('gp32_wasm_core.wasm');
   const bin = await res.arrayBuffer();
   const mod = await WebAssembly.instantiate(bin, imports);
@@ -948,8 +952,14 @@ function handleVisibilityChange() {
 }
 
 async function loadBiosFile(file) {
-  const bytes = await fileBytes(file);
-  const ptr = copyToWasm(bytes);
+  let bytes, ptr;
+  try {
+    bytes = await fileBytes(file);
+    if (!bytes.byteLength) throw new Error('BIOS file is empty.');
+    ptr = copyToWasm(bytes);
+  } catch (err) {
+    setState('error'); log(err.message || String(err)); return;
+  }
   if (!exp.gp32_wasm_load_bios(ptr, bytes.byteLength)) { setState('error'); log(errorText()); return; }
   biosLoaded = true;
   biosMeta = mediaMeta(file, bytes, 'bios');
@@ -957,9 +967,16 @@ async function loadBiosFile(file) {
   log('');
 }
 async function loadGameFile(file) {
-  const bytes = await fileBytes(file);
-  const ptr = copyToWasm(bytes);
-  const name = copyStringToWasm(file.name || 'game.smc');
+  let bytes, ptr = 0, name;
+  try {
+    bytes = await fileBytes(file);
+    if (!bytes.byteLength) throw new Error('Game file is empty.');
+    ptr = copyToWasm(bytes);
+    name = copyStringToWasm(file.name || 'game.smc');
+  } catch (err) {
+    if (ptr) exp.gp32_wasm_free(ptr);
+    setState('error'); log(err.message || String(err)); return;
+  }
   const forceHle = hleMode.checked ? 1 : 0;
   currentLaunchUsesHle = !!forceHle || !biosLoaded;
   if (!exp.gp32_wasm_load_media(ptr, bytes.byteLength, name.ptr, name.len, forceHle)) { setState('error'); log(errorText()); return; }
@@ -995,11 +1012,12 @@ async function loadStateFromStorage() {
   catch (err) { return setStorageStatus(`load failed: ${err.message || err}`, 'bad'); }
   if (!bytes) return setStorageStatus(`No state in slot ${config.stateSlot} for this BIOS/game.`, 'warn');
   if (!looksLikeGp32State(bytes)) return setStorageStatus(`State slot ${config.stateSlot} is corrupt or from an older incompatible build; save the slot again.`, 'bad');
+  let ptr;
+  try { ptr = copyToWasm(bytes); }
+  catch (err) { return setStorageStatus(`load failed: ${err.message || err}`, 'bad'); }
   const wasRunning = running;
   running = false;
   cancelAnimationFrame(raf);
-  resetAudioQueues();
-  const ptr = copyToWasm(bytes);
   const ok = exp.gp32_wasm_load_state(ptr, bytes.byteLength);
   if (!ok) {
     running = wasRunning;
@@ -1008,6 +1026,7 @@ async function loadStateFromStorage() {
     if (running) raf = requestAnimationFrame(loop);
     return setStorageStatus(`state rejected: ${errorText()}`, 'bad');
   }
+  resetAudioQueues();
   clearAllInput();
   lastDrawnCoreFrame = -1;
   drawFrame();

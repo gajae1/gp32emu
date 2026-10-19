@@ -137,8 +137,9 @@ static int run_slice(fixture_t *f) {
 static uint32_t run_site_instruction(fixture_t *f, uint32_t r0) {
     arm920t_set_cpsr(f->g->cpu, 0xd3u);
     arm920t_set_reg(f->g->cpu, 0u, r0);
+    arm920t_set_reg(f->g->cpu, 12u, 0x0c22a30cu);
     arm920t_set_reg(f->g->cpu, 15u, GP32_PINBALL_FIX_PC);
-    return arm920t_run(f->g->cpu, 3u); /* MOV, BL, inlined callee self-branch */
+    return arm920t_run(f->g->cpu, 3u); /* MOV, BL, callee BX r12 */
 }
 
 static int capture_state(fixture_t *f, state_blob_t *blob) {
@@ -310,21 +311,35 @@ static void check_site_instruction(int jit) {
     fixture_t f;
     if (!open_fixture(&f, jit, NO_CORRUPT, 0u)) return;
     program_tuple(f.g, CAPTURE_STATUS, CAPTURE_CONTROL, CAPTURE_VOLUME);
-    ram_put(&f, 0x0c22a30cu, 0xeafffffeu); /* park at the BL destination */
+    /* BX bounds the trace at three instructions. A direct self-branch can
+     * extend the trace beyond that budget and never enter native execution. */
+    ram_put(&f, 0x0c22a30cu, 0xe12fff1cu); /* park through BX r12 */
 
-    CHECK(run_site_instruction(&f, 0xdeadbeefu) == 3u, "the original call trace runs");
-    CHECK(arm920t_get_reg(f.g->cpu, 0u) == 63u, "with the game's code resident the site runs mov r0, #63");
-    CHECK(arm920t_get_pc(f.g->cpu) == 0x0c22a30cu, "the original block reaches its BL destination");
+    /* The first encounter is deliberately portable under lazy compilation.
+     * Execute each version again to test a mature native block as well. */
+    for (unsigned encounter = 0; encounter < 2u; ++encounter) {
+        CHECK(run_site_instruction(&f, 0xdeadbeefu) == 3u, "the original call trace runs");
+        CHECK(arm920t_get_reg(f.g->cpu, 0u) == 63u, "with the game's code resident the site runs mov r0, #63");
+        CHECK(arm920t_get_pc(f.g->cpu) == 0x0c22a30cu, "the original block reaches its BL destination");
+    }
+    gp32_cpu_profile_t before_patch = {0};
+    arm920t_get_cpu_profile(f.g->cpu, &before_patch);
+    if (jit && before_patch.supported && before_patch.native_backend)
+        CHECK(before_patch.native_arm_insns >= 3u, "the original block executes native code");
 
     CHECK(run_slice(&f), "run slice installs the fix");
     CHECK(ram_word(&f, GP32_PINBALL_FIX_PC) == GP32_PINBALL_FIX_NEW, "the site is patched");
 
-    CHECK(run_site_instruction(&f, 0xdeadbeefu) == 3u, "the corrected call trace runs");
-    CHECK(arm920t_get_reg(f.g->cpu, 0u) == 0u, "the site now runs mov r0, #0");
+    for (unsigned encounter = 0; encounter < 2u; ++encounter) {
+        CHECK(run_site_instruction(&f, 0xdeadbeefu) == 3u, "the corrected call trace runs");
+        CHECK(arm920t_get_reg(f.g->cpu, 0u) == 0u, "the site now runs mov r0, #0");
+        CHECK(arm920t_get_pc(f.g->cpu) == 0x0c22a30cu, "the corrected block reaches its BL destination");
+    }
     gp32_cpu_profile_t profile = {0};
     arm920t_get_cpu_profile(f.g->cpu, &profile);
     if (jit && profile.supported && profile.native_backend)
-        CHECK(profile.native_arm_insns >= 6u, "the original and corrected blocks execute native code");
+        CHECK(profile.native_arm_insns >= before_patch.native_arm_insns + 3u,
+              "the corrected block executes native code");
     close_fixture(&f);
 }
 

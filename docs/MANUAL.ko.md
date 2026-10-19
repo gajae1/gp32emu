@@ -1,10 +1,10 @@
 # GP32emu 사용설명서
 
-GP32emu의 Windows·Android 앱과 RetroArch 코어 설치·조작·저장 안내입니다.
+GP32emu의 Windows·Android·iOS 앱과 RetroArch 코어 설치·조작·저장 안내입니다.
 BIOS와 게임 파일은 포함하지 않습니다. 직접 보유한 덤프를 사용하세요.
 
-개발 중인 **1.1.0**에는 iPhone·iPad 앱도 있습니다. 아래 1.0.1 공개 패키지에는
-포함되지 않으며, 설치 방법은 [iOS 개발 버전 안내](#iphoneipad-개발-버전)를 참고하세요.
+**1.1.0**에는 실험적인 iPhone·iPad 앱도 포함됩니다.
+서명과 설치 방법은 [iOS 안내](#iphoneipad)를 참고하세요.
 
 ## 필요한 파일
 
@@ -16,6 +16,7 @@ BIOS와 게임 파일은 포함하지 않습니다. 직접 보유한 덤프를 �
 | Windows x64 RetroArch | `gp32emu-VERSION-libretro-windows-x64.zip`: `gp32emu_libretro.dll` |
 | Linux AArch64 RetroArch | `gp32emu-VERSION-linux-aarch64.zip`: `gp32emu_libretro.so` |
 | Android 앱 | `gp32emu-VERSION-android.apk`: 별도 설치, RetroArch 불필요 |
+| iPhone/iPad 앱 | `gp32emu-VERSION-ios-unsigned.ipa`: 설치 전 사용자 서명 필요 |
 | Android ARM64 RetroArch | `gp32emu-VERSION-android-arm64.zip`: `gp32emu_libretro_android.so` |
 | Android ARMv7 RetroArch | `gp32emu-VERSION-android-armv7.zip`: `gp32emu_libretro_android.so` |
 | Nintendo Switch RetroArch | `gp32emu-VERSION-switch-libnx.zip`: 실험적 NRO 코어 |
@@ -23,7 +24,7 @@ BIOS와 게임 파일은 포함하지 않습니다. 직접 보유한 덤프를 �
 각 코어 ZIP에는 `gp32emu_libretro.info`도 포함되어 있습니다. 실행용 ZIP에는 README,
 릴리스 노트, 이 설명서, `licenses/`, `manifest.json`이 함께 들어 있습니다.
 Linux 코어는 glibc 2.17 이상, Android 코어는 API 21 이상을 대상으로 합니다.
-Android 앱은 Android 6.0 이상이 필요합니다. 1.1.0 개발 앱은 ARM64 휴대전화에서
+Android 앱은 Android 6.0 이상이 필요합니다. 1.1.0 앱은 ARM64 휴대전화에서
 일부 게임의 실행·오디오·입력을 확인했습니다. Android RetroArch 통합 검증은 남아 있습니다.
 ARMv7은 JIT 없이 동작하므로 ARM64보다 상당히 느립니다.
 
@@ -42,11 +43,14 @@ ARMv7은 JIT 없이 동작하므로 ARM64보다 상당히 느립니다.
 - **Android:** 기존 앱을 지우지 말고 새 APK를 덮어 설치하면 가져온 게임과 세이브가 유지됩니다.
 - **RetroArch:** 게임을 종료하고 같은 플랫폼·아키텍처의 코어와 정보 파일을 교체합니다.
   BIOS·롬·저장 파일과 기존 RetroArch 설정은 그대로 사용하세요.
+- **상태 저장:** 1.1.0은 기존 v2~v12, v14~v16 상태를 읽습니다. 새 상태는 v17 형식이며
+  구버전 코어는 이를 읽지 못하므로 필요한 기존 상태 파일을 따로 보관하세요.
 
-## iPhone/iPad 개발 버전
+## iPhone/iPad
 
-iOS/iPadOS 15 이상의 ARM64 기기용 `gp32emu-1.1.0-ios-unsigned.ipa`를 테스트 중입니다.
-아직 공개 릴리스가 아니며, SideStore를 통한 전체 설치 과정은 확인이 남아 있습니다.
+iOS/iPadOS 15 이상의 ARM64 기기용 `gp32emu-1.1.0-ios-unsigned.ipa`를 제공합니다.
+최종 10슬롯·v17 저장 기능은 시뮬레이터에서 확인했습니다. 최종 빌드의 iPhone 실기
+재검증과 SideStore를 통한 전체 설치 과정은 확인이 남아 있습니다.
 
 서명 없는 IPA는 다운로드만으로 설치·실행되지 않습니다. SideStore 최초 설정에는
 Windows·Mac·Linux 컴퓨터가 필요하며, 이후에는 필요한 Wi-Fi·VPN 설정을 갖춘 기기에서
@@ -67,7 +71,8 @@ StikDebug 초기 설정을 마친 뒤 게임 메뉴의 **Enable JIT with StikDeb
 자동 연동은 실험적 기능이고 실제 StikDebug 연동 검증은 남아 있습니다.
 
 가로 화면에서는 메뉴 아이콘이 잠시 후 사라집니다. 게임 화면 위쪽 가운데의 같은 위치를
-누르면 메뉴가 열립니다. 상태 저장과 게임 내 저장은 별개입니다.
+누르면 메뉴가 열립니다. 상태 저장과 게임 내 저장은 별개이며, 게임마다 상태 슬롯이
+10개 있습니다. 예전 iOS 앱의 단일 상태 저장은 슬롯 1로 그대로 이어집니다.
 메뉴의 **Hide touch controls**를 선택하면 Start·Select와 양옆 조작부의 여백까지
 게임 화면에 사용합니다. 화면은 4:3 비율을 유지하며, 키보드와 게임패드는 계속 사용할 수
 있습니다. **Show touch controls**로 버튼을 다시 표시합니다.
@@ -123,7 +128,7 @@ LCD 잔상 효과, 프레임 블렌딩을 고릅니다. 화면 출력에 문제�
 | Enter | Start |
 | Shift | Select |
 | F5 / F8 | 현재 슬롯에 상태 저장 / 불러오기 |
-| F6 / F7 | 이전 / 다음 상태 슬롯 (1~9) |
+| F6 / F7 | 이전 / 다음 상태 슬롯 (1~10) |
 | F9 | 일시정지 / 재개 |
 | Tab (누르고 있기) | 빨리 감기. 이때 소리는 꺼짐 |
 | F12 | 스크린샷을 `screenshots` 폴더에 저장 |
@@ -192,7 +197,8 @@ retroarch -L ./gp32emu_libretro.so "game.smc"
 
 게임 중 뒤로가기나 ≡ 버튼을 누르면 일시정지 메뉴가 열립니다. 계속하기, 상태 저장, 상태 불러오기,
 처음부터 다시 시작, 터치 조작 표시/숨기기, 터치 진동, 선명한 픽셀(정수배 확대), 게임 목록, 정보,
-종료를 고를 수 있습니다. 상태 저장은 게임마다 슬롯 3개를 씁니다.
+종료를 고를 수 있습니다. 상태 저장과 불러오기는 게임마다 10개 슬롯을 사용하며,
+비어 있는 슬롯과 저장된 슬롯을 함께 표시합니다.
 터치 조작은 방향키와 A/B/L/R/Start/Select를 제공하고, 가로 화면에서는 화면 양옆으로
 배치되며 Start·Select는 아래 가운데에 놓입니다. 게임 화면은 버튼에 가리지 않게 4:3으로
 맞춥니다. 터치 조작을 숨기면 그 공간까지 게임 화면에 사용합니다. 여러 버튼을 동시에
@@ -225,6 +231,9 @@ Android RetroArch에서의 실행과 조작은 아직 확인되지 않았습니�
 RetroPad 1번 포트를 사용합니다. 방향키, A/B, L/R, Start, Select는 각각 같은 이름의
 GP32 버튼에 대응합니다. 실제 키보드·게임패드 배치는 RetroArch의 입력 설정과 리맵에서 바꿉니다.
 위의 Windows 키보드 표는 독립 실행 프로그램에만 적용됩니다.
+
+Windows·Android·iOS 앱의 게임별 10개 상태 슬롯은 RetroArch에 적용되지 않습니다.
+RetroArch에서는 프런트엔드가 관리하는 상태 슬롯과 저장·불러오기 기능을 사용하세요.
 
 ### 코어 옵션
 
@@ -283,14 +292,19 @@ Windows HLE 실행과 RetroArch의 일반 직접 부팅은 쓰기 가능한 카�
 
 ### 세이브 스테이트
 
-Windows에서는 F5로 현재 슬롯에 저장하고 F8로 불러옵니다. 슬롯은 1~9번이며 F6/F7이나
+Windows에서는 F5로 현재 슬롯에 저장하고 F8로 불러옵니다. 슬롯은 1~10번이며 F6/F7이나
 `파일 > 상태 슬롯`에서 바꿉니다. 파일은 `states` 폴더에 게임 파일 이름을 붙여
 `game.smc.state1.gp32st`처럼 저장됩니다. 다른 위치에 저장하거나 불러오려면
 `파일 > 다른 이름으로 상태 저장...`과
 `파일 > 파일에서 상태 불러오기...`를 사용하세요. F12 스크린샷은 `screenshots` 폴더에
 게임 이름과 시각이 붙은 PNG로 저장됩니다.
-Android에서는 일시정지 메뉴의 상태 저장·불러오기에서 슬롯 3개 중 하나를 고릅니다.
-RetroArch에서는 프런트엔드의 스테이트 저장·불러오기 기능을 사용합니다.
+Android와 iOS에서는 일시정지 메뉴의 상태 저장·불러오기에서 게임별 슬롯 10개 중 하나를
+고릅니다. iOS의 예전 단일 상태 저장은 슬롯 1에 남아 있습니다. RetroArch에서는
+프런트엔드의 스테이트 저장·불러오기와 자체 슬롯 기능을 사용합니다.
+
+새 상태는 공통 v17 형식으로 저장됩니다. 1.1.0은 기존 v2~v12, v14~v16 상태를 읽을 수
+있지만, 구버전 코어는 v17 상태를 읽지 못합니다. 상태 형식이나 슬롯을 바꿔도 게임 내
+카드 저장 형식과 파일 이름은 그대로이며, `.sav` 데이터를 변환하지 않습니다.
 
 스테이트는 CPU·메모리·연결된 카드까지 포함하는 순간 저장입니다. 카드 변경분은
 원본 기준으로 저장될 수 있으므로 해당 원본 ROM을 그대로 보관하세요. 스테이트를
@@ -321,7 +335,7 @@ RetroArch에서는 프런트엔드의 스테이트 저장·불러오기 기능�
 - **RetroArch가 종료됨:** `retroarch --verbose`로 로그를 확인하세요.
 
 호환성 확인은 일부 장면에 한정되며 전체 게임 완주를 보장하지 않습니다. 실제 GP32와의 소리·입력
-지연 비교, 장시간 플레이는 미확인입니다. 1.1.0 개발 앱은 실제 ARM64 Android 기기에서 일부
+지연 비교, 장시간 플레이는 미확인입니다. 1.1.0 앱은 실제 ARM64 Android 기기에서 일부
 게임·오디오·입력을 확인했습니다. Android RetroArch 연동, Qt 실행, 브라우저 재생은 미검증입니다.
 
 실기의 모든 클럭과 주변장치를 정밀 재현하는 에뮬레이터는 아닙니다. CPU 파이프라인과 메모리

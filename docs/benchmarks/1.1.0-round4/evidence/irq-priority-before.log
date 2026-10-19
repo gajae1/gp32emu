@@ -1,0 +1,17 @@
+FAIL: rotation state arb=0 sel=0 mode=1 mask=02 step=0
+FAIL: held selection rotated twice arb=0 sel=0 mode=1 mask=02 step=0
+FAIL: rotation state arb=0 sel=0 mode=1 mask=02 step=1
+FAIL: held selection rotated twice arb=0 sel=0 mode=1 mask=02 step=1
+FAIL: rotation state arb=0 sel=0 mode=1 mask=02 step=2
+FAIL: held selection rotated twice arb=0 sel=0 mode=1 mask=02 step=2
+FAIL: rotation state arb=0 sel=0 mode=1 mask=02 step=3
+FAIL: held selection rotated twice arb=0 sel=0 mode=1 mask=02 step=3
+FAIL: rotation state arb=0 sel=0 mode=1 mask=02 step=4
+FAIL: held selection rotated twice arb=0 sel=0 mode=1 mask=02 step=4
+FAIL: rotation state arb=0 sel=0 mode=1 mask=02 step=5
+FAIL: held selection rotated twice arb=0 sel=0 mode=1 mask=02 step=5
+FAIL: rotation state arb=0 sel=0 mode=1 mask=04 step=0
+FAIL: held selection rotated twice arb=0 sel=0 mode=1 mask=04 step=0
+FAIL: rotation state arb=0 sel=0 mode=1 mask=04 step=1
+FAIL: held selection rotated twice arb=0 sel=0 mode=1 mask=04 step=1
+IRQ priority scenarios=2508 assertion_failures=10042

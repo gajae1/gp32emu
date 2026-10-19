@@ -1,0 +1,42 @@
+["/tmp/gp32-round4-tools/cmake/data/bin/cmake", "-S", "/tmp/gp32-round5-before", "-B", "/tmp/gp32-round5-bench-before/clang-profile1", "-DCMAKE_C_COMPILER=/usr/bin/clang-18", "-DCMAKE_BUILD_TYPE=Release", "-DGP32EMU_REQUIRE_C23=ON", "-DGP32EMU_ENABLE_IPO=OFF", "-DGP32EMU_CPU_PROFILE=ON", "-DGP32EMU_BUILD_TESTS=OFF", "-DGP32EMU_BUILD_HEADLESS=OFF", "-DGP32EMU_BUILD_LIBRETRO=OFF", "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON"]
+-- The C compiler identification is Clang 18.1.3
+-- Detecting C compiler ABI info
+-- Detecting C compiler ABI info - done
+-- Check for working C compiler: /usr/bin/clang-18 - skipped
+-- Detecting C compile features
+-- Detecting C compile features - done
+-- Requesting C23 dialect (Clang 18.1.3)
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD - Success
+-- Found Threads: TRUE
+-- Configuring done (0.2s)
+-- Generating done (0.0s)
+-- Build files have been written to: /tmp/gp32-round5-bench-before/clang-profile1
+["/tmp/gp32-round4-tools/cmake/data/bin/cmake", "--build", "/tmp/gp32-round5-bench-before/clang-profile1", "--target", "gp32emu", "-j", "2"]
+[  5%] Building C object CMakeFiles/gp32emu.dir/src/arm920t.c.o
+[ 11%] Building C object CMakeFiles/gp32emu.dir/src/gp32.c.o
+/tmp/gp32-round5-before/src/arm920t.c:837:13: warning: unused function 'itlb_store' [-Wunused-function]
+  837 | static void itlb_store(arm920t_t *c,uint32_t va,uint32_t pa,uint32_t mask) {
+      |             ^~~~~~~~~~
+/tmp/gp32-round5-before/src/arm920t.c:3811:13: warning: unused function 'x64_fetch_guard' [-Wunused-function]
+ 3811 | static void x64_fetch_guard(arm920t_t *c, x64_emit_t *e, uint32_t pc, uint32_t done) {
+      |             ^~~~~~~~~~~~~~~
+[ 17%] Building C object CMakeFiles/gp32emu.dir/src/s3c2400.c.o
+[ 23%] Building C object CMakeFiles/gp32emu.dir/src/gp32_codec.c.o
+[ 29%] Building C object CMakeFiles/gp32emu.dir/src/smartmedia.c.o
+[ 35%] Building C object CMakeFiles/gp32emu.dir/src/smc_direct.c.o
+2 warnings generated.
+[ 41%] Building C object CMakeFiles/gp32emu.dir/src/fxe.c.o
+[ 47%] Building C object CMakeFiles/gp32emu.dir/src/fpk.c.o
+[ 52%] Building C object CMakeFiles/gp32emu.dir/src/gp32_zip.c.o
+[ 58%] Building C object CMakeFiles/gp32emu.dir/src/third_party/zip/zip.c.o
+[ 64%] Building C object CMakeFiles/gp32emu.dir/src/input_script.c.o
+[ 70%] Building C object CMakeFiles/gp32emu.dir/src/platform/platform.c.o
+[ 76%] Building C object CMakeFiles/gp32emu.dir/src/audio/gp32_audio_resampler.c.o
+[ 82%] Building C object CMakeFiles/gp32emu.dir/src/media/gp32_media.c.o
+[ 88%] Building C object CMakeFiles/gp32emu.dir/src/media/gp32_video_effects.c.o
+[ 94%] Building C object CMakeFiles/gp32emu.dir/src/save_atomic.c.o
+[100%] Linking C static library libgp32emu.a
+[100%] Built target gp32emu
+["/usr/bin/clang-18", "-O3", "-DNDEBUG", "-std=c2x", "-fno-lto", "-D_XOPEN_SOURCE=700", "-D_FILE_OFFSET_BITS=64", "-DGP32EMU_ENABLE_THREADS=1", "-DGP32EMU_CPU_PROFILE=1", "-I", "/tmp/gp32-round5-before/src", "-I", "/tmp/gp32-round5-before/include", "-DARM_SOURCE=\"/tmp/gp32-round5-before/src/arm920t.c\"", "/tmp/gp32-round4/scripts/bench_external_writes.c", "-lm", "-o", "/tmp/gp32-round5-bench-before/clang-profile1/external-writes"]
+["/usr/bin/clang-18", "-O3", "-DNDEBUG", "-std=c2x", "-fno-lto", "-D_XOPEN_SOURCE=700", "-D_FILE_OFFSET_BITS=64", "-DGP32EMU_ENABLE_THREADS=1", "-DGP32EMU_CPU_PROFILE=1", "-I", "/tmp/gp32-round5-before/src", "-I", "/tmp/gp32-round5-before/include", "-DGP32_CORE_UNDER_TEST=\"/tmp/gp32-round5-before/src/gp32.c\"", "/tmp/gp32-round4/scripts/bench_hle_outputs.c", "/tmp/gp32-round5-bench-before/clang-profile1/libgp32emu.a", "-lm", "-pthread", "-o", "/tmp/gp32-round5-bench-before/clang-profile1/hle-outputs"]

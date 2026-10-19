@@ -425,11 +425,15 @@ static void check_peripheral_clock_boundary(int jit) {
             s3c2400_audio_samples(g->soc, &frames, &rate);
             CHECK(frames == 1u && rate == 93750u, "IIS credits pre-write cycles at old PCLK");
         } else {
-            s3c2400_write32(g->soc, 0x1510000cu, 99u); /* 200 cycles before, 400 after. */
+            s3c2400_write32(g->soc, 0x1510000cu, 99u); /* Repeated intervals: 200/400 cycles. */
+            s3c2400_write32(g->soc, 0x15100008u, 10u); /* Manual load, auto-reload. */
             s3c2400_write32(g->soc, 0x15100008u, 9u);
-            CHECK(gp32_run_cycles(g, 299u) == GP32_OK, "run to just before PWM boundary");
+            /* First zero follows 99 decrements: 50 before the clock write,
+             * then 49 at four CPU cycles each. Zero requests at cycle 296;
+             * its separate reload edge starts the following 400-cycle period. */
+            CHECK(gp32_run_cycles(g, 295u) == GP32_OK, "run to just before PWM boundary");
             CHECK(!(s3c2400_read32(g->soc, 0x14400000u) & (1u << 10)), "no premature PWM IRQ");
-            CHECK(s3c2400_read32(g->soc, 0x15100014u) == 0u, "PWM counter includes pre-write progress");
+            CHECK(s3c2400_read32(g->soc, 0x15100014u) == 1u, "PWM counter includes pre-write progress");
             gp32_run_cycles(g, 1u);
             CHECK(s3c2400_read32(g->soc, 0x14400000u) & (1u << 10), "PWM expires at old/new clock boundary");
             s3c2400_write32(g->soc, 0x14400000u, 1u << 10);

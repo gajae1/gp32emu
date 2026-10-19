@@ -1,0 +1,906 @@
+[  7%] Building C object CMakeFiles/gp32emu.dir/src/s3c2400.c.o
+[ 14%] Building C object CMakeFiles/gp32emu.dir/src/gp32.c.o
+[ 21%] Building C object CMakeFiles/gp32emu.dir/src/gp32_codec.c.o
+[ 21%] Building C object CMakeFiles/gp32emu.dir/src/arm920t.c.o
+[ 28%] Building C object CMakeFiles/gp32emu.dir/src/smartmedia.c.o
+/tmp/gp32-round5-jit/src/arm920t.c: In function ‘arm_jit_fold_const_step’:
+/tmp/gp32-round5-jit/src/arm920t.c:3498:59: warning: comparison is always false due to limited range of data type [-Wtype-limits]
+ 3498 |         if (next->e != prev->c || next->g > 3u || next->h > 31u) return 0;
+      |                                                           ^
+In file included from /tmp/gp32-round5-jit/src/arm920t.c:5215:
+/tmp/gp32-round5-jit/src/arm920t_jit_a64.inc: In function ‘a64_data’:
+/tmp/gp32-round5-jit/src/arm920t_jit_a64.inc:892:42: warning: operand of ‘?:’ changes signedness from ‘int’ to ‘unsigned int’ due to unsignedness of other operand [-Wsign-compare]
+  892 |     uint32_t shift_bits = folded_shift ? (op->g << 22) | (op->h << 10) : 0u;
+      |                                          ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/tmp/gp32-round5-jit/src/arm920t_jit_a64.inc: At top level:
+/tmp/gp32-round5-jit/src/arm920t_jit_a64.inc:656:13: warning: ‘a64_fetch_guard’ defined but not used [-Wunused-function]
+  656 | static void a64_fetch_guard(arm920t_t *c, a64_emit_t *e, uint32_t pc, uint32_t done) {
+      |             ^~~~~~~~~~~~~~~
+/tmp/gp32-round5-jit/src/arm920t.c:837:13: warning: ‘itlb_store’ defined but not used [-Wunused-function]
+  837 | static void itlb_store(arm920t_t *c,uint32_t va,uint32_t pa,uint32_t mask) {
+      |             ^~~~~~~~~~
+/tmp/gp32-round5-jit/src/s3c2400.c: In function ‘audio_prepare_rate’:
+/tmp/gp32-round5-jit/src/s3c2400.c:892:67: warning: comparison is always false due to limited range of data type [-Wtype-limits]
+  892 |                 if (cap <= s->audio_boundary_cap || (uint64_t)cap > SIZE_MAX / sizeof(*s->audio_boundaries)) return 0;
+      |                                                                   ^
+/tmp/gp32-round5-jit/src/s3c2400.c: In function ‘s3c2400_state_load_image’:
+/tmp/gp32-round5-jit/src/s3c2400.c:2847:67: warning: comparison is always false due to limited range of data type [-Wtype-limits]
+ 2847 |             span_count > st->audio_frames || (uint64_t)span_count > SIZE_MAX / sizeof(*new_spans)) goto bad_audio;
+      |                                                                   ^
+[ 28%] Building C object CMakeFiles/gp32emu.dir/src/smc_direct.c.o
+[ 35%] Building C object CMakeFiles/gp32emu.dir/src/fxe.c.o
+[ 42%] Building C object CMakeFiles/gp32emu.dir/src/fpk.c.o
+[ 50%] Building C object CMakeFiles/gp32emu.dir/src/gp32_zip.c.o
+[ 57%] Building C object CMakeFiles/gp32emu.dir/src/third_party/zip/zip.c.o
+[ 57%] Building C object CMakeFiles/gp32emu.dir/src/input_script.c.o
+In file included from /tmp/gp32-round5-jit/src/third_party/zip/zip.c:39:
+/tmp/gp32-round5-jit/src/third_party/zip/miniz.h:5185:9: note: ‘#pragma message: Using fopen, ftello, fseeko, stat() etc. path for file I/O - this path may not support large files.’
+ 5185 | #pragma message(                                                               \
+      |         ^~~~~~~
+[ 64%] Building C object CMakeFiles/gp32emu.dir/src/platform/platform.c.o
+[ 71%] Building C object CMakeFiles/gp32emu.dir/src/audio/gp32_audio_resampler.c.o
+[ 78%] Building C object CMakeFiles/gp32emu.dir/src/media/gp32_media.c.o
+[ 78%] Building C object CMakeFiles/gp32emu.dir/src/media/gp32_video_effects.c.o
+[ 85%] Building C object CMakeFiles/gp32emu.dir/src/save_atomic.c.o
+[ 92%] Linking C static library libgp32emu.a
+[ 92%] Built target gp32emu
+[100%] Building C object CMakeFiles/arm_jit_test.dir/tests/arm_jit_test.c.o
+In file included from /tmp/gp32-round5-jit/tests/arm_jit_test.c:22:
+/tmp/gp32-round5-jit/tests/../src/arm920t.c: In function ‘arm_jit_fold_const_step’:
+/tmp/gp32-round5-jit/tests/../src/arm920t.c:3498:59: warning: comparison is always false due to limited range of data type [-Wtype-limits]
+ 3498 |         if (next->e != prev->c || next->g > 3u || next->h > 31u) return 0;
+      |                                                           ^
+In file included from /tmp/gp32-round5-jit/tests/../src/arm920t.c:5215:
+/tmp/gp32-round5-jit/tests/../src/arm920t_jit_a64.inc: In function ‘a64_data’:
+/tmp/gp32-round5-jit/tests/../src/arm920t_jit_a64.inc:892:42: warning: operand of ‘?:’ changes signedness from ‘int’ to ‘unsigned int’ due to unsignedness of other operand [-Wsign-compare]
+  892 |     uint32_t shift_bits = folded_shift ? (op->g << 22) | (op->h << 10) : 0u;
+      |                                          ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/tmp/gp32-round5-jit/tests/../src/arm920t_jit_a64.inc: At top level:
+/tmp/gp32-round5-jit/tests/../src/arm920t_jit_a64.inc:656:13: warning: ‘a64_fetch_guard’ defined but not used [-Wunused-function]
+  656 | static void a64_fetch_guard(arm920t_t *c, a64_emit_t *e, uint32_t pc, uint32_t done) {
+      |             ^~~~~~~~~~~~~~~
+In function ‘spsr_bank’,
+    inlined from ‘case_native_spsr_bank_reuse’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3445:5:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3234:33: warning: ‘c.spsr_svc’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3234 |     case SPSR_MODE_SVC: return c.spsr_svc;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round5-jit/tests/arm_jit_test.c: In function ‘case_native_spsr_bank_reuse’:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3229:32: note: ‘c’ declared here
+ 3229 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘case_native_spsr_bank_reuse’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3446:5:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3232:33: warning: ‘c.spsr_fiq’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3232 |     case SPSR_MODE_FIQ: return c.spsr_fiq;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round5-jit/tests/arm_jit_test.c: In function ‘case_native_spsr_bank_reuse’:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3229:32: note: ‘c’ declared here
+ 3229 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘case_native_spsr_bank_reuse’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3443:5:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3232:33: warning: ‘c.spsr_fiq’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3232 |     case SPSR_MODE_FIQ: return c.spsr_fiq;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round5-jit/tests/arm_jit_test.c: In function ‘case_native_spsr_bank_reuse’:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3229:32: note: ‘c’ declared here
+ 3229 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘case_native_spsr_bank_reuse’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3428:26:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3234:33: warning: ‘c.spsr_svc’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3234 |     case SPSR_MODE_SVC: return c.spsr_svc;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round5-jit/tests/arm_jit_test.c: In function ‘case_native_spsr_bank_reuse’:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3229:32: note: ‘c’ declared here
+ 3229 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘case_native_psr_continuation’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3583:9:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3234:33: warning: ‘c.spsr_svc’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3234 |     case SPSR_MODE_SVC: return c.spsr_svc;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round5-jit/tests/arm_jit_test.c: In function ‘case_native_psr_continuation’:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3229:32: note: ‘c’ declared here
+ 3229 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘check_bank_seeds’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3258:13,
+    inlined from ‘case_native_spsr_mode_banks’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3293:9,
+    inlined from ‘case_native_spsr’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3668:5:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3233:33: warning: ‘c.spsr_irq’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3233 |     case SPSR_MODE_IRQ: return c.spsr_irq;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round5-jit/tests/arm_jit_test.c: In function ‘case_native_spsr’:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3229:32: note: ‘c’ declared here
+ 3229 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘check_bank_seeds’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3258:13,
+    inlined from ‘case_native_spsr_mode_banks’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3293:9,
+    inlined from ‘case_native_spsr’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3668:5:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3234:33: warning: ‘c.spsr_svc’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3234 |     case SPSR_MODE_SVC: return c.spsr_svc;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round5-jit/tests/arm_jit_test.c: In function ‘case_native_spsr’:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3229:32: note: ‘c’ declared here
+ 3229 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘check_bank_seeds’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3258:13,
+    inlined from ‘case_native_spsr_mode_banks’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3293:9,
+    inlined from ‘case_native_spsr’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3668:5:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3235:33: warning: ‘c.spsr_abt’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3235 |     case SPSR_MODE_ABT: return c.spsr_abt;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round5-jit/tests/arm_jit_test.c: In function ‘case_native_spsr’:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3229:32: note: ‘c’ declared here
+ 3229 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘check_bank_seeds’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3258:13,
+    inlined from ‘case_native_spsr_mode_banks’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3293:9,
+    inlined from ‘case_native_spsr’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3668:5:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3234:33: warning: ‘c.spsr_svc’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3234 |     case SPSR_MODE_SVC: return c.spsr_svc;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round5-jit/tests/arm_jit_test.c: In function ‘case_native_spsr’:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3229:32: note: ‘c’ declared here
+ 3229 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘check_bank_seeds’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3258:13,
+    inlined from ‘case_native_spsr_mode_banks’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3293:9,
+    inlined from ‘case_native_spsr’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3668:5:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3235:33: warning: ‘c.spsr_abt’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3235 |     case SPSR_MODE_ABT: return c.spsr_abt;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round5-jit/tests/arm_jit_test.c: In function ‘case_native_spsr’:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3229:32: note: ‘c’ declared here
+ 3229 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘check_bank_seeds’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3258:13,
+    inlined from ‘case_native_spsr_no_bank’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3321:9,
+    inlined from ‘case_native_spsr’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3669:5:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3232:33: warning: ‘c.spsr_fiq’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3232 |     case SPSR_MODE_FIQ: return c.spsr_fiq;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round5-jit/tests/arm_jit_test.c: In function ‘case_native_spsr’:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3229:32: note: ‘c’ declared here
+ 3229 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘check_bank_seeds’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3258:13,
+    inlined from ‘case_native_spsr_no_bank’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3321:9,
+    inlined from ‘case_native_spsr’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3669:5:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3234:33: warning: ‘c.spsr_svc’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3234 |     case SPSR_MODE_SVC: return c.spsr_svc;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round5-jit/tests/arm_jit_test.c: In function ‘case_native_spsr’:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3229:32: note: ‘c’ declared here
+ 3229 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘check_bank_seeds’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3258:13,
+    inlined from ‘case_native_spsr_fields’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3365:9,
+    inlined from ‘case_native_spsr’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3670:5:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3232:33: warning: ‘c.spsr_fiq’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3232 |     case SPSR_MODE_FIQ: return c.spsr_fiq;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round5-jit/tests/arm_jit_test.c: In function ‘case_native_spsr’:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3229:32: note: ‘c’ declared here
+ 3229 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘check_bank_seeds’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3258:13,
+    inlined from ‘case_native_spsr_fields’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3365:9,
+    inlined from ‘case_native_spsr’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3670:5:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3233:33: warning: ‘c.spsr_irq’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3233 |     case SPSR_MODE_IRQ: return c.spsr_irq;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round5-jit/tests/arm_jit_test.c: In function ‘case_native_spsr’:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3229:32: note: ‘c’ declared here
+ 3229 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘check_bank_seeds’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3258:13,
+    inlined from ‘case_native_spsr_conditions’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3403:9,
+    inlined from ‘case_native_spsr’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3671:5:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3233:33: warning: ‘c.spsr_irq’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3233 |     case SPSR_MODE_IRQ: return c.spsr_irq;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round5-jit/tests/arm_jit_test.c: In function ‘case_native_spsr’:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3229:32: note: ‘c’ declared here
+ 3229 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘check_bank_seeds’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3258:13,
+    inlined from ‘case_native_spsr_conditions’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3403:9,
+    inlined from ‘case_native_spsr’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3671:5:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3235:33: warning: ‘c.spsr_abt’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3235 |     case SPSR_MODE_ABT: return c.spsr_abt;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round5-jit/tests/arm_jit_test.c: In function ‘case_native_spsr’:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3229:32: note: ‘c’ declared here
+ 3229 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘check_bank_seeds’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3258:13,
+    inlined from ‘case_native_spsr_conditions’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3403:9,
+    inlined from ‘case_native_spsr’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3671:5:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3232:33: warning: ‘c.spsr_fiq’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3232 |     case SPSR_MODE_FIQ: return c.spsr_fiq;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round5-jit/tests/arm_jit_test.c: In function ‘case_native_spsr’:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3229:32: note: ‘c’ declared here
+ 3229 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘case_native_spsr_conditions’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3400:9,
+    inlined from ‘case_native_spsr’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3671:5:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3234:33: warning: ‘c.spsr_svc’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3234 |     case SPSR_MODE_SVC: return c.spsr_svc;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round5-jit/tests/arm_jit_test.c: In function ‘case_native_spsr’:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3229:32: note: ‘c’ declared here
+ 3229 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘check_bank_seeds’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3258:13,
+    inlined from ‘case_native_spsr_fields’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3365:9,
+    inlined from ‘case_native_spsr’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3670:5:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3235:33: warning: ‘c.spsr_abt’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3235 |     case SPSR_MODE_ABT: return c.spsr_abt;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round5-jit/tests/arm_jit_test.c: In function ‘case_native_spsr’:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3229:32: note: ‘c’ declared here
+ 3229 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘case_native_spsr_fields’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3362:9,
+    inlined from ‘case_native_spsr’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3670:5:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3234:33: warning: ‘c.spsr_svc’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3234 |     case SPSR_MODE_SVC: return c.spsr_svc;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round5-jit/tests/arm_jit_test.c: In function ‘case_native_spsr’:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3229:32: note: ‘c’ declared here
+ 3229 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘check_bank_seeds’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3258:13,
+    inlined from ‘case_native_spsr_no_bank’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3321:9,
+    inlined from ‘case_native_spsr’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3669:5:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3235:33: warning: ‘c.spsr_abt’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3235 |     case SPSR_MODE_ABT: return c.spsr_abt;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round5-jit/tests/arm_jit_test.c: In function ‘case_native_spsr’:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3229:32: note: ‘c’ declared here
+ 3229 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘check_bank_seeds’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3258:13,
+    inlined from ‘case_native_spsr_no_bank’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3321:9,
+    inlined from ‘case_native_spsr’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3669:5:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3233:33: warning: ‘c.spsr_irq’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3233 |     case SPSR_MODE_IRQ: return c.spsr_irq;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round5-jit/tests/arm_jit_test.c: In function ‘case_native_spsr’:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3229:32: note: ‘c’ declared here
+ 3229 |     arm920t_register_context_t c;
+      |                                ^
+[100%] Linking C executable arm_jit_test
+[100%] Built target arm_jit_test
+[ 50%] Building C object CMakeFiles/arm_jit_recycle_test.dir/tests/arm_jit_recycle_test.c.o
+[100%] Linking C executable arm_jit_recycle_test
+[100%] Built target arm_jit_recycle_test
+[100%] Building C object CMakeFiles/arm_jit_policy_test.dir/tests/arm_jit_policy_test.c.o
+[100%] Linking C executable arm_jit_policy_test
+[100%] Built target arm_jit_policy_test
+[ 50%] Building C object CMakeFiles/arm_alu_differential_test.dir/tests/arm_alu_differential_test.c.o
+[100%] Linking C executable arm_alu_differential_test
+[100%] Built target arm_alu_differential_test
+[ 86%] Built target gp32emu
+[ 93%] Building C object CMakeFiles/arm_translation_test.dir/tests/arm_translation_test.c.o
+In file included from /tmp/gp32-round5-jit/tests/arm_translation_test.c:2:
+/tmp/gp32-round5-jit/tests/../src/arm920t.c: In function ‘arm_jit_fold_const_step’:
+/tmp/gp32-round5-jit/tests/../src/arm920t.c:3498:59: warning: comparison is always false due to limited range of data type [-Wtype-limits]
+ 3498 |         if (next->e != prev->c || next->g > 3u || next->h > 31u) return 0;
+      |                                                           ^
+In file included from /tmp/gp32-round5-jit/tests/../src/arm920t.c:5215:
+/tmp/gp32-round5-jit/tests/../src/arm920t_jit_a64.inc: In function ‘a64_data’:
+/tmp/gp32-round5-jit/tests/../src/arm920t_jit_a64.inc:892:42: warning: operand of ‘?:’ changes signedness from ‘int’ to ‘unsigned int’ due to unsignedness of other operand [-Wsign-compare]
+  892 |     uint32_t shift_bits = folded_shift ? (op->g << 22) | (op->h << 10) : 0u;
+      |                                          ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/tmp/gp32-round5-jit/tests/../src/arm920t_jit_a64.inc: At top level:
+/tmp/gp32-round5-jit/tests/../src/arm920t_jit_a64.inc:656:13: warning: ‘a64_fetch_guard’ defined but not used [-Wunused-function]
+  656 | static void a64_fetch_guard(arm920t_t *c, a64_emit_t *e, uint32_t pc, uint32_t done) {
+      |             ^~~~~~~~~~~~~~~
+In file included from /tmp/gp32-round5-jit/tests/arm_translation_test.c:4:
+In function ‘spsr_bank’,
+    inlined from ‘case_native_spsr_bank_reuse’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3445:5:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3234:33: warning: ‘c.spsr_svc’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3234 |     case SPSR_MODE_SVC: return c.spsr_svc;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round5-jit/tests/arm_jit_test.c: In function ‘case_native_spsr_bank_reuse’:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3229:32: note: ‘c’ declared here
+ 3229 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘case_native_spsr_bank_reuse’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3446:5:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3232:33: warning: ‘c.spsr_fiq’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3232 |     case SPSR_MODE_FIQ: return c.spsr_fiq;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round5-jit/tests/arm_jit_test.c: In function ‘case_native_spsr_bank_reuse’:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3229:32: note: ‘c’ declared here
+ 3229 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘case_native_spsr_bank_reuse’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3443:5:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3232:33: warning: ‘c.spsr_fiq’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3232 |     case SPSR_MODE_FIQ: return c.spsr_fiq;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round5-jit/tests/arm_jit_test.c: In function ‘case_native_spsr_bank_reuse’:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3229:32: note: ‘c’ declared here
+ 3229 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘case_native_spsr_bank_reuse’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3445:5:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3234:33: warning: ‘c.spsr_svc’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3234 |     case SPSR_MODE_SVC: return c.spsr_svc;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round5-jit/tests/arm_jit_test.c: In function ‘case_native_spsr_bank_reuse’:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3229:32: note: ‘c’ declared here
+ 3229 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘case_native_spsr_bank_reuse’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3428:26:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3234:33: warning: ‘c.spsr_svc’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3234 |     case SPSR_MODE_SVC: return c.spsr_svc;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round5-jit/tests/arm_jit_test.c: In function ‘case_native_spsr_bank_reuse’:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3229:32: note: ‘c’ declared here
+ 3229 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘check_bank_seeds’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3258:13,
+    inlined from ‘case_native_spsr_mode_banks’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3293:9,
+    inlined from ‘case_native_spsr’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3668:5:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3233:33: warning: ‘c.spsr_irq’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3233 |     case SPSR_MODE_IRQ: return c.spsr_irq;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round5-jit/tests/arm_jit_test.c: In function ‘case_native_spsr’:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3229:32: note: ‘c’ declared here
+ 3229 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘check_bank_seeds’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3258:13,
+    inlined from ‘case_native_spsr_mode_banks’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3293:9,
+    inlined from ‘case_native_spsr’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3668:5:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3234:33: warning: ‘c.spsr_svc’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3234 |     case SPSR_MODE_SVC: return c.spsr_svc;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round5-jit/tests/arm_jit_test.c: In function ‘case_native_spsr’:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3229:32: note: ‘c’ declared here
+ 3229 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘check_bank_seeds’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3258:13,
+    inlined from ‘case_native_spsr_mode_banks’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3293:9,
+    inlined from ‘case_native_spsr’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3668:5:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3235:33: warning: ‘c.spsr_abt’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3235 |     case SPSR_MODE_ABT: return c.spsr_abt;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round5-jit/tests/arm_jit_test.c: In function ‘case_native_spsr’:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3229:32: note: ‘c’ declared here
+ 3229 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘check_bank_seeds’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3258:13,
+    inlined from ‘case_native_spsr_mode_banks’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3293:9,
+    inlined from ‘case_native_spsr’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3668:5:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3234:33: warning: ‘c.spsr_svc’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3234 |     case SPSR_MODE_SVC: return c.spsr_svc;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round5-jit/tests/arm_jit_test.c: In function ‘case_native_spsr’:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3229:32: note: ‘c’ declared here
+ 3229 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘check_bank_seeds’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3258:13,
+    inlined from ‘case_native_spsr_mode_banks’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3293:9,
+    inlined from ‘case_native_spsr’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3668:5:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3235:33: warning: ‘c.spsr_abt’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3235 |     case SPSR_MODE_ABT: return c.spsr_abt;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round5-jit/tests/arm_jit_test.c: In function ‘case_native_spsr’:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3229:32: note: ‘c’ declared here
+ 3229 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘check_bank_seeds’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3258:13,
+    inlined from ‘case_native_spsr_no_bank’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3321:9,
+    inlined from ‘case_native_spsr’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3669:5:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3232:33: warning: ‘c.spsr_fiq’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3232 |     case SPSR_MODE_FIQ: return c.spsr_fiq;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round5-jit/tests/arm_jit_test.c: In function ‘case_native_spsr’:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3229:32: note: ‘c’ declared here
+ 3229 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘check_bank_seeds’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3258:13,
+    inlined from ‘case_native_spsr_no_bank’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3321:9,
+    inlined from ‘case_native_spsr’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3669:5:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3232:33: warning: ‘c.spsr_fiq’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3232 |     case SPSR_MODE_FIQ: return c.spsr_fiq;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round5-jit/tests/arm_jit_test.c: In function ‘case_native_spsr’:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3229:32: note: ‘c’ declared here
+ 3229 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘check_bank_seeds’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3258:13,
+    inlined from ‘case_native_spsr_no_bank’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3321:9,
+    inlined from ‘case_native_spsr’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3669:5:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3234:33: warning: ‘c.spsr_svc’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3234 |     case SPSR_MODE_SVC: return c.spsr_svc;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round5-jit/tests/arm_jit_test.c: In function ‘case_native_spsr’:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3229:32: note: ‘c’ declared here
+ 3229 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘check_bank_seeds’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3258:13,
+    inlined from ‘case_native_spsr_no_bank’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3321:9,
+    inlined from ‘case_native_spsr’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3669:5:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3234:33: warning: ‘c.spsr_svc’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3234 |     case SPSR_MODE_SVC: return c.spsr_svc;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round5-jit/tests/arm_jit_test.c: In function ‘case_native_spsr’:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3229:32: note: ‘c’ declared here
+ 3229 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘check_bank_seeds’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3258:13,
+    inlined from ‘case_native_spsr_fields’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3365:9,
+    inlined from ‘case_native_spsr’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3670:5:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3232:33: warning: ‘c.spsr_fiq’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3232 |     case SPSR_MODE_FIQ: return c.spsr_fiq;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round5-jit/tests/arm_jit_test.c: In function ‘case_native_spsr’:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3229:32: note: ‘c’ declared here
+ 3229 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘check_bank_seeds’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3258:13,
+    inlined from ‘case_native_spsr_fields’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3365:9,
+    inlined from ‘case_native_spsr’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3670:5:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3233:33: warning: ‘c.spsr_irq’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3233 |     case SPSR_MODE_IRQ: return c.spsr_irq;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round5-jit/tests/arm_jit_test.c: In function ‘case_native_spsr’:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3229:32: note: ‘c’ declared here
+ 3229 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘check_bank_seeds’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3258:13,
+    inlined from ‘case_native_spsr_conditions’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3403:9,
+    inlined from ‘case_native_spsr’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3671:5:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3233:33: warning: ‘c.spsr_irq’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3233 |     case SPSR_MODE_IRQ: return c.spsr_irq;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round5-jit/tests/arm_jit_test.c: In function ‘case_native_spsr’:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3229:32: note: ‘c’ declared here
+ 3229 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘check_bank_seeds’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3258:13,
+    inlined from ‘case_native_spsr_conditions’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3403:9,
+    inlined from ‘case_native_spsr’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3671:5:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3233:33: warning: ‘c.spsr_irq’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3233 |     case SPSR_MODE_IRQ: return c.spsr_irq;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round5-jit/tests/arm_jit_test.c: In function ‘case_native_spsr’:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3229:32: note: ‘c’ declared here
+ 3229 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘check_bank_seeds’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3258:13,
+    inlined from ‘case_native_spsr_conditions’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3403:9,
+    inlined from ‘case_native_spsr’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3671:5:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3235:33: warning: ‘c.spsr_abt’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3235 |     case SPSR_MODE_ABT: return c.spsr_abt;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round5-jit/tests/arm_jit_test.c: In function ‘case_native_spsr’:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3229:32: note: ‘c’ declared here
+ 3229 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘check_bank_seeds’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3258:13,
+    inlined from ‘case_native_spsr_conditions’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3403:9,
+    inlined from ‘case_native_spsr’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3671:5:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3232:33: warning: ‘c.spsr_fiq’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3232 |     case SPSR_MODE_FIQ: return c.spsr_fiq;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round5-jit/tests/arm_jit_test.c: In function ‘case_native_spsr’:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3229:32: note: ‘c’ declared here
+ 3229 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘case_native_spsr_conditions’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3400:9,
+    inlined from ‘case_native_spsr’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3671:5:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3234:33: warning: ‘c.spsr_svc’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3234 |     case SPSR_MODE_SVC: return c.spsr_svc;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round5-jit/tests/arm_jit_test.c: In function ‘case_native_spsr’:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3229:32: note: ‘c’ declared here
+ 3229 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘check_bank_seeds’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3258:13,
+    inlined from ‘case_native_spsr_fields’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3365:9,
+    inlined from ‘case_native_spsr’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3670:5:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3235:33: warning: ‘c.spsr_abt’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3235 |     case SPSR_MODE_ABT: return c.spsr_abt;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round5-jit/tests/arm_jit_test.c: In function ‘case_native_spsr’:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3229:32: note: ‘c’ declared here
+ 3229 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘case_native_spsr_fields’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3362:9,
+    inlined from ‘case_native_spsr’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3670:5:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3234:33: warning: ‘c.spsr_svc’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3234 |     case SPSR_MODE_SVC: return c.spsr_svc;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round5-jit/tests/arm_jit_test.c: In function ‘case_native_spsr’:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3229:32: note: ‘c’ declared here
+ 3229 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘check_bank_seeds’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3258:13,
+    inlined from ‘case_native_spsr_no_bank’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3321:9,
+    inlined from ‘case_native_spsr’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3669:5:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3235:33: warning: ‘c.spsr_abt’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3235 |     case SPSR_MODE_ABT: return c.spsr_abt;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round5-jit/tests/arm_jit_test.c: In function ‘case_native_spsr’:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3229:32: note: ‘c’ declared here
+ 3229 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘check_bank_seeds’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3258:13,
+    inlined from ‘case_native_spsr_no_bank’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3321:9,
+    inlined from ‘case_native_spsr’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3669:5:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3233:33: warning: ‘c.spsr_irq’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3233 |     case SPSR_MODE_IRQ: return c.spsr_irq;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round5-jit/tests/arm_jit_test.c: In function ‘case_native_spsr’:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3229:32: note: ‘c’ declared here
+ 3229 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘check_bank_seeds’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3258:13,
+    inlined from ‘case_native_spsr_no_bank’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3321:9,
+    inlined from ‘case_native_spsr’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3669:5:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3233:33: warning: ‘c.spsr_irq’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3233 |     case SPSR_MODE_IRQ: return c.spsr_irq;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round5-jit/tests/arm_jit_test.c: In function ‘case_native_spsr’:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3229:32: note: ‘c’ declared here
+ 3229 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘case_native_psr_continuation’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3583:9:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3234:33: warning: ‘c.spsr_svc’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3234 |     case SPSR_MODE_SVC: return c.spsr_svc;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round5-jit/tests/arm_jit_test.c: In function ‘case_native_psr_continuation’:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3229:32: note: ‘c’ declared here
+ 3229 |     arm920t_register_context_t c;
+      |                                ^
+[100%] Linking C executable arm_translation_test
+[100%] Built target arm_translation_test
+[ 86%] Built target gp32emu
+[ 93%] Building C object CMakeFiles/arm_cpu_code_write_test.dir/tests/arm_cpu_code_write_test.c.o
+In file included from /tmp/gp32-round5-jit/tests/arm_jit_test.c:22,
+                 from /tmp/gp32-round5-jit/tests/arm_cpu_code_write_test.c:5:
+/tmp/gp32-round5-jit/tests/../src/arm920t.c: In function ‘arm_jit_fold_const_step’:
+/tmp/gp32-round5-jit/tests/../src/arm920t.c:3498:59: warning: comparison is always false due to limited range of data type [-Wtype-limits]
+ 3498 |         if (next->e != prev->c || next->g > 3u || next->h > 31u) return 0;
+      |                                                           ^
+In file included from /tmp/gp32-round5-jit/tests/../src/arm920t.c:5215:
+/tmp/gp32-round5-jit/tests/../src/arm920t_jit_a64.inc: In function ‘a64_data’:
+/tmp/gp32-round5-jit/tests/../src/arm920t_jit_a64.inc:892:42: warning: operand of ‘?:’ changes signedness from ‘int’ to ‘unsigned int’ due to unsignedness of other operand [-Wsign-compare]
+  892 |     uint32_t shift_bits = folded_shift ? (op->g << 22) | (op->h << 10) : 0u;
+      |                                          ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/tmp/gp32-round5-jit/tests/../src/arm920t_jit_a64.inc: At top level:
+/tmp/gp32-round5-jit/tests/../src/arm920t_jit_a64.inc:656:13: warning: ‘a64_fetch_guard’ defined but not used [-Wunused-function]
+  656 | static void a64_fetch_guard(arm920t_t *c, a64_emit_t *e, uint32_t pc, uint32_t done) {
+      |             ^~~~~~~~~~~~~~~
+In function ‘spsr_bank’,
+    inlined from ‘case_native_spsr_bank_reuse’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3445:5:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3234:33: warning: ‘c.spsr_svc’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3234 |     case SPSR_MODE_SVC: return c.spsr_svc;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round5-jit/tests/arm_jit_test.c: In function ‘case_native_spsr_bank_reuse’:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3229:32: note: ‘c’ declared here
+ 3229 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘case_native_spsr_bank_reuse’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3446:5:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3232:33: warning: ‘c.spsr_fiq’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3232 |     case SPSR_MODE_FIQ: return c.spsr_fiq;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round5-jit/tests/arm_jit_test.c: In function ‘case_native_spsr_bank_reuse’:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3229:32: note: ‘c’ declared here
+ 3229 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘case_native_spsr_bank_reuse’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3443:5:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3232:33: warning: ‘c.spsr_fiq’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3232 |     case SPSR_MODE_FIQ: return c.spsr_fiq;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round5-jit/tests/arm_jit_test.c: In function ‘case_native_spsr_bank_reuse’:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3229:32: note: ‘c’ declared here
+ 3229 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘case_native_spsr_bank_reuse’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3445:5:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3234:33: warning: ‘c.spsr_svc’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3234 |     case SPSR_MODE_SVC: return c.spsr_svc;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round5-jit/tests/arm_jit_test.c: In function ‘case_native_spsr_bank_reuse’:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3229:32: note: ‘c’ declared here
+ 3229 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘case_native_spsr_bank_reuse’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3428:26:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3234:33: warning: ‘c.spsr_svc’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3234 |     case SPSR_MODE_SVC: return c.spsr_svc;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round5-jit/tests/arm_jit_test.c: In function ‘case_native_spsr_bank_reuse’:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3229:32: note: ‘c’ declared here
+ 3229 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘check_bank_seeds’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3258:13,
+    inlined from ‘case_native_spsr_mode_banks’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3293:9,
+    inlined from ‘case_native_spsr’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3668:5:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3233:33: warning: ‘c.spsr_irq’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3233 |     case SPSR_MODE_IRQ: return c.spsr_irq;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round5-jit/tests/arm_jit_test.c: In function ‘case_native_spsr’:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3229:32: note: ‘c’ declared here
+ 3229 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘check_bank_seeds’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3258:13,
+    inlined from ‘case_native_spsr_mode_banks’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3293:9,
+    inlined from ‘case_native_spsr’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3668:5:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3234:33: warning: ‘c.spsr_svc’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3234 |     case SPSR_MODE_SVC: return c.spsr_svc;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round5-jit/tests/arm_jit_test.c: In function ‘case_native_spsr’:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3229:32: note: ‘c’ declared here
+ 3229 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘check_bank_seeds’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3258:13,
+    inlined from ‘case_native_spsr_mode_banks’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3293:9,
+    inlined from ‘case_native_spsr’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3668:5:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3235:33: warning: ‘c.spsr_abt’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3235 |     case SPSR_MODE_ABT: return c.spsr_abt;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round5-jit/tests/arm_jit_test.c: In function ‘case_native_spsr’:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3229:32: note: ‘c’ declared here
+ 3229 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘check_bank_seeds’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3258:13,
+    inlined from ‘case_native_spsr_mode_banks’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3293:9,
+    inlined from ‘case_native_spsr’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3668:5:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3234:33: warning: ‘c.spsr_svc’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3234 |     case SPSR_MODE_SVC: return c.spsr_svc;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round5-jit/tests/arm_jit_test.c: In function ‘case_native_spsr’:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3229:32: note: ‘c’ declared here
+ 3229 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘check_bank_seeds’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3258:13,
+    inlined from ‘case_native_spsr_mode_banks’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3293:9,
+    inlined from ‘case_native_spsr’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3668:5:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3235:33: warning: ‘c.spsr_abt’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3235 |     case SPSR_MODE_ABT: return c.spsr_abt;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round5-jit/tests/arm_jit_test.c: In function ‘case_native_spsr’:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3229:32: note: ‘c’ declared here
+ 3229 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘check_bank_seeds’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3258:13,
+    inlined from ‘case_native_spsr_no_bank’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3321:9,
+    inlined from ‘case_native_spsr’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3669:5:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3232:33: warning: ‘c.spsr_fiq’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3232 |     case SPSR_MODE_FIQ: return c.spsr_fiq;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round5-jit/tests/arm_jit_test.c: In function ‘case_native_spsr’:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3229:32: note: ‘c’ declared here
+ 3229 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘check_bank_seeds’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3258:13,
+    inlined from ‘case_native_spsr_no_bank’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3321:9,
+    inlined from ‘case_native_spsr’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3669:5:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3232:33: warning: ‘c.spsr_fiq’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3232 |     case SPSR_MODE_FIQ: return c.spsr_fiq;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round5-jit/tests/arm_jit_test.c: In function ‘case_native_spsr’:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3229:32: note: ‘c’ declared here
+ 3229 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘check_bank_seeds’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3258:13,
+    inlined from ‘case_native_spsr_no_bank’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3321:9,
+    inlined from ‘case_native_spsr’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3669:5:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3234:33: warning: ‘c.spsr_svc’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3234 |     case SPSR_MODE_SVC: return c.spsr_svc;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round5-jit/tests/arm_jit_test.c: In function ‘case_native_spsr’:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3229:32: note: ‘c’ declared here
+ 3229 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘check_bank_seeds’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3258:13,
+    inlined from ‘case_native_spsr_no_bank’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3321:9,
+    inlined from ‘case_native_spsr’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3669:5:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3234:33: warning: ‘c.spsr_svc’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3234 |     case SPSR_MODE_SVC: return c.spsr_svc;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round5-jit/tests/arm_jit_test.c: In function ‘case_native_spsr’:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3229:32: note: ‘c’ declared here
+ 3229 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘check_bank_seeds’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3258:13,
+    inlined from ‘case_native_spsr_fields’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3365:9,
+    inlined from ‘case_native_spsr’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3670:5:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3232:33: warning: ‘c.spsr_fiq’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3232 |     case SPSR_MODE_FIQ: return c.spsr_fiq;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round5-jit/tests/arm_jit_test.c: In function ‘case_native_spsr’:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3229:32: note: ‘c’ declared here
+ 3229 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘check_bank_seeds’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3258:13,
+    inlined from ‘case_native_spsr_fields’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3365:9,
+    inlined from ‘case_native_spsr’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3670:5:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3233:33: warning: ‘c.spsr_irq’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3233 |     case SPSR_MODE_IRQ: return c.spsr_irq;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round5-jit/tests/arm_jit_test.c: In function ‘case_native_spsr’:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3229:32: note: ‘c’ declared here
+ 3229 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘check_bank_seeds’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3258:13,
+    inlined from ‘case_native_spsr_conditions’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3403:9,
+    inlined from ‘case_native_spsr’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3671:5:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3233:33: warning: ‘c.spsr_irq’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3233 |     case SPSR_MODE_IRQ: return c.spsr_irq;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round5-jit/tests/arm_jit_test.c: In function ‘case_native_spsr’:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3229:32: note: ‘c’ declared here
+ 3229 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘check_bank_seeds’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3258:13,
+    inlined from ‘case_native_spsr_conditions’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3403:9,
+    inlined from ‘case_native_spsr’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3671:5:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3233:33: warning: ‘c.spsr_irq’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3233 |     case SPSR_MODE_IRQ: return c.spsr_irq;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round5-jit/tests/arm_jit_test.c: In function ‘case_native_spsr’:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3229:32: note: ‘c’ declared here
+ 3229 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘check_bank_seeds’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3258:13,
+    inlined from ‘case_native_spsr_conditions’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3403:9,
+    inlined from ‘case_native_spsr’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3671:5:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3235:33: warning: ‘c.spsr_abt’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3235 |     case SPSR_MODE_ABT: return c.spsr_abt;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round5-jit/tests/arm_jit_test.c: In function ‘case_native_spsr’:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3229:32: note: ‘c’ declared here
+ 3229 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘check_bank_seeds’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3258:13,
+    inlined from ‘case_native_spsr_conditions’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3403:9,
+    inlined from ‘case_native_spsr’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3671:5:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3232:33: warning: ‘c.spsr_fiq’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3232 |     case SPSR_MODE_FIQ: return c.spsr_fiq;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round5-jit/tests/arm_jit_test.c: In function ‘case_native_spsr’:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3229:32: note: ‘c’ declared here
+ 3229 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘case_native_spsr_conditions’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3400:9,
+    inlined from ‘case_native_spsr’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3671:5:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3234:33: warning: ‘c.spsr_svc’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3234 |     case SPSR_MODE_SVC: return c.spsr_svc;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round5-jit/tests/arm_jit_test.c: In function ‘case_native_spsr’:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3229:32: note: ‘c’ declared here
+ 3229 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘check_bank_seeds’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3258:13,
+    inlined from ‘case_native_spsr_fields’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3365:9,
+    inlined from ‘case_native_spsr’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3670:5:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3235:33: warning: ‘c.spsr_abt’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3235 |     case SPSR_MODE_ABT: return c.spsr_abt;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round5-jit/tests/arm_jit_test.c: In function ‘case_native_spsr’:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3229:32: note: ‘c’ declared here
+ 3229 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘case_native_spsr_fields’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3362:9,
+    inlined from ‘case_native_spsr’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3670:5:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3234:33: warning: ‘c.spsr_svc’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3234 |     case SPSR_MODE_SVC: return c.spsr_svc;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round5-jit/tests/arm_jit_test.c: In function ‘case_native_spsr’:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3229:32: note: ‘c’ declared here
+ 3229 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘check_bank_seeds’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3258:13,
+    inlined from ‘case_native_spsr_no_bank’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3321:9,
+    inlined from ‘case_native_spsr’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3669:5:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3235:33: warning: ‘c.spsr_abt’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3235 |     case SPSR_MODE_ABT: return c.spsr_abt;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round5-jit/tests/arm_jit_test.c: In function ‘case_native_spsr’:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3229:32: note: ‘c’ declared here
+ 3229 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘check_bank_seeds’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3258:13,
+    inlined from ‘case_native_spsr_no_bank’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3321:9,
+    inlined from ‘case_native_spsr’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3669:5:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3233:33: warning: ‘c.spsr_irq’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3233 |     case SPSR_MODE_IRQ: return c.spsr_irq;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round5-jit/tests/arm_jit_test.c: In function ‘case_native_spsr’:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3229:32: note: ‘c’ declared here
+ 3229 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘check_bank_seeds’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3258:13,
+    inlined from ‘case_native_spsr_no_bank’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3321:9,
+    inlined from ‘case_native_spsr’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3669:5:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3233:33: warning: ‘c.spsr_irq’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3233 |     case SPSR_MODE_IRQ: return c.spsr_irq;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round5-jit/tests/arm_jit_test.c: In function ‘case_native_spsr’:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3229:32: note: ‘c’ declared here
+ 3229 |     arm920t_register_context_t c;
+      |                                ^
+In function ‘spsr_bank’,
+    inlined from ‘case_native_psr_continuation’ at /tmp/gp32-round5-jit/tests/arm_jit_test.c:3583:9:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3234:33: warning: ‘c.spsr_svc’ may be used uninitialized [-Wmaybe-uninitialized]
+ 3234 |     case SPSR_MODE_SVC: return c.spsr_svc;
+      |                                ~^~~~~~~~~
+/tmp/gp32-round5-jit/tests/arm_jit_test.c: In function ‘case_native_psr_continuation’:
+/tmp/gp32-round5-jit/tests/arm_jit_test.c:3229:32: note: ‘c’ declared here
+ 3229 |     arm920t_register_context_t c;
+      |                                ^
+[100%] Linking C executable arm_cpu_code_write_test
+[100%] Built target arm_cpu_code_write_test

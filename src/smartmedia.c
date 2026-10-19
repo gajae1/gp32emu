@@ -57,7 +57,12 @@ typedef struct smc_save_job {
 #define SMC_STATE_DELTA_TAG 0x31444d53u  /* 'S','M','D','1' */
 #define SMC_STATE_DELTA_MIN_ENTRIES 2048u
 #define SMC_STATE_DELTA_HEADROOM 1024u
-#define SMC_STATE_MAX_IMAGE ((size_t)128u * 1024u * 1024u)
+/* Card capacity counts data bytes. Every supported NAND page adds one spare
+ * byte per 32 data bytes: the largest 128 MiB card has a 132 MiB payload.
+ * The optional MAME header is separate from that serialized payload. */
+#define SMC_MAX_DATA_BYTES ((size_t)128u * 1024u * 1024u)
+#define SMC_STATE_MAX_IMAGE (SMC_MAX_DATA_BYTES / 512u * 528u)
+#define SMC_FILE_MAX_IMAGE (SMC_STATE_MAX_IMAGE + 1024u)
 #define SMC_STATE_MAX_PAGE_TOTAL 2112u
 
 /* Delta body, written after smc_state_image_t when SMC_STATE_DELTA_FLAG is set:
@@ -261,7 +266,7 @@ static void smc_base_release(smc_t *s) {
  * pages only and carries its geometry in the size. */
 static int smc_image_payload(const uint8_t *image, size_t image_size,
                              size_t *payload_off, uint32_t *page_total_size, uint32_t *num_pages) {
-    if (image_size == 0) return 0;
+    if (image_size == 0 || image_size > SMC_FILE_MAX_IMAGE) return 0;
     if (image_size > 1024u) {
         uint32_t pd = 0, pt = 0, np = 0, ppb = 0;
         if (smc_detect_small_geometry(image[0], image[1], &pd, &pt, &np, &ppb) &&
@@ -272,6 +277,7 @@ static int smc_image_payload(const uint8_t *image, size_t image_size,
             return 1;
         }
     }
+    if (image_size > SMC_STATE_MAX_IMAGE) return 0;
     if ((image_size % 528u) == 0) {
         *page_total_size = 528u;
         *num_pages = (uint32_t)(image_size / 528u);
@@ -394,6 +400,10 @@ static void smc_mount_image_free(smc_mount_image_t *img) {
  * image that is idle (reset command state) and ready to be installed. */
 static int smc_parse_image(const uint8_t *src, size_t len, smc_mount_image_t *out, char *err, size_t err_len) {
     memset(out, 0, sizeof(*out));
+    if (len > SMC_FILE_MAX_IMAGE) {
+        if (err && err_len) snprintf(err, err_len, "SmartMedia exceeds the 128 MiB data-card capacity");
+        return 0;
+    }
     size_t payload_off = 0;
     uint32_t pd = 0, pt = 0, np = 0, ppb = 0;
     if (len > 1024u && smc_detect_small_geometry(src[0], src[1], &pd, &pt, &np, &ppb) &&
@@ -419,6 +429,10 @@ static int smc_parse_image(const uint8_t *src, size_t len, smc_mount_image_t *ou
         memcpy(out->data_uid + 256, src + 272, 16);
         out->data_uid_present = 1;
     } else {
+        if (len > SMC_STATE_MAX_IMAGE) {
+            if (err && err_len) snprintf(err, err_len, "SmartMedia exceeds the 128 MiB data-card capacity");
+            return 0;
+        }
         smc_t shape;
         memset(&shape, 0, sizeof(shape));
         if (!smc_set_geometry_from_size(&shape, len, err, err_len)) return 0;
@@ -573,8 +587,8 @@ static int smc_read_file_image(const char *path, uint8_t **out, size_t *out_len,
         }
         if (fseek(f, 0, SEEK_END) != 0) { fclose(f); return 0; }
         long n = ftell(f);
-        /* No SmartMedia image exceeds 128 MiB plus its spare area. */
-        if (n <= 0 || (unsigned long)n > 136ul * 1024ul * 1024ul) {
+        /* Allow the largest NAND payload and its optional MAME header. */
+        if (n <= 0 || (unsigned long)n > SMC_FILE_MAX_IMAGE) {
             if (err && err_len && n > 0) snprintf(err, err_len, "%s is too large for a GP32 card", path);
             fclose(f);
             return 0;
@@ -837,7 +851,7 @@ uint64_t smc_host_time_ms(void) {
 #if defined(_WIN32)
     return GetTickCount64();
 #elif defined(GP32EMU_WASM)
-    return (uint64_t)((double)clock() * 1000.0 / CLOCKS_PER_SEC);
+    return (uint64_t)gp32_wasm_host_time_ms();
 #else
     struct timespec ts;
     if (clock_gettime(CLOCK_MONOTONIC, &ts)) return 0;
@@ -1030,10 +1044,11 @@ void smc_command_w(smc_t *s, uint8_t data) {
     case 0xd0:
         if (s->mode == SM_M_ERASE) {
             uint32_t first = s->page_addr & ~((UINT32_C(1) << s->log2_pages_per_block) - 1u);
-            size_t off = (size_t)first * s->page_total_size;
-            size_t len = ((size_t)1u << s->log2_pages_per_block) * s->page_total_size;
-            if (off < s->data_size) {
-                if (off + len > s->data_size) len = s->data_size - off;
+            if (first < s->num_pages) {
+                size_t off = (size_t)first * s->page_total_size;
+                uint64_t block_bytes = (UINT64_C(1) << s->log2_pages_per_block) * s->page_total_size;
+                size_t len = s->data_size - off;
+                if (block_bytes < len) len = (size_t)block_bytes;
                 size_t i = 0;
                 while (i < len && s->data[off + i] == 0xff) ++i;
                 if (i < len) {
@@ -1330,8 +1345,17 @@ smc_state_stage_t *smc_state_stage_begin(smc_t *s, state_io_t *io, smc_state_for
     smc_state_image_t *st = &stage->st;
     if (!state_io_read(io, st, sizeof(*st))) goto fail;
     if (st->data_size > SMC_STATE_MAX_IMAGE || st->page_total_size > SMC_STATE_MAX_PAGE_TOTAL) goto fail;
+    /* Later address/erase commands shift 32-bit values using these fields.
+     * Validate the wire geometry before allocation or live-card replacement. */
+    if (st->log2_pages_per_block >= 32u || st->col_address_cycles > 4u ||
+        st->row_address_cycles > 4u || st->page_data_size > st->page_total_size ||
+        (st->page_total_size && (!st->page_data_size || !st->col_address_cycles || !st->row_address_cycles))) goto fail;
+    /* Inspect the representation before evaluating a streamed C bool. */
+    const bool flag_clear = false, flag_set = true;
+    if (memcmp(&st->mode_3065, &flag_clear, sizeof(flag_clear)) != 0 &&
+        memcmp(&st->mode_3065, &flag_set, sizeof(flag_set)) != 0) goto fail;
     if ((st->page_total_size == 0) != (st->num_pages == 0)) goto fail;
-    if (st->page_total_size ? st->data_size != (size_t)st->num_pages * st->page_total_size
+    if (st->page_total_size ? st->data_size != (uint64_t)st->num_pages * st->page_total_size
                             : st->data_size != 0) goto fail;
     if (st->dirty & ~(int)(SMC_STATE_DELTA_FLAG | 1)) goto fail;
     stage->delta = format == SMC_STATE_FORMAT_V14 && (st->dirty & (int)SMC_STATE_DELTA_FLAG) != 0;

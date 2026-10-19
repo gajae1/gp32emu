@@ -383,4 +383,24 @@ static const void *GP32EmulatorQueueKey = &GP32EmulatorQueueKey;
                           }];
 }
 
+- (void)saveStateAtPath:(NSString *)statePath completion:(GP32ResultHandler)completion {
+    NSString *state = [statePath copy];
+    [self runPersistenceWithSuccess:@"State saved."
+                         completion:completion
+                          operation:^int(gp32_ios_emulator_t *emulator) {
+                              return gp32_ios_emulator_save_state_at_path(
+                                  emulator, state.fileSystemRepresentation);
+                          }];
+}
+
+- (void)loadStateAtPath:(NSString *)statePath completion:(GP32ResultHandler)completion {
+    NSString *state = [statePath copy];
+    [self runPersistenceWithSuccess:@"State loaded."
+                         completion:completion
+                          operation:^int(gp32_ios_emulator_t *emulator) {
+                              return gp32_ios_emulator_load_state_at_path(
+                                  emulator, state.fileSystemRepresentation);
+                          }];
+}
+
 @end

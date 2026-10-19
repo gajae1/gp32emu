@@ -1,0 +1,30 @@
+{
+  "inspection_only": true,
+  "rebuild_performed": false,
+  "performance_measured": false,
+  "source_commit": "06c4d879543f90d1003d174718d738e27a8ed6b8",
+  "source_sha256": "913b01cd38cf1ade9ce0be4cd456782a7eb2518f615058887dff551be7199a4e",
+  "header_sha256": "002a78b438627b9d1446e33911ec4825d61996256b5884db8101cfeb0c5c1a15",
+  "object_path": "/tmp/gp32-round4-build-aarch64/CMakeFiles/gp32emu.dir/src/audio/gp32_audio_resampler.c.o",
+  "object_sha256": "ea9b453f77c36a4a41e3b97ef67c863542737165a0c39bcea7b9301984dc90d1",
+  "object_size_bytes": 10584,
+  "poly_gather_size_bytes": 1276,
+  "source_loop_vectorized": false,
+  "history_loop_vectorized": true,
+  "history_main_vector_taps": 8,
+  "history_epilogue_vector_taps": 4,
+  "scalar_tail_maximum_taps": 3,
+  "compile_command": {
+    "directory": "/tmp/gp32-round4-build-aarch64",
+    "command": "/usr/bin/aarch64-linux-gnu-gcc -DGP32EMU_CPU_PROFILE=1 -DGP32EMU_ENABLE_THREADS=1 -DZIP_ENABLE_DEFLATE=0 -DZIP_HAVE_SYMLINK=0 -D_FILE_OFFSET_BITS=64 -D_XOPEN_SOURCE=700 -I/tmp/gp32-round4/include -I/tmp/gp32-round4/src -O3 -DNDEBUG -std=c2x -fPIC -Wall -Wextra -Wpedantic -o CMakeFiles/gp32emu.dir/src/audio/gp32_audio_resampler.c.o -c /tmp/gp32-round4/src/audio/gp32_audio_resampler.c",
+    "file": "/tmp/gp32-round4/src/audio/gp32_audio_resampler.c",
+    "output": "CMakeFiles/gp32emu.dir/src/audio/gp32_audio_resampler.c.o"
+  },
+  "disassembly_command": [
+    "aarch64-linux-gnu-objdump",
+    "-dr",
+    "--disassemble=poly_gather",
+    "/tmp/gp32-round4-build-aarch64/CMakeFiles/gp32emu.dir/src/audio/gp32_audio_resampler.c.o"
+  ],
+  "decoder": "GNU objdump (GNU Binutils for Ubuntu) 2.42"
+}

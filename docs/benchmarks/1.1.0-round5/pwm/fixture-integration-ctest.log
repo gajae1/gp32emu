@@ -1,0 +1,31 @@
+$ /tmp/gp32-round4-tools/cmake/data/bin/ctest --test-dir /tmp/gp32-round5-build-pwm/gcc -R ^(s3c2400_(pwm|pwm_model|pwm_state|irq|state|timing|dma)|gp32_(state|state_speed|timer|callback|wait))$ --output-on-failure
+Test project /tmp/gp32-round5-build-pwm/gcc
+      Start 21: s3c2400_timing
+ 1/12 Test #21: s3c2400_timing ...................   Passed    0.05 sec
+      Start 23: s3c2400_dma
+ 2/12 Test #23: s3c2400_dma ......................   Passed    0.02 sec
+      Start 25: s3c2400_irq
+ 3/12 Test #25: s3c2400_irq ......................   Passed    0.02 sec
+      Start 29: s3c2400_pwm
+ 4/12 Test #29: s3c2400_pwm ......................   Passed    0.07 sec
+      Start 30: s3c2400_pwm_model
+ 5/12 Test #30: s3c2400_pwm_model ................   Passed    0.00 sec
+      Start 31: s3c2400_pwm_state
+ 6/12 Test #31: s3c2400_pwm_state ................   Passed    0.04 sec
+      Start 33: s3c2400_state
+ 7/12 Test #33: s3c2400_state ....................   Passed    0.01 sec
+      Start 35: gp32_timer
+ 8/12 Test #35: gp32_timer .......................   Passed    0.30 sec
+      Start 36: gp32_callback
+ 9/12 Test #36: gp32_callback ....................   Passed    0.38 sec
+      Start 38: gp32_wait
+10/12 Test #38: gp32_wait ........................   Passed    0.74 sec
+      Start 47: gp32_state
+11/12 Test #47: gp32_state .......................   Passed    0.12 sec
+      Start 48: gp32_state_speed
+12/12 Test #48: gp32_state_speed .................   Passed    0.17 sec
+
+100% tests passed out of 12
+
+Total Test time (real) =   1.93 sec
+exit=0

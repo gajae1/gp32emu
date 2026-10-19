@@ -1,0 +1,112 @@
+{
+  "started_utc": "2026-10-18T17:10:17.526288+00:00",
+  "host": {
+    "system": "Linux",
+    "node": "163c21da1bca",
+    "release": "6.18.55",
+    "version": "#1 SMP Wed Oct 14 19:45:18 UTC 2026",
+    "machine": "x86_64",
+    "processor": "x86_64"
+  },
+  "cpu_model": "AMD EPYC 9V74 80-Core Processor",
+  "allowed_cpus": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8
+  ],
+  "sequential_measurements": true,
+  "context": "All builds, sanitizer tests, and functional/WASM executions finished before this window. Agents continued lightweight documentation work. Other activity on the shared host was not controlled.",
+  "commands": [
+    {
+      "component": "external",
+      "compiler": "gcc",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin/python3",
+        "/tmp/gp32-round4/scripts/bench_external_writes.py",
+        "/tmp/gp32-round5-bench-before/gcc-profile0/external-writes",
+        "/tmp/gp32-round5-bench-after/gcc-profile0/external-writes",
+        "/tmp/gp32-round4/docs/benchmarks/1.1.0-round5/writes/external-gcc-timed.json",
+        "--rounds",
+        "7",
+        "--iterations",
+        "250000"
+      ],
+      "started_utc": "2026-10-18T17:10:17.527414+00:00",
+      "returncode": 0,
+      "finished_utc": "2026-10-18T17:10:21.607645+00:00"
+    },
+    {
+      "component": "external",
+      "compiler": "clang",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin/python3",
+        "/tmp/gp32-round4/scripts/bench_external_writes.py",
+        "/tmp/gp32-round5-bench-before/clang-profile0/external-writes",
+        "/tmp/gp32-round5-bench-after/clang-profile0/external-writes",
+        "/tmp/gp32-round4/docs/benchmarks/1.1.0-round5/writes/external-clang-timed.json",
+        "--rounds",
+        "7",
+        "--iterations",
+        "250000"
+      ],
+      "started_utc": "2026-10-18T17:10:21.608034+00:00",
+      "returncode": 0,
+      "finished_utc": "2026-10-18T17:10:27.482708+00:00"
+    },
+    {
+      "component": "hle",
+      "compiler": "gcc",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin/python3",
+        "/tmp/gp32-round4/scripts/bench_hle_outputs.py",
+        "/tmp/gp32-round5-bench-before/gcc-profile0/hle-outputs",
+        "/tmp/gp32-round5-bench-after/gcc-profile0/hle-outputs",
+        "/tmp/gp32-round4/docs/benchmarks/1.1.0-round5/writes/hle-gcc-timed.json",
+        "--rounds",
+        "7",
+        "--scalar-iterations",
+        "2000000",
+        "--string-iterations",
+        "500000"
+      ],
+      "started_utc": "2026-10-18T17:10:27.483178+00:00",
+      "returncode": 0,
+      "finished_utc": "2026-10-18T17:10:37.472994+00:00"
+    },
+    {
+      "component": "hle",
+      "compiler": "clang",
+      "command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin/python3",
+        "/tmp/gp32-round4/scripts/bench_hle_outputs.py",
+        "/tmp/gp32-round5-bench-before/clang-profile0/hle-outputs",
+        "/tmp/gp32-round5-bench-after/clang-profile0/hle-outputs",
+        "/tmp/gp32-round4/docs/benchmarks/1.1.0-round5/writes/hle-clang-timed.json",
+        "--rounds",
+        "7",
+        "--scalar-iterations",
+        "2000000",
+        "--string-iterations",
+        "500000"
+      ],
+      "started_utc": "2026-10-18T17:10:37.473671+00:00",
+      "returncode": 0,
+      "finished_utc": "2026-10-18T17:10:48.612118+00:00"
+    }
+  ],
+  "finished_utc": "2026-10-18T17:10:48.613531+00:00",
+  "context_wording_correction": {
+    "reason": "The initial statement that all agent execution had ended was overbroad; documentation reads/hashing/edits were allowed. No commands, times, or sample values changed.",
+    "corrected_utc": "2026-10-18T17:36:11.196636+00:00",
+    "original_file": "measurement-window-original.json",
+    "original_sha256": "3005fbd615dbb5b5542172d7a5684488dcdf4f15ba1b599070678fcfb7d2e507",
+    "original_runner": "run-measurements-original.py",
+    "original_runner_sha256": "5e2a509a27d2c8c4640b8a290ede778cbc1f9c22c965efbfed0e30c792252d40"
+  }
+}

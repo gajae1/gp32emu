@@ -1,0 +1,13 @@
+$ /tmp/gp32-round4-tools/cmake/data/bin/cmake --build /tmp/gp32-round5-build-pwm/gcc --target s3c2400_pwm_model_test --parallel 2
+[ 92%] Built target gp32emu
+[100%] Building C object CMakeFiles/s3c2400_pwm_model_test.dir/tests/s3c2400_pwm_model_test.c.o
+[100%] Linking C executable s3c2400_pwm_model_test
+[100%] Built target s3c2400_pwm_model_test
+exit=0
+$ /tmp/gp32-round5-build-pwm/gcc/s3c2400_pwm_model_test large
+FAIL: DMA acknowledges previously pending timer IRQ timer=5 DMA clears all earlier requests actual=2048 expected=0
+FAIL: DMA acknowledges previously pending timer IRQ timer=5 DMA clears all earlier requests actual=2048 expected=0
+PWM model scenarios=50 checks=3789 assertion_failures=2
+exit=1
+sha256 9e75015d135714d5f3b3024bff0f9feae1c0fbf5b4034fef937c82273d3b4597 src/s3c2400.c
+sha256 e1dc038d5f2264a059625c84f755eec323312c3cbfd0917a5da5e27666ee3dce tests/s3c2400_pwm_model_test.c

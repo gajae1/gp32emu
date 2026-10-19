@@ -665,9 +665,49 @@ int gp32_ios_emulator_save_state(gp32_ios_emulator_t *e) {
     return 1;
 }
 
+/* The caller's string is validated in bridge-owned storage before any core
+ * call. In particular, a bad explicit path cannot overwrite e->state_path or
+ * leave the current game backed by a half-applied state load. */
+static int explicit_state_path(gp32_ios_emulator_t *e, const char *path,
+                               char target[GP32_IOS_PATH_MAX]) {
+    if (!e || !e->core) return 0;
+    if (!copy_text(target, GP32_IOS_PATH_MAX, path)) {
+        set_error(e, "save-state path is too long for this build");
+        return 0;
+    }
+    if (!target[0]) {
+        set_error(e, "save-state path is unavailable");
+        return 0;
+    }
+    return 1;
+}
+
+int gp32_ios_emulator_save_state_at_path(gp32_ios_emulator_t *e, const char *path) {
+    char target[GP32_IOS_PATH_MAX];
+    if (!explicit_state_path(e, path, target)) return 0;
+    if (gp32_save_state(e->core, target) != GP32_OK) {
+        set_core_error(e);
+        return 0;
+    }
+    e->error[0] = '\0';
+    return 1;
+}
+
 int gp32_ios_emulator_load_state(gp32_ios_emulator_t *e) {
     if (!e || !e->core || !e->state_path[0]) return 0;
     if (gp32_load_state(e->core, e->state_path) != GP32_OK) {
+        set_core_error(e);
+        return 0;
+    }
+    gp32_ios_emulator_clear_audio(e);
+    e->error[0] = '\0';
+    return 1;
+}
+
+int gp32_ios_emulator_load_state_at_path(gp32_ios_emulator_t *e, const char *path) {
+    char target[GP32_IOS_PATH_MAX];
+    if (!explicit_state_path(e, path, target)) return 0;
+    if (gp32_load_state(e->core, target) != GP32_OK) {
         set_core_error(e);
         return 0;
     }

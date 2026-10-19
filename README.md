@@ -1,7 +1,7 @@
 # GP32emu
 
 GP32emu emulates the Game Park GP32, the Korean handheld released in 2001. It
-provides Windows and Android applications and a libretro core for RetroArch. This fork of
+provides Windows, Android and iOS applications and a libretro core for RetroArch. This fork of
 [gameblabla's gp32emu](https://github.com/gameblabla/gp32emu) focuses on performance,
 including on lower-powered ARM devices, and is maintained at
 [gajae1/gp32emu](https://github.com/gajae1/gp32emu).
@@ -10,12 +10,12 @@ Supply your own BIOS and game dumps; neither is included.
 
 [Downloads](https://github.com/gajae1/gp32emu/releases) · [한국어 사용설명서](docs/MANUAL.ko.md)
 
-Current public release: **1.0.1**. Choose the Windows application or Android APK
+Current public release: **1.1.0**. Choose the Windows application or Android APK
 to play directly, or a core package for your existing RetroArch installation.
 
-Development version: **1.1.0**, not yet publicly released. Android APK and iOS
-IPA candidates have been built for testing. See the [development notes](docs/RELEASE-1.1.0.md)
-and [iPhone/iPad guide](ios/README.md); public downloads above remain 1.0.1.
+An unsigned IPA is also available for iPhone and iPad; installation requires a
+compatible signing tool. See the [release notes](docs/RELEASE-1.1.0.md) and
+[iPhone/iPad guide](ios/README.md).
 
 ## Features
 
@@ -23,7 +23,8 @@ and [iPhone/iPad guide](ios/README.md); public downloads above remain 1.0.1.
 - Supports GP32 BIOS boot and limited booting without a BIOS.
 - Uses a dynamic recompiler (JIT) on x86-64 and little-endian AArch64, with a
   portable interpreter for other hosts.
-- Supports save states and in-game SmartMedia saves when a writable card is mounted.
+- Supports ten per-game save-state slots in the Windows, Android and iOS apps,
+  and in-game SmartMedia saves when a writable card is mounted.
 - Offers optional LCD persistence and frame interpolation. RetroArch also offers
   guest CPU speed settings from 100% to 300%.
 - Shortens silent card-loading pauses such as Blue Angelo's dialogue opening.
@@ -47,9 +48,12 @@ The separate `gp32emu-VERSION-android.apk` installs the Android application; it 
 not a ZIP archive and does not require RetroArch. It supports Android 6.0 or
 newer and includes ARM64 and ARMv7. ARM64 is recommended.
 
+`gp32emu-VERSION-ios-unsigned.ipa` contains the experimental iPhone/iPad app.
+It must be signed before installation; downloading it alone does not install it.
+
 The Linux core targets AArch64 with glibc 2.17 or newer. The Android RetroArch
 cores target API 21 or newer. ARMv7 uses the interpreter and is substantially
-slower than ARM64. The 1.1.0 development app has had bounded gameplay, audio and
+slower than ARM64. The 1.1.0 app has had bounded gameplay, audio and
 input checks on an ARM64 phone. Android RetroArch integration remains unverified.
 
 Each binary ZIP also contains this README, release notes, the
@@ -70,6 +74,9 @@ Source archives cannot be installed as RetroArch cores.
   and saves. Do not uninstall first.
 - RetroArch: close the game and replace the core and `.info` file for the same
   platform and architecture. Keep your BIOS, games, saves and frontend settings.
+- Save states: 1.1.0 reads existing v2-v12 and v14-v16 states. New states use
+  v17 and require a compatible 1.1.0 or later build; older cores cannot load
+  them. Keep copies of valuable state files when upgrading.
 
 ## Windows application
 
@@ -94,7 +101,7 @@ language (Korean or English); set `Language=ko` or `Language=en` under `[UI]` in
 | A / S | L / R |
 | Enter / Shift | Start / Select |
 | F5 / F8 | Save / load the state in the current slot |
-| F6 / F7 | Previous / next state slot (1-9) |
+| F6 / F7 | Previous / next state slot (1-10) |
 | F9 | Pause or resume |
 | Tab (hold) | Fast forward, with sound muted |
 | F11 or Alt+Enter | Fullscreen; Esc leaves fullscreen |
@@ -118,7 +125,7 @@ system language (Korean or English).
 
 During play, Back or the ≡ button pauses and opens the menu: resume, save state,
 load state, restart, show or hide touch controls, touch vibration, sharp integer
-scaling, game list, about and quit. Each game has three state slots. Touch
+scaling, game list, about and quit. Each game has ten state slots. Touch
 controls cover the D-pad, A/B, L/R, Start and Select, and
 move beside the picture in landscape, with Start/Select below it. Controls do
 not cover the picture; hiding them expands the available 4:3 display area.
@@ -154,6 +161,9 @@ sideloading; it is not a Play Store release.
 
 Leave boot mode on `auto` for normal use. See the [manual](docs/MANUAL.ko.md)
 for controls, options and installation details.
+
+RetroArch controls its own save-state slots. The ten per-game slots described
+in this README apply to the Windows, Android and iOS applications.
 
 ## Nintendo Switch
 
@@ -195,9 +205,18 @@ preserve card writes, use save states instead.
 If saving fails, check free space and write access. An unreadable saved card
 stops loading rather than being silently replaced.
 
-Save states are separate snapshots of the running machine. They may contain
-base-relative card deltas, so preserve the exact original ROM. Restoring a state
-also rolls back in-game card progress.
+The Windows, Android and iOS apps provide ten save-state slots for each game.
+The iOS app keeps a single state saved by an earlier build in slot 1; the other
+nine slots use separate files. RetroArch uses its own frontend slots.
+
+Save states use the common v17 format. GP32emu 1.1.0 imports existing v2-v12
+and v14-v16 states. Older core builds cannot load v17 states, so keep a copy of
+state files you may still need with an older build.
+
+In-game card saves keep the same data and filenames; changing save-state slots
+does not alter `.gp32.sav` files. Save states themselves are separate snapshots
+of the running machine. They may contain base-relative card deltas, so preserve
+the exact original ROM. Restoring a state also rolls back in-game card progress.
 
 ## Limitations
 
@@ -209,9 +228,10 @@ also rolls back in-game card progress.
 - Audio fidelity and input latency have not been measured against a physical
   GP32.
 - Compatibility checks cover selected scenes, not complete playthroughs.
-- Rewind and run-ahead in a real RetroArch session are unverified.
+- Per-frame rewind can noticeably reduce speed on low-power devices.
+  Interactive run-ahead remains unverified.
 - Android device checks cover selected startup scenes and input/rotation on an
-  LG V50 with the development app. Broader performance and Android RetroArch
+  ARM64 phone. Broader performance and Android RetroArch
   integration remain unverified.
 - Qt and browser frontends are available in source form; their runtime use is
   unverified. The Switch build is experimental and has not been tested on a
@@ -223,10 +243,12 @@ also rolls back in-game card progress.
 See [BUILDING.md](https://github.com/gajae1/gp32emu/blob/main/docs/BUILDING.md) for
 build commands, source-only frontends and the source layout.
 
-The [iPhone/iPad frontend](ios/README.md) is available as development source and
-an unsigned IPA candidate. Device builds include an experimental ARM64 JIT;
+The [iPhone/iPad frontend](ios/README.md) is available as source and an unsigned
+IPA. Device builds include an experimental ARM64 JIT;
 games start with the interpreter until external activation succeeds. Local
-Xcode/LLDB activation has been tested on an iPhone. The complete
+Xcode/LLDB activation was tested on an earlier iPhone build. The final ten-slot
+and v17 state flow has been checked in Simulator; physical iPhone revalidation
+of this final build remains outstanding. The complete
 SideStore/StikDebug installation and activation workflow remains unverified.
 
 ## Credits and licensing
