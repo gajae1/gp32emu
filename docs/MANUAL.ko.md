@@ -1,10 +1,10 @@
 # GP32emu 사용설명서
 
-GP32emu의 Windows·Android 앱과 RetroArch 코어 설치·조작·저장 안내입니다.
+GP32emu의 Windows·Android·iOS 앱과 RetroArch 코어 설치·조작·저장 안내입니다.
 BIOS와 게임 파일은 포함하지 않습니다. 직접 보유한 덤프를 사용하세요.
 
-개발 중인 **1.1.0**에는 iPhone·iPad 앱도 있습니다. 아래 1.0.1 공개 패키지에는
-포함되지 않으며, 설치 방법은 [iOS 개발 버전 안내](#iphoneipad-개발-버전)를 참고하세요.
+**1.1.0**에는 실험적인 iPhone·iPad 앱도 포함됩니다.
+서명과 설치 방법은 [iOS 안내](#iphoneipad)를 참고하세요.
 
 ## 필요한 파일
 
@@ -16,6 +16,7 @@ BIOS와 게임 파일은 포함하지 않습니다. 직접 보유한 덤프를 �
 | Windows x64 RetroArch | `gp32emu-VERSION-libretro-windows-x64.zip`: `gp32emu_libretro.dll` |
 | Linux AArch64 RetroArch | `gp32emu-VERSION-linux-aarch64.zip`: `gp32emu_libretro.so` |
 | Android 앱 | `gp32emu-VERSION-android.apk`: 별도 설치, RetroArch 불필요 |
+| iPhone/iPad 앱 | `gp32emu-VERSION-ios-unsigned.ipa`: 설치 전 사용자 서명 필요 |
 | Android ARM64 RetroArch | `gp32emu-VERSION-android-arm64.zip`: `gp32emu_libretro_android.so` |
 | Android ARMv7 RetroArch | `gp32emu-VERSION-android-armv7.zip`: `gp32emu_libretro_android.so` |
 | Nintendo Switch RetroArch | `gp32emu-VERSION-switch-libnx.zip`: 실험적 NRO 코어 |
@@ -23,7 +24,7 @@ BIOS와 게임 파일은 포함하지 않습니다. 직접 보유한 덤프를 �
 각 코어 ZIP에는 `gp32emu_libretro.info`도 포함되어 있습니다. 실행용 ZIP에는 README,
 릴리스 노트, 이 설명서, `licenses/`, `manifest.json`이 함께 들어 있습니다.
 Linux 코어는 glibc 2.17 이상, Android 코어는 API 21 이상을 대상으로 합니다.
-Android 앱은 Android 6.0 이상이 필요합니다. 1.1.0 개발 앱은 ARM64 휴대전화에서
+Android 앱은 Android 6.0 이상이 필요합니다. 1.1.0 앱은 ARM64 휴대전화에서
 일부 게임의 실행·오디오·입력을 확인했습니다. Android RetroArch 통합 검증은 남아 있습니다.
 ARMv7은 JIT 없이 동작하므로 ARM64보다 상당히 느립니다.
 
@@ -45,10 +46,11 @@ ARMv7은 JIT 없이 동작하므로 ARM64보다 상당히 느립니다.
 - **상태 저장:** 1.1.0은 기존 v2~v12, v14~v16 상태를 읽습니다. 새 상태는 v17 형식이며
   구버전 코어는 이를 읽지 못하므로 필요한 기존 상태 파일을 따로 보관하세요.
 
-## iPhone/iPad 개발 버전
+## iPhone/iPad
 
-iOS/iPadOS 15 이상의 ARM64 기기용 `gp32emu-1.1.0-ios-unsigned.ipa`를 테스트 중입니다.
-아직 공개 릴리스가 아니며, SideStore를 통한 전체 설치 과정은 확인이 남아 있습니다.
+iOS/iPadOS 15 이상의 ARM64 기기용 `gp32emu-1.1.0-ios-unsigned.ipa`를 제공합니다.
+최종 10슬롯·v17 저장 기능은 시뮬레이터에서 확인했습니다. 최종 빌드의 iPhone 실기
+재검증과 SideStore를 통한 전체 설치 과정은 확인이 남아 있습니다.
 
 서명 없는 IPA는 다운로드만으로 설치·실행되지 않습니다. SideStore 최초 설정에는
 Windows·Mac·Linux 컴퓨터가 필요하며, 이후에는 필요한 Wi-Fi·VPN 설정을 갖춘 기기에서
@@ -333,7 +335,7 @@ Android와 iOS에서는 일시정지 메뉴의 상태 저장·불러오기에서
 - **RetroArch가 종료됨:** `retroarch --verbose`로 로그를 확인하세요.
 
 호환성 확인은 일부 장면에 한정되며 전체 게임 완주를 보장하지 않습니다. 실제 GP32와의 소리·입력
-지연 비교, 장시간 플레이는 미확인입니다. 1.1.0 개발 앱은 실제 ARM64 Android 기기에서 일부
+지연 비교, 장시간 플레이는 미확인입니다. 1.1.0 앱은 실제 ARM64 Android 기기에서 일부
 게임·오디오·입력을 확인했습니다. Android RetroArch 연동, Qt 실행, 브라우저 재생은 미검증입니다.
 
 실기의 모든 클럭과 주변장치를 정밀 재현하는 에뮬레이터는 아닙니다. CPU 파이프라인과 메모리

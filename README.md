@@ -1,7 +1,7 @@
 # GP32emu
 
 GP32emu emulates the Game Park GP32, the Korean handheld released in 2001. It
-provides Windows and Android applications and a libretro core for RetroArch. This fork of
+provides Windows, Android and iOS applications and a libretro core for RetroArch. This fork of
 [gameblabla's gp32emu](https://github.com/gameblabla/gp32emu) focuses on performance,
 including on lower-powered ARM devices, and is maintained at
 [gajae1/gp32emu](https://github.com/gajae1/gp32emu).
@@ -10,12 +10,12 @@ Supply your own BIOS and game dumps; neither is included.
 
 [Downloads](https://github.com/gajae1/gp32emu/releases) · [한국어 사용설명서](docs/MANUAL.ko.md)
 
-Current public release: **1.0.1**. Choose the Windows application or Android APK
+Current public release: **1.1.0**. Choose the Windows application or Android APK
 to play directly, or a core package for your existing RetroArch installation.
 
-Development version: **1.1.0**, not yet publicly released. Android APK and iOS
-IPA candidates have been built for testing. See the [development notes](docs/RELEASE-1.1.0.md)
-and [iPhone/iPad guide](ios/README.md); public downloads above remain 1.0.1.
+An unsigned IPA is also available for iPhone and iPad; installation requires a
+compatible signing tool. See the [release notes](docs/RELEASE-1.1.0.md) and
+[iPhone/iPad guide](ios/README.md).
 
 ## Features
 
@@ -48,9 +48,12 @@ The separate `gp32emu-VERSION-android.apk` installs the Android application; it 
 not a ZIP archive and does not require RetroArch. It supports Android 6.0 or
 newer and includes ARM64 and ARMv7. ARM64 is recommended.
 
+`gp32emu-VERSION-ios-unsigned.ipa` contains the experimental iPhone/iPad app.
+It must be signed before installation; downloading it alone does not install it.
+
 The Linux core targets AArch64 with glibc 2.17 or newer. The Android RetroArch
 cores target API 21 or newer. ARMv7 uses the interpreter and is substantially
-slower than ARM64. The 1.1.0 development app has had bounded gameplay, audio and
+slower than ARM64. The 1.1.0 app has had bounded gameplay, audio and
 input checks on an ARM64 phone. Android RetroArch integration remains unverified.
 
 Each binary ZIP also contains this README, release notes, the
@@ -228,7 +231,7 @@ the exact original ROM. Restoring a state also rolls back in-game card progress.
 - Per-frame rewind can noticeably reduce speed on low-power devices.
   Interactive run-ahead remains unverified.
 - Android device checks cover selected startup scenes and input/rotation on an
-  ARM64 phone with the development app. Broader performance and Android RetroArch
+  ARM64 phone. Broader performance and Android RetroArch
   integration remain unverified.
 - Qt and browser frontends are available in source form; their runtime use is
   unverified. The Switch build is experimental and has not been tested on a
@@ -240,10 +243,12 @@ the exact original ROM. Restoring a state also rolls back in-game card progress.
 See [BUILDING.md](https://github.com/gajae1/gp32emu/blob/main/docs/BUILDING.md) for
 build commands, source-only frontends and the source layout.
 
-The [iPhone/iPad frontend](ios/README.md) is available as development source and
-an unsigned IPA candidate. Device builds include an experimental ARM64 JIT;
+The [iPhone/iPad frontend](ios/README.md) is available as source and an unsigned
+IPA. Device builds include an experimental ARM64 JIT;
 games start with the interpreter until external activation succeeds. Local
-Xcode/LLDB activation has been tested on an iPhone. The complete
+Xcode/LLDB activation was tested on an earlier iPhone build. The final ten-slot
+and v17 state flow has been checked in Simulator; physical iPhone revalidation
+of this final build remains outstanding. The complete
 SideStore/StikDebug installation and activation workflow remains unverified.
 
 ## Credits and licensing

@@ -1,11 +1,15 @@
 # GP32emu for iPhone and iPad
 
-The iOS app is part of the **unreleased 1.1.0 development version**. It runs on
+The experimental iOS app is included in **1.1.0**. It runs on
 ARM64 devices with iOS/iPadOS 15 or later. Supply your own GP32 BIOS and games.
 
-The development package is `gp32emu-1.1.0-ios-unsigned.ipa`. It includes the
+The package is `gp32emu-1.1.0-ios-unsigned.ipa`. It includes the
 interpreter and an experimental AArch64 JIT. Games start with the interpreter;
 installing the IPA does not automatically enable JIT.
+
+The final ten-slot and v17 state flow was checked in Simulator. Physical iPhone
+revalidation of this final build remains outstanding; earlier device checks do
+not establish compatibility with every game or iOS configuration.
 
 ## Install and update
 
