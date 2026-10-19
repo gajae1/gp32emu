@@ -2,8 +2,7 @@
 
 GP32emu emulates the Game Park GP32, the Korean handheld released in 2001. It
 provides Windows, Android and iOS applications and a libretro core for RetroArch. This fork of
-[gameblabla's gp32emu](https://github.com/gameblabla/gp32emu) focuses on performance,
-including on lower-powered ARM devices, and is maintained at
+[gameblabla's gp32emu](https://github.com/gameblabla/gp32emu) is maintained at
 [gajae1/gp32emu](https://github.com/gajae1/gp32emu).
 
 Supply your own BIOS and game dumps; neither is included.
@@ -23,8 +22,8 @@ compatible signing tool. See the [release notes](docs/RELEASE-1.1.0.md) and
 - Supports GP32 BIOS boot and limited booting without a BIOS.
 - Uses a dynamic recompiler (JIT) on x86-64 and little-endian AArch64, with a
   portable interpreter for other hosts.
-- Supports ten per-game save-state slots in the Windows, Android and iOS apps,
-  and in-game SmartMedia saves when a writable card is mounted.
+- Supports ten manual per-game save-state slots in the Windows, Android and iOS
+  apps, and in-game SmartMedia saves when a writable card is mounted.
 - Offers optional LCD persistence and frame interpolation. RetroArch also offers
   guest CPU speed settings from 100% to 300%.
 - Shortens silent card-loading pauses such as Blue Angelo's dialogue opening.
@@ -124,8 +123,10 @@ system language (Korean or English).
 
 During play, Back or the ≡ button pauses and opens the menu: resume, save state,
 load state, restart, show or hide touch controls, touch vibration, sharp integer
-scaling, game list, about and quit. Each game has ten state slots. Touch
-controls cover the D-pad, A/B, L/R, Start and Select, and
+scaling, game list, about and quit. Each game has ten state slots. **Load latest
+state** finds the newest saved slot for that game and asks before loading it.
+Loading does not create or overwrite a save state. Touch controls cover the
+D-pad, A/B, L/R, Start and Select, and
 move beside the picture in landscape, with Start/Select below it. Controls do
 not cover the picture; hiding them expands the available 4:3 display area.
 Multiple buttons can be held together.
@@ -173,9 +174,8 @@ your existing RetroArch configuration. Put `gp32166m.bin` in your system
 directory, then select the GP32emu core and a game. Use full-memory application
 mode as described in the RetroArch guide.
 
-This experimental NRO includes RetroArch 1.22.2 and the GP32emu core. It has
-not been tested on a Switch. Report issues with the game, BIOS version and
-steps to reproduce.
+Switch support is experimental and has not been tested on a console. When reporting an issue, include the game,
+BIOS version and steps to reproduce.
 
 ## Saves
 
@@ -203,9 +203,10 @@ preserve card writes, use save states instead.
 If saving fails, check free space and write access. An unreadable saved card
 stops loading rather than being silently replaced.
 
-The Windows, Android and iOS apps provide ten save-state slots for each game.
-The iOS app keeps a single state saved by an earlier build in slot 1; the other
-nine slots use separate files. RetroArch uses its own frontend slots.
+The Windows, Android and iOS apps provide ten manual save-state slots for each
+game. **Load latest state** finds the newest occupied slot for the current game
+and asks before loading it. The iOS app keeps a single state saved by an earlier build in slot 1; the
+other nine slots use separate files. RetroArch uses its own frontend slots.
 
 Save states use the common v17 format. GP32emu 1.1.0 imports existing v2-v12
 and v14-v16 states. Older core builds cannot load v17 states, so keep a copy of

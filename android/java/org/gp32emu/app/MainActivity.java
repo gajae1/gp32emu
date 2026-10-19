@@ -37,6 +37,7 @@ import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ListView;
+import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 import java.io.File;
@@ -73,7 +74,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private FrameLayout menuButton;
     private TextView menuGlyph;
     private boolean menuTouchBlocked;
-    private LinearLayout home;
+    private ScrollView home;
     private TextView biosStatus;
     private Button biosButton, continueButton;
     private TextView emptyText;
@@ -171,17 +172,15 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         worker.start();
     }
 
-    private LinearLayout buildHome() {
+    private ScrollView buildHome() {
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(true);
+        scroll.setBackgroundColor(Color.rgb(20, 22, 27));
+        scroll.setOnApplyWindowInsetsListener((view, insets) -> { padForInsets(view, insets); return insets; });
         LinearLayout page = new LinearLayout(this);
         page.setOrientation(LinearLayout.VERTICAL);
-        page.setBackgroundColor(Color.rgb(20, 22, 27));
+        page.setPadding(dp(20), dp(16), dp(20), dp(12));
         page.setClickable(true); // The game surface below must not receive taps.
-        page.setOnApplyWindowInsetsListener((view, insets) -> {
-            padForInsets(view, insets);
-            view.setPadding(view.getPaddingLeft() + dp(20), view.getPaddingTop() + dp(16),
-                            view.getPaddingRight() + dp(20), view.getPaddingBottom() + dp(12));
-            return insets;
-        });
         TextView title = new TextView(this);
         title.setText(R.string.app_name);
         title.setTextSize(28);
@@ -260,6 +259,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         page.addView(emptyText);
 
         ListView list = new ListView(this);
+        list.setNestedScrollingEnabled(true);
         list.setDividerHeight(dp(6));
         list.setDivider(null);
         // Rows paint their own background, so draw the selector over them for D-pad/gamepad navigation.
@@ -282,10 +282,12 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         list.setAdapter(gameAdapter);
         list.setOnItemClickListener((parent, view, position, id) -> launch(games.get(position)));
         list.setOnItemLongClickListener((parent, view, position, id) -> { confirmRemove(games.get(position)); return true; });
-        LinearLayout.LayoutParams listParams = new LinearLayout.LayoutParams(-1, 0, 1);
+        // Keep three library rows reachable on short screens; fill spare tablet height.
+        LinearLayout.LayoutParams listParams = new LinearLayout.LayoutParams(-1, dp(168), 1);
         listParams.topMargin = dp(10);
         page.addView(list, listParams);
-        return page;
+        scroll.addView(page, new ScrollView.LayoutParams(-1, -2));
+        return scroll;
     }
 
     private Button primaryButton() {
@@ -304,9 +306,14 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     }
     private void padForInsets(View view, WindowInsets insets) {
         if (Build.VERSION.SDK_INT >= 30) {
-            android.graphics.Insets safe = insets.getInsets(WindowInsets.Type.systemBars()
-                    | WindowInsets.Type.displayCutout() | WindowInsets.Type.mandatorySystemGestures());
-            view.setPadding(safe.left, safe.top, safe.right, safe.bottom);
+            android.graphics.Insets visible = insets.getInsets(WindowInsets.Type.systemBars()
+                    | WindowInsets.Type.displayCutout());
+            android.graphics.Insets gestures = insets.getInsets(WindowInsets.Type.mandatorySystemGestures());
+            // A hidden status bar still reserves a notification-swipe region.
+            // It must not push the game down; visible bars and cutouts still do.
+            view.setPadding(Math.max(visible.left, gestures.left),
+                    view == play ? visible.top : Math.max(visible.top, gestures.top),
+                    Math.max(visible.right, gestures.right), Math.max(visible.bottom, gestures.bottom));
             return;
         }
         int l = insets.getSystemWindowInsetLeft(), t = insets.getSystemWindowInsetTop();
@@ -391,11 +398,17 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
 
     private void showMenu() {
         if (menu != null && menu.isShowing()) return;
+        String game = runningGame;
+        int latestSlot = game == null || !gameLoaded ? 0 : latestStateSlot(game);
         List<String> labels = new ArrayList<>();
         List<Runnable> actions = new ArrayList<>();
         labels.add(getString(R.string.menu_resume)); actions.add(() -> {});
         labels.add(getString(R.string.menu_save_state)); actions.add(() -> showStateSlots(true));
         labels.add(getString(R.string.menu_load_state)); actions.add(() -> showStateSlots(false));
+        if (latestSlot != 0) {
+            labels.add(getString(R.string.menu_load_latest_state));
+            actions.add(() -> confirmLoadLatest(game, latestSlot));
+        }
         labels.add(getString(R.string.menu_reset)); actions.add(() -> present(new AlertDialog.Builder(this)
                 .setTitle(R.string.menu_reset).setMessage(R.string.reset_confirm)
                 .setPositiveButton(R.string.ok, (d, which) -> { resetRequested = true; })
@@ -441,6 +454,23 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
 
     private File stateFile(String game, int slot) {
         return new File(new File(getFilesDir(), "saves/" + new File(game).getParentFile().getName()), "state" + slot + ".gp32st");
+    }
+    private int latestStateSlot(String game) {
+        int latestSlot = 0;
+        long latestTime = 0;
+        for (int i = 1; i <= STATE_SLOTS; ++i) {
+            File file = stateFile(game, i);
+            if (!file.isFile() || file.length() == 0) continue;
+            long modified = file.lastModified();
+            if (latestSlot == 0 || modified > latestTime) {
+                latestSlot = i;
+                latestTime = modified;
+            }
+        }
+        return latestSlot;
+    }
+    private String stateTimestamp(File file, DateFormat format) {
+        return format.format(new Date(file.lastModified()));
     }
     private void showControls() {
         present(new AlertDialog.Builder(this).setTitle(R.string.controls)
@@ -504,7 +534,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             File file = stateFile(game, i + 1);
             filled[i] = file.isFile() && file.length() > 0;
             labels[i] = getString(R.string.slot, i + 1) + "  \u00b7  "
-                    + (filled[i] ? format.format(new Date(file.lastModified())) : getString(R.string.slot_empty));
+                    + (filled[i] ? stateTimestamp(file, format) : getString(R.string.slot_empty));
         }
         // Loading needs a saved state, so empty slots are shown but disabled.
         ArrayAdapter<String> adapter = new ArrayAdapter<String>(this, android.R.layout.simple_list_item_1, labels) {
@@ -518,6 +548,16 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         present(new AlertDialog.Builder(this)
             .setTitle(save ? R.string.menu_save_state : R.string.menu_load_state)
             .setAdapter(adapter, (d, which) -> requestState(save, game, which + 1))
+            .setNegativeButton(R.string.cancel, null).create());
+    }
+    private void confirmLoadLatest(String game, int slot) {
+        File file = stateFile(game, slot);
+        if (!file.isFile() || file.length() == 0) return;
+        DateFormat format = DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT);
+        present(new AlertDialog.Builder(this)
+            .setTitle(R.string.menu_load_latest_state)
+            .setMessage(getString(R.string.load_latest_confirm, slot, stateTimestamp(file, format)))
+            .setPositiveButton(R.string.load, (d, which) -> requestState(false, game, slot))
             .setNegativeButton(R.string.cancel, null).create());
     }
     private void requestState(boolean save, String game, int slot) {
@@ -759,7 +799,8 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
                 } else {
                     w = Math.min(areaW, areaH * 4 / 3); h = w * 3 / 4;
                 }
-                int x = left + (areaW - w) / 2, y = top + (areaH - h) / 2;
+                // Landscape pins the picture to the top; spare height stays below it.
+                int x = left + (areaW - w) / 2, y = width > height ? top : top + (areaH - h) / 2;
                 dest.set(x, y, x + w, y + h);
                 canvas.drawBitmap(image, null, dest, paint);
             } finally { if (canvas != null) screen.getHolder().unlockCanvasAndPost(canvas); }

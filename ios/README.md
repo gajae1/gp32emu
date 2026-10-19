@@ -39,18 +39,17 @@ identified app may have separate storage.
 Use the app menu to import files and select a game. A BIOS is recommended for
 commercial games; booting without one is limited.
 
-Imported files keep their filenames. Their contents determine the save identity:
-different files with the same name have separate saves, while importing identical
-bytes again reuses the existing identity. Original files remain unchanged.
+**Game library** lists games already imported into the app. Select a game to
+open it without importing another copy. **Load latest state** finds the newest
+of that game's ten saved slots and asks you to confirm its slot and date. It
+does not create or replace a state automatically.
 
-| Data | App storage |
-| --- | --- |
-| BIOS and games | `Documents/GP32emu/BIOS` and `Documents/GP32emu/Games` |
-| Save states (10 slots per game) | `Documents/GP32emu/States` |
-| In-game card progress | `Library/Application Support/GP32emu/Cards` |
+The app copies imported files into its own storage and leaves the originals
+unchanged. Save data follows the imported file contents: importing identical
+contents again reuses the existing save, while different contents create a
+separate save. Imported games and save states are available through the Files
+app. In-game card progress is managed separately from save states.
 
-The Documents folders are available through the Files app. In-game card progress
-is separate from save states and is kept in the app's private Library directory.
 A damaged, mismatched or unreadable card save stops loading to protect progress.
 If saving fails while changing games, the current game stays loaded and paused.
 Resolve the storage error and retry; closing the app can discard unsaved progress.
@@ -106,13 +105,9 @@ For the experimental automatic setup:
 3. Complete the StikDebug request and return to GP32emu. Confirm **JIT enabled**
    in the menu before assuming it is active.
 
-GP32emu requests `universal.js` automatically. This path currently requires a
-device with Apple's TXM memory protection; the app checks support before starting.
-StikDebug's own supported-device list does not by itself establish compatibility
-with this integration. Setup times out after at most 30 seconds and may end
-earlier if iOS withdraws background time.
-
-Repeat activation after restarting the app or changing games. Reset and state
+Automatic setup requires a supported device with Apple's TXM memory protection;
+the app checks compatibility before starting. Repeat activation after restarting
+the app or changing games. Reset and state
 restore retain an active JIT session. Missing tools or failed setup leave the
 interpreter available. Automatic JIT setup is experimental and depends on the
 device, signing setup, and StikDebug configuration. Activation does not

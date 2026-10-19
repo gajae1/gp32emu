@@ -98,35 +98,39 @@ public final class TouchPadView extends View {
         dpad.setEmpty();
         float margin = 8 * density;
         float gap = 8 * density;
-        float availableWidth = width - getPaddingLeft() - getPaddingRight() - 2 * margin;
-        float availableHeight = Math.min(240 * density,
-                height - getPaddingTop() - getPaddingBottom()) - 2 * margin;
-        float preferred = Math.min(56 * density, Math.max(44 * density, availableWidth / 8));
-        float unit = Math.min(preferred,
-                Math.min((availableWidth - gap) / 6, (availableHeight - gap) / 4));
-        if (unit <= 0) { videoArea = new Rect(); return; }
         boolean landscape = width > height;
+        // Portrait stacks L/R, the d-pad/A/B band, then Start/Select alone on
+        // the bottom row, with wider gaps between those rows.
+        float rowGap = landscape ? gap : 2 * gap;
+        float centerRow = landscape ? 0 : 48 * density;
+        float availableWidth = width - getPaddingLeft() - getPaddingRight() - 2 * margin;
+        float availableHeight = Math.min(240 * density, height - getPaddingTop() - getPaddingBottom()
+                - (landscape ? 0 : centerRow + rowGap)) - 2 * margin;
+        float preferred = Math.min(56 * density, Math.max(48 * density, availableWidth / 8));
+        float unit = Math.min(preferred,
+                Math.min((availableWidth - gap) / 6, (availableHeight - rowGap) / 4));
         if (landscape) {
-            // Reserve two compact side columns instead of covering the video.
-            unit = Math.min(unit, Math.min(48 * density, (availableWidth - 2 * gap) / 9));
+            // Leave the center row two 48dp targets and three gaps between columns.
+            unit = Math.min(unit, Math.min(48 * density,
+                    (availableWidth - 3 * gap - 2 * 48 * density) / 6));
         }
+        if (unit <= 0) { videoArea = new Rect(); return; }
 
         float left = getPaddingLeft() + margin;
         float right = width - getPaddingRight() - margin;
         float bottom = height - getPaddingBottom() - margin;
-        dpad.set(left, bottom - 3 * unit, left + 3 * unit, bottom);
+        float clusterBottom = landscape ? bottom : bottom - centerRow - rowGap;
+        dpad.set(left, clusterBottom - 3 * unit, left + 3 * unit, clusterBottom);
         bounds[0].set(left + unit, dpad.top, left + 2 * unit, dpad.top + unit);
-        bounds[1].set(left + unit, bottom - unit, left + 2 * unit, bottom);
-        bounds[2].set(left, dpad.top + unit, left + unit, bottom - unit);
-        bounds[3].set(left + 2 * unit, dpad.top + unit, left + 3 * unit, bottom - unit);
+        bounds[1].set(left + unit, clusterBottom - unit, left + 2 * unit, clusterBottom);
+        bounds[2].set(left, dpad.top + unit, left + unit, clusterBottom - unit);
+        bounds[3].set(left + 2 * unit, dpad.top + unit, left + 3 * unit, clusterBottom - unit);
 
         float actionSize = 1.35f * unit;
         bounds[4].set(right - actionSize, dpad.top, right, dpad.top + actionSize);
-        bounds[5].set(right - 3 * unit, bottom - actionSize,
-                right - 3 * unit + actionSize, bottom);
+        bounds[5].set(right - 3 * unit, clusterBottom - actionSize,
+                right - 3 * unit + actionSize, clusterBottom);
 
-        float rowTop = dpad.top - gap - unit;
-        float rowBottom = rowTop + unit;
         float center = (left + right) / 2;
         if (landscape) {
             float shoulderTop = getPaddingTop() + margin;
@@ -134,18 +138,21 @@ public final class TouchPadView extends View {
             bounds[7].set(right - 1.5f * unit, shoulderTop, right, shoulderTop + unit);
             float pictureLeft = left + 3 * unit + gap;
             float pictureRight = right - 3 * unit - gap;
-            float small = Math.min(44 * density, unit);
+            float small = Math.min(48 * density, unit);
             float smallWidth = Math.min(72 * density, (pictureRight - pictureLeft - gap) / 2);
             bounds[8].set(center + gap / 2, bottom - small, center + gap / 2 + smallWidth, bottom);
             bounds[9].set(center - gap / 2 - smallWidth, bottom - small, center - gap / 2, bottom);
-            videoArea = new Rect((int)Math.ceil(pictureLeft), (int)Math.ceil(shoulderTop),
+            // Only the shoulder buttons need the edge margin; the picture starts at the safe top.
+            videoArea = new Rect((int)Math.ceil(pictureLeft), getPaddingTop(),
                     (int)Math.floor(pictureRight), (int)Math.floor(bottom - small - gap));
             return;
         }
-        bounds[6].set(left, rowTop, left + 1.2f * unit, rowBottom);
-        bounds[7].set(right - 1.2f * unit, rowTop, right, rowBottom);
-        bounds[8].set(center + gap / 2, rowTop, center + gap / 2 + 1.5f * unit, rowBottom);
-        bounds[9].set(center - gap / 2 - 1.5f * unit, rowTop, center - gap / 2, rowBottom);
+        float shoulderBottom = dpad.top - rowGap;
+        bounds[6].set(left, shoulderBottom - unit, left + 1.5f * unit, shoulderBottom);
+        bounds[7].set(right - 1.5f * unit, shoulderBottom - unit, right, shoulderBottom);
+        float smallWidth = Math.min(72 * density, (right - left - gap) / 2);
+        bounds[8].set(center + gap / 2, bottom - centerRow, center + gap / 2 + smallWidth, bottom);
+        bounds[9].set(center - gap / 2 - smallWidth, bottom - centerRow, center - gap / 2, bottom);
     }
 
     @Override protected void onDraw(Canvas canvas) {

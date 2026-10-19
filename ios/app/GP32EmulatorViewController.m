@@ -46,6 +46,121 @@ static NSString *const GP32DefaultBootModeKey = @"GP32BootMode";
 static NSString *const GP32TouchControlsHiddenKey = @"GP32TouchControlsHidden";
 static const NSUInteger GP32StateSlotCount = 10;
 
+typedef void (^GP32GameLibraryCompletion)(NSURL * _Nullable gameURL, BOOL importRequested);
+
+static BOOL GP32IsSupportedGameExtension(NSString *extension) {
+    return [extension isEqualToString:@"smc"] ||
+           [extension isEqualToString:@"fxe"] ||
+           [extension isEqualToString:@"fpk"];
+}
+
+@interface GP32GameLibraryViewController : UITableViewController {
+    NSArray<NSURL *> *_games;
+    GP32GameLibraryCompletion _completion;
+    BOOL _finished;
+}
+- (instancetype)initWithGames:(NSArray<NSURL *> *)games
+                   completion:(GP32GameLibraryCompletion)completion;
+- (void)finishWithGameURL:(nullable NSURL *)gameURL importRequested:(BOOL)importRequested;
+@end
+
+@implementation GP32GameLibraryViewController
+
+- (instancetype)initWithGames:(NSArray<NSURL *> *)games
+                   completion:(GP32GameLibraryCompletion)completion {
+    self = [super initWithStyle:UITableViewStyleInsetGrouped];
+    if (!self) return nil;
+    _games = [games copy] ?: @[];
+    _completion = [completion copy];
+    return self;
+}
+
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    self.title = @"Game library";
+    self.navigationItem.leftBarButtonItem =
+        [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemCancel
+                                                      target:self
+                                                      action:@selector(cancel)];
+    self.tableView.rowHeight = UITableViewAutomaticDimension;
+    self.tableView.estimatedRowHeight = 54.0;
+}
+
+- (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView {
+    (void)tableView;
+    return 2;
+}
+
+- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
+    (void)tableView;
+    return section == 0 ? (NSInteger)_games.count : 1;
+}
+
+- (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
+    (void)tableView;
+    return section == 0 ? @"Imported games" : @"Add games";
+}
+
+- (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
+    (void)tableView;
+    if (section != 0 || _games.count != 0) return nil;
+    return @"No supported games were found. Import a .smc, .fxe, or .fpk game image.";
+}
+
+- (UITableViewCell *)tableView:(UITableView *)tableView
+         cellForRowAtIndexPath:(NSIndexPath *)indexPath {
+    if (indexPath.section == 0) {
+        static NSString *const gameCellIdentifier = @"GP32GameCell";
+        UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:gameCellIdentifier];
+        if (!cell) {
+            cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle
+                                          reuseIdentifier:gameCellIdentifier];
+        }
+        NSString *filename = _games[(NSUInteger)indexPath.row].lastPathComponent;
+        NSString *title = filename.stringByDeletingPathExtension;
+        cell.textLabel.text = title.length ? title : filename;
+        cell.detailTextLabel.text = filename;
+        cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+        return cell;
+    }
+
+    static NSString *const importCellIdentifier = @"GP32ImportGameCell";
+    UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:importCellIdentifier];
+    if (!cell) {
+        cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle
+                                      reuseIdentifier:importCellIdentifier];
+    }
+    cell.textLabel.text = @"Import game image";
+    cell.detailTextLabel.text = @"Choose a .smc, .fxe, or .fpk file";
+    cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+    return cell;
+}
+
+- (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
+    [tableView deselectRowAtIndexPath:indexPath animated:YES];
+    if (indexPath.section == 0 && (NSUInteger)indexPath.row < _games.count) {
+        [self finishWithGameURL:_games[(NSUInteger)indexPath.row] importRequested:NO];
+    } else if (indexPath.section == 1) {
+        [self finishWithGameURL:nil importRequested:YES];
+    }
+}
+
+- (void)cancel {
+    [self finishWithGameURL:nil importRequested:NO];
+}
+
+- (void)finishWithGameURL:(NSURL *)gameURL importRequested:(BOOL)importRequested {
+    if (_finished) return;
+    _finished = YES;
+    GP32GameLibraryCompletion completion = _completion;
+    _completion = nil;
+    [self dismissViewControllerAnimated:YES completion:^{
+        if (completion) completion(gameURL, importRequested);
+    }];
+}
+
+@end
+
 @interface GP32EmulatorViewController () <UIDocumentPickerDelegate, UIAdaptivePresentationControllerDelegate>
 + (NSString *)importURL:(NSURL *)source into:(NSString *)directory error:(NSError **)error;
 /* Declared so a selector is visible wherever this class sends it to itself;
@@ -73,10 +188,14 @@ static const NSUInteger GP32StateSlotCount = 10;
 - (void)restoreSelectionIfPossible;
 - (void)loadContentAtPath:(NSString *)gamePath;
 - (nullable NSString *)statePathForGamePath:(NSString *)gamePath slot:(NSUInteger)slot;
++ (NSArray<NSURL *> *)importedGameURLs;
+- (void)presentGameLibrary;
+- (void)presentLatestStateForCurrentGame;
 - (void)presentStateSlotChooserForSaving:(BOOL)saving;
 - (void)chooseBootMode:(gp32_ios_boot_mode_t)mode;
 - (void)presentPickerForImport:(GP32ImportKind)kind;
 - (void)presentSoon:(UIViewController *)controller;
+- (void)afterMenuDismissal:(void (^)(void))completion;
 - (void)showMenu:(id)sender;
 - (void)revealMenuButton;
 - (void)showStatus:(NSString *)message temporary:(BOOL)temporary;
@@ -123,6 +242,7 @@ static const NSUInteger GP32StateSlotCount = 10;
     BOOL _foreground;
     BOOL _userPaused;
     BOOL _menuOpen;
+    UIViewController *_menuController;
     BOOL _audioRunning;
     BOOL _audioInterrupted;
 #if GP32EMU_IOS_DEVELOPER_JIT
@@ -470,12 +590,18 @@ static const NSUInteger GP32StateSlotCount = 10;
     CGFloat width = right - left;
     BOOL landscape = safe.size.width > safe.size.height;
     _landscapeLayout = landscape;
+    CGFloat pictureTop = landscape ? CGRectGetMinY(safe) : top + 56;
     CGFloat padSize;
+    CGFloat clusterBottom = bottom;
     CGRect pictureArea;
     if (landscape) {
         /* Keep Start/Select away from the shoulder buttons: they occupy the
          * lower center, while the d-pad and A/B stay in the side columns. */
-        padSize = MIN(144, MIN((width - 2 * gap) / 4, (bottom - top) - 164));
+        /* Budget one shoulder row plus its gap, and leave the center enough
+         * width for two 44-point targets. Short phones can keep a full d-pad. */
+        CGFloat preferredPad = MAX(3 * 44, (width - 2 * gap) / 4);
+        padSize = MIN(144, MIN(preferredPad,
+            MIN((width - 3 * gap - 2 * 44) / 2, (bottom - top) - 44 - gap)));
         padSize = MAX(72, padSize);
         CGFloat column = MAX(96, padSize);
         _pad.frame = CGRectMake(left, bottom - padSize, padSize, padSize);
@@ -484,33 +610,43 @@ static const NSUInteger GP32StateSlotCount = 10;
         CGFloat rightButton = right - (column + small) / 2;
         _leftShoulder.frame = CGRectMake(leftButton, top, small, 44);
         _rightShoulder.frame = CGRectMake(rightButton, top, small, 44);
-        _selectButton.frame = CGRectMake(CGRectGetMidX(safe) - gap - 72, bottom - 44, 72, 44);
-        _startButton.frame = CGRectMake(CGRectGetMidX(safe) + gap, bottom - 44, 72, 44);
-        pictureArea = CGRectMake(left + column + gap, top,
-                                 MAX(1, width - 2 * (column + gap)), MAX(1, bottom - top - 56));
+        CGFloat centerButtonWidth = MIN(72, MAX(0, (width - 2 * (column + gap) - gap) / 2));
+        _selectButton.frame = CGRectMake(CGRectGetMidX(safe) - gap / 2 - centerButtonWidth,
+                                        bottom - 44, centerButtonWidth, 44);
+        _startButton.frame = CGRectMake(CGRectGetMidX(safe) + gap / 2,
+                                       bottom - 44, centerButtonWidth, 44);
+        pictureArea = CGRectMake(left + column + gap, pictureTop,
+                                 MAX(1, width - 2 * (column + gap)), MAX(1, bottom - pictureTop - 56));
     } else {
+        /* Portrait stacks three bands under the picture, as landscape splits
+         * shoulders from the lower center: L/R on the outer edges, the d-pad
+         * with A/B, then Start/Select alone on the bottom row. */
+        CGFloat rowGap = 16;
         padSize = MIN(156, (width - gap) / 2);
-        CGFloat controlsTop = bottom - padSize - 56;
-        _pad.frame = CGRectMake(left, bottom - padSize, padSize, padSize);
-        CGFloat small = MIN(72, (width - 3 * gap) / 4);
-        _leftShoulder.frame = CGRectMake(left, controlsTop, small, 44);
-        _rightShoulder.frame = CGRectMake(right - small, controlsTop, small, 44);
-        _selectButton.frame = CGRectMake(CGRectGetMidX(safe) - gap / 2 - small, controlsTop, small, 44);
-        _startButton.frame = CGRectMake(CGRectGetMidX(safe) + gap / 2, controlsTop, small, 44);
+        CGFloat centerButtonWidth = MIN(72, (width - gap) / 2);
+        _selectButton.frame = CGRectMake(CGRectGetMidX(safe) - gap / 2 - centerButtonWidth,
+                                        bottom - 44, centerButtonWidth, 44);
+        _startButton.frame = CGRectMake(CGRectGetMidX(safe) + gap / 2,
+                                       bottom - 44, centerButtonWidth, 44);
+        clusterBottom = bottom - 44 - rowGap;
+        _pad.frame = CGRectMake(left, clusterBottom - padSize, padSize, padSize);
+        CGFloat shoulderTop = clusterBottom - padSize - rowGap - 44;
+        CGFloat shoulderWidth = MIN(88, (width - gap) / 4);
+        _leftShoulder.frame = CGRectMake(left, shoulderTop, shoulderWidth, 44);
+        _rightShoulder.frame = CGRectMake(right - shoulderWidth, shoulderTop, shoulderWidth, 44);
         _menuButton.frame = CGRectMake(right - 44, top, 44, 44);
-        pictureArea = CGRectMake(left, top + 56, width, MAX(1, controlsTop - top - 68));
+        pictureArea = CGRectMake(left, top + 56, width, MAX(1, shoulderTop - gap - (top + 56)));
     }
     /* A upper-right, B lower-left, as on Android. Both have independent
      * touch tracking, so direction + A/B and simultaneous buttons work. */
-    CGFloat actionSize = padSize * 0.45;
-    _buttonA.frame = CGRectMake(right - actionSize, bottom - padSize, actionSize, actionSize);
-    _buttonB.frame = CGRectMake(right - padSize, bottom - actionSize, actionSize, actionSize);
+    CGFloat actionSize = MIN(padSize / 2, MAX(44, padSize * 0.45));
+    _buttonA.frame = CGRectMake(right - actionSize, clusterBottom - padSize, actionSize, actionSize);
+    _buttonB.frame = CGRectMake(right - padSize, clusterBottom - actionSize, actionSize, actionSize);
     _buttonA.layer.cornerRadius = actionSize / 2;
     _buttonB.layer.cornerRadius = actionSize / 2;
     if (_touchControlsHidden) {
         // Reclaim both side columns and the Start/Select row. In portrait the
         // menu keeps its own top row; hardware input remains available.
-        CGFloat pictureTop = landscape ? top : top + 56;
         pictureArea = CGRectMake(left, pictureTop, width, MAX(1, bottom - pictureTop));
     }
     CGFloat pictureWidth = MIN(pictureArea.size.width, pictureArea.size.height * 4.0 / 3.0);
@@ -812,6 +948,46 @@ static const NSUInteger GP32StateSlotCount = 10;
     return [path hasPrefix:prefix] && [files fileExistsAtPath:path] ? path : nil;
 }
 
++ (NSArray<NSURL *> *)importedGameURLs {
+    NSFileManager *files = NSFileManager.defaultManager;
+    NSString *directory = [self gamesDirectory];
+    NSArray<NSString *> *identities = [files contentsOfDirectoryAtPath:directory error:NULL];
+    NSCharacterSet *nonHex = [[NSCharacterSet characterSetWithCharactersInString:
+        @"0123456789abcdefABCDEF"] invertedSet];
+    NSMutableArray<NSURL *> *games = [NSMutableArray array];
+    for (NSString *identity in identities ?: @[]) {
+        if (identity.length != CC_SHA256_DIGEST_LENGTH * 2 ||
+            [identity rangeOfCharacterFromSet:nonHex].location != NSNotFound) continue;
+        NSString *folder = [directory stringByAppendingPathComponent:identity];
+        NSDictionary<NSFileAttributeKey, id> *folderAttributes =
+            [files attributesOfItemAtPath:folder error:NULL];
+        if (![folderAttributes[NSFileType] isEqualToString:NSFileTypeDirectory]) continue;
+
+        /* Imports are exactly Games/<SHA-256 identity>/<source filename>.
+         * Do not recurse into state/metadata folders; the extension allowlist
+         * also excludes temporary files, saves and sidecars. */
+        NSArray<NSString *> *filenames = [files contentsOfDirectoryAtPath:folder error:NULL];
+        for (NSString *filename in filenames ?: @[]) {
+            if ([filename hasPrefix:@"."]) continue;
+            NSString *extension = filename.pathExtension.lowercaseString;
+            if (!GP32IsSupportedGameExtension(extension)) continue;
+
+            NSString *path = [folder stringByAppendingPathComponent:filename];
+            NSDictionary<NSFileAttributeKey, id> *attributes =
+                [files attributesOfItemAtPath:path error:NULL];
+            if (![attributes[NSFileType] isEqualToString:NSFileTypeRegular] ||
+                [attributes[NSFileSize] unsignedLongLongValue] == 0 ||
+                ![files isReadableFileAtPath:path]) continue;
+            [games addObject:[NSURL fileURLWithPath:path]];
+        }
+    }
+    [games sortUsingComparator:^NSComparisonResult(NSURL *left, NSURL *right) {
+        NSComparisonResult order = [left.lastPathComponent localizedStandardCompare:right.lastPathComponent];
+        return order != NSOrderedSame ? order : [left.path localizedStandardCompare:right.path];
+    }];
+    return games;
+}
+
 - (void)restoreSelectionIfPossible {
     NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
     _biosPath = [GP32EmulatorViewController resolveContentPath:[defaults stringForKey:GP32DefaultBIOSKey]];
@@ -888,22 +1064,77 @@ static const NSUInteger GP32StateSlotCount = 10;
     [self presentSoon:picker];
 }
 
-/* An alert action handler runs while its own sheet is still being dismissed, so
- * the follow-up controller goes out on the next main-queue turn instead of
- * racing that dismissal. */
+/* Track the next controller before the old one dismisses: a late dismissal
+ * callback from the old sheet must not end the child's menu pause. */
 - (void)presentSoon:(UIViewController *)controller {
+    _menuController = controller;
+    __weak typeof(self) weakSelf = self;
+    [self afterMenuDismissal:^{
+        typeof(self) self = weakSelf;
+        if (!self || self->_menuController != controller) return;
+        [self presentViewController:controller animated:YES completion:nil];
+        /* UIKit owns an alert's presentation delegate; alerts close via their actions. */
+        if (![controller isKindOfClass:UIAlertController.class]) controller.presentationController.delegate = self;
+    }];
+}
+
+/* Alert and document-picker delegates can run before UIKit finishes dismissing
+ * them. Keep the guest paused until that transition actually completes. */
+- (void)afterMenuDismissal:(void (^)(void))completion {
     __weak typeof(self) weakSelf = self;
     dispatch_async(dispatch_get_main_queue(), ^{
         typeof(self) self = weakSelf;
-        if (self) [self presentViewController:controller animated:YES completion:nil];
+        if (!self) return;
+        UIViewController *presented = self.presentedViewController;
+        id<UIViewControllerTransitionCoordinator> transition = presented.transitionCoordinator;
+        if (presented.isBeingDismissed && transition) {
+            [transition animateAlongsideTransition:nil
+                                      completion:^(id<UIViewControllerTransitionCoordinatorContext> context) {
+                if (context.isCancelled) [weakSelf afterMenuDismissal:completion];
+                else completion();
+            }];
+        } else if (presented) {
+            [self dismissViewControllerAnimated:YES completion:completion];
+        } else {
+            completion();
+        }
     });
+}
+
+- (void)presentGameLibrary {
+    NSArray<NSURL *> *games = [GP32EmulatorViewController importedGameURLs];
+    __weak typeof(self) weakSelf = self;
+    GP32GameLibraryCompletion completion = ^(NSURL *gameURL, BOOL importRequested) {
+        typeof(self) self = weakSelf;
+        if (!self) return;
+        if (importRequested) {
+            [self presentPickerForImport:GP32ImportGame];
+            return;
+        }
+        if (gameURL.path.length) [self loadContentAtPath:gameURL.path];
+        [self menuDidClose];
+    };
+
+    GP32GameLibraryViewController *library =
+        [[GP32GameLibraryViewController alloc] initWithGames:games completion:completion];
+    UINavigationController *navigation =
+        [[UINavigationController alloc] initWithRootViewController:library];
+    navigation.modalPresentationStyle = UIModalPresentationPopover;
+    navigation.preferredContentSize = CGSizeMake(380.0,
+        MAX(280.0, MIN(520.0, 180.0 + (CGFloat)(games.count + 1) * 54.0)));
+    UIPopoverPresentationController *popover = navigation.popoverPresentationController;
+    popover.sourceView = self.view;
+    popover.sourceRect = CGRectMake(CGRectGetMidX(self.view.bounds),
+                                    CGRectGetMidY(self.view.bounds), 1.0, 1.0);
+    popover.permittedArrowDirections = 0;
+    [self presentSoon:navigation];
 }
 
 /* The picker hands out a security-scoped URL; the copy into private app
  * storage happens between the access pair and the scope is always released. */
 - (void)documentPicker:(UIDocumentPickerViewController *)controller
         didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
-    (void)controller;
+    if (_menuController != controller) return;
     NSURL *source = urls.firstObject;
     if (!source) {
         [self menuDidClose];
@@ -980,7 +1211,7 @@ static const NSUInteger GP32StateSlotCount = 10;
 }
 
 - (void)documentPickerWasCancelled:(UIDocumentPickerViewController *)controller {
-    (void)controller;
+    if (_menuController != controller) return;
     [self menuDidClose];
 }
 
@@ -1057,8 +1288,74 @@ static const NSUInteger GP32StateSlotCount = 10;
     popover.sourceRect = CGRectMake(CGRectGetMidX(self.view.bounds),
                                    CGRectGetMidY(self.view.bounds), 1, 1);
     popover.permittedArrowDirections = 0;
-    chooser.presentationController.delegate = self;
     [self presentSoon:chooser];
+}
+
+- (void)presentLatestStateForCurrentGame {
+    NSString *gamePath = _emulator.contentPath;
+    if (!_emulator.hasGame || !gamePath.length) {
+        [self showStatus:@"Load a game before loading a saved state." temporary:NO];
+        [self menuDidClose];
+        return;
+    }
+
+    NSFileManager *files = NSFileManager.defaultManager;
+    NSString *latestPath = nil;
+    NSDate *latestDate = nil;
+    NSUInteger latestSlot = 0;
+    for (NSUInteger slot = 1; slot <= GP32StateSlotCount; ++slot) {
+        NSString *path = [self statePathForGamePath:gamePath slot:slot];
+        if (!path.length) continue;
+        BOOL isDirectory = NO;
+        BOOL exists = [files fileExistsAtPath:path isDirectory:&isDirectory];
+        NSDictionary<NSFileAttributeKey, id> *attributes = exists && !isDirectory
+            ? [files attributesOfItemAtPath:path error:NULL] : nil;
+        NSNumber *fileSize = attributes[NSFileSize];
+        NSDate *savedAt = attributes[NSFileModificationDate];
+        BOOL occupied = [attributes[NSFileType] isEqualToString:NSFileTypeRegular] &&
+                        fileSize.unsignedLongLongValue > 0;
+        if (!occupied || !savedAt) continue;
+        if (!latestPath || [savedAt compare:latestDate] == NSOrderedDescending ||
+            ([savedAt compare:latestDate] == NSOrderedSame && slot > latestSlot)) {
+            latestPath = path;
+            latestDate = savedAt;
+            latestSlot = slot;
+        }
+    }
+
+    NSString *date = latestDate ? [NSDateFormatter localizedStringFromDate:latestDate
+                                                    dateStyle:NSDateFormatterMediumStyle
+                                                    timeStyle:NSDateFormatterShortStyle] : nil;
+    UIAlertController *confirmation = [UIAlertController
+        alertControllerWithTitle:(latestPath
+            ? [NSString stringWithFormat:@"Load slot %lu?", (unsigned long)latestSlot]
+            : @"Load latest state")
+                         message:(latestPath
+            ? [NSString stringWithFormat:@"Saved %@. The current emulator state will be replaced.", date]
+            : @"No saved states for the current game.")
+                  preferredStyle:UIAlertControllerStyleAlert];
+    __weak typeof(self) weakSelf = self;
+    [confirmation addAction:[UIAlertAction actionWithTitle:(latestPath ? @"Cancel" : @"OK")
+                                                     style:UIAlertActionStyleCancel
+                                                   handler:^(UIAlertAction *action) {
+        (void)action;
+        typeof(self) self = weakSelf;
+        if (self) [self menuDidClose];
+    }]];
+    if (latestPath) [confirmation addAction:[UIAlertAction actionWithTitle:@"Load state"
+                                                     style:UIAlertActionStyleDefault
+                                                   handler:^(UIAlertAction *action) {
+        (void)action;
+        typeof(self) self = weakSelf;
+        if (!self) return;
+        if (self->_emulator.hasGame && [self->_emulator.contentPath isEqualToString:gamePath]) {
+            [self->_emulator loadStateAtPath:latestPath completion:nil];
+        } else {
+            [self showStatus:@"The game changed. Choose a saved state again." temporary:NO];
+        }
+        [self menuDidClose];
+    }]];
+    [self presentSoon:confirmation];
 }
 
 #pragma mark - Menu
@@ -1103,6 +1400,12 @@ static const NSUInteger GP32StateSlotCount = 10;
     [menu addAction:jitAction];
 #endif
 
+    [menu addAction:[UIAlertAction actionWithTitle:@"Game library"
+                                            style:UIAlertActionStyleDefault
+                                          handler:^(UIAlertAction *action) {
+        (void)action;
+        [weakSelf presentGameLibrary];
+    }]];
     [menu addAction:[UIAlertAction actionWithTitle:@"Import game image"
                                             style:UIAlertActionStyleDefault
                                           handler:^(UIAlertAction *action) {
@@ -1168,7 +1471,6 @@ static const NSUInteger GP32StateSlotCount = 10;
         popover.sourceRect = CGRectMake(CGRectGetMidX(self.view.bounds),
                                        CGRectGetMidY(self.view.bounds), 1, 1);
         popover.permittedArrowDirections = 0;
-        chooser.presentationController.delegate = self;
         [self presentSoon:chooser];
     }]];
 
@@ -1198,6 +1500,14 @@ static const NSUInteger GP32StateSlotCount = 10;
         if (!self) return;
         [self presentStateSlotChooserForSaving:NO];
     }]];
+    UIAlertAction *latestState = [UIAlertAction actionWithTitle:@"Load latest state"
+                                                        style:UIAlertActionStyleDefault
+                                                      handler:^(UIAlertAction *action) {
+        (void)action;
+        [weakSelf presentLatestStateForCurrentGame];
+    }];
+    latestState.enabled = _emulator.hasGame;
+    [menu addAction:latestState];
     [menu addAction:[UIAlertAction actionWithTitle:@"Flush card save"
                                             style:UIAlertActionStyleDefault
                                           handler:^(UIAlertAction *action) {
@@ -1242,8 +1552,7 @@ static const NSUInteger GP32StateSlotCount = 10;
                                     CGRectGetMidY(self.view.bounds), 1.0, 1.0);
     popover.permittedArrowDirections = 0;
 
-    menu.presentationController.delegate = self;
-    [self presentViewController:menu animated:YES completion:nil];
+    [self presentSoon:menu];
 }
 
 /* Ends the menu session and resumes pacing and the guest when the app should
@@ -1252,17 +1561,24 @@ static const NSUInteger GP32StateSlotCount = 10;
  * presentationControllerDidDismiss: (that callback only covers a swipe or a
  * tap outside). The guard keeps repeated calls idempotent. */
 - (void)menuDidClose {
-    if (!_menuOpen) return;
-    _menuOpen = NO;
-    [self revealMenuButton];
-    _lastTickTime = 0.0;
-    _displayLink.paused = !_foreground;
-    [self applyRunningState];
+    if (!_menuOpen || !_menuController) return;
+    _menuController = nil;
+    __weak typeof(self) weakSelf = self;
+    [self afterMenuDismissal:^{
+        typeof(self) self = weakSelf;
+        if (!self || self->_menuController) return;
+        self->_menuOpen = NO;
+        [self revealMenuButton];
+        self->_lastTickTime = 0.0;
+        self->_displayLink.paused = !self->_foreground;
+        [self applyRunningState];
+    }];
 }
 
 - (void)presentationControllerDidDismiss:(UIPresentationController *)presentationController {
-    (void)presentationController;
-    [self menuDidClose];
+    if (presentationController.presentedViewController == _menuController && !_importing) {
+        [self menuDidClose];
+    }
 }
 
 #pragma mark - Focus and interruption
@@ -1385,7 +1701,7 @@ static const NSUInteger GP32StateSlotCount = 10;
     (void)note;
     _foreground = YES;
     _lastTickTime = 0.0;
-    _displayLink.paused = NO;
+    _displayLink.paused = _menuOpen;
     [self applyRunningState];
 }
 
