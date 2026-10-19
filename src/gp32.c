@@ -5933,6 +5933,12 @@ static int gp32_pcm_state_read(state_io_t *io, gp32_resume_image_t *resume) {
 
 static int gp32_state_write_with_pwm_phase(const gp32_t *g, state_io_t *io,
                                           const s3c2400_pwm_phase_t *pwm_phase) {
+    if (io && io->mode == STATE_IO_COUNT)
+        return state_io_count_bytes(io, sizeof(gp32_state_magic) + sizeof(gp32_state_image_t) +
+                                    sizeof(g->elapsed) + sizeof(g->frame_time) + GP32_CONTINUATION_BYTES) &&
+               arm920t_state_save_io(g->cpu, io) &&
+               state_io_count_bytes(io, GP32_PCM_STATE_BYTES) &&
+               s3c2400_state_save_io_with_pwm_phase(g->soc, io, pwm_phase);
     gp32_state_image_t direct;
     gp32_direct_state_capture(g, &direct);
     return state_io_write(io, gp32_state_magic, sizeof(gp32_state_magic)) &&

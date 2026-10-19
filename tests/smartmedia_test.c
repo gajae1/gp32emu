@@ -165,7 +165,61 @@ done:
     smc_destroy(s); smc_destroy(restored); free(original); remove(path);
 }
 
+/* A delta created after loading substantial card progress must stay compact
+ * when restored into a fresh session mounted from the same original card. */
+static void check_delta_remount(void) {
+    size_t image_size = 8192u * 528u;
+    uint8_t *image = malloc(image_size), *saved = NULL, *clean = NULL, *again = NULL;
+    smc_t *source = smc_create(), *target = smc_create();
+    char err[128] = {0};
+    CHECK(image && source && target, "allocate remount fixture");
+    if (!image || !source || !target) goto done;
+    memset(image, 0x5a, image_size);
+    CHECK(smc_load_buffer(source, image, image_size, err, sizeof(err)) &&
+          smc_load_buffer(target, image, image_size, err, sizeof(err)), "mount identical bases");
+    state_io_t count = state_io_counter();
+    CHECK(smc_state_save_io(target, &count), "count clean session");
+    size_t clean_size = count.pos;
+    clean = malloc(clean_size);
+    if (!clean) { CHECK(0, "allocate clean state"); goto done; }
+    state_io_t writer = state_io_writer(clean, clean_size);
+    CHECK(smc_state_save_io(target, &writer), "save clean session");
+    for (unsigned page = 0; page < 4096u; page += 16u) erase_block(source, page);
+    CHECK(smc_set_state_base(source, image, image_size, err, sizeof(err)), "plan loaded card progress");
+    count = state_io_counter();
+    CHECK(smc_state_save_io(source, &count), "count larger delta");
+    size_t saved_size = count.pos;
+    CHECK(saved_size > clean_size && saved_size < image_size, "larger session still uses delta form");
+    saved = malloc(saved_size); again = malloc(saved_size);
+    if (!saved || !again) { CHECK(0, "allocate larger state"); goto done; }
+    writer = state_io_writer(saved, saved_size);
+    CHECK(smc_state_save_io(source, &writer), "save larger delta");
+    state_io_t reader = state_io_reader(saved, saved_size - 1u);
+    CHECK(!smc_state_load_io(target, &reader, SMC_STATE_FORMAT_V14), "reject truncated larger delta");
+    count = state_io_counter();
+    CHECK(smc_state_save_io(target, &count) && count.pos == clean_size && read_page(target, 0) == 0x5a,
+          "rejected load preserves card and session capacity");
+    reader = state_io_reader(saved, saved_size);
+    CHECK(smc_state_load_io(target, &reader, SMC_STATE_FORMAT_V14), "restore larger delta into fresh session");
+    count = state_io_counter();
+    CHECK(smc_state_save_io(target, &count), "count remounted delta");
+    printf("SmartMedia delta remount: saved=%zu restored=%zu\n", saved_size, count.pos);
+    CHECK(count.pos == saved_size, "remounted delta does not expand to a full image");
+    writer = state_io_writer(again, saved_size);
+    int written = smc_state_save_io(target, &writer);
+    CHECK(written && !memcmp(saved, again, saved_size), "remounted state preserves serialized bytes");
+    reader = state_io_reader(clean, clean_size);
+    CHECK(smc_state_load_io(target, &reader, SMC_STATE_FORMAT_V14), "restore smaller old state");
+    count = state_io_counter();
+    CHECK(smc_state_save_io(target, &count) && count.pos == saved_size,
+          "loading smaller state keeps session high-water capacity");
+done:
+    free(image); free(saved); free(clean); free(again);
+    smc_destroy(source); smc_destroy(target);
+}
+
 int main(void) {
+    check_delta_remount();
     check_autosave();
     for (unsigned header = 0; header < 2; ++header) {
         check_progress(header != 0);

@@ -5994,6 +5994,9 @@ void arm920t_translation_state_apply(arm920t_t *c,const arm920t_translation_stat
 
 int arm920t_state_save_io(const arm920t_t *c, state_io_t *io) {
     if (!c || !io) return 0;
+    if (io->mode == STATE_IO_COUNT)
+        return state_io_count_bytes(io, sizeof(arm920t_state_image_t)) &&
+               state_io_count_bytes(io, sizeof(arm920t_translation_state_image_t));
     arm920t_state_image_t st;
     memset(&st, 0, sizeof(st));
     memcpy(st.r, c->r, sizeof(st.r));

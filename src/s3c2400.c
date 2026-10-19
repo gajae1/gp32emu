@@ -3155,6 +3155,21 @@ static int s3c2400_state_save_image(const s3c2400_t *s, state_io_t *io, s3c2400_
 int s3c2400_state_save_io_with_pwm_phase(const s3c2400_t *s, state_io_t *io,
                                        const s3c2400_pwm_phase_t *phase) {
     if (!s || !io || s->audio_frames > SIZE_MAX / (2u * sizeof(int16_t))) return 0;
+    if (io->mode == STATE_IO_COUNT) {
+        /* This is the same sequence of wire spans as the writer above. Count
+         * current RAM/audio/card sizes without building the large scalar image;
+         * no cached size can survive a load or a card's full-form fallback. */
+        const int16_t *unread = s->audio ? s->audio + (size_t)s->audio_read_frames * 2u : NULL;
+        size_t audio_bytes = (size_t)(s->audio_frames - s->audio_read_frames) * 2u * sizeof(int16_t);
+        uint32_t spans = s->audio_boundary_count - s->audio_boundary_head;
+        if (spans && sizeof(audio_boundary_t) > SIZE_MAX / spans) return state_io_fail(io);
+        return state_io_count_bytes(io, sizeof(s3c2400_state_image_t)) &&
+               state_io_write(io, s->ram, s->ram_size) && smc_state_save_io(s->smc, io) &&
+               state_io_write(io, unread, audio_bytes) && state_io_count_bytes(io, sizeof(spans)) &&
+               state_io_count_bytes(io, (size_t)spans * sizeof(audio_boundary_t)) &&
+               state_io_count_bytes(io, sizeof(s->iis_accum) + 2u * sizeof(uint64_t) +
+                                   sizeof(s->audio_idle_phase) + 6u + S3C2400_PWM_STATE_BYTES);
+    }
     /* The wire image includes BIOS and pixels (~840 KB), exceeding small
      * frontend worker stacks. Per-call storage also keeps instances separate. */
     s3c2400_state_image_t *st = malloc(sizeof(*st));

@@ -1228,6 +1228,16 @@ typedef struct smc_state_image {
 /* Zero padding of the delta entry region; one shared buffer keeps the write
  * loop bounded no matter how large the session budget is. */
 static int smc_state_write_zeros(state_io_t *io, uint64_t bytes) {
+    /* The common memory path has already reserved the complete state. Fill its
+     * padding once; keep the chunk path for files and short-buffer failures. */
+    if (io && !io->failed && bytes <= SIZE_MAX - io->pos) {
+        if (io->mode == STATE_IO_COUNT) return state_io_count_bytes(io, (size_t)bytes);
+        if (io->mode == STATE_IO_WRITE && io->pos <= io->size && bytes <= io->size - io->pos) {
+            if (bytes) memset(io->output + io->pos, 0, (size_t)bytes);
+            io->pos += (size_t)bytes;
+            return 1;
+        }
+    }
     static const uint8_t zeros[256] = {0};
     while (bytes) {
         size_t chunk = bytes > sizeof(zeros) ? sizeof(zeros) : (size_t)bytes;
@@ -1239,6 +1249,18 @@ static int smc_state_write_zeros(state_io_t *io, uint64_t bytes) {
 
 int smc_state_save_io(const smc_t *s, state_io_t *io) {
     if (!s || !io) return 0;
+    int delta = smc_state_delta_usable(s);
+    if (io->mode == STATE_IO_COUNT) {
+        if (!state_io_count_bytes(io, sizeof(smc_state_image_t))) return 0;
+        if (delta) {
+            /* Written entries plus zero padding always occupy this budget.
+             * The page bitmap and page bytes need no traversal for a count. */
+            uint64_t entries = (uint64_t)s->state_entries * (4u + (uint64_t)s->page_total_size);
+            if (entries > SIZE_MAX || !state_io_count_bytes(io, sizeof(smc_state_delta_head_t)) ||
+                !state_io_count_bytes(io, (size_t)entries)) return state_io_fail(io);
+        } else if (!state_io_write(io, s->data, s->data_size)) return 0;
+        return state_io_write(io, s->page_reg, s->page_total_size);
+    }
     smc_state_image_t st;
     memset(&st, 0, sizeof(st));
     st.data_size = s->data_size;
@@ -1267,7 +1289,6 @@ int smc_state_save_io(const smc_t *s, state_io_t *io) {
     st.program_byte_count = s->program_byte_count;
     /* The delta form only changes the section body; its scalar head keeps the
      * dirty bit the older layout stored and marks the form in another bit. */
-    int delta = smc_state_delta_usable(s);
     if (delta) st.dirty |= (int)SMC_STATE_DELTA_FLAG;
     if (!state_io_write(io, &st, sizeof(st))) return 0;
     if (delta) {
@@ -1430,6 +1451,10 @@ void smc_state_stage_commit(smc_t *s, smc_state_stage_t *stage) {
         free(s->page_reg);
         s->page_reg = stage->page_reg;
         stage->page_reg = NULL;
+        /* Keep the validated delta budget when resuming in a fresh session;
+         * otherwise an unchanged card can immediately fall back to FULL.
+         * Never shrink a budget already advertised to the frontend. */
+        if (s->state_entries < stage->capacity) s->state_entries = stage->capacity;
     } else {
         smc_mount_image_t img;
         memset(&img, 0, sizeof(img));

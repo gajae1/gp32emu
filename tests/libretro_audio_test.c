@@ -1157,7 +1157,22 @@ static void test_clean_tone_delivery(void) {
     }
 }
 
+static void test_state_capacity_bounds(void) {
+    size_t saved_capacity = state_capacity;
+    state_capacity = 0u;
+    CHECK(retro_state_capacity(0u) == 0u, "empty guest has no serialized capacity");
+    size_t tail = lrst_capacity();
+    CHECK(retro_state_capacity(SIZE_MAX - tail) == SIZE_MAX, "largest non-overflowing capacity");
+    CHECK(retro_state_capacity(SIZE_MAX - tail + 1u) == 0u && state_capacity == SIZE_MAX,
+          "capacity overflow rejects without changing its high-water value");
+    state_capacity = 1234u;
+    CHECK(retro_state_capacity(SIZE_MAX) == 0u && state_capacity == 1234u,
+          "overflow leaves an ordinary high-water capacity intact");
+    state_capacity = saved_capacity;
+}
+
 int main(int argc, char **argv) {
+    test_state_capacity_bounds();
     test_clean_tone_delivery();
     test_resampler_gap_replay();
     test_resampler_rate_cache();
