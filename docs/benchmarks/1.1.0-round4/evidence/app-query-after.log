@@ -1,5 +1,0 @@
-swi-1ff jit=0 pc=0c020000 cpsr=900000d3 spsr=90000013
-swi-1ff-declined jit=0 pc=000001e8 cpsr=90000093
-swi-1ff jit=1 pc=0c020000 cpsr=900000d3 spsr=90000013
-swi-1ff-declined jit=1 pc=000001e8 cpsr=90000093
-gp32_swi_1ff: all checks passed, including 39 app-query range cases

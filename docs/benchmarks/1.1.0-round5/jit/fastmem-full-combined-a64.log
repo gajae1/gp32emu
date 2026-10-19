@@ -1,6 +1,0 @@
-arm_fastmem_io_test: 2478 cases, 0 failures
-mode 0: 826 cases, 0 failures
-mode 1: 826 cases, 0 failures
-mode 2: 826 cases, 0 failures
-native instructions: 1576
-process_exit=0

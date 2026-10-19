@@ -26,8 +26,7 @@ $licenses = Join-Path $repo 'licenses'
 # Preserve document paths: moving release notes to the root breaks their links.
 $documentPaths = @(
     'README.md', 'docs/MANUAL.ko.md', "docs/RELEASE-$version.md",
-    'docs/RELEASE-1.0.1.md', 'docs/BUILDING.md', 'docs/ANDROID_BUILD.md',
-    'docs/IOS_BUILD.md', 'ios/README.md', 'ios/CREDITS.md'
+    'ios/README.md', 'ios/CREDITS.md'
 )
 $commonCopies = @($documentPaths | Select-Object -Unique | ForEach-Object {
     @{From=(Join-Path $repo $_);To=$_}

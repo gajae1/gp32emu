@@ -53,8 +53,7 @@ It must be signed before installation; downloading it alone does not install it.
 
 The Linux core targets AArch64 with glibc 2.17 or newer. The Android RetroArch
 cores target API 21 or newer. ARMv7 uses the interpreter and is substantially
-slower than ARM64. The 1.1.0 app has had bounded gameplay, audio and
-input checks on an ARM64 phone. Android RetroArch integration remains unverified.
+slower than ARM64.
 
 Each binary ZIP also contains this README, release notes, the
 [Korean manual](docs/MANUAL.ko.md), third-party notices in [licenses/](licenses/),
@@ -145,8 +144,7 @@ A gamepad's Mode/Menu button, or Start and Select pressed together, opens
 the menu. Imported files, in-game saves and states are kept in
 private app storage; original files are unchanged. Uninstalling the app removes
 these copies and saves. If playback stops with an internal error, the app returns
-to the game list. The APK uses an existing development signing key for
-sideloading; it is not a Play Store release.
+to the game list. Install the APK directly; it is not a Play Store release.
 
 ## RetroArch
 
@@ -176,8 +174,8 @@ directory, then select the GP32emu core and a game. Use full-memory application
 mode as described in the RetroArch guide.
 
 This experimental NRO includes RetroArch 1.22.2 and the GP32emu core. It has
-not been tested on a Switch; performance, audio and save behaviour need device
-testing. Report issues with the game, BIOS version and steps to reproduce.
+not been tested on a Switch. Report issues with the game, BIOS version and
+steps to reproduce.
 
 ## Saves
 
@@ -225,31 +223,17 @@ the exact original ROM. Restoring a state also rolls back in-game card progress.
 - The Astonishia Story R audio-click fix and the Pinball Dreams startup-mute fix
   are on by default and leave the ROM unchanged. In RetroArch, keep
   `Fix game code bugs` enabled; the Windows application always applies them.
-- Audio fidelity and input latency have not been measured against a physical
-  GP32.
-- Compatibility checks cover selected scenes, not complete playthroughs.
+- Compatibility and performance vary by game and host.
 - Per-frame rewind can noticeably reduce speed on low-power devices.
-  Interactive run-ahead remains unverified.
-- Android device checks cover selected startup scenes and input/rotation on an
-  ARM64 phone. Broader performance and Android RetroArch
-  integration remain unverified.
-- Qt and browser frontends are available in source form; their runtime use is
-  unverified. The Switch build is experimental and has not been tested on a
-  console. It uses the ARM64 JIT when the homebrew environment permits executable
-  memory, with an interpreter fallback.
+- iOS and Switch support is experimental. On iOS, installing the IPA does not
+  enable JIT; use a compatible signing and JIT activation tool as described in
+  the [iPhone/iPad guide](ios/README.md).
+- Qt and browser frontends are available in source form.
 
 ## Building from source
 
 See [BUILDING.md](https://github.com/gajae1/gp32emu/blob/main/docs/BUILDING.md) for
 build commands, source-only frontends and the source layout.
-
-The [iPhone/iPad frontend](ios/README.md) is available as source and an unsigned
-IPA. Device builds include an experimental ARM64 JIT;
-games start with the interpreter until external activation succeeds. Local
-Xcode/LLDB activation was tested on an earlier iPhone build. The final ten-slot
-and v17 state flow has been checked in Simulator; physical iPhone revalidation
-of this final build remains outstanding. The complete
-SideStore/StikDebug installation and activation workflow remains unverified.
 
 ## Credits and licensing
 

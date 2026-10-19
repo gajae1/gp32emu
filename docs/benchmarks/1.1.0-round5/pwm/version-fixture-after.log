@@ -1,9 +1,0 @@
-$ /tmp/gp32-round4-tools/cmake/data/bin/cmake --build /tmp/gp32-round5-build-pwm/gcc --target gp32_state_speed_test --parallel 2
-[ 86%] Built target gp32emu
-[ 93%] Building C object CMakeFiles/gp32_state_speed_test.dir/tests/gp32_state_speed_test.c.o
-[100%] Linking C executable gp32_state_speed_test
-[100%] Built target gp32_state_speed_test
-exit=0
-$ /tmp/gp32-round5-build-pwm/gcc/gp32_state_speed_test /tmp/gp32-round5-build-pwm/gcc/version-fixture-state.bin
-gp32_state_speed cases=56 failures=0
-exit=0

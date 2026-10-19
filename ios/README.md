@@ -7,9 +7,8 @@ The package is `gp32emu-1.1.0-ios-unsigned.ipa`. It includes the
 interpreter and an experimental AArch64 JIT. Games start with the interpreter;
 installing the IPA does not automatically enable JIT.
 
-The final ten-slot and v17 state flow was checked in Simulator. Physical iPhone
-revalidation of this final build remains outstanding; earlier device checks do
-not establish compatibility with every game or iOS configuration.
+The iOS app remains experimental; features and performance may vary by device,
+iOS version, and signing setup.
 
 ## Install and update
 
@@ -21,7 +20,6 @@ not establish compatibility with every game or iOS configuration.
 No source build is needed to install an IPA. The package has no publisher
 signature or provisioning profile and includes no BIOS, games or saves.
 Free-account installations need periodic refreshes through the signing tool.
-The complete SideStore installation workflow is not yet verified for this build.
 
 An unsigned IPA cannot be installed by opening the download alone. SideStore
 requires a computer for initial setup (Windows, macOS or Linux); later installs
@@ -116,16 +114,11 @@ earlier if iOS withdraws background time.
 
 Repeat activation after restarting the app or changing games. Reset and state
 restore retain an active JIT session. Missing tools or failed setup leave the
-interpreter available. A local Xcode/LLDB activation method is described in the
-[build guide](../docs/IOS_BUILD.md#developer-debugger-workflow).
+interpreter available. Automatic JIT setup is experimental and depends on the
+device, signing setup, and StikDebug configuration. Activation does not
+guarantee full speed in every game.
 
-Interpreter/JIT output and repeated code-cache reuse have passed targeted checks
-on a physical iPhone. The complete StikDebug/SideStore workflow, automatic setup
-on non-TXM devices, broader gameplay and physical audio-accessory changes remain
-unverified. JIT is experimental, not a guarantee of full speed in every game.
+## Licenses
 
-## Building and licenses
-
-See [Building the iOS app](../docs/IOS_BUILD.md) for Xcode, unsigned IPA packaging
-and host checks. Third-party notices from `licenses/` and [CREDITS.md](CREDITS.md)
-are included in the app. Project licensing is described in the main README.
+Third-party notices from `licenses/` and [CREDITS.md](CREDITS.md) are included in
+the app. Project licensing is described in the main README.

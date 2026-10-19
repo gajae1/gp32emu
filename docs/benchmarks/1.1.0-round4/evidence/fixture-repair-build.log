@@ -1,6 +1,0 @@
-[ 86%] Built target gp32emu
-[ 93%] Building C object CMakeFiles/arm_poll_test.dir/tests/arm_poll_test.c.o
-[100%] Linking C executable arm_poll_test
-[100%] Built target arm_poll_test
-[ 92%] Built target gp32emu
-[100%] Built target arm_exception_test

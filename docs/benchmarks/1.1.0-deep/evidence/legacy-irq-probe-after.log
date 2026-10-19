@@ -1,7 +1,0 @@
-fixed core restored selection: SRCPND=00000c00 INTPND=00000400 INTOFFSET=10
-ISR acknowledges source 10
-after acknowledgement: SRCPND=00000800 INTPND=00000800 INTOFFSET=11
-ISR acknowledges source 11
-after acknowledgement: SRCPND=00000000 INTPND=00000000 INTOFFSET=0
-ISR acknowledges source 0
-after acknowledgement: SRCPND=00000000 INTPND=00000000 INTOFFSET=0

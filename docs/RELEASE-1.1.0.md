@@ -1,136 +1,38 @@
 # GP32emu 1.1.0
 
-This release adds an experimental iPhone/iPad app, ten per-game save-state
-slots in the standalone apps, and shared CPU, DMA and save-state corrections.
-Each platform is available as a separate download.
+This release adds an experimental iPhone/iPad app, ten save-state slots per game
+in the standalone apps, and fixes to emulation, audio and state restoration.
 
-## iPhone and iPad
+## New and improved
 
-The new app supports ARM64 devices running iOS/iPadOS 15 or later. It imports
-BIOS and game files, supports in-game card saves and save states, and provides
-touch, keyboard and controller input. Portrait keeps controls below the picture;
-landscape separates the shoulder buttons from Start/Select. The menu icon hides
-during landscape play and can be opened by tapping its position.
-Its enlarged touch target remains active after the icon hides.
-Hiding touch controls reclaims their screen space, including the Start/Select
-row, while preserving the game's 4:3 aspect ratio and hardware input.
-Save State and Load State offer ten per-game slots. A single state saved by an
-earlier iOS build remains in slot 1.
+- **iPhone and iPad:** import BIOS and games, use touch controls or a controller,
+  and play in portrait or landscape. The unsigned IPA requires a compatible
+  signing tool. JIT requires separate activation.
+- **Windows, Android and iOS:** ten save-state slots for each game. Existing
+  slots remain available; the previous single iOS state appears in slot 1.
+- **Mobile controls:** improved landscape layout, a menu button that hides
+  during play, and more screen space when touch controls are disabled.
+- **Audio:** smoother recovery after pauses, state loads and audio interruptions.
+- **Emulation:** corrected CPU/JIT memory handling, DMA transfers and timer
+  behavior. Save states preserve all four PCM channels and their playback positions.
+- **Loading and saving:** better handling of damaged states and failed loads,
+  preserving the running game when a state is rejected.
 
-The IPA is intended for SideStore or another compatible signing tool. It has no
-publisher signature, provisioning profile, BIOS, games or saves. The complete
-SideStore installation workflow remains unverified. See the
-[iPhone/iPad guide](../ios/README.md) for installation, controls and storage.
+## Updating
 
-Games start with the interpreter. An experimental ARM64 JIT is included; it
-requires external activation and is not enabled merely by installing the app.
-The menu can request StikDebug activation on supported TXM devices. Local
-Xcode/LLDB activation is also available. Complete StikDebug app-to-app activation
-and automatic setup on non-TXM devices remain unverified.
+Install over the existing application or replace the matching RetroArch core.
+Keep your BIOS, games, settings and saves. Do not uninstall a mobile app first.
 
-Earlier physical-device checks matched interpreter/JIT video, audio and complete
-save-state output for Blue Angelo and Astonishia Story R, including repeated
-JIT code-cache reuse. The final ten-slot and v17 state flow was checked in
-Simulator; physical iPhone revalidation of the final build remains outstanding.
-These checks do not establish compatibility or full speed across the entire
-game library.
+New state files use v17. GP32emu 1.1.0 reads supported v2–v12 and v14–v16 states,
+but older cores cannot read v17. Back up old slots before overwriting them if
+you may return to an older version. In-game card saves keep their existing format.
+RetroArch continues to manage its own state slots.
 
-Audio and lifecycle changes include:
+## Downloads
 
-- Fading in the first recovered samples after an audio underrun or state change.
-- Rebuilding playback after an audio-engine configuration change while preserving
-  menu and pause state; disconnects and system audio resets pause the game.
-- Preserving imported content selections when an app update relocates its container.
-- Keeping the current game paused and its progress in memory if saving fails
-  while switching games, so the save can be retried.
-- Keeping errors visible while dismissing successful save/load messages.
-- Avoiding large temporary save-state allocations on frontend worker stacks.
+Applications and cores are packaged separately for each platform. iOS and
+Switch support is experimental. BIOS images, games and saves are not included.
 
-## Android
-
-- Places the landscape menu at the upper center without a reserved left strip.
-  Its icon disappears after three seconds; the larger touch target stays active.
-  Rotation and closing the menu briefly reveal it again.
-- Keeps the landscape picture clear of touch controls, with Start/Select below
-  it. Hiding controls restores the full available 4:3 display area.
-- Prevents extra fingers or gestures begun on the controls from opening the menu.
-- Keeps controls inside system bars, display cutouts and gesture areas.
-- Uses a hardware-accelerated canvas on Android 8 and newer, reducing the time
-  screen scaling occupies the emulation/audio thread. Android 6/7 keep software
-  rendering.
-- Queues the first audio samples before starting playback, avoiding an empty
-  audio track while the first emulated frame is being prepared. The same path
-  is used after pause, reset and state load.
-- Gives each game ten save-state slots; the state menu shows whether each slot
-  is empty or occupied.
-- Redraws touch controls only when their pressed state changes, while continuing
-  to process held-button and sliding input.
-
-Layout and input checks have run on emulators and a physical Android phone.
-Short Blue Angelo and Astonishia Story R title-scene measurements sustained
-about 60 frontend intervals per second with no steady-state audio underruns.
-The updated ASR startup check also recorded no startup underruns. These are
-bounded measurements, not a guarantee of perfect audio or input latency in
-all scenes and devices.
-
-Install an updated APK over the existing app to preserve imported files and saves.
-Do not uninstall first.
-
-## Shared core
-
-The interpreter and native JIT backends include corrections to ARM/Thumb
-instruction behavior, exception handling, privileged register access and
-instruction/data address translation. These are shared emulation fixes rather
-than filename-dependent game workarounds.
-
-Thumb word loads/stores and ARM SWP now handle unaligned addresses consistently
-with ARMv4 word transfers, avoiding incorrect reads and writes into the next word.
-Unallocated ARM transfer encodings now raise an undefined-instruction exception
-instead of accidentally changing a register or writing a byte to memory.
-
-JIT changes reduce compilation and dispatch work, avoid compiling one-use paths,
-and reduce decoded-instruction storage. ARM64 memory access, conditional branches
-and polling-loop handling retain checked fallbacks. Polling safety checks no
-longer change translation state for a conditional instruction that does not run.
-Apple ARM64 execution preserves the host frame pointer for helper calls.
-
-DMA four-unit bursts and STOP now follow the S3C2400 transfer semantics,
-preventing incorrect memory or audio-FIFO movement when a transfer ends early.
-
-File transfers and eligible homebrew decompression avoid redundant host work.
-FXP loading preserves the original guest loader when host decompression fails;
-GXB loading respects initialized and zero-initialized data placement. Audio
-filters reuse identical coefficients without changing the output samples.
-Performance gains vary with the game and host; no library-wide multiplier is claimed.
-
-Existing compact card saves and the Astonishia Story R/Pinball Dreams audio
-corrections remain available; they are not new features of 1.1.0.
-
-## Save-state compatibility
-
-The Windows, Android and iOS apps keep ten save-state slots for each game. On
-iOS, the earlier single save remains slot 1. RetroArch continues to use the
-save-state slots managed by the frontend.
-
-New save states use the common v17 format. It preserves separate instruction
-and data translation caches, all four direct-PCM channel identities and their
-resampling positions, and PWM counters, reload values and fractional phase. GP32emu 1.1.0 can read
-existing v2-v12 and v14-v16 states. Older core builds cannot read v17 states,
-so keep copies of state files needed by an older build.
-
-Older states lack some cache, PCM-channel and timer history. They remain
-loadable, but exact continuation across the format change is not guaranteed. In-game SmartMedia card saves and their `.sav` data are unchanged by
-the new slot and state-file format.
-
-## Remaining validation
-
-- The full SideStore installation and StikDebug activation workflow.
-- Broader mobile gameplay, physical keyboard/controller latency and sustained
-  performance beyond the measured scenes.
-- Physical headphone/Bluetooth changes and real system-audio resets on iOS;
-  injected audio-notification checks have passed.
-- Nintendo Switch runtime behavior and Android RetroArch integration.
-
-See [Building](BUILDING.md), [Android builds](ANDROID_BUILD.md) and
-[iOS builds](IOS_BUILD.md) for source builds. Each binary ZIP includes a manifest
-identifying its source revision and file checksums.
+See the [README](../README.md) for package selection, the
+[Korean manual](MANUAL.ko.md) for controls and saves, and the
+[iPhone/iPad guide](../ios/README.md) for IPA installation.

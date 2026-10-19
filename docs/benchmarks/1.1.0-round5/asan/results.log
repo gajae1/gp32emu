@@ -1,7 +1,0 @@
-configure.log exit_status=0
-build.log exit_status=0
-s3c2400_fastmem.log exit_status=0
-s3c2400_bios_load.log exit_status=0
-gp32_bios_reload.log exit_status=0
-s3c2400_pwm_state.log exit_status=0
-gp32_state_speed.log exit_status=0

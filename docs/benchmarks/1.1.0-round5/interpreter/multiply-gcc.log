@@ -1,5 +1,0 @@
-mode 0: 290688 cases
-mode 1: 290688 cases
-mode 2: 290688 cases
-native multiply helpers: 0, other helpers: 0
-arm_multiply_test: 872064 cases, 0 failures, 581376 native instructions

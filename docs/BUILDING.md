@@ -31,9 +31,7 @@ steps. `Makefile.libretro` also builds the legacy Linux core.
 The Android build script accepts `arm64-v8a` and `armeabi-v7a`. Building `x86_64`
 requires a manual NDK CMake configuration with `-DANDROID_ABI=x86_64` or
 `ndk-build`. The separate Android cores target API 21; the standalone app targets API 23
-as its minimum. See [ANDROID_BUILD.md](ANDROID_BUILD.md) for app packaging and
-validation limits. RetroArch integration and native ARM device use remain
-unverified.
+as its minimum. See [ANDROID_BUILD.md](ANDROID_BUILD.md) for app packaging.
 
 For Linux AArch64 cross-compilation, put Zig 0.13.0 on PATH and use the toolchain
 file `cmake/toolchains/linux-aarch64-zig.cmake`. It retains the Cortex-A53
@@ -49,17 +47,15 @@ directories: one Windows build containing `gp32emu_win64.exe` and
 `gp32emu_libretro.dll`, one Linux AArch64 core build, and one build for each
 Android ABI. Also pass SDL3's DLL and licence notice and `llvm-strip` (included
 in the Android NDK). Debug information is removed only from packaged `.so`
-copies; original build outputs keep their symbols. Tests, build caches and local
-results are not packaged.
+copies; original build outputs keep their symbols. Binary packages exclude
+tests, build caches and local results; source packages retain the tests.
 
-The development defaults produce `gp32emu-1.1.0-windows-x64.zip`,
+The defaults produce `gp32emu-1.1.0-windows-x64.zip`,
 `gp32emu-1.1.0-libretro-windows-x64.zip`, `gp32emu-1.1.0-linux-aarch64.zip`,
 `gp32emu-1.1.0-android-arm64.zip` and `gp32emu-1.1.0-android-armv7.zip`.
-These are future build outputs; the current public downloads remain 1.0.1.
 Each archive places its binaries and, for cores, `gp32emu_libretro.info` at the
-root, then adds the common README, release notes, Korean manual, `licenses/`
-and `manifest.json`. The output directory also receives `SHA256SUMS.txt` for
-the five ZIP files.
+root, then adds user documentation, `licenses/` and `manifest.json`.
+The output directory also receives `SHA256SUMS.txt` for the generated packages.
 
 ## Nintendo Switch (experimental)
 
@@ -135,7 +131,6 @@ This builds `web/gp32_wasm_core.wasm`. Open `http://127.0.0.1:8008/` for the loc
 page, which accepts BIOS and game files by drag and drop. The build needs a C
 compiler targeting `wasm32` plus `wasm-ld`, such as clang or
 `zig cc -target wasm32-freestanding`. It uses the interpreter without JIT.
-Browser playback and Qt runtime use remain unverified.
 
 ## Headless runner and tests
 

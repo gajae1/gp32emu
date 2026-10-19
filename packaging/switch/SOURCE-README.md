@@ -1,8 +1,5 @@
 # GP32emu 1.1.0 Switch core source package
 
-This is the packaging template for an unreleased 1.1.0 build.
-The named 1.1.0 downloads are not published yet.
-
 This package contains the GP32emu core sources and the compiled static library
 `gp32emu_libretro_libnx.a`. To play, download `gp32emu-1.1.0-switch-libnx.zip`
 instead. A static library cannot be loaded by RetroArch on a console.

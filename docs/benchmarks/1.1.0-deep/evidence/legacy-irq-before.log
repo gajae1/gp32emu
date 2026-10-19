@@ -1,6 +1,0 @@
-FAIL: legacy state restores one IRQ with a matching offset (63)
-FAIL: legacy queued IRQ remains serviceable after the selected IRQ (68)
-FAIL: legacy state restores one IRQ with a matching offset (63)
-FAIL: legacy queued IRQ remains serviceable after the selected IRQ (68)
-FAIL: legacy state restores one IRQ with a matching offset (63)
-FAIL: legacy queued IRQ remains serviceable after the selected IRQ (68)

@@ -99,10 +99,6 @@ its code memory unchanged. Repeat the handshake
 after restarting the app or changing games; reset and state restore retain the
 current grant while invalidating translated guest code.
 
-The LLDB workflow has run Blue Angelo and Astonishia Story R on an iPhone with
-matching interpreter/JIT video, PCM and final save-state output. This does not
-establish full compatibility across devices or the game library.
-
 ## Host checks without an iOS SDK
 
 Build the portable C bridge on Windows, Linux or macOS:
@@ -120,6 +116,6 @@ cmake --build build-tests --target ios_bridge_test --parallel 2
 ctest --test-dir build-tests -C Debug -R '^ios_bridge$' --output-on-failure
 ```
 
-The host regression passed on Windows and Apple Silicon macOS. It checks the portable C code, not the
-UIKit app or actual audio playback. The core selects C23 when supported and
+The host regression checks the portable C code, not the UIKit app or actual
+audio playback. The core selects C23 when supported and
 otherwise falls back to C11.

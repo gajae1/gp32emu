@@ -1,5 +1,0 @@
-mode=2 op=d0f32190 a=80000000 b=ffffffff flags=f0000000 multiply avoids semantic helpers got=00046f80 want=00000000
-mode 0: 290688 cases
-mode 1: 290688 cases
-mode 2: 290688 cases
-arm_multiply_test: 872064 cases, 1 failures, 581376 native instructions

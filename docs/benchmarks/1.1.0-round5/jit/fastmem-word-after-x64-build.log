@@ -1,1 +1,0 @@
-argv=['gcc-13', '-std=c2x', '-O3', '-DNDEBUG', '-D_XOPEN_SOURCE=700', '-DGP32EMU_CPU_PROFILE=1', '-DCORE_UNDER_TEST="/tmp/gp32-round5-jit/src/arm920t.c"', '-Isrc', '-Iinclude', 'docs/benchmarks/1.1.0-round5/jit/native-fastmem-word-test.c', '-o', '/tmp/gp32-round5-jit-baseline-native/fastmem-word-after-x64']
