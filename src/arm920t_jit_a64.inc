@@ -2101,17 +2101,24 @@ static uint32_t a64_op_reads(const arm_jit_op_t *op) {
     return m & 0x7fffu;
 }
 
-/* Cache the guest registers the block reads at least twice, most read first. */
+/* Cache registers read at least twice. Prefer reads in the repeating prefix
+ * over a long fallthrough tail; use whole-trace reads to break ties. A trace
+ * without a native self backedge keeps the original ordering. All copies
+ * remain write-through and helpers still reload them before continuing. */
 static void a64_pick_cache(a64_emit_t *e, const arm_jit_op_t *ops, unsigned count) {
-    unsigned reads[15] = {0};
+    unsigned reads[15] = {0}, loop_reads[15] = {0};
     for (unsigned i = 0; i < count; ++i) {
         uint32_t m = a64_op_reads(&ops[i]);
-        for (unsigned r = 0; r < 15u; ++r) reads[r] += (m >> r) & 1u;
+        for (unsigned r = 0; r < 15u; ++r) {
+            reads[r] += (m >> r) & 1u;
+            if (i < e->loop_done) loop_reads[r] += (m >> r) & 1u;
+        }
     }
     for (unsigned k = 0; k < A64_CACHE_REGS; ++k) {
         unsigned best = 15u;
         for (unsigned r = 0; r < 15u; ++r)
-            if (!e->cache_host[r] && reads[r] >= 2u && (best == 15u || reads[r] > reads[best])) best = r;
+            if (!e->cache_host[r] && reads[r] >= 2u && (best == 15u || loop_reads[r] > loop_reads[best] ||
+                 (loop_reads[r] == loop_reads[best] && reads[r] > reads[best]))) best = r;
         if (best == 15u) break;
         e->cache_host[best] = a64_cache_pool[k];
     }
