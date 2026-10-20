@@ -361,6 +361,25 @@ static void test_midframe_delivery_batches(void) {
     CHECK(callback_calls <= 10u, "tiny slices should not each invoke the frontend");
 }
 
+static size_t audio_frames_at_video;
+static void observe_audio_at_video(const void *data, unsigned w, unsigned h, size_t pitch) {
+    (void)data; (void)w; (void)h; (void)pitch;
+    /* A frontend may wait for vertical sync here. Already-generated audio
+     * must reach it before that wait, including a short pump remainder. */
+    audio_frames_at_video = captured_frames;
+}
+
+static void test_audio_before_video(void) {
+    start_case();
+    retro_set_video_refresh(observe_audio_at_video);
+    per_call = 7u;
+    audio_frames_at_video = 0u;
+    feed(31u, 44100u, 100);
+    CHECK(audio_frames_at_video == 31u, "frame-tail PCM must precede a blocking video callback");
+    CHECK(captured_frames == 31u, "early delivery must not duplicate the frame tail");
+    retro_set_video_refresh(NULL);
+}
+
 static void test_partial_and_blocked(void) {
     start_case();
     per_call = 3;
@@ -1180,6 +1199,7 @@ int main(int argc, char **argv) {
     test_resampler_peak_clipping();
     test_frontend_audio_clock();
     test_midframe_delivery_batches();
+    test_audio_before_video();
     test_partial_and_blocked();
     test_resampled_and_sample_callback();
     test_mixed_spans();
