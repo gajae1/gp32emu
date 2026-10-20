@@ -5408,9 +5408,11 @@ static ARM_NOINLINE uint32_t arm_jit_run_portable(arm920t_t *c,
     /* Decoded ops live in one stable allocation for the CPU's lifetime; the
      * generation/epoch fences below guard in-place reuse of the block. */
     const arm_jit_op_t *ops = arm_jit_ops(c, b);
+    /* The previous iteration's exit check proves the next PC and ARM state.
+     * No callback runs between that check and the next iteration. */
+    if (!b->count || (c->r[15] & ~3u) != ops[0].pc || thumb(c)) return 0;
     for (uint8_t i = 0; i < b->count && done < budget && run_done + done < c->run_limit; ++i) {
         const arm_jit_op_t *op = &ops[i];
-        if ((c->r[15] & ~3u) != op->pc || thumb(c)) break;
         if ((c->cp15[1] & 1u) && c->jit_fetch_page != (op->pc >> 10)) {
             if (arm_jit_prepare_fetch(c, op->pc)) {
                 /* The unusual unmapped fetch already executed one raw op. */
@@ -5422,7 +5424,7 @@ static ARM_NOINLINE uint32_t arm_jit_run_portable(arm920t_t *c,
              * repetition. Changed proofs still leave before any old op. */
             if (c->jit_generation != generation || c->jit_cache_epoch != epoch) break;
         }
-        uint32_t expected_next = (i + 1u < b->count) ? (ops[i + 1u].pc & ~3u) : (op->pc + 4u);
+        uint32_t expected_next = (i + 1u < b->count) ? ops[i + 1u].pc : (op->pc + 4u);
         if (*stable_reads && (i >= b->poll_prefix || !arm_poll_read_stable(c, op))) *stable_reads = 0;
         arm_jit_exec_classified_bc(c, op);
         ARM_PROF_INC(c, block_interp_arm_insns);

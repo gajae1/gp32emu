@@ -153,11 +153,14 @@ ARM_FORCE_INLINE int arm_a64_can_continue(const arm920t_t *c, int stop,
      * deadline leaves after this instruction, before any native backedge can
      * reuse w22's old budget. Dispatch resumes with the new remaining budget;
      * callback-free chains retain their existing fast guards. */
-    return !stop && c->run_limit == run_limit && !c->halted && !thumb(c) && !c->trace && c->jit_enabled &&
-           c->jit_generation == generation && c->jit_cache_epoch == epoch &&
+    if (stop) return 0;
+    /* These read-only identity checks all require equality. Combine their
+     * differences before the control checks instead of branching on each. */
+    uint32_t changed = (c->run_limit ^ run_limit) | (c->jit_generation ^ generation) |
+                       (c->jit_cache_epoch ^ epoch) | ((c->cpsr & 0xffu) ^ status) |
+                       ((c->r[15] & ~3u) ^ expected_next);
+    return !changed && !c->halted && !thumb(c) && !c->trace && c->jit_enabled &&
            c->jit_ram_base == ram_base &&
-           (c->cpsr & 0xffu) == status &&
-           (c->r[15] & ~3u) == expected_next &&
            !(c->irq_line && !(c->cpsr & I_FLAG)) &&
            !(c->fiq_line && !(c->cpsr & F_FLAG)) &&
            (!(c->cp15[1] & 1u) || c->jit_fetch_page != UINT32_MAX);
@@ -577,7 +580,9 @@ static void a64_ext(a64_emit_t *e, uint32_t opcode, unsigned to) {
     if (e->fail || e->ext_count >= A64_EXT_MAX) { e->fail = 1; return; }
     e->ext_at[e->ext_count] = (uint32_t)e->pos;
     e->ext_to[e->ext_count++] = (uint8_t)to;
-    a64_branch_word(e, opcode);
+    /* The external link pass owns this placeholder. It has no target within
+     * tmp, so the ordinary hot/cold relocation scan need not visit it. */
+    a64_u32(e, opcode);
 }
 
 /* Leave the call: w0 = ops completed by this block, rt_exit adds w23. */
@@ -2180,15 +2185,31 @@ static ARM_NOINLINE void a64_pick_cache(a64_emit_t *e, const arm_jit_op_t *ops, 
         a64_pick_cache_short(e, ops, count);
         return;
     }
-    /* Keep the long-trace accumulator vectorizable, with no per-op call that
-     * would spill its counters. The short path stays outside this hot loop. */
-    unsigned reads[15] = {0}, loop_reads[15] = {0};
+    /* Five register counts fit in separate bytes of one 64-bit word. Each
+     * op contributes at most one to a lane, so no lane can carry into the
+     * next within the maximum block length. Keep the repeating-prefix counts
+     * as a snapshot; unpack once for the unchanged ranking below. The
+     * multiplier has bits at 0,7,14,21,28: multiplying five input bits and
+     * masking byte bit 0 spreads bit i to bit 8*i without overlapping terms. */
+    _Static_assert(ARM_JIT_MAX_INSNS < 256u, "byte-wide register counts");
+    uint64_t lo = 0, mid = 0, hi = 0, loop_lo = 0, loop_mid = 0, loop_hi = 0;
+    const unsigned prefix = e->loop_done;
     for (unsigned i = 0; i < count; ++i) {
+        if (i == prefix) { loop_lo = lo; loop_mid = mid; loop_hi = hi; }
         uint32_t m = a64_op_reads(&ops[i]);
-        for (unsigned r = 0; r < 15u; ++r) {
-            reads[r] += (m >> r) & 1u;
-            if (i < e->loop_done) loop_reads[r] += (m >> r) & 1u;
-        }
+        lo += ((uint64_t)(m & 31u) * UINT64_C(0x10204081)) & UINT64_C(0x0101010101);
+        mid += ((uint64_t)((m >> 5) & 31u) * UINT64_C(0x10204081)) & UINT64_C(0x0101010101);
+        hi += ((uint64_t)(m >> 10) * UINT64_C(0x10204081)) & UINT64_C(0x0101010101);
+    }
+    if (prefix >= count) { loop_lo = lo; loop_mid = mid; loop_hi = hi; }
+    unsigned reads[15], loop_reads[15];
+    for (unsigned r = 0; r < 5u; ++r) {
+        reads[r] = (unsigned)(lo >> (r * 8u)) & 255u;
+        reads[r + 5u] = (unsigned)(mid >> (r * 8u)) & 255u;
+        reads[r + 10u] = (unsigned)(hi >> (r * 8u)) & 255u;
+        loop_reads[r] = (unsigned)(loop_lo >> (r * 8u)) & 255u;
+        loop_reads[r + 5u] = (unsigned)(loop_mid >> (r * 8u)) & 255u;
+        loop_reads[r + 10u] = (unsigned)(loop_hi >> (r * 8u)) & 255u;
     }
     for (unsigned k = 0; k < A64_CACHE_REGS; ++k) {
         unsigned best = 15u;
