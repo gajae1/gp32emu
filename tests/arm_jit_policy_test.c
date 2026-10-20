@@ -94,10 +94,32 @@ static void policy_lifecycle(void) {
 }
 #endif
 
+/* A first revalidation must compare against the original decode even if
+ * its compact proof has not been needed yet. Repeat after replacing that
+ * same cache slot, so stale proof metadata cannot accept the old opcode. */
+static void first_revalidation_changed(void) {
+    const uint32_t target = RAM_BASE + 0x3000u;
+    current_case = "first-revalidation-changed";
+    setup_cache_pair();
+    set_mem_both(target, 0xe3a04011u); /* MOV r4,#17 */
+    set_mem_both(target + 4u, 0xe12fff1eu); /* BX lr */
+    set_reg_both(14u, CODE_ADDR + 0x1000u);
+    run_cache_pair(target, 2u);
+    CHECK(ref_reg(4u) == 17u, "original decoded instruction");
+    for (unsigned value = 34u; value <= 51u; value += 17u) {
+        set_mem_both(target, 0xe3a04000u | value);
+        run_cache_pair(CODE_ADDR, 1u); /* guest I-cache maintenance */
+        run_cache_pair(target, 2u);
+        CHECK(ref_reg(4u) == value, "first revalidation rejects changed instruction");
+    }
+    teardown_pair();
+}
+
 int main(void) {
 #if ARM920T_NATIVE_BACKEND
     policy_lifecycle();
 #endif
+    first_revalidation_changed();
     /* Preserve existing cache assertions; only warm both compilation tiers
      * before its arena-size snapshot. No checks are removed or relaxed. */
     case_cache_unchanged();

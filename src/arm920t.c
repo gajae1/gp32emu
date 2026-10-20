@@ -300,12 +300,13 @@ typedef struct arm_jit_block {
  * skipping is only ever decided by the existing fixed-point proof.
  */
 typedef struct arm_jit_poll_state {
-    uint8_t flags; /* ARM_JIT_POLL_* */
+    uint8_t flags; /* ARM_JIT_POLL_* and ARM_JIT_PROOF_READY */
     uint8_t idle;  /* consecutive portable runs of a plain candidate without a skip */
 } arm_jit_poll_state_t;
 
 #define ARM_JIT_POLL_NATIVE 0x01u /* promoted: run the native block when available */
 #define ARM_JIT_POLL_LOOPS  0x02u /* a real skip proved a fixed point: keep the portable path */
+#define ARM_JIT_PROOF_READY 0x04u /* compact fetch proof matches this slot's decoded ops */
 /*
  * A fixed-point loop reaches its first skip within two consecutive observed
  * repetitions.  Requiring this many consecutive no-skip portable runs before
@@ -2038,7 +2039,15 @@ ARM_FORCE_INLINE int arm_jit_peek_fetch(arm920t_t *c, uint32_t pc, uint32_t *ins
         uint32_t mask;
         if (!arm_jit_peek_translate(c, pc, &pa, &mask)) return 0;
     }
-    const uint8_t *p = fastmem(c, pa, 4u, 0);
+    /* These bases certify the whole physical window, just as for decoded
+     * loads. Partial/callback-backed mappings still need the exact probe. */
+    uint32_t off = pa - ARM_JIT_RAM_BASE_ADDR;
+    const uint8_t *p;
+    if (c->jit_ram_base && off <= ARM_JIT_RAM_SIZE_BYTES - 4u)
+        p = c->jit_ram_base + off;
+    else if (c->jit_bios_base && pa <= ARM_JIT_BIOS_SIZE_BYTES - 4u)
+        p = c->jit_bios_base + pa;
+    else p = fastmem(c, pa, 4u, 0);
     if (!p) return 0;
     *insn = gp32_ld32le(p);
     arm_jit_track_code(c, pa, 4u);
@@ -2088,9 +2097,19 @@ static int arm_jit_prove_run(arm920t_t *c, uint32_t pc, unsigned len,
  * A missing mapping is unprovable, even if identity memory happens to match.
  * Games that invalidate the I-cache every frame revalidate every block they
  * run once per frame, so the slot's compact proof is read when it exists. */
+static void arm_jit_proof_build(arm_jit_proof_t *pf, const arm_jit_op_t *ops, unsigned count);
 static int arm_jit_fetch_unchanged(arm920t_t *c, const arm_jit_block_t *b) {
     if (!b->count || b->count > ARM_JIT_MAX_INSNS) return 0;
-    const arm_jit_proof_t *pf = &c->jit_proof[b - c->jit_blocks];
+    arm_jit_proof_t *pf = &c->jit_proof[b - c->jit_blocks];
+    arm_jit_poll_state_t *ps = &c->jit_poll[b - c->jit_blocks];
+    if (!(ps->flags & ARM_JIT_PROOF_READY)) {
+        /* Build from the recorded decode, never from current guest memory.
+         * Blocks that never need revalidation avoid touching this cold table.
+         * Reusing a block slot clears these flags before publishing its decode.
+         * Keep valid == 1: the A64 link stub compares it with the PC as a pair. */
+        arm_jit_proof_build(pf, arm_jit_ops(c, b), b->count);
+        ps->flags |= ARM_JIT_PROOF_READY;
+    }
     /* Fetching an earlier page would evict a later page's cached mapping.
      * Independent side-effect-free peeks cannot reproduce that sequence:
      * after a table edit they could accept stale words from the later TLB
@@ -2743,11 +2762,9 @@ static ARM_NOINLINE arm_jit_block_t *arm_jit_translate(arm920t_t *c, uint32_t pc
             if (c->jit_generation != collecting_generation) return NULL;
         } else if (!arm_jit_peek_fetch(c, cur, &insn)) break;
         arm_jit_op_t *op = &arm_jit_ops(c, b)[i];
-        op->pc = cur;
-        op->insn = insn;
-        op->cond = (uint8_t)(insn >> 28);
-        op->kind = (uint8_t)arm_jit_classify(insn);
-        op->stop = (uint8_t)arm_jit_may_write_pc(insn);
+        *op = (arm_jit_op_t){.pc = cur, .insn = insn,
+            .cond = (uint8_t)(insn >> 28), .kind = (uint8_t)arm_jit_classify(insn),
+            .stop = (uint8_t)arm_jit_may_write_pc(insn)};
         op->reserved = (op->kind == ARM_JIT_OP_COPROC && arm_jit_is_local_cp15_op(insn)) ? 6u : 0u;
         arm_bc_decode_op(op);
         b->count = (uint8_t)(i + 1u);
@@ -2955,7 +2972,6 @@ static ARM_NOINLINE arm_jit_block_t *arm_jit_translate(arm920t_t *c, uint32_t pc
      * recorded for whatever block previously occupied this slot. */
     c->jit_poll[b - c->jit_blocks].flags = 0;
     c->jit_poll[b - c->jit_blocks].idle = 0;
-    arm_jit_proof_build(&c->jit_proof[b - c->jit_blocks], arm_jit_ops(c, b), b->count);
     /* With the MMU off every fetch address is physical, so record its page.
      * Code above the RAM window (an alias) cannot be matched to a RAM page. */
     if (c->cp15[1] & 1u) {
