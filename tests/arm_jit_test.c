@@ -5965,7 +5965,63 @@ static void case_native_bx(void) {
     printf("BX raw/cached/native retirement cases=%u\n", cases);
 }
 
+static void case_a64_cache_ranking(void) {
+#if defined(ARM_JIT_NATIVE_A64)
+    static const unsigned counts[] = {0u, 1u, 2u, 3u, 7u, 31u, 63u, ARM_JIT_MAX_INSNS};
+    uint32_t seed = 0x981327abu;
+    unsigned cases = 0;
+    current_case = "a64-cache-ranking";
+    for (unsigned n = 0; n < GP32_ARRAY_COUNT(counts); ++n) {
+        unsigned count = counts[n];
+        unsigned prefixes[] = {0u, count ? 1u : 0u, count / 2u, count};
+        for (unsigned pattern = 0; pattern < 4u; ++pattern)
+            for (unsigned p = 0; p < GP32_ARRAY_COUNT(prefixes); ++p) {
+                arm_jit_op_t ops[ARM_JIT_MAX_INSNS];
+                unsigned reads[15] = {0}, loop[15] = {0};
+                uint8_t expected[16] = {0};
+                a64_emit_t e = {0};
+                e.loop_done = prefixes[p];
+                for (unsigned i = 0; i < count; ++i) {
+                    uint32_t mask;
+                    seed ^= seed << 13; seed ^= seed >> 17; seed ^= seed << 5;
+                    if (pattern == 0u) mask = 0x7fffu;
+                    else if (pattern == 1u) mask = 1u | (1u << (i % 15u));
+                    else if (pattern == 2u) mask = 1u | (seed & 0x7fffu);
+                    else mask = 1u | (i < e.loop_done ? 0x4210u : 0x2084u);
+                    /* STM r0,{list}: r0 and every listed register are read
+                     * once. Supply the mask independently of a64_op_reads. */
+                    ops[i] = (arm_jit_op_t){.kind = ARM_JIT_OP_BLOCK_DT,
+                                           .insn = 0xe8800000u | mask};
+                    for (unsigned r = 0; r < 15u; ++r)
+                        if (mask & (1u << r)) {
+                            ++reads[r];
+                            if (i < e.loop_done) ++loop[r];
+                        }
+                }
+                for (unsigned k = 0; k < A64_CACHE_REGS; ++k) {
+                    unsigned best = 15u;
+                    for (unsigned r = 0; r < 15u; ++r)
+                        if (!expected[r] && reads[r] >= 2u &&
+                            (best == 15u || loop[r] > loop[best] ||
+                             (loop[r] == loop[best] && reads[r] > reads[best]))) best = r;
+                    if (best == 15u) break;
+                    expected[best] = a64_cache_pool[k];
+                }
+                a64_pick_cache(&e, ops, count);
+                CHECK(!memcmp(expected, e.cache_host, sizeof(expected)),
+                      "packed register counts changed cache ranking");
+                ++cases;
+            }
+    }
+    printf("A64 cache ranking cases=%u\n", cases);
+#endif
+}
+
 int main(int argc, char **argv) {
+    if (argc == 1 || (argc == 2 && !strcmp(argv[1], "--a64-cache-ranking"))) {
+        case_a64_cache_ranking();
+        if (argc == 2) return !!failures;
+    }
     /* Native gate triage can isolate this mapped physical-boundary case
      * without rerunning unrelated differential workloads. */
     int ram_end_only = argc == 2 && !strcmp(argv[1], "--ram-end");
