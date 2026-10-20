@@ -57,6 +57,8 @@ static int audio_guest_pcm_this_frame;
 static uint64_t last_video_frame = UINT64_MAX;
 static const uint32_t *last_video_ptr;
 static int have_last_video;
+/* Frontend presentation is not part of the serialized guest history. */
+static int video_needs_refresh = 1;
 static int can_dupe;
 static int input_bitmasks;
 static unsigned input_device = RETRO_DEVICE_JOYPAD;
@@ -399,7 +401,10 @@ void retro_set_environment(retro_environment_t cb) {
 }
 
 
-void retro_set_video_refresh(retro_video_refresh_t cb) { video_cb = cb; }
+void retro_set_video_refresh(retro_video_refresh_t cb) {
+    video_cb = cb;
+    video_needs_refresh = 1;
+}
 void retro_set_audio_sample(retro_audio_sample_t cb) { audio_cb = cb; }
 void retro_set_audio_sample_batch(retro_audio_sample_batch_t cb) { audio_batch_cb = cb; }
 void retro_set_input_poll(retro_input_poll_t cb) { input_poll_cb = cb; }
@@ -734,6 +739,7 @@ static void invalidate_last_video(void) {
     last_video_frame = UINT64_MAX;
     last_video_ptr = NULL;
     have_last_video = 0;
+    video_needs_refresh = 1;
 }
 
 /* Historical post-load delivery reset, kept for savestates that carry no
@@ -1084,12 +1090,13 @@ static void pump_audio_delivery(gp32_t *g, void *user) {
  * presented pointer is tracked instead of assuming frame_rgb. */
 static void present_duplicate_frame(void) {
     if (!video_cb) return;
-    if (can_dupe) {
-        video_cb(NULL, 0, 0, 0);
+    if (can_dupe && !video_needs_refresh) {
+        video_cb(NULL, GP32_W, GP32_H, GP32_W * sizeof(uint32_t));
         return;
     }
     if (have_last_video) {
         video_cb(last_video_ptr, GP32_W, GP32_H, GP32_W * sizeof(uint32_t));
+        video_needs_refresh = 0;
         return;
     }
     /* Nothing has been presented yet, so a blank frame is the only ABI-valid
@@ -1099,6 +1106,7 @@ static void present_duplicate_frame(void) {
      * pixels through the last_video_ptr path. */
     for (size_t i = 0; i < GP32_W * GP32_H; ++i) frame_rgb[i] = 0xff000000u;
     video_cb(frame_rgb, GP32_W, GP32_H, GP32_W * sizeof(uint32_t));
+    video_needs_refresh = 0;
     last_video_ptr = frame_rgb;
     have_last_video = 1;
 }
@@ -1135,7 +1143,7 @@ void retro_run(void) {
     gp32_framebuffer_desc_t fb;
     int have_fb = gp32_get_framebuffer(emu, &fb) == GP32_OK;
     int effects_active = effects_ready && gp32_video_effects_active(&effects);
-    if (have_fb && fb.frame_counter == last_video_frame && !effects_active) {
+    if (have_fb && fb.frame_counter == last_video_frame && !effects_active && !video_needs_refresh) {
         /* The emulated LCD produced no new frame this run (for example while
          * the panel is disabled). Present a duplicate instead of restaging and
          * repushing identical pixels; the frontend re-shows the last frame when
@@ -1145,7 +1153,10 @@ void retro_run(void) {
     } else if (have_fb && stage_frame_320x240(&fb, frame_rgb)) {
         const uint32_t *src = frame_rgb;
         if (effects_active && gp32_video_effects_process_320x240(&effects, frame_rgb, effect_rgb)) src = effect_rgb;
-        if (video_cb) video_cb(src, GP32_W, GP32_H, GP32_W * sizeof(uint32_t));
+        if (video_cb) {
+            video_cb(src, GP32_W, GP32_H, GP32_W * sizeof(uint32_t));
+            video_needs_refresh = 0;
+        }
         last_video_frame = fb.frame_counter;
         last_video_ptr = src;
         have_last_video = 1;
@@ -1360,6 +1371,9 @@ bool retro_unserialize(const void *data, size_t size) {
      * are unchanged. */
     if (stage.present) lrst_apply(&stage);
     else reset_loaded_delivery_state();
+    /* Neither the frontend's image nor frame_rgb/effect_rgb was restored.
+     * Restage the guest LCD even if its counter matches the saved history. */
+    video_needs_refresh = 1;
     free(stage.grown);
     free(stage.payload);
     return true;
