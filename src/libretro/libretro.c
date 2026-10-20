@@ -1116,6 +1116,22 @@ void retro_run(void) {
      * core instance in this file goes through this single run path. */
     gp32_set_host_pump(emu, pump_audio_delivery, NULL);
     gp32_run_frame(emu);
+    /* Hand off the final PCM before staging/presenting video: video_cb may
+     * block on vertical sync while the audio device keeps consuming. The
+     * mid-frame pump intentionally retains small tails for this drain. */
+    gp32_audio_desc_t aud;
+    if (gp32_get_audio(emu, &aud) == GP32_OK) {
+        if (aud.frame_count) {
+            /* Each span has its own source rate and is consumed only after
+             * the delivery queue retains its output. */
+            drain_guest_audio(emu, &aud);
+        } else if (!audio_guest_pcm_this_frame) {
+            /* Idle fill shares the active stream's source sample grid and
+             * fractional duration; never pad a short active block. */
+            submit_idle_silence(aud.sample_rate_hz);
+        }
+    }
+    flush_audio();
     gp32_framebuffer_desc_t fb;
     int have_fb = gp32_get_framebuffer(emu, &fb) == GP32_OK;
     int effects_active = effects_ready && gp32_video_effects_active(&effects);
@@ -1136,21 +1152,6 @@ void retro_run(void) {
     } else {
         present_duplicate_frame();
     }
-    gp32_audio_desc_t aud;
-    if (gp32_get_audio(emu, &aud) == GP32_OK) {
-        if (aud.frame_count) {
-            /* Each span has its own source rate; drain_guest_audio releases it
-             * only after the delivery queue retains its output. */
-            drain_guest_audio(emu, &aud);
-        } else if (!audio_guest_pcm_this_frame) {
-            /* Keep audio-driven frontend pacing alive while emulated audio is
-             * idle. Never pad short active blocks or alter their sample rate. */
-            /* Silence occupies the same source sample grid as active audio,
-             * including the boundary interpolation and fractional duration. */
-            submit_idle_silence(aud.sample_rate_hz);
-        }
-    }
-    flush_audio();
     if (smartmedia_save_path[0] && gp32_poll_card_progress(emu, smartmedia_save_path) != GP32_OK) {
         lr_log(RETRO_LOG_ERROR, "[gp32emu] Automatic card save failed: %s\n", gp32_get_error(emu));
         lr_message("GP32 automatic save failed. Check space and write access; retrying in the background.");
