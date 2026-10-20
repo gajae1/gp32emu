@@ -1472,8 +1472,10 @@ static void case_block_pairs(void) {
                     if (!(lists[shape] & (1u << r))) continue;
                     set_mem_both(starts[edge] + 4u * lane++, 0xaabb0000u + r);
                 }
-                /* Warm a complete native block, then revisit it with a
+                /* Prepare a complete native block without executing guest
+                 * instructions, then revisit it with a
                  * one-instruction remainder and with a full-block budget. */
+                prepare_native_block(cpu_jit, CODE_ADDR);
                 const uint32_t budgets[] = {2u, 1u, 2u};
                 for (unsigned step = 0; step < GP32_ARRAY_COUNT(budgets); ++step) {
                     set_reg_both(0u, starts[edge]);
@@ -6356,10 +6358,10 @@ static void prepare_native_block(arm920t_t *c, uint32_t pc) {
         }
         if(!b) b=arm_jit_translate(c,pc);
         if(b && !b->poll_backedge && !b->native) {
-            if(b->native_ok==4u) b->native_ok=0u;
+            if(b->native_ok>=4u) b->native_ok=0u;
             if(arm_jit_lazy_compile(c,b)) {
                 b=arm_jit_translate(c,pc);
-                if(b && b->native_ok==4u) b->native_ok=0u;
+                if(b && b->native_ok>=4u) b->native_ok=0u;
                 if(b) CHECK(!arm_jit_lazy_compile(c,b),"fixture repeated native recycle");
             }
             CHECK(b && b->native,"fixture failed to prepare native code");

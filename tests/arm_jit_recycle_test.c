@@ -13,6 +13,8 @@
 #define main arm_jit_differential_main
 #include "arm_jit_test.c"
 #undef main
+#define COLD_PENDING_INITIAL \
+    ((uint8_t)(3u + ARM_JIT_COLD_PORTABLE_OBSERVATIONS))
 
 /* Way-aware lookups: a set holds ARM_JIT_BLOCK_WAYS slots, so matching the
  * set base alone no longer identifies this PC's own block. */
@@ -66,11 +68,24 @@ int main(void) {
         set_reg_both(15u, pc);
         set_reg_both(1u, pc + 31u * 4u);
         if (!native_block_for_pc(pc)) {
+            arm_jit_block_t *prior = block_for_pc(pc);
+            uint8_t prior_state = prior ? prior->native_ok : COLD_PENDING_INITIAL;
             uint64_t calls = cpu_jit->prof.native_block_calls;
             CHECK(arm920t_run(cpu_jit, 32u) == arm920t_run(cpu_ref, 32u), "cold churn budget");
             arm_jit_block_t *cold = block_for_pc(pc);
-            CHECK(cold && !cold->native && cold->native_ok == 0u, "cold churn must retain portable metadata");
+            uint8_t remaining = prior_state > 4u ? (uint8_t)(prior_state - 1u) : 0u;
+            CHECK(cold && !cold->native && cold->native_ok == remaining,
+                  "cold churn decrements one observation");
             CHECK(cpu_jit->prof.native_block_calls == calls, "cold churn unexpectedly executed native code");
+            for (unsigned warm = 1u; warm < ARM_JIT_COLD_PORTABLE_OBSERVATIONS; ++warm) {
+                set_reg_both(15u, pc);
+                CHECK(arm920t_run(cpu_jit, 32u) == arm920t_run(cpu_ref, 32u), "cold warm-up budget");
+            }
+            CHECK(cpu_jit->prof.native_block_calls == calls,
+                  "cold warm-up unexpectedly executed native code");
+            arm_jit_block_t *ready = block_for_pc(pc);
+            CHECK(ready && !ready->native && ready->native_ok == 0u,
+                  "cold churn consumed the exact countdown");
             ++cold_passes;
             if ((i % 100u) == 0u) compare_state();
             set_reg_both(15u, pc);
@@ -114,16 +129,22 @@ int main(void) {
     compare_state();
     CHECK(cpu_jit->jit_generation == 1u, "generation wrap failed");
     arm_jit_block_t *wrapped_block = block_for_pc(addresses[0]);
-    CHECK(wrapped_block && wrapped_block->native_ok == 0u && !wrapped_block->native,
+    uint8_t remaining = ARM_JIT_COLD_PORTABLE_OBSERVATIONS == 1u ? 0u :
+                        (uint8_t)(COLD_PENDING_INITIAL - 1u);
+    CHECK(wrapped_block && !wrapped_block->native &&
+          wrapped_block->native_ok == remaining,
           "wrap cleared the cold block under translation");
-    set_reg_both(15u, addresses[0]);
-    CHECK(arm920t_run(cpu_jit, 32u) == arm920t_run(cpu_ref, 32u), "post-wrap promotion budget");
-    compare_state();
+    for (unsigned warm=0; warm<ARM_JIT_COLD_PORTABLE_OBSERVATIONS &&
+         !native_block_for_pc(addresses[0]); ++warm) {
+        set_reg_both(15u, addresses[0]);
+        CHECK(arm920t_run(cpu_jit, 32u) == arm920t_run(cpu_ref, 32u), "post-wrap promotion budget");
+        compare_state();
+    }
     CHECK(native_block_for_pc(addresses[0]) != NULL, "post-wrap block did not promote");
     /* A guest cache epoch can wrap while its MCR native block is active.
      * It must retire that arena without overwriting the returning block. */
     set_mem_both(CODE_ADDR, 0xee070f15u); /* MCR p15,0,r0,c7,c5,0 */
-    for (unsigned visit = 0; visit < 2u; ++visit) {
+    for (unsigned visit = 0; visit < ARM_JIT_COLD_PORTABLE_OBSERVATIONS + 1u; ++visit) {
         set_reg_both(15u, CODE_ADDR);
         CHECK(arm920t_run(cpu_jit, 1u) == arm920t_run(cpu_ref, 1u), "prepare active MCR budget");
         compare_state();
