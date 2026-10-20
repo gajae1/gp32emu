@@ -9,6 +9,16 @@
 #define _DARWIN_C_SOURCE 1
 #endif
 #include "arm920t.h"
+#ifndef GP32EMU_ENABLE_THREADS
+#define GP32EMU_ENABLE_THREADS 0
+#endif
+/* Other hosts keep the same compact storage with synchronous allocation. */
+#if GP32EMU_ENABLE_THREADS && !defined(_WIN32) && !defined(__SWITCH__) && !defined(GP32EMU_WASM)
+#define ARM_JIT_STORAGE_THREADS 1
+#include <pthread.h>
+#else
+#define ARM_JIT_STORAGE_THREADS 0
+#endif
 
 /* Sandboxed frontends can compile out every executable-memory backend. */
 #ifndef GP32EMU_DISABLE_JIT
@@ -257,7 +267,7 @@ _Static_assert(sizeof(arm_jit_op_t) == 20, "packed decoded op footprint");
 
 typedef uint32_t (*arm_jit_native_fn)(arm920t_t *cpu, uint32_t cycles);
 
-/* Revalidation proof of one block slot, parallel to jit_ops: the fetched
+/* Revalidation proof of one block slot: the fetched
  * words in op order and the runs of consecutive fetch addresses, so proving a
  * block reads four bytes per instruction instead of a whole decoded op. */
 #define ARM_JIT_PROOF_SPANS 8u
@@ -268,6 +278,22 @@ typedef struct arm_jit_proof {
     uint32_t pc[ARM_JIT_PROOF_SPANS];
     uint32_t words[ARM_JIT_MAX_INSNS];
 } arm_jit_proof_t;
+
+/* Each slot is assigned stable storage on its first translation. Packing
+ * used slots together avoids faulting sparse pages in two maximum-size tables.
+ * Reset/revalidation never relocates operands retained by native helpers. */
+typedef struct arm_jit_storage {
+    arm_jit_op_t ops[ARM_JIT_MAX_INSNS];
+    arm_jit_proof_t proof;
+} arm_jit_storage_t;
+#define ARM_JIT_OP_SLAB_SLOTS (ARM_JIT_BLOCK_COUNT < 32u ? ARM_JIT_BLOCK_COUNT : 32u)
+typedef struct arm_jit_op_slab {
+    struct arm_jit_op_slab *next;
+    unsigned used;
+    arm_jit_storage_t slots[ARM_JIT_OP_SLAB_SLOTS];
+} arm_jit_op_slab_t;
+
+#include "arm920t_storage.inc"
 
 typedef struct arm_jit_block {
     uint32_t tag_pc;
@@ -394,8 +420,8 @@ struct arm920t {
     size_t accelerator_count;
     void *accelerator_user;
     arm_jit_block_t *jit_blocks;
-    arm_jit_op_t (*jit_ops)[ARM_JIT_MAX_INSNS];
-    arm_jit_proof_t *jit_proof; /* parallel to jit_blocks */
+    arm_jit_storage_t **jit_data;
+    arm_jit_op_slab_t *jit_op_slabs;
     uint8_t *jit_code;
     uint8_t *jit_ram_base;
     uint8_t *jit_bios_base;
@@ -480,6 +506,8 @@ struct arm920t {
      * each other, so ordinary GP32 MMIO/data writes retain the RAM policy.
      * Runtime-only; cleared with a full generation, not a sampling reset. */
     uint8_t jit_code_nonram;
+    arm_jit_storage_worker_t *jit_storage_worker;
+    int jit_storage_started;
 };
 _Static_assert(offsetof(arm920t_t, jit_cache_epoch) == offsetof(arm920t_t, jit_generation) + 4u &&
                offsetof(arm_jit_block_t, tag_cache_epoch) == offsetof(arm_jit_block_t, generation) + 4u,
@@ -489,10 +517,10 @@ _Static_assert(offsetof(arm_jit_block_t, count) == 16u && offsetof(arm_jit_block
                offsetof(arm_jit_block_t, deferred_inline_pc) == 20u,
                "dispatcher reads the block's fast-path metadata as one 64-bit word");
 
-/* Native dispatch only needs the compact header. Decoded instructions live
- * in a separate stable allocation so C helpers can retain their addresses. */
+/* Native dispatch only needs the compact header. Slot storage stays at its
+ * original address so C helpers can retain decoded instruction pointers. */
 ARM_FORCE_INLINE arm_jit_op_t *arm_jit_ops(const arm920t_t *c, const arm_jit_block_t *b) {
-    return c->jit_ops[b - c->jit_blocks];
+    return c->jit_data[b - c->jit_blocks]->ops;
 }
 
 static uint32_t mode(const arm920t_t *c) { return c->cpsr & MODE_MASK; }
@@ -1223,10 +1251,15 @@ void arm920t_destroy(arm920t_t *c) {
 #if defined(ARM_JIT_NATIVE_X64) || defined(ARM_JIT_NATIVE_A64)
     arm_jit_free_exec(c, c->jit_code, c->jit_code_size);
 #endif
+    arm_jit_storage_stop(c->jit_storage_worker);
     free(c->jit_blocks);
-    free(c->jit_ops);
+    while (c->jit_op_slabs) {
+        arm_jit_op_slab_t *next = c->jit_op_slabs->next;
+        free(c->jit_op_slabs);
+        c->jit_op_slabs = next;
+    }
+    free(c->jit_data);
     free(c->jit_poll);
-    free(c->jit_proof);
     free(c);
 }
 void arm920t_set_trace(arm920t_t *c, int en, arm_log_fn log, void *user) { if (c) { c->trace = en; c->log = log; c->log_user = user; } }
@@ -2100,7 +2133,7 @@ static int arm_jit_prove_run(arm920t_t *c, uint32_t pc, unsigned len,
 static void arm_jit_proof_build(arm_jit_proof_t *pf, const arm_jit_op_t *ops, unsigned count);
 static int arm_jit_fetch_unchanged(arm920t_t *c, const arm_jit_block_t *b) {
     if (!b->count || b->count > ARM_JIT_MAX_INSNS) return 0;
-    arm_jit_proof_t *pf = &c->jit_proof[b - c->jit_blocks];
+    arm_jit_proof_t *pf = &c->jit_data[b - c->jit_blocks]->proof;
     arm_jit_poll_state_t *ps = &c->jit_poll[b - c->jit_blocks];
     if (!(ps->flags & ARM_JIT_PROOF_READY)) {
         /* Build from the recorded decode, never from current guest memory.
@@ -2473,22 +2506,40 @@ static int arm_jit_op_may_write_lr(const arm_jit_op_t *op) {
     }
 }
 
+static int arm_jit_alloc_ops(arm920t_t *c, arm_jit_block_t *b) {
+    size_t slot = (size_t)(b - c->jit_blocks);
+    if (c->jit_data[slot]) return 1;
+    arm_jit_op_slab_t *slab = c->jit_op_slabs;
+    if (!slab || slab->used == ARM_JIT_OP_SLAB_SLOTS) {
+        /* One small block set needs no worker. Start at the first exhausted
+         * slab, and remember failure so resource pressure cannot spawn retries. */
+        if (slab && !c->jit_storage_started) {
+            c->jit_storage_started = 1;
+            c->jit_storage_worker = arm_jit_storage_start();
+        }
+        slab = arm_jit_storage_take(c->jit_storage_worker);
+        if (!slab) return 0;
+        slab->next = c->jit_op_slabs;
+        slab->used = 0;
+        c->jit_op_slabs = slab;
+    }
+    c->jit_data[slot] = &slab->slots[slab->used++];
+    return 1;
+}
+
 static int arm_jit_alloc(arm920t_t *c) {
     if (c->jit_blocks) return 1;
     c->jit_blocks = (arm_jit_block_t *)calloc(ARM_JIT_BLOCK_COUNT, sizeof(c->jit_blocks[0]));
     if (!c->jit_blocks) return 0;
-    c->jit_ops = calloc(ARM_JIT_BLOCK_COUNT, sizeof(c->jit_ops[0]));
+    c->jit_data = calloc(ARM_JIT_BLOCK_COUNT, sizeof(c->jit_data[0]));
     c->jit_poll = (arm_jit_poll_state_t *)calloc(ARM_JIT_BLOCK_COUNT, sizeof(c->jit_poll[0]));
-    c->jit_proof = (arm_jit_proof_t *)calloc(ARM_JIT_BLOCK_COUNT, sizeof(c->jit_proof[0]));
-    if (!c->jit_ops || !c->jit_poll || !c->jit_proof) {
+    if (!c->jit_data || !c->jit_poll) {
         free(c->jit_blocks);
-        free(c->jit_ops);
+        free(c->jit_data);
         free(c->jit_poll);
-        free(c->jit_proof);
         c->jit_blocks = NULL;
-        c->jit_ops = NULL;
+        c->jit_data = NULL;
         c->jit_poll = NULL;
-        c->jit_proof = NULL;
         return 0;
     }
     return 1;
@@ -2715,6 +2766,10 @@ static ARM_NOINLINE arm_jit_block_t *arm_jit_translate(arm920t_t *c, uint32_t pc
 #if ARM920T_PROFILING
         else c->prof.jit_block_conflicts++;
 #endif
+    }
+    if (!arm_jit_alloc_ops(c, b)) {
+        ARM_PROF_INC(c, jit_translate_failures);
+        return NULL;
     }
     b->valid = 0;
     b->tag_pc = pc;
