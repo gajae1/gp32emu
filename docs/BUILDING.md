@@ -7,6 +7,12 @@ root. For packaged binaries, see the [README](../README.md) and
 The sources build as C23 and fall back to C11 on older compilers. Configure with
 `-DGP32EMU_REQUIRE_C23=ON` to fail instead of falling back.
 
+Optional background workers are enabled by default. Thread-enabled POSIX builds
+prepare a small reserve of decoded-code storage in the background; guest CPU and
+device execution remain ordered on the emulation thread. Other targets allocate
+the same storage synchronously. Use `-DGP32EMU_ENABLE_THREADS=OFF` when building
+without background workers.
+
 For the iPhone/iPad app, Xcode signing, unsigned IPA packaging and debugger-assisted
 JIT, see [Building the iOS app](IOS_BUILD.md).
 
