@@ -143,7 +143,7 @@ static void mapping_case(unsigned variant, unsigned mmu, uint32_t data_pa) {
         arm_jit_block_t *b = arm_jit_translate(c, MAP_CODE);
         mapping_check(b && b->count == 3u, "complete three-instruction block");
         if (b) {
-            if (b->native_ok == 4u) b->native_ok = 0u;
+            if (b->native_ok >= 4u) b->native_ok = 0u;
             mapping_check(!arm_jit_lazy_compile(c, b) && b->native, "native entry prepared");
         }
         if (variants[variant].excludes)

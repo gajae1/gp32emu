@@ -103,7 +103,7 @@ static void prepare_native(arm920t_t *cpu) {
     arm_jit_block_t *b = arm_jit_translate(cpu, TEST_CODE);
     check(b != NULL,1u,"block collected");
     if (!b) return;
-    if (b->native_ok == 4u) b->native_ok = 0u;
+    if (b->native_ok >= 4u) b->native_ok = 0u;
     check((uint32_t)arm_jit_lazy_compile(cpu,b),0u,"no arena recycle");
     check(b->native != NULL,1u,"native entry prepared");
 #else

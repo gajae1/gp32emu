@@ -41,6 +41,14 @@
 #else
 #define ARM920T_NATIVE_BACKEND 0u
 #endif
+/* Ordinary A64 blocks first prove reuse on the decoded path. This avoids
+ * paying the emitter cost for short-lived scene/loader code. Keep the x64
+ * policy unchanged until the longer observation window is measured there. */
+#if defined(ARM_JIT_NATIVE_A64)
+#define ARM_JIT_COLD_PORTABLE_OBSERVATIONS 8u
+#else
+#define ARM_JIT_COLD_PORTABLE_OBSERVATIONS 1u
+#endif
 /* Per-block emit budget for the native backends. The live-read and
  * identity-I/O probes cost about 150 bytes per eligible word access, so the
  * x64 backend needs the room the AArch64 backend always had; at 16 KiB Blue
@@ -270,7 +278,7 @@ typedef struct arm_jit_block {
     uint32_t tag_cache_epoch;
     uint8_t count;
     uint8_t native_ok; /* 0: unattempted; 1: compiled; 2: failed lazy attempt;
-                        * 3: host accelerator; 4: first portable encounter pending. */
+                        * 3: host accelerator; >=4: portable encounters left + 3. */
     uint8_t poll_prefix;
     uint8_t poll_backedge; /* bit 0: backedge; bits 1..4: counted register + 1. */
     uint32_t deferred_inline_pc;
@@ -2975,13 +2983,13 @@ static ARM_NOINLINE arm_jit_block_t *arm_jit_translate(arm920t_t *c, uint32_t pc
     ARM_PROF_INC(c, jit_blocks_compiled);
     /* Counted candidates first observe real portable reads. Do not allocate
      * unused native code for stable loops; rejected observations may compile
-     * once later at dispatch. Ordinary blocks execute once portably before
+     * once later at dispatch. Ordinary blocks first execute portably before
      * spending host time and executable memory on native compilation. */
     if (c->jit_enabled && !(b->poll_backedge >> 1) && !arm_jit_needs_poll(c, b)) {
         if (ARM920T_NATIVE_BACKEND && !b->poll_backedge && !arm_accel_entry(c, b->tag_pc)) {
-            /* First encounter executes existing portable code. A later ordinary
+            /* Cold encounters execute existing portable code. A later ordinary
              * dispatch may compile once; poll and accelerator policy is unchanged. */
-            b->native_ok = 4u;
+            b->native_ok = 3u + ARM_JIT_COLD_PORTABLE_OBSERVATIONS;
         } else {
             arm_jit_compile_native(c, b);
 #if ARM920T_PROFILING && ARM920T_NATIVE_BACKEND
@@ -5739,8 +5747,11 @@ static uint32_t arm_jit_run(arm920t_t *c, uint32_t run_done) {
         int native_allowed = !counted || !c->bus.is_stable_read32 ||
             (rejected_pc == pc && rejected_generation == generation && rejected_epoch == epoch) ||
             (b->native && c->r[(b->poll_backedge >> 1) - 1u] - 1u >= INT32_MAX);
-        if (ARM920T_NATIVE_BACKEND && b->native_ok == 4u) {
-            b->native_ok = 0u;
+        if (ARM920T_NATIVE_BACKEND && b->native_ok >= 4u) {
+            /* Count nonzero dispatches, including a short remaining budget.
+             * The final observation still runs portably; only a subsequent
+             * full-budget dispatch may enter the emitter. */
+            b->native_ok = b->native_ok == 4u ? 0u : (uint8_t)(b->native_ok - 1u);
         } else if (ARM920T_NATIVE_BACKEND && c->jit_enabled && !b->poll_backedge &&
                    !b->native_ok && (c->run_limit - total) >= b->count) {
             if (arm_jit_lazy_compile(c, b)) {
