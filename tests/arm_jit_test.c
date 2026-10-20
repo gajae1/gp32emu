@@ -5901,6 +5901,70 @@ static void case_ldm_predicate(void) {
     printf("predicated-stop cases=%u\n",cases);
 }
 
+/* BX has no bus access: compare raw/cached/native retirement itself with a
+ * one-op budget, including every predicate/NZCV pair and every source register.
+ * Odd targets preserve bit 1 in Thumb; even targets clear both low bits. */
+static void bx_native_one(unsigned cond, unsigned rm, unsigned low, unsigned flags) {
+    const uint32_t pc = CODE_ADDR + 8u * (cond * 16u + rm);
+    const uint32_t target = CODE_ADDR + 0x4000u + low;
+    for (unsigned r = 0; r < 15u; ++r) set_reg_both(r, 0xabc00000u + r * 0x10101u);
+    arm920t_set_cpsr(cpu_jit, (flags << 28) | 0xd3u);
+    arm920t_set_cpsr(cpu_ref, (flags << 28) | 0xd3u);
+    if (rm < 15u) set_reg_both(rm, target);
+    set_reg_both(15u, pc);
+    CHECK(prepared_native_run(cpu_jit, 1u) == arm920t_run(cpu_ref, 1u), "BX one-op budget");
+    compare_state();
+    if (cond == 14u) {
+        uint32_t operand = rm == 15u ? pc + 8u : target;
+        CHECK(arm920t_get_pc(cpu_ref) == (operand & (operand & 1u ? ~1u : ~3u)),
+              "BX target alignment and PC+8 operand");
+        CHECK(arm920t_get_cpsr(cpu_ref) == ((flags << 28) | 0xd3u | ((operand & 1u) << 5)),
+              "BX changes only the Thumb bit");
+    } else if (cond == 15u) {
+        CHECK(arm920t_get_pc(cpu_ref) == pc + 4u &&
+              arm920t_get_cpsr(cpu_ref) == ((flags << 28) | 0xd3u), "NV BX is never executed");
+    }
+}
+
+static void case_native_bx(void) {
+    unsigned cases = 0;
+    for (unsigned native = 0; native < 2u; ++native) {
+        current_case = native ? "bx-native-retirement" : "bx-cached-retirement";
+        setup_pair();
+        arm920t_set_trace(cpu_ref, 1, NULL, NULL); /* raw ARM decoder */
+        arm920t_set_jit(cpu_jit, (int)native);
+        for (unsigned cond = 0; cond < 16u; ++cond)
+            for (unsigned rm = 0; rm < 16u; ++rm)
+                set_mem_both(CODE_ADDR + 8u * (cond * 16u + rm),
+                             (cond << 28) | 0x012fff10u | rm);
+        arm920t_reset_cpu_profile(cpu_jit);
+        for (unsigned cond = 0; cond < 16u; ++cond)
+            for (unsigned flags = 0; flags < 16u; ++flags) {
+                const unsigned regs[] = {0u, 14u, 15u};
+                bx_native_one(cond, regs[cond % 3u], flags & 3u, flags);
+                ++cases;
+            }
+        for (unsigned rm = 0; rm < 16u; ++rm)
+            for (unsigned low = 0; low < 4u; ++low) {
+                bx_native_one(14u, rm, low, (rm + low) & 15u);
+                ++cases;
+            }
+        gp32_cpu_profile_t p;
+        arm920t_get_cpu_profile(cpu_jit, &p);
+        printf("BX retirement mode=%s cases=320 native_calls=%" PRIu64 " helper_interp=%" PRIu64 "\n",
+               native ? "native" : "cached", p.native_block_calls, p.helper_op_kinds[0]);
+        if (native && p.supported && p.native_backend) {
+            CHECK(p.native_block_calls == 320u && p.native_arm_insns == 320u,
+                  "every BX case executes exactly one native instruction");
+#if defined(ARM_JIT_NATIVE_A64)
+            CHECK(p.helper_op_kinds[0] == 0u, "A64 BX must not call the classified helper");
+#endif
+        }
+        teardown_pair();
+    }
+    printf("BX raw/cached/native retirement cases=%u\n", cases);
+}
+
 int main(int argc, char **argv) {
     /* Native gate triage can isolate this mapped physical-boundary case
      * without rerunning unrelated differential workloads. */
@@ -5922,7 +5986,11 @@ int main(int argc, char **argv) {
     int psr_only = argc == 2 && !strcmp(argv[1], "--psr");
     int terminal_coproc_only = argc == 2 && !strcmp(argv[1], "--terminal-coproc");
     int selfmove_only = argc == 2 && !strcmp(argv[1], "--self-move-nop");
-    if (argc == 2 && !strcmp(argv[1], "--predicate-joins")) {
+    if (argc == 2 && !strcmp(argv[1], "--bx-native")) {
+        case_native_bx();
+        case_bx();
+        case_superblock_callback_lr();
+    } else if (argc == 2 && !strcmp(argv[1], "--predicate-joins")) {
         case_native_predicate_joins();
     } else if (argc == 2 && !strcmp(argv[1], "--internal-forward")) {
         case_native_internal_forward();
@@ -6156,6 +6224,7 @@ int main(int argc, char **argv) {
     case_branch_chain();
     case_forward_loop();
     case_bx();
+    case_native_bx();
     case_mem();
     case_half_modes();
     case_block_modes();
@@ -6189,6 +6258,7 @@ int main(int argc, char **argv) {
         return 1;
     }
     printf("PASS: arm jit differential (%s), jit events=%" PRIu64 " fallbacks=%" PRIu64 "\n",
+           (argc == 2 && !strcmp(argv[1], "--bx-native")) ? "bx-native" :
            (argc == 2 && !strcmp(argv[1], "--ldm-predicate")) ? "ldm-predicate" :
            (argc == 2 && !strcmp(argv[1], "--stm-base")) ? "STM-base" :
            (argc == 2 && !strcmp(argv[1], "--store-pc")) ? "store-PC" :
