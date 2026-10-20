@@ -1250,6 +1250,10 @@ static int a64_single_dt(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
     int literal = op->a == 15u && !(d & ARM_BC_SD_REGOFF);
     uint32_t literal_addr = op->pc + 8u + ((d & ARM_BC_SD_U) ? op->imm : 0u - op->imm);
     if (literal) {
+        /* Start the independent live-page load before materializing the VA. */
+        if (e->mmu)
+            a64_u32(e, 0xf9400000u | (((literal_addr >> 12) & 0xfffu) << 10) |
+                       (20u << 5) | 7u); /* ldr x7, [x20, #slot*8] */
         a64_imm(e, 0, literal_addr);
     } else {
         if (d & ARM_BC_SD_REGOFF) {
@@ -1286,7 +1290,15 @@ static int a64_single_dt(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
             a64_u32(e, 0x53000000u | (29u << 16) | (1u << 10) | 11u);
         }
     }
-    a64_ram_offset(e, slow, &nslow, byte ? 1u : 4u, !byte);
+    if (literal && e->mmu) {
+        /* The instruction fixes the lookup slot, not its live mapping or
+         * contents. Keep the same tag check and cold fallback; an aligned
+         * literal also needs no runtime word-alignment mask. */
+        a64_u32(e, 0x6b4030ffu); /* cmp w7, w0, lsr #12 */
+        slow[nslow++] = a64_jump(e, 1);
+        a64_u32(e, 0xca478009u); /* eor x9, x0, x7, lsr #32 */
+        if (!byte && (literal_addr & 3u)) a64_mask(e, 9, 9, ~3u);
+    } else a64_ram_offset(e, slow, &nslow, byte ? 1u : 4u, !byte);
     if (!load) a64_guard_code_write(e, slow, &nslow, 0u);
     /* Keep the authoritative guest store, but avoid moving its value through
      * w1 when a write-through register is already assigned. Guard failures

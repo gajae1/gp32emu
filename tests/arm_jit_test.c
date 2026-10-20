@@ -3917,6 +3917,132 @@ static void case_native_literal_addresses(void) {
 static uint32_t cache_branch(uint32_t pc, uint32_t target, int link) {
     return (link ? 0xeb000000u : 0xea000000u) | (((target - pc - 8u) >> 2) & 0x00ffffffu);
 }
+/* A PC-relative literal pool can stay at one virtual address while its live
+ * TLB entry is replaced. Reuse the same translated block, but read the new
+ * page only after the guest invalidates the old data mapping. Keep a skipped
+ * conditional load in the block to prove the loads preserve its condition. */
+static void case_native_literal_remap(void) {
+    const uint32_t code_va = 0x10002000u, data_va = 0x10001000u;
+    const uint32_t literal_va = data_va + 0x101u;
+    const uint32_t ttb = RAM_BASE + 0x4000u, l2 = RAM_BASE + 0x8000u;
+    const uint32_t code_pa = RAM_BASE + 0x10000u;
+    const uint32_t data_pa_a = RAM_BASE + 0x20000u, data_pa_b = RAM_BASE + 0x30000u;
+    const uint32_t l2_data_slot = l2 + ((data_va >> 10) & 0x3fcu);
+    const uint32_t program[] = {
+        0x151f1000u | (code_va + 8u - literal_va),  /* LDRNE r1,[pc,-imm] */
+        0x155f2000u | (code_va + 12u - literal_va), /* LDRBNE r2,[pc,-imm] */
+        0x051f3000u | (code_va + 16u - literal_va), /* LDREQ r3,[pc,-imm] */
+        0xeafffffeu,
+    };
+    current_case = "native-literal-remap";
+    setup_pair();
+    arm920t_set_trace(cpu_ref, 1, NULL, NULL);
+    set_cpsr_both(0x000000d3u);
+
+    set_mem_both(ttb, 2u); /* BIOS identity */
+    set_mem_both(ttb + ((RAM_BASE >> 20) * 4u), RAM_BASE | 2u);
+    set_mem_both(ttb + ((code_va >> 20) * 4u), l2 | 1u);
+    set_mem_both(l2 + ((code_va >> 10) & 0x3fcu), code_pa | 2u);
+    set_mem_both(l2_data_slot, data_pa_a | 2u);
+    for (unsigned i = 0; i < GP32_ARRAY_COUNT(program); ++i)
+        set_mem_both(code_pa + i * 4u, program[i]);
+    set_mem_both(data_pa_a + 0x100u, 0x44332211u);
+    set_mem_both(data_pa_b + 0x100u, 0x88776655u);
+
+    set_mem_both(CODE_ADDR, 0xee02af10u);       /* MCR p15,0,r10,c2,c0,0 */
+    set_mem_both(CODE_ADDR + 4u, 0xee01bf10u);  /* MCR p15,0,r11,c1,c0,0 */
+    set_mem_both(CODE_ADDR + 8u, 0xe12fff1cu); /* BX r12: target is beyond B range */
+    set_mem_both(CODE_ADDR + 0x100u, 0xe5832000u); /* STR r2,[r3] */
+    set_mem_both(CODE_ADDR + 0x104u, 0xee080f36u); /* MCR p15,0,r0,c8,c6,1 */
+    set_mem_both(CODE_ADDR + 0x108u, 0xeafffffeu);
+    set_reg_both(10u, ttb);
+    set_reg_both(11u, 1u);
+    set_reg_both(12u, code_va);
+    run_cache_pair(CODE_ADDR, 3u);
+    CHECK(arm920t_get_pc(cpu_ref) == code_va, "literal remap bootstrap target");
+
+    const unsigned data_slot = (data_va >> 12) & 0xfffu;
+    CHECK(!cpu_jit->tlb_entry[data_slot].valid &&
+          !cpu_ref->tlb_entry[data_slot].valid, "literal remap fixture needs a cold data slot");
+
+    /* First execution walks the table. The second is the same cached block
+     * with the live mapping resident. Allow room for the terminal self-branch's
+     * appended trace copy, so the native entry receives a full-block budget. */
+    set_reg_both(1u, 0x11111111u);
+    set_reg_both(2u, 0x22222222u);
+    set_reg_both(3u, 0xa5a5a5a5u);
+    run_cache_pair(code_va, 20u);
+    CHECK(ref_reg(1u) == 0x11443322u && ref_reg(2u) == 0x22u &&
+          ref_reg(3u) == 0xa5a5a5a5u && arm920t_get_cpsr(cpu_ref) == 0x000000d3u,
+          "cold literal A rotation, byte, condition and flags");
+    CHECK(cpu_jit->tlb_entry[data_slot].valid &&
+          cpu_jit->tlb_entry[data_slot].pa_base == data_pa_a,
+          "literal A live derived TLB slot");
+
+    prepare_native_block(cpu_jit, code_va);
+    set_reg_both(1u, 0x11111111u);
+    set_reg_both(2u, 0x22222222u);
+    set_reg_both(3u, 0xa5a5a5a5u);
+    arm920t_reset_cpu_profile(cpu_jit);
+    run_cache_pair(code_va, 20u);
+    CHECK(ref_reg(1u) == 0x11443322u && ref_reg(2u) == 0x22u &&
+          ref_reg(3u) == 0xa5a5a5a5u && arm920t_get_cpsr(cpu_ref) == 0x000000d3u,
+          "warm literal A preserves condition and flags");
+    gp32_cpu_profile_t profile;
+    arm920t_get_cpu_profile(cpu_jit, &profile);
+    if (profile.supported && profile.native_backend)
+        CHECK(profile.native_block_calls != 0u, "warm mapped literal block did not run natively");
+
+    arm_jit_block_t *retained = NULL;
+    if (cpu_jit->jit_blocks) {
+        unsigned slot = arm_jit_block_index(code_va);
+        for (unsigned way = 0; way < ARM_JIT_BLOCK_WAYS; ++way)
+            if (cpu_jit->jit_blocks[slot + way].valid &&
+                cpu_jit->jit_blocks[slot + way].tag_pc == code_va)
+                retained = &cpu_jit->jit_blocks[slot + way];
+    }
+    arm_jit_native_fn retained_native = retained ? retained->native : NULL;
+    uint32_t retained_generation = cpu_jit->jit_generation;
+    if (profile.supported && profile.native_backend)
+        CHECK(retained_native && retained->count <= 20u,
+              "warm literal run covers its complete native trace");
+
+    /* Guest code installs a fresh second-level descriptor and invalidates only
+     * the old data translation. No API flush stands in for the CP15 remap. */
+    set_reg_both(0u, data_va);
+    set_reg_both(2u, data_pa_b | 2u);
+    set_reg_both(3u, l2_data_slot);
+    run_cache_pair(CODE_ADDR + 0x100u, 2u);
+    CHECK(gp32_ld32le(bus_ptr(&bus_ref, l2_data_slot, 4u)) == (data_pa_b | 2u) &&
+          !cpu_jit->tlb_entry[data_slot].valid &&
+          !cpu_ref->tlb_entry[data_slot].valid,
+          "guest CP15 remap changed the descriptor and live data slot");
+
+    CHECK(cpu_jit->jit_generation == retained_generation &&
+          (!retained_native || (retained->valid && retained->native == retained_native)),
+          "D-TLB remap must retain the compiled literal block");
+    set_reg_both(1u, 0x11111111u);
+    set_reg_both(2u, 0x22222222u);
+    set_reg_both(3u, 0xa5a5a5a5u);
+    run_cache_pair(code_va, 20u);
+    CHECK(ref_reg(1u) == 0x55887766u && ref_reg(2u) == 0x66u &&
+          ref_reg(3u) == 0xa5a5a5a5u && arm920t_get_cpsr(cpu_ref) == 0x000000d3u,
+          "cold remapped literal B rotation, byte, condition and flags");
+    CHECK(cpu_jit->tlb_entry[data_slot].valid &&
+          cpu_jit->tlb_entry[data_slot].pa_base == data_pa_b,
+          "literal B live derived TLB slot");
+
+    set_reg_both(1u, 0x11111111u);
+    set_reg_both(2u, 0x22222222u);
+    set_reg_both(3u, 0xa5a5a5a5u);
+    run_cache_pair(code_va, 20u);
+    CHECK(ref_reg(1u) == 0x55887766u && ref_reg(2u) == 0x66u &&
+          ref_reg(3u) == 0xa5a5a5a5u && arm920t_get_cpsr(cpu_ref) == 0x000000d3u,
+          "warm remapped literal B preserves condition and flags");
+    CHECK(!retained_native || (retained->valid && retained->native == retained_native),
+          "remapped literal must reuse native code with the fresh mapping");
+    teardown_pair();
+}
 /* The caller is translated before its callee has a TLB entry. Once real
  * execution fills that entry, it must gain the same call folding as a warm
  * mapping, without changing partial-budget or later cache-flush behavior. */
@@ -6100,6 +6226,9 @@ int main(int argc, char **argv) {
     } else if (argc == 2 && !strcmp(argv[1], "--const-data")) {
         case_native_const_data();
         case_native_const_chain();
+    } else if (argc == 2 && !strcmp(argv[1], "--literal-addresses")) {
+        case_native_literal_addresses();
+        case_native_literal_remap();
     } else if (argc == 2 && !strcmp(argv[1], "--word-probes")) {
         case_native_read_windows();
         case_live_read32();
@@ -6226,6 +6355,7 @@ int main(int argc, char **argv) {
     case_poll_progress();
     case_native_mapped_pages();
     case_native_literal_addresses();
+    case_native_literal_remap();
     case_native_mmu_mode_changes();
     case_native_mapped_ram_end();
     case_cache_unchanged();
@@ -6324,6 +6454,7 @@ int main(int argc, char **argv) {
            (argc == 2 && !strcmp(argv[1], "--shift-pc")) ? "register-shift-PC" :
            (argc == 2 && !strcmp(argv[1], "--trace-lr")) ? "trace-lr" :
            (argc == 2 && !strcmp(argv[1], "--alu-callback-state")) ? "alu-callback-state" :
+           (argc == 2 && !strcmp(argv[1], "--literal-addresses")) ? "literal-addresses" :
            (argc == 2 && !strcmp(argv[1], "--word-probes")) ? "word-probes" :
            (argc == 2 && !strcmp(argv[1], "--read-windows")) ? "read-windows" :
            (argc == 2 && !strcmp(argv[1], "--ram-page-tags")) ? "ram-page-tags" :
