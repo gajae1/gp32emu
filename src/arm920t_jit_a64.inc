@@ -127,7 +127,7 @@ enum a64_cold_kind {
      * branch, re-runs the translation and the transfer for a span that crosses
      * one 4 KiB boundary, and resumes the hot continuation behind it. Its own
      * guard rejections join the sibling classified-helper chain. */
-    A64_COLD_BLOCK_DT_XPAGE
+    A64_COLD_BLOCK_DT_XPAGE, A64_COLD_BX_THUMB
 };
 
 /* One deferred cold chain.  The hot body records what to emit and where the
@@ -1678,14 +1678,17 @@ static int a64_mul(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
  * mappings, interrupt masks, RAM ownership or the run deadline. An ARM
  * target keeps the state already proved at native entry/checked helpers and
  * uses the same guarded hop as MOV pc. Thumb targets return to dispatch. */
-static int a64_bx(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
+static ARM_NOINLINE int a64_bx(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
     if ((op->insn & 0x0ffffff0u) != 0x012fff10u) return 0;
     unsigned rm = op->insn & 15u;
     a64_guest(e, 0, rm, op->pc); /* BX PC reads instruction address + 8. */
-    size_t thumb_target = 0;
     if (rm != 15u) {
-        thumb_target = e->pos;
-        a64_branch_word(e, 0x37000000u); /* tbnz w0, #0, Thumb exit */
+        /* The Thumb exit is not part of an ARM successor's hot body. Use
+         * B.cond's range: a cold span can be farther away than TB(N)Z reaches. */
+        a64_u32(e, 0x7200001fu); /* tst w0, #1; guest flags stay in CPSR */
+        size_t thumb_target = a64_jump(e, 1);
+        a64_cold_op_t *cold = a64_cold_open(e, op, done, A64_COLD_BX_THUMB);
+        a64_cold_fix(e, cold, thumb_target);
     }
     a64_mask(e, 16, 0, ~3u);
     a64_store(e, 16, offsetof(arm920t_t, r) + 15u * 4u);
@@ -1698,15 +1701,6 @@ static int a64_bx(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
         matched = a64_jump(e, 0);
     }
     a64_hop(e, done);
-    if (thumb_target) {
-        a64_patch(e, thumb_target, e->pos);
-        a64_load(e, 3, offsetof(arm920t_t, cpsr));
-        a64_u32(e, 0x321b0063u); /* orr w3, w3, #T_FLAG: preserve NZCV/mode */
-        a64_store(e, 3, offsetof(arm920t_t, cpsr));
-        a64_mask(e, 16, 0, ~1u); /* Thumb preserves target bit 1. */
-        a64_store(e, 16, offsetof(arm920t_t, r) + 15u * 4u);
-        a64_return(e, done);
-    }
     if (matched) a64_patch(e, matched, e->pos);
     return 1;
 }
@@ -1857,6 +1851,16 @@ static void a64_cold_flush(a64_emit_t *e) {
         e->expected_next = c->expected_next;
         e->generation = c->generation;
         switch (c->kind) {
+        case A64_COLD_BX_THUMB:
+            /* The hot bit test leaves the original target in w0. This exit
+             * preserves all guest flags/mode bits and never resumes ARM code. */
+            a64_load(e, 3, offsetof(arm920t_t, cpsr));
+            a64_u32(e, 0x321b0063u); /* orr w3, w3, #T_FLAG */
+            a64_store(e, 3, offsetof(arm920t_t, cpsr));
+            a64_mask(e, 16, 0, ~1u);
+            a64_store(e, 16, offsetof(arm920t_t, r) + 15u * 4u);
+            a64_return(e, c->done);
+            continue;
         case A64_COLD_BLOCK_DT_XPAGE: {
             /* The hot page-cross branch lands here instead of walking an
              * inline second copy of the whole transfer. The retry's own guard
@@ -2115,7 +2119,7 @@ static void a64_evict_chunk(arm920t_t *c, size_t cs, size_t ce) {
 
 /* Guest registers an op reads, from its ARM encoding. This only ranks which
  * registers are worth a cached copy; correctness never depends on it. */
-static uint32_t a64_op_reads(const arm_jit_op_t *op) {
+ARM_FORCE_INLINE uint32_t a64_op_reads(const arm_jit_op_t *op) {
     uint32_t insn = op->insn, m = 0;
     unsigned rn = (insn >> 16) & 15u, rd = (insn >> 12) & 15u, rs = (insn >> 8) & 15u, rm = insn & 15u;
     switch (op->kind) {
@@ -2156,27 +2160,34 @@ static uint32_t a64_op_reads(const arm_jit_op_t *op) {
  * over a long fallthrough tail; use whole-trace reads to break ties. A trace
  * without a native self backedge keeps the original ordering. All copies
  * remain write-through and helpers still reload them before continuing. */
-static void a64_pick_cache(a64_emit_t *e, const arm_jit_op_t *ops, unsigned count) {
+static ARM_NOINLINE void a64_pick_cache_short(a64_emit_t *e,
+                                           const arm_jit_op_t *ops,
+                                           unsigned count) {
     /* With two ops, only their common reads qualify. Each eligible register
      * has exactly two whole-trace reads and the same prefix count, so the
      * existing tie order is simply the ascending guest register number. */
+    uint32_t common = count == 2u ? a64_op_reads(&ops[0]) & a64_op_reads(&ops[1]) : 0u;
+    for (unsigned k = 0; common && k < A64_CACHE_REGS; ++k) {
+        unsigned r = arm_ctz16(common);
+        e->cache_host[r] = a64_cache_pool[k];
+        common &= common - 1u;
+    }
+}
+
+/* Keep register ranking out of the large block-emission function. */
+static ARM_NOINLINE void a64_pick_cache(a64_emit_t *e, const arm_jit_op_t *ops, unsigned count) {
     if (count <= 2u) {
-        uint32_t common = count == 2u ? a64_op_reads(&ops[0]) & a64_op_reads(&ops[1]) : 0u;
-        for (unsigned k = 0; common && k < A64_CACHE_REGS; ++k) {
-            unsigned r = arm_ctz16(common);
-            e->cache_host[r] = a64_cache_pool[k];
-            common &= common - 1u;
-        }
+        a64_pick_cache_short(e, ops, count);
         return;
     }
+    /* Keep the long-trace accumulator vectorizable, with no per-op call that
+     * would spill its counters. The short path stays outside this hot loop. */
     unsigned reads[15] = {0}, loop_reads[15] = {0};
     for (unsigned i = 0; i < count; ++i) {
         uint32_t m = a64_op_reads(&ops[i]);
-        while (m) {
-            unsigned r = arm_ctz16(m);
-            ++reads[r];
-            if (i < e->loop_done) ++loop_reads[r];
-            m &= m - 1u;
+        for (unsigned r = 0; r < 15u; ++r) {
+            reads[r] += (m >> r) & 1u;
+            if (i < e->loop_done) loop_reads[r] += (m >> r) & 1u;
         }
     }
     for (unsigned k = 0; k < A64_CACHE_REGS; ++k) {
