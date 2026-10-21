@@ -181,8 +181,10 @@ struct s3c2400 {
 };
 
 #if defined(_MSC_VER)
+#define GP32_IO_NOINLINE __declspec(noinline)
 #define GP32_IO_COLD __declspec(noinline)
 #else
+#define GP32_IO_NOINLINE __attribute__((noinline))
 #define GP32_IO_COLD __attribute__((noinline, cold))
 #endif
 
@@ -1417,7 +1419,60 @@ static void defer_io_write(s3c2400_t *s, uint32_t addr, uint32_t value, uint32_t
     arm920t_stop_run(s->cpu_irq_sink);
 }
 
+/* Keep SmartMedia GPIO stores out of the codec path's register-save frame.
+ * The individual bus writes, NAND strobes and live readback updates are
+ * unchanged; this is only a host call boundary. */
+static GP32_IO_NOINLINE void gpio_card_write32(s3c2400_t *s, uint32_t off,
+                                              uint32_t value, uint32_t mask) {
+    uint32_t *reg = &s->gpio[off >> 2];
+    *reg = (*reg & ~mask) | (value & mask);
+    switch(off){
+    case 0x08:
+        s->smc_lines.read = ((*reg & 1u) == 0);
+        live_gpcon_refresh(s);
+        if (gp32_smc_update_does_work(&s->smc_lines)) {
+            gp32_smc_update(s);
+            live_gpbdat_refresh(s);
+            live_gpcon_refresh(s);
+            live_gpcdat_refresh(s);
+        }
+        break;
+    case 0x0c: s->smc_lines.datatx = (uint8_t)(*reg & 0xffu); break;
+    case 0x24:
+        s->smc_lines.do_read=((*reg&0x100u)==0);
+        s->smc_lines.chip=((*reg&0x80u)==0);
+        s->smc_lines.wp=((*reg&0x40u)==0);
+        live_gpcdat_refresh(s);
+        if (gp32_smc_update_does_work(&s->smc_lines)) {
+            gp32_smc_update(s);
+            live_gpbdat_refresh(s);
+            live_gpcon_refresh(s);
+            live_gpcdat_refresh(s);
+        }
+        break;
+    default: break;
+    }
+    /* Every word a store can move was refreshed with its own register
+     * above: GPBCON and GPCDAT through the latched SmartMedia lines,
+     * GPBDAT through datarx, and GPEDAT only through its own word.
+     * A GPBDAT store also exposes the register's own upper half, so it
+     * keeps a refresh of that single word. Unknown GPIO mutations stay
+     * conservative. */
+    if (off == 0x0cu) live_gpbdat_refresh(s);
+    else if (off != 0x08u && off != 0x24u) live_read32_refresh(s);
+}
+
+static GP32_IO_NOINLINE void io_write32_control(s3c2400_t *s, uint32_t addr,
+                                               uint32_t value, uint32_t mask);
 static void io_write32(s3c2400_t *s, uint32_t addr, uint32_t value, uint32_t mask) {
+    uint32_t off = addr - 0x15600000u;
+    if (off <= 0x5bu && off != 0x30u)
+        gpio_card_write32(s, off, value, mask);
+    else
+        io_write32_control(s, addr, value, mask);
+}
+
+static GP32_IO_NOINLINE void io_write32_control(s3c2400_t *s, uint32_t addr, uint32_t value, uint32_t mask) {
     uint32_t off;
     /* GPIO dominates SmartMedia bit-banging; preserve every signal update
      * while avoiding the unrelated peripheral range checks on each edge. */
@@ -1457,41 +1512,7 @@ static void io_write32(s3c2400_t *s, uint32_t addr, uint32_t value, uint32_t mas
             }
             live_gpedat_refresh(s);
         } else {
-            *reg = (*reg & ~mask) | (value & mask);
-            switch(off){
-            case 0x08:
-                s->smc_lines.read = ((*reg & 1u) == 0);
-                live_gpcon_refresh(s);
-                if (gp32_smc_update_does_work(&s->smc_lines)) {
-                    gp32_smc_update(s);
-                    live_gpbdat_refresh(s);
-                    live_gpcon_refresh(s);
-                    live_gpcdat_refresh(s);
-                }
-                break;
-            case 0x0c: s->smc_lines.datatx = (uint8_t)(*reg & 0xffu); break;
-            case 0x24:
-                s->smc_lines.do_read=((*reg&0x100u)==0);
-                s->smc_lines.chip=((*reg&0x80u)==0);
-                s->smc_lines.wp=((*reg&0x40u)==0);
-                live_gpcdat_refresh(s);
-                if (gp32_smc_update_does_work(&s->smc_lines)) {
-                    gp32_smc_update(s);
-                    live_gpbdat_refresh(s);
-                    live_gpcon_refresh(s);
-                    live_gpcdat_refresh(s);
-                }
-                break;
-            default: break;
-            }
-            /* Every word a store can move was refreshed with its own register
-             * above: GPBCON and GPCDAT through the latched SmartMedia lines,
-             * GPBDAT through datarx, and GPEDAT only through its own word.
-             * A GPBDAT store also exposes the register's own upper half, so it
-             * keeps a refresh of that single word. Unknown GPIO mutations stay
-             * conservative. */
-            if (off == 0x0cu) live_gpbdat_refresh(s);
-            else if (off != 0x08u && off != 0x24u) live_read32_refresh(s);
+            gpio_card_write32(s, off, value, mask);
         }
         return;
     }
