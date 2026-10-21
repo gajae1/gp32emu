@@ -9,11 +9,13 @@ Supply your own BIOS and game dumps; neither is included.
 
 [Downloads](https://github.com/gajae1/gp32emu/releases) · [한국어 사용설명서](docs/MANUAL.ko.md)
 
-Current public release: **1.1.0**. Choose the Windows application or Android APK
-to play directly, or a core package for your existing RetroArch installation.
+Current public release: **1.0.1**. **1.1.0 is in development**; this README
+describes the development version. Choose an application package to play directly,
+or a core package for your existing RetroArch installation.
 
-An unsigned IPA is also available for iPhone and iPad; installation requires a
-compatible signing tool. See the [release notes](docs/RELEASE-1.1.0.md) and
+The development version also builds an unsigned IPA for iPhone and iPad;
+installation requires a compatible signing tool. See the
+[upcoming release notes](docs/RELEASE-1.1.0.md) and
 [iPhone/iPad guide](ios/README.md).
 
 ## Features
