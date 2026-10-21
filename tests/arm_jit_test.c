@@ -5939,9 +5939,129 @@ static void case_checked_access_translation(void) {
     teardown_pair();
 }
 
-/* Real execution, with callback counts proving the A64 path was exercised.
- * The test-only read counter is not guest-visible; the certified value has
- * no read effects. Writes remain callbacks and change the next live load. */
+/* Callback counts prove the A64 path was exercised. Compare every store,
+ * guest state observation and subsequent read with the ordinary bus. */
+static unsigned leaf_calls, leaf_wrong_state, leaf_rebind_rejected;
+static void tb_leaf_write32(void *u, uint32_t pa, uint32_t value) {
+    test_bus_t *b = u;
+    uint32_t pc = arm920t_get_pc(b->observe_cpu);
+    if (pc != CODE_ADDR + 4u && pc != CODE_ADDR + 8u && pc != CODE_ADDR + 12u)
+        ++leaf_wrong_state;
+    if (arm920t_get_reg(b->observe_cpu, 2) != 0xa1b2c3d4u) ++leaf_wrong_state;
+    if (value != (pc == CODE_ADDR + 12u ? CODE_ADDR + 20u : 0xa1b2c3d4u)) ++leaf_wrong_state;
+    ++leaf_calls;
+    leaf_rebind_rejected += !arm920t_set_leaf_write32(b->observe_cpu, NULL, 0);
+    tb_write32(u, pa, value);
+}
+static void case_leaf_write32(void) {
+    const uint32_t va = 0x10007700u;
+    const uint32_t masks[] = {0u, 0xfffu, 0x3ffu};
+    const uint32_t code[] = {0xe5802000u, 0xe5802000u, 0xe580f000u,
+        0xe5903000u, /* observe STR PC before the following stores */
+        0xe5802001u, /* unaligned word: checked path */
+        0xe5c02000u, /* STRB: checked path */
+        0xe4802000u, /* post-indexed even with offset zero: checked path */
+        0x05802000u, /* STREQ: Z is clear, no write at all */
+        0xeafffffeu};
+    for (unsigned k = 0; k < GP32_ARRAY_COUNT(masks); ++k) {
+      for (unsigned certified = 0; certified < 2u; ++certified) {
+        current_case = "leaf-write-word";
+        setup_pair_with_io_certificate(certified);
+        load_both(code, GP32_ARRAY_COUNT(code));
+        uint32_t addr = k ? va : IO_ADDR;
+        uint32_t pa = IO_ADDR | (k ? va & masks[k] : 0u);
+        if (k) {
+            arm920t_state_image_t *st = calloc(1, sizeof(*st));
+            if (!st) exit(2);
+            st->r[15] = CODE_ADDR; st->cpsr = 0xd3u; st->cp15[1] = 1u;
+            st->tlb_valid[0] = 1; st->tlb_mask[0] = 0xfffu;
+            unsigned idx = (va >> 12) & 0xfffu;
+            st->tlb_valid[idx] = 1; st->tlb_mask[idx] = masks[k];
+            st->tlb_va_base[idx] = va & ~masks[k]; st->tlb_pa_base[idx] = IO_ADDR;
+            apply_io_fixture_state(cpu_ref, st); apply_io_fixture_state(cpu_jit, st);
+            free(st); arm920t_set_jit(cpu_jit, 1);
+        }
+        set_reg_both(0, addr); set_reg_both(2, 0xa1b2c3d4u);
+        bus_ref.live_pa = bus_jit.live_pa = pa;
+        bus_ref.observe_cpu = cpu_ref; bus_jit.observe_cpu = cpu_jit;
+        arm_leaf_write32_t leaf[] = {{pa ^ 0x10u, tb_leaf_write32, &bus_jit},
+            {pa ^ 0x20u, tb_leaf_write32, &bus_jit}, {pa ^ 0x30u, tb_leaf_write32, &bus_jit}};
+        leaf[k].pa = pa; /* exercise each branch in a shared callback group */
+        CHECK(arm920t_set_leaf_write32(cpu_jit, leaf, 3), "register leaf writes");
+        leaf_calls = leaf_wrong_state = leaf_rebind_rejected = 0;
+        prepare_native_block(cpu_jit, CODE_ADDR);
+        run_cache_pair(CODE_ADDR, 64u);
+        CHECK(bus_jit.live_writes == 5u && bus_ref.live_writes == 5u,
+              "repeated, PC, unaligned and writeback stores execute; failed condition does not");
+        CHECK(ref_reg(3) == CODE_ADDR + 20u, "STR PC source is instruction+12");
+#if defined(ARM_JIT_NATIVE_A64)
+        /* STR PC uses the existing whole-op fallback, even with a certificate. */
+        CHECK(leaf_calls == (certified ? 2u : 0u), "two ordinary-register stores use certified leaf path");
+        CHECK(!leaf_wrong_state && leaf_rebind_rejected == leaf_calls,
+              "callback state and in-run registration guard");
+#else
+        CHECK(!leaf_calls, "other backends retain ordinary bus writes");
+#endif
+        if (!k) {
+        unsigned unchanged = leaf_calls;
+        set_reg_both(0, DATA_ADDR);
+        run_cache_pair(CODE_ADDR, 64u);
+        CHECK(leaf_calls == unchanged && gp32_ld32le(bus_jit.ram + 0x1000u) == 0xa1b2c3d4u,
+              "changed base uses current RAM mapping instead of sampled peripheral");
+        set_reg_both(0, addr);
+        }
+        CHECK(arm920t_set_leaf_write32(cpu_jit, NULL, 0), "disable leaf writes");
+        unsigned before = leaf_calls;
+        run_cache_pair(CODE_ADDR, 64u);
+        CHECK(leaf_calls == before && bus_jit.live_writes == 10u,
+              "revocation flushes existing native code");
+        arm_leaf_write32_t bad = {pa | 1u, tb_leaf_write32, &bus_jit};
+        CHECK(!arm920t_set_leaf_write32(cpu_jit, &bad, 1) &&
+              !arm920t_set_leaf_write32(cpu_jit, NULL, 1), "invalid leaf descriptor rejected");
+        teardown_pair();
+      }
+    }
+}
+
+static uint8_t *tb_leaf_fetch(void *u, uint32_t addr, size_t bytes, int write) {
+    test_bus_t *b = u;
+    if (!write && addr >= b->live_pa && addr - b->live_pa <= 4u &&
+        bytes <= 4u - (addr - b->live_pa))
+        return (uint8_t *)&b->live_value + (addr - b->live_pa);
+    return tb_fastmem(u, addr, bytes, write);
+}
+/* The peripheral fetch happens AFTER the ordinary store block is compiled.
+ * Its physical code watch must still force future stores through invalidation. */
+static void case_leaf_write32_code_watch(void) {
+    current_case = "leaf-write-code-watch";
+    setup_pair_with_io_certificate(1);
+    const uint32_t code[] = {0xe5802000u, 0xeafffffeu};
+    load_both(code, GP32_ARRAY_COUNT(code));
+    bus_ref.live_pa = bus_jit.live_pa = IO_ADDR;
+    bus_ref.live_value = bus_jit.live_value = 0xe3a07003u; /* MOV r7,#3 */
+    cpu_ref->bus.fastmem = cpu_jit->bus.fastmem = tb_leaf_fetch;
+    bus_ref.observe_cpu = cpu_ref; bus_jit.observe_cpu = cpu_jit;
+    set_reg_both(0, IO_ADDR); set_reg_both(2, 0xe3a07009u); /* MOV r7,#9 */
+    arm_leaf_write32_t leaf = {IO_ADDR, tb_leaf_write32, &bus_jit};
+    CHECK(arm920t_set_leaf_write32(cpu_jit, &leaf, 1), "register watched endpoint");
+    prepare_native_block(cpu_jit, CODE_ADDR);
+    prepare_native_block(cpu_jit, IO_ADDR);
+#if ARM920T_NATIVE_BACKEND
+    CHECK(cpu_jit->jit_code_nonram & ARM_JIT_NONRAM_OTHER,
+          "peripheral code translation installs its physical watch");
+#endif
+    run_cache_pair(IO_ADDR, 1u);
+    CHECK(ref_reg(7) == 3u, "peripheral fetch establishes code watch");
+    leaf_calls = leaf_wrong_state = leaf_rebind_rejected = 0;
+    run_cache_pair(CODE_ADDR, 64u);
+    CHECK(leaf_calls == 0u, "new peripheral code watch rejects previously compiled leaf path");
+    CHECK(bus_jit.live_writes == 1u && bus_ref.live_writes == 1u,
+          "watched peripheral store still executes once");
+    run_cache_pair(IO_ADDR, 1u);
+    CHECK(ref_reg(7) == 9u, "modified peripheral instruction is fetched afresh");
+    teardown_pair();
+}
+
 static void case_live_read32(void) {
     const uint32_t va = 0x10007700u;
     const uint32_t masks[] = {0u, 0xfffu, 0x3ffu};
@@ -6604,7 +6724,10 @@ int main(int argc, char **argv) {
     int terminal_coproc_only = argc == 2 && !strcmp(argv[1], "--terminal-coproc");
     int selfmove_only = argc == 2 && !strcmp(argv[1], "--self-move-nop");
     int copy_only = argc == 2 && !strcmp(argv[1], "--copy-loop");
-    if (argc == 2 && !strcmp(argv[1], "--bx-native")) {
+    if (argc == 2 && !strcmp(argv[1], "--leaf-write32")) {
+        case_leaf_write32();
+        case_leaf_write32_code_watch();
+    } else if (argc == 2 && !strcmp(argv[1], "--bx-native")) {
         case_native_bx();
         case_bx();
         case_superblock_callback_lr();
@@ -6784,6 +6907,8 @@ int main(int argc, char **argv) {
     } else {
     case_ldm_predicate();
     case_native_read_windows();
+    case_leaf_write32();
+    case_leaf_write32_code_watch();
     case_live_read32();
     case_live_read32_cold_tlb();
     case_io_direct_word();

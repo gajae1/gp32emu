@@ -96,13 +96,14 @@ static void policy_lifecycle(void) {
 /* Native promotion may split an unvisited exit tail, but that tail remains
  * real guest code. Compare every execution against raw interpretation,
  * including first exit, modified exit code, and an exit visited while cold. */
-static void policy_observed_exit(int visit_tail) {
-    const uint32_t outside=RAM_BASE+0x3000u, entry=outside+0x20u;
+static void policy_observed_exit(int visit_tail, int forward) {
+    const uint32_t entry=RAM_BASE+0x3020u;
+    const uint32_t outside=forward ? entry+0x1000u : entry-0x20u;
     current_case=visit_tail?"observed-exit-kept":"unvisited-exit-split";
     setup_cache_pair();
-    set_mem_both(outside,0xea000006u); /* B entry */
+    set_mem_both(outside,0xea000000u | (((entry-outside-8u)>>2)&0xffffffu)); /* B entry */
     set_mem_both(entry,0xe2500001u); /* SUBS r0,r0,#1 */
-    set_mem_both(entry+4u,0x1afffff5u); /* BNE outside */
+    set_mem_both(entry+4u,0x1a000000u | (((outside-entry-12u)>>2)&0xffffffu)); /* BNE outside */
     for(unsigned i=2;i<30u;++i) set_mem_both(entry+i*4u,0xe1a01001u);
     set_mem_both(entry+120u,0xe3a04011u); /* MOV r4,#17 */
     set_mem_both(entry+124u,0xe12fff1eu); /* BX lr */
@@ -157,7 +158,8 @@ int main(void) {
 #if ARM920T_NATIVE_BACKEND
     policy_lifecycle();
 #if defined(ARM_JIT_NATIVE_A64)
-    policy_observed_exit(0); policy_observed_exit(1);
+    policy_observed_exit(0,0); policy_observed_exit(1,0);
+    policy_observed_exit(0,1); policy_observed_exit(1,1);
 #endif
 #endif
     first_revalidation_changed();

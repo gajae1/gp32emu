@@ -108,6 +108,10 @@ typedef struct a64_emit {
     int want_nzcv;  /* the next decoded op is conditional */
     uint32_t loop_done, block_count;
     size_t loop_head;
+    const arm920t_t *leaf_sample;
+    const arm_leaf_write32_t *leaf_write32;
+    size_t leaf_write32_count;
+    unsigned leaf_write32_mask;
     const arm_live_read32_t *live_read32;
     size_t live_read32_count;
     struct a64_cold_op *cold; /* deferred cold chains, one per fast-path op */
@@ -1146,6 +1150,77 @@ static void a64_guard_code_write(a64_emit_t *e, size_t *slow, unsigned *nslow,
     }
 }
 
+/* Only the already translated, aligned physical endpoint is selected.
+ * The original VA alignment is tested separately. No-writeback word stores
+ * need no guest state retained in caller-saved registers over the call. */
+/* Entry values only choose whether extra cold code is worth emitting.
+ * They never authorize an access: the generated path still proves the live
+ * mapping/alignment/endpoint/watch on EVERY execution. A missed prediction
+ * retains the ordinary checked helper, including after a base value changes.
+ * No table walk or bus callback may be performed for this size heuristic. */
+static int a64_leaf_write32_likely(const a64_emit_t *e, const arm_jit_op_t *op) {
+    if (!e->leaf_write32_mask || (op->d & ARM_BC_SD_REGOFF) || op->a == 15u) return 0;
+    const arm920t_t *c = e->leaf_sample;
+    uint32_t va = c->r[op->a];
+    va = (op->d & ARM_BC_SD_U) ? va + op->imm : va - op->imm;
+    if (va & 3u) return 0;
+    uint32_t pa = va;
+    if (e->mmu) {
+        const arm_tlb_entry_t *t = &c->tlb_entry[(va >> 12) & 0xfffu];
+        if (!t->valid || (va & ~t->mask) != t->va_base) return 0;
+        pa = t->pa_base | (va & t->mask);
+    }
+    for (size_t i = 0; i < e->leaf_write32_count; ++i)
+        if ((e->leaf_write32_mask & (1u << i)) && pa == e->leaf_write32[i].pa) return 1;
+    return 0;
+}
+
+static void a64_leaf_write32_pa(a64_emit_t *e, const arm_jit_op_t *op, size_t cont) {
+    if (!a64_leaf_write32_likely(e, op)) return;
+    a64_mask(e, 6, 12, 3u);
+    a64_cmp(e, 6, 31);
+    size_t unaligned = a64_jump(e, 1);
+    size_t code_watch = SIZE_MAX;
+    if (e->check_code_writes) {
+        /* A later non-RAM fetch can add this watch after compilation.
+         * Retain the ordinary write/invalidation fence for that case. */
+        a64_cpu_mem(e, 0x39400000u, 6, offsetof(arm920t_t, jit_code_nonram), 0);
+        code_watch = e->pos;
+        a64_branch_word(e, 0x37080006u); /* tbnz w6, #1 -> checked path */
+    }
+    for (size_t i = 0; i < e->leaf_write32_count && !e->fail;) {
+        const arm_leaf_write32_t *w = &e->leaf_write32[i];
+        size_t end = i + 1u;
+        while (end < e->leaf_write32_count &&
+               e->leaf_write32[end].write == w->write &&
+               e->leaf_write32[end].user == w->user) ++end;
+        size_t matched[8];
+        unsigned nm = 0;
+        for (size_t j = i; j < end; ++j) {
+            if (!(e->leaf_write32_mask & (1u << j))) continue;
+            a64_imm(e, 6, e->leaf_write32[j].pa);
+            a64_cmp(e, 0, 6);
+            matched[nm++] = a64_jump(e, 0);
+        }
+        i = end;
+        if (!nm) continue;
+        size_t unmatched = e->pos;
+        a64_branch_word(e, 0x14000000u);
+        for (unsigned j = 0; j < nm; ++j) a64_patch(e, matched[j], e->pos);
+        a64_mov(e, 1, 0);
+        a64_guest(e, 2, op->b, op->pc + 4u);
+        a64_imm(e, 6, op->pc + 4u);
+        a64_store(e, 6, offsetof(arm920t_t, r) + 15u * 4u);
+        a64_ptr(e, 0, (uintptr_t)w->user);
+        a64_ptr(e, 16, (uintptr_t)w->write);
+        a64_u32(e, 0xd63f0200u);
+        a64_branch_back(e, cont);
+        a64_patch(e, unmatched, e->pos);
+    }
+    a64_patch(e, unaligned, e->pos);
+    if (code_watch != SIZE_MAX) a64_patch(e, code_watch, e->pos);
+}
+
 /* The shared word probe has established the current physical address in w0.
  * Certificates require an aligned original VA and use the aligned physical
  * word; preserve w0 for the following ROM/open-bus/I/O probes on rejection.
@@ -2007,6 +2082,8 @@ static void a64_cold_flush(a64_emit_t *e) {
                  * to the checked helper. Live certificates only cover word
                  * loads without writeback, a subset of this access path. */
                 a64_word_pa(e, io_cold, &nio);
+                if (!c->load && !c->wb && !c->byte)
+                    a64_leaf_write32_pa(e, c->op, c->cont);
                 if (c->live) a64_live_read32_pa(e, c->op->b, c->cont);
                 if (c->ro) a64_ro_word_pa(e, c->op, c->cont);
                 if (c->access && !c->byte)
@@ -2439,6 +2516,12 @@ static void arm_jit_compile_host(arm920t_t *c, arm_jit_block_t *b) {
     e.fwd_guest = -1;
     e.mmu = !!(c->cp15[1] & 1u);
     e.check_code_writes = !(c->cp15[1] & (1u << 12));
+    e.leaf_sample = c;
+    e.leaf_write32 = c->leaf_write32;
+    e.leaf_write32_count = c->leaf_write32_count <= 8u ? c->leaf_write32_count : 0u;
+    for (size_t i = 0; i < e.leaf_write32_count; ++i)
+        if (arm_jit_nonram_region(e.leaf_write32[i].pa) == ARM_JIT_NONRAM_OTHER &&
+            fastmem_excludes(c, e.leaf_write32[i].pa, 4u, 1)) e.leaf_write32_mask |= 1u << i;
     e.live_read32 = c->live_read32;
     e.live_read32_count = c->live_read32_count;
     e.loop_done = a64_selfloop_prefix(c, b);
