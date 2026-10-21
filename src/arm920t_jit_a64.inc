@@ -160,11 +160,14 @@ ARM_FORCE_INLINE int arm_a64_can_continue(const arm920t_t *c, int stop,
     uint32_t changed = (c->run_limit ^ run_limit) | (c->jit_generation ^ generation) |
                        (c->jit_cache_epoch ^ epoch) | ((c->cpsr & 0xffu) ^ status) |
                        ((c->r[15] & ~3u) ^ expected_next);
-    return !changed && !c->halted && !thumb(c) && !c->trace && c->jit_enabled &&
-           c->jit_ram_base == ram_base &&
-           !(c->irq_line && !(c->cpsr & I_FLAG)) &&
-           !(c->fiq_line && !(c->cpsr & F_FLAG)) &&
-           (!(c->cp15[1] & 1u) || c->jit_fetch_page != UINT32_MAX);
+    /* All operands are ordinary CPU fields. Evaluate the same predicates
+     * together so successful MMIO returns do not traverse a branch per field.
+     * Normalize every int: callbacks are not required to write only 0 or 1. */
+    return (changed == 0u) & !c->halted & !thumb(c) & !c->trace & !!c->jit_enabled &
+           (c->jit_ram_base == ram_base) &
+           (!c->irq_line | !!(c->cpsr & I_FLAG)) &
+           (!c->fiq_line | !!(c->cpsr & F_FLAG)) &
+           (!(c->cp15[1] & 1u) | (c->jit_fetch_page != UINT32_MAX));
 }
 
 static int arm_a64_exec_checked(arm920t_t *c, const arm_jit_op_t *op,
