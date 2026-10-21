@@ -14,8 +14,9 @@
  *   x26-x29  write-through copies of up to four guest registers that the
  *        current block reads most; c->r[] stays authoritative and current
  * A RAM-page hit loads its tag and VA-to-RAM XOR with one word pair.
- * Guest data registers and CPSR are committed after every instruction; PC is
- * materialized at exits and by the classified helper before callbacks.
+ * Ordinary ops commit guest data registers and CPSR after every instruction;
+ * proved callback-free RAM loops may batch a bounded number of iterations.
+ * PC is materialized at exits and by the classified helper before callbacks.
  * Slow instructions use the classified helper and validate its exit state:
  * exceptions, MMIO callbacks, mode changes and cache invalidation therefore
  * cannot continue executing an obsolete trace. No guest cycles are elided.
@@ -1850,6 +1851,102 @@ static uint32_t a64_selfloop_prefix(arm920t_t *c, arm_jit_block_t *b) {
     return 0;
 }
 
+/* Bound a contiguous halfword-copy idiom by the guest instruction budget.
+ * Every load still precedes its store, including overlapping forward copies.
+ * A failed proof reaches the ordinary instruction sequence without changing
+ * architectural state. No callback, page crossing or watched code write is
+ * batched. I-cache-enabled writes retain the ordinary native store policy. */
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((cold)) /* Rare translation work, kept apart from CPU execution. */
+#endif
+static ARM_NOINLINE int a64_copy_loop(a64_emit_t *e, const arm_jit_op_t *ops) {
+    if (!e->ram_read || !e->ram_write || e->loop_done != 5u || e->counted ||
+        (ops[0].pc >> 10) != (ops[4].pc >> 10) ||
+        (ops[0].insn & 0xfff00fffu) != 0xe0d000b2u ||
+        (ops[1].insn & 0xfff00fffu) != 0xe2400001u ||
+        (ops[2].insn & 0xfff0ffffu) != 0xe3500000u ||
+        (ops[3].insn & 0xfff00fffu) != 0xe0c000b2u ||
+        ops[4].insn != 0xcafffffau) return 0;
+    unsigned src = (ops[0].insn >> 16) & 15u;
+    unsigned val = (ops[0].insn >> 12) & 15u;
+    unsigned dst = (ops[3].insn >> 16) & 15u;
+    unsigned cnt = (ops[1].insn >> 16) & 15u;
+    if (src == 15u || val == 15u || dst == 15u || cnt == 15u ||
+        src == val || src == dst || src == cnt || val == dst || val == cnt || dst == cnt ||
+        ((ops[1].insn >> 12) & 15u) != cnt || ((ops[2].insn >> 16) & 15u) != cnt ||
+        ((ops[3].insn >> 12) & 15u) != val) return 0;
+    for (unsigned i = 0; i < 5u; ++i)
+        if (ops[i].reserved || ops[i].pc != ops[0].pc + i * 4u) return 0;
+
+    size_t slow[16];
+    unsigned nslow = 0;
+    a64_guest(e, 10, cnt, ops[0].pc);
+    a64_cmp_imm(e, 10, 0);
+    slow[nslow++] = a64_jump(e, 13); /* LE: preserve signed wrap semantics */
+    a64_guest(e, 12, src, ops[0].pc);
+    a64_guest(e, 13, dst, ops[0].pc);
+    a64_rr(e, 0x2a000000u, 6, 12, 13);
+    a64_mask(e, 6, 6, 1u);
+    slow[nslow++] = e->pos;
+    a64_branch_word(e, 0x35000006u); /* CBNZ w6: leave odd accesses alone */
+    a64_mov(e, 0, 12);
+    a64_ram_offset(e, slow, &nslow, 2u, 0);
+    a64_mov(e, 14, 9);
+    a64_mov(e, 0, 13);
+    a64_ram_offset(e, slow, &nslow, 2u, 0);
+    a64_mov(e, 15, 9);
+    /* The same page proof covers every byte in at most 16 iterations. The
+     * conservative full window also rejects a short copy near a page end. */
+    for (unsigned r = 14; r <= 15; ++r) {
+        a64_mask(e, 6, r, 0xfffu);
+        a64_cmp_imm(e, 6, 4096u - 32u);
+        slow[nslow++] = a64_jump(e, 8); /* HI */
+    }
+    /* A halfword-aligned 32-byte window covers at most nine code words.
+     * The padded watch bitmap permits the conservative final-word probe. */
+    a64_guard_code_words(e, slow, &nslow, 15u, 9u, 0u);
+    a64_imm(e, 6, 5u);
+    a64_rr(e, 0x1ac00800u, 11, 22, 6); /* UDIV w11,w22,w6 */
+    a64_cmp(e, 11, 10);
+    a64_u32(e, 0x1a800000u | (10u << 16) | (9u << 12) | (11u << 5) | 11u);
+    a64_imm(e, 6, 16u);
+    a64_cmp(e, 11, 6);
+    a64_u32(e, 0x1a800000u | (6u << 16) | (9u << 12) | (11u << 5) | 11u);
+    a64_rr(e, 0x8b204000u, 0, 21, 14); /* ADD x0,x21,w14,UXTW */
+    a64_rr(e, 0x8b204000u, 1, 21, 15);
+    a64_mov(e, 3, 11);
+    size_t copy = e->pos;
+    a64_u32(e, 0x78402402u); /* LDRH w2,[x0],#2 */
+    a64_u32(e, 0x78002422u); /* STRH w2,[x1],#2 */
+    a64_u32(e, 0x71000463u); /* SUBS w3,w3,#1 */
+    a64_branch_word(e, 0x54000001u | (((uint32_t)(copy - e->pos) & 0x7ffffu) << 5));
+    a64_rr(e, 0x0b000400u, 12, 12, 11); /* source += n * 2 */
+    a64_rr(e, 0x0b000400u, 13, 13, 11);
+    a64_rr(e, 0x4b000000u, 10, 10, 11);
+    a64_put_guest(e, src, 12);
+    a64_put_guest(e, dst, 13);
+    a64_put_guest(e, cnt, 10);
+    a64_put_guest(e, val, 2);
+    a64_cmp_imm(e, 10, 0);
+    a64_u32(e, 0xd53b4205u);
+    a64_load(e, 3, offsetof(arm920t_t, cpsr));
+    a64_bfxil_low(e, 5, 3, 28u);
+    a64_store(e, 5, offsetof(arm920t_t, cpsr));
+    a64_rr(e, 0x0b000800u, 16, 11, 11); /* five guest ops per iteration */
+    a64_rr(e, 0x4b000000u, 22, 22, 16);
+    a64_rr(e, 0x0b000000u, 23, 23, 16);
+    size_t remaining = a64_jump(e, 1); /* CMP flags survive non-S accounting */
+    a64_exit_const(e, ops[4].pc + 4u, 0u);
+    a64_patch(e, remaining, e->pos);
+    a64_cmp_imm(e, 22, e->block_count);
+    size_t leave = a64_jump(e, 3);
+    a64_branch_back(e, e->loop_head);
+    a64_patch(e, leave, e->pos);
+    a64_exit_const(e, ops[0].pc, 0u);
+    for (unsigned i = 0; i < nslow; ++i) a64_patch(e, slow[i], e->pos);
+    return 1;
+}
+
 /* Replay the recorded cold chains after the block's hot body, so every line
  * the RAM fast path walks is free of cold bytes.  A chain is entered only
  * through its recorded hot branches and resumes at the continuation that was
@@ -2383,6 +2480,12 @@ static void arm_jit_compile_host(arm920t_t *c, arm_jit_block_t *b) {
     for (unsigned r = 0; r < 15u; ++r)
         if (e.cache_host[r]) a64_load(&e, e.cache_host[r], offsetof(arm920t_t, r) + r * 4u);
     e.loop_head = e.pos;
+    int copy_loop = e.loop_done == 5u && a64_copy_loop(&e, arm_jit_ops(c, b));
+#if ARM920T_PROFILING
+    if (copy_loop) c->profile_native_variable_count[b - c->jit_blocks] = 1u;
+#else
+    (void)copy_loop;
+#endif
     int stopped = 0;
     /* Pending in-block forward branches: site and target op index. Poll
      * sources keep their dispatcher-owned repetition bookkeeping, which
