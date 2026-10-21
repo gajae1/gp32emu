@@ -1,4 +1,4 @@
-# GP32emu 1.1.0
+# GP32emu 1.1.0 (unreleased)
 
 This release adds an experimental iPhone/iPad app, ten manual save-state slots
 per game in the standalone apps, and updates to controls, audio and saving.
