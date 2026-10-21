@@ -327,7 +327,10 @@ typedef struct arm_jit_block {
  */
 typedef struct arm_jit_poll_state {
     uint8_t flags; /* ARM_JIT_POLL_* and ARM_JIT_PROOF_READY */
-    uint8_t idle;  /* consecutive portable runs of a plain candidate without a skip */
+    union {
+        uint8_t idle; /* plain poll: consecutive portable runs without a skip */
+        uint8_t cold_extent; /* non-poll: furthest op reached before promotion */
+    };
 } arm_jit_poll_state_t;
 
 #define ARM_JIT_POLL_NATIVE 0x01u /* promoted: run the native block when available */
@@ -5443,6 +5446,28 @@ static int arm_poll_read_stable(arm920t_t *c, const arm_jit_op_t *op) {
  * Keep the emitter's large scratch frame out of the hot dispatch function.
  * Failed attempts are derived block state, reset only by retranslation.
  * Returns 1 when dispatch must restart (the table may have been cleared). */
+#if defined(ARM_JIT_NATIVE_A64)
+/* Keep observed loop exits out of unrelated entries' native bodies. This
+ * only changes the collection boundary; the exit path resumes from the same
+ * guest PC through ordinary dispatch. Poll candidates own the other union
+ * member and never use this policy. No native code exists for this slot yet. */
+static void arm_jit_trim_cold_tail(arm920t_t *c, arm_jit_block_t *b) {
+    if (b->poll_backedge || b->deferred_inline_pc) return;
+    arm_jit_poll_state_t *ps = &c->jit_poll[b - c->jit_blocks];
+    unsigned n = ps->cold_extent;
+    if (!n || n + 16u >= b->count) return;
+    const arm_jit_op_t *ops = arm_jit_ops(c, b), *last = &ops[n - 1u];
+    if (last->kind != ARM_JIT_OP_BRANCH || last->cond >= 14u ||
+        (last->insn & (1u << 24))) return;
+    uint32_t target = arm_jit_branch_target(last->pc, last->insn);
+    if (target > last->pc) return;
+    for (unsigned i = 0; i < n; ++i) if (ops[i].pc == target) return;
+    b->count = (uint8_t)n;
+    if (b->poll_prefix > n) b->poll_prefix = (uint8_t)n;
+    ps->flags &= (uint8_t)~ARM_JIT_PROOF_READY;
+}
+#endif
+
 static ARM_NOINLINE int arm_jit_lazy_compile(arm920t_t *c, arm_jit_block_t *b) {
 #if ARM920T_NATIVE_BACKEND
     if (!c->jit_enabled || b->native_ok) return 0;
@@ -5453,6 +5478,10 @@ static ARM_NOINLINE int arm_jit_lazy_compile(arm920t_t *c, arm_jit_block_t *b) {
         arm920t_jit_invalidate_all(c, ARM_JIT_INV_CODE_RECYCLE);
         return 1;
     }
+#if defined(ARM_JIT_NATIVE_A64)
+    /* A64 observes several cold runs. Other backends retain their policy. */
+    arm_jit_trim_cold_tail(c, b);
+#endif
     b->native_ok = 2u;
     arm_jit_compile_native(c, b);
 #if ARM920T_PROFILING
@@ -5519,6 +5548,17 @@ static ARM_NOINLINE uint32_t arm_jit_run_portable(arm920t_t *c,
         }
         if (op->stop || thumb(c) || c->halted || (c->r[15] & ~3u) != expected_next) break;
     }
+#if defined(ARM_JIT_NATIVE_A64)
+    /* Only a still-current, uncompiled non-poll block owns cold_extent.
+     * Short budgets contribute only their completed prefix; a later run
+     * through the exit tail grows the maximum and prevents trimming it. */
+    if (ARM920T_NATIVE_BACKEND && c->jit_enabled && !b->native &&
+        !b->poll_backedge && b->native_ok != 2u &&
+        c->jit_generation == generation && c->jit_cache_epoch == epoch) {
+        arm_jit_poll_state_t *ps = &c->jit_poll[b - c->jit_blocks];
+        if (done > ps->cold_extent) ps->cold_extent = (uint8_t)done;
+    }
+#endif
     return done;
 }
 
