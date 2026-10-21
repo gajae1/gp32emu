@@ -978,6 +978,179 @@ static void case_half_modes(void) {
     teardown_pair();
 }
 
+/* A positive seed gives exactly that many copies: the branch observes the
+ * decremented count. Zero and negatives other than INT32_MIN copy once. */
+static const uint32_t P_COPY_LOOP[] = {
+    0xe0dc20b2u, /* LDRH r2,[r12],#2 */  0xe2400001u, /* SUB r0,r0,#1 */
+    0xe3500000u, /* CMP r0,#0 */         0xe0c320b2u, /* STRH r2,[r3],#2 */
+    0xcafffffau, /* BGT first */         0xe5996000u, /* LDR r6,[r9] */
+    0xeafffffeu, /* B . */
+};
+static uint8_t copy_byte(unsigned i) { return (uint8_t)(0x31u + i * 37u); }
+static void copy_seed(uint32_t a, unsigned n) {
+    uint8_t *j = bus_ptr(&bus_jit, a, n), *r = bus_ptr(&bus_ref, a, n);
+    CHECK(j && r, "copy seed range");
+    if (j && r) for (unsigned i = 0; i < n; ++i) j[i] = r[i] = copy_byte(i);
+}
+static int copy_ok(uint32_t a, unsigned n) {
+    uint8_t *p = bus_ptr(&bus_ref, a, n);
+    if (!p) return 0;
+    for (unsigned i = 0; i < n; ++i) if (p[i] != copy_byte(i)) return 0;
+    return 1;
+}
+static void copy_start(const char *name, const uint32_t *program, unsigned words,
+                       uint32_t seed, uint32_t src, uint32_t dst) {
+    current_case = name; setup_pair(); arm920t_set_trace(cpu_ref, 1, NULL, NULL);
+    load_both(program, words);
+    set_reg_both(0u, seed); set_reg_both(3u, dst); set_reg_both(12u, src);
+    set_reg_both(9u, IO_ADDR);
+    bus_jit.observe_cpu = cpu_jit; bus_ref.observe_cpu = cpu_ref;
+}
+static void copy_budgets(uint32_t end_pc) {
+    static const uint32_t budgets[] = {1u,2u,4u,7u,3u,11u,5u,19u,23u,31u,47u,63u,127u,257u};
+    for (size_t i = 0; i < GP32_ARRAY_COUNT(budgets); ++i) {
+        uint32_t j = prepared_native_run(cpu_jit, budgets[i]);
+        uint32_t r = arm920t_run(cpu_ref, budgets[i]);
+        if (j != r) report("copy-loop budget", j, r);
+        compare_state();
+        if (arm920t_get_pc(cpu_jit) == end_pc && arm920t_get_pc(cpu_ref) == end_pc) break;
+    }
+    CHECK(arm920t_get_pc(cpu_jit) == end_pc && arm920t_get_pc(cpu_ref) == end_pc,
+          "copy loop did not finish");
+}
+static void copy_native_proof(const char *msg) {
+    gp32_cpu_profile_t p; arm920t_get_cpu_profile(cpu_jit, &p);
+    if (p.supported && p.native_backend)
+        CHECK(p.native_block_calls != 0u && p.native_arm_insns != 0u, msg);
+}
+static void copy_case(const char *name, unsigned count, uint32_t src, uint32_t dst,
+                      unsigned repeat, unsigned proof) {
+    copy_start(name, P_COPY_LOOP, GP32_ARRAY_COUNT(P_COPY_LOOP), count, src, dst);
+    copy_seed(src, 2u * count);
+    if (count == 1u) {
+        CHECK(prepared_native_run(cpu_jit, 32u) == arm920t_run(cpu_ref, 32u),
+              "single copy full native budget");
+        compare_state();
+    } else copy_budgets(CODE_ADDR + 24u);
+    CHECK(ref_reg(0) == 0u, "copy-loop final count");
+    CHECK(ref_reg(3) == dst + 2u * count && ref_reg(12) == src + 2u * count,
+          "copy-loop writeback");
+    CHECK(ref_reg(6) == CODE_ADDR + 24u && bus_ref.io_count == 1u && bus_jit.io_count == 1u,
+          "copy-loop callback");
+    CHECK(!memcmp(bus_jit.io_regs, bus_ref.io_regs, sizeof(bus_ref.io_regs)) &&
+          !memcmp(bus_jit.io_cpsr, bus_ref.io_cpsr, sizeof(bus_ref.io_cpsr)),
+          "copy-loop callback architectural state");
+    if (repeat) {
+        uint16_t first = gp32_ld16le(bus_ptr(&bus_ref, dst, 2u)), ok = 1u;
+        for (unsigned i = 0; i < count; ++i)
+            ok &= gp32_ld16le(bus_ptr(&bus_ref, dst + 2u * i, 2u)) == first;
+        CHECK(ok && first == (uint16_t)(copy_byte(0) | copy_byte(1) << 8),
+              "forward-overlap halfword pattern");
+    } else CHECK(copy_ok(dst, 2u * count), "copy-loop data");
+    if (proof) copy_native_proof("copy-loop native calls/insns");
+    teardown_pair();
+}
+static void copy_stop(const char *name, uint32_t seed, uint32_t final) {
+    const uint32_t src = DATA_ADDR + 0x600u, dst = DATA_ADDR + 0x700u;
+    copy_start(name, P_COPY_LOOP, GP32_ARRAY_COUNT(P_COPY_LOOP), seed, src, dst);
+    copy_seed(src, 2u);
+    CHECK(prepared_native_run(cpu_jit, 7u) == arm920t_run(cpu_ref, 7u),
+          "nonpositive copy full native budget");
+    compare_state();
+    CHECK(arm920t_get_pc(cpu_ref) == CODE_ADDR + 24u && ref_reg(0) == final &&
+          ref_reg(3) == dst + 2u && ref_reg(12) == src + 2u &&
+          ref_reg(2) == gp32_ld16le(bus_ptr(&bus_ref, src, 2u)) && bus_ref.io_count == 1u,
+          "nonpositive copy count");
+    teardown_pair();
+}
+static void case_copy_loop(void) {
+    static const unsigned counts[] = {1u, 15u, 16u, 17u, 63u};
+    for (size_t i = 0; i < GP32_ARRAY_COUNT(counts); ++i) {
+        char name[24]; snprintf(name, sizeof(name), "copy-loop-%u", counts[i]);
+        copy_case(name, counts[i], DATA_ADDR + 0x200u, DATA_ADDR + 0x800u, 0u, 1u);
+    }
+    copy_case("copy-loop-overlap-forward", 17u, DATA_ADDR + 0x400u, DATA_ADDR + 0x402u, 1u, 0u);
+    copy_case("copy-loop-overlap-backward", 17u, DATA_ADDR + 0x400u, DATA_ADDR + 0x3feu, 0u, 0u);
+    copy_case("copy-loop-unaligned", 17u, DATA_ADDR + 0x201u, DATA_ADDR + 0x812u, 0u, 0u);
+    copy_case("copy-loop-page-edge", 5u, DATA_ADDR + 0xffeu, DATA_ADDR + 0x2ffeu, 0u, 0u);
+    copy_stop("copy-loop-count-zero", 0u, UINT32_MAX);
+    copy_stop("copy-loop-count-negative", 0xfffffffeu, 0xfffffffdu);
+    copy_start("copy-loop-signed-wrap", P_COPY_LOOP, GP32_ARRAY_COUNT(P_COPY_LOOP),
+               0x80000000u, DATA_ADDR + 0x200u, DATA_ADDR + 0x800u);
+    copy_seed(DATA_ADDR + 0x200u, 4u);
+    CHECK(prepared_native_run(cpu_jit, 7u) == arm920t_run(cpu_ref, 7u),
+          "signed wrap copy budget");
+    compare_state();
+    CHECK(ref_reg(0) == 0x7ffffffeu && arm920t_get_pc(cpu_ref) == CODE_ADDR + 8u &&
+          ref_reg(12) == DATA_ADDR + 0x204u && ref_reg(3) == DATA_ADDR + 0x802u,
+          "INT32_MIN copies once before becoming positive");
+    teardown_pair();
+
+    {
+        const uint32_t dst = DATA_ADDR + 0x700u;
+        copy_start("copy-loop-mmio-source", P_COPY_LOOP, GP32_ARRAY_COUNT(P_COPY_LOOP),
+                   1u, IO_ADDR, dst);
+        CHECK(prepared_native_run(cpu_jit, 7u) == arm920t_run(cpu_ref, 7u),
+              "copy-loop MMIO source budget");
+        compare_state();
+        CHECK(bus_ref.io_count == 2u && bus_jit.io_count == 2u &&
+              bus_ref.io_pc[0] == CODE_ADDR + 4u && bus_ref.io_pc[1] == CODE_ADDR + 24u &&
+              !memcmp(bus_ref.io_pc, bus_jit.io_pc, 2u * sizeof(bus_ref.io_pc[0])) &&
+              ref_reg(2) == CODE_ADDR + 4u && ref_reg(6) == CODE_ADDR + 24u &&
+              gp32_ld16le(bus_ptr(&bus_ref, dst, 2u)) == 0x0404u,
+              "MMIO source callback/fallback");
+        teardown_pair();
+    }
+    {
+        const uint32_t target = DATA_ADDR + 0x1000u, src = DATA_ADDR + 0x600u;
+        copy_start("copy-loop-code-watch", P_COPY_LOOP, GP32_ARRAY_COUNT(P_COPY_LOOP),
+                   1u, src, target);
+        set_mem_both(target, 0xe3a07011u); /* MOV r7,#0x11 */
+        set_mem_both(target + 4u, 0xeafffffeu);
+        set_reg_both(15u, target);
+        CHECK(prepared_native_run(cpu_jit, 1u) == arm920t_run(cpu_ref, 1u),
+              "prime decoded RAM instruction");
+        compare_state();
+        gp32_st16le(bus_ptr(&bus_jit, src, 2u), 0x7022u);
+        gp32_st16le(bus_ptr(&bus_ref, src, 2u), 0x7022u);
+        set_reg_both(15u, CODE_ADDR);
+        CHECK(prepared_native_run(cpu_jit, 7u) == arm920t_run(cpu_ref, 7u),
+              "copy into watched code");
+        compare_state();
+        CHECK(ref_reg(0) == 0u && ref_reg(6) == CODE_ADDR + 24u &&
+              bus_ref.io_count == 1u && bus_jit.io_count == 1u &&
+              gp32_ld32le(bus_ptr(&bus_ref, target, 4u)) == 0xe3a07022u,
+              "watched halfword write/callback");
+        set_reg_both(15u, target);
+        CHECK(prepared_native_run(cpu_jit, 2u) == arm920t_run(cpu_ref, 2u),
+              "execute watched destination");
+        compare_state();
+        CHECK(ref_reg(7) == 0x22u && arm920t_get_pc(cpu_ref) == target + 4u,
+              "stale decoded instruction after watched store");
+        teardown_pair();
+    }
+    {
+        const uint32_t ttb = RAM_BASE + 0x4000u, sva = 0x10001200u, dva = 0x10003200u;
+        const uint32_t program[] = {0xee02af10u, 0xee01bf10u, P_COPY_LOOP[0], P_COPY_LOOP[1],
+            P_COPY_LOOP[2], P_COPY_LOOP[3], P_COPY_LOOP[4], P_COPY_LOOP[5], P_COPY_LOOP[6]};
+        copy_start("copy-loop-mmu-remap", program, GP32_ARRAY_COUNT(program), 17u, sva, dva);
+        set_reg_both(10u, ttb); set_reg_both(11u, 1u);
+        set_mem_both(ttb, 2u); set_mem_both(ttb + 0x400u, RAM_BASE | 2u);
+        set_mem_both(ttb + 0x500u, IO_ADDR | 2u);
+        copy_seed(RAM_BASE + 0x1200u, 34u);
+        CHECK(prepared_native_run(cpu_jit, 2u) == arm920t_run(cpu_ref, 2u),
+              "copy-loop MMU setup");
+        compare_state();
+        CHECK(arm920t_get_cp15(cpu_ref, 1u) & 1u, "copy-loop MMU not enabled");
+        copy_budgets(CODE_ADDR + 0x20u);
+        CHECK(ref_reg(0) == 0u && ref_reg(3) == dva + 34u && ref_reg(12) == sva + 34u &&
+              ref_reg(6) == CODE_ADDR + 0x20u && copy_ok(RAM_BASE + 0x3200u, 34u),
+              "remapped copy-loop result");
+        copy_native_proof("remapped copy-loop native calls/insns");
+        teardown_pair();
+    }
+}
+
 static uint32_t block_insn(unsigned p, unsigned u, unsigned s, unsigned w,
                            unsigned l, unsigned rn, unsigned regs) {
     return 0xE8000000u | (p << 24) | (u << 23) | (s << 22) |
@@ -6349,6 +6522,7 @@ int main(int argc, char **argv) {
     int psr_only = argc == 2 && !strcmp(argv[1], "--psr");
     int terminal_coproc_only = argc == 2 && !strcmp(argv[1], "--terminal-coproc");
     int selfmove_only = argc == 2 && !strcmp(argv[1], "--self-move-nop");
+    int copy_only = argc == 2 && !strcmp(argv[1], "--copy-loop");
     if (argc == 2 && !strcmp(argv[1], "--bx-native")) {
         case_native_bx();
         case_bx();
@@ -6448,6 +6622,8 @@ int main(int argc, char **argv) {
         case_native_carry_arith();
     } else if (selfmove_only) {
         case_native_self_move_noop();
+    } else if (copy_only) {
+        case_copy_loop();
     } else if (argc == 2 && !strcmp(argv[1], "--psr-blocks")) {
         case_native_psr_continuation();
     } else if (argc == 2 && !strcmp(argv[1], "--cpsr")) {
@@ -6597,6 +6773,7 @@ int main(int argc, char **argv) {
     case_native_bx();
     case_mem();
     case_half_modes();
+    case_copy_loop();
     case_block_modes();
     case_block_pairs();
     case_ldm_pc();
@@ -6647,7 +6824,7 @@ int main(int argc, char **argv) {
            (argc == 2 && !strcmp(argv[1], "--ldm-pc-native")) ? "ldm-pc-native" :
            (argc == 2 && !strcmp(argv[1], "--psr-blocks")) ? "psr-blocks" :
            (argc == 2 && !strcmp(argv[1], "--cpsr")) ? "cpsr" :
-           (argc == 2 && !strcmp(argv[1], "--carry-arith")) ? "carry-arith" : selfmove_only ? "self-move-nop" : psr_only ? "spsr" : poll_only ? "poll-progress" : io_only ? "io-direct" : access_only ? "checked-access" : pairs_only ? "block-pairs/fences" : portable_only ? "portable-callback" : block_only ? "block-callback" : irq_only ? "callback-IRQ" : chain_only ? "branch-chain" : forward_only ? "forward-loop" : callback_only ? "callback-PC" : (leaf_only ? "unframed-leaf" : (ram_end_only ? "mapped-page-RAM-end" : (loops_only ? "loop-fences" : "flags/shift/branch/mem/half/block/mul/seeded/budget/loop-fences"))),
+           (argc == 2 && !strcmp(argv[1], "--carry-arith")) ? "carry-arith" : copy_only ? "copy-loop" : selfmove_only ? "self-move-nop" : psr_only ? "spsr" : poll_only ? "poll-progress" : io_only ? "io-direct" : access_only ? "checked-access" : pairs_only ? "block-pairs/fences" : portable_only ? "portable-callback" : block_only ? "block-callback" : irq_only ? "callback-IRQ" : chain_only ? "branch-chain" : forward_only ? "forward-loop" : callback_only ? "callback-PC" : (leaf_only ? "unframed-leaf" : (ram_end_only ? "mapped-page-RAM-end" : (loops_only ? "loop-fences" : "flags/shift/branch/mem/half/block/mul/seeded/budget/loop-fences"))),
            jit_events, jit_fallbacks);
     return 0;
 }
