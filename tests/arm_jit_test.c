@@ -1063,6 +1063,87 @@ static void copy_stop(const char *name, uint32_t seed, uint32_t final) {
           "nonpositive copy count");
     teardown_pair();
 }
+/* A memory accumulator, byte post-index and rotated CMP immediate. The
+ * long tail observes the final flags and architectural state via MMIO. */
+static void xor_case(const char *name, unsigned count, unsigned ragged,
+                     uint32_t src, uint32_t acc, unsigned watched, unsigned mmu) {
+    current_case = name; setup_pair(); arm920t_set_trace(cpu_ref, 1, NULL, NULL);
+    uint32_t initial = 256u - count;
+    if (!count) count = 1u; /* initial >= limit still executes the do-while body */
+    uint32_t program[98]; unsigned lead = mmu ? 2u : 0u;
+    if (mmu) { program[0] = 0xee02af10u; program[1] = 0xee01bf10u; }
+    const uint32_t loop[] = {0xe59d8040u,0xe4d09001u,0xe2877001u,0xe0288009u,
+                            0xe20880ffu,0xe58d8040u,0xe3570c01u,0x3afffff7u};
+    memcpy(program + lead, loop, sizeof(loop));
+    program[lead + 8u] = 0x028bb001u; /* ADDEQ r11,r11,#1 */
+    for (unsigned i = 9u; i < 94u; ++i) program[lead + i] = 0xe28cc001u;
+    program[lead + 94u] = 0xe5956000u; /* LDR r6,[r5]: observe committed state */
+    program[lead + 95u] = 0xeafffffeu;
+    load_both(program, lead + 96u);
+    uint32_t physical_src = src, physical_acc = acc;
+    if (mmu) {
+        const uint32_t ttb = RAM_BASE + 0x4000u;
+        set_mem_both(ttb, 2u);
+        set_mem_both(ttb + 0x400u, RAM_BASE | 2u);
+        set_mem_both(ttb + 0x404u, RAM_BASE | 2u); /* two VAs alias one section */
+        set_mem_both(ttb + 0x540u, IO_ADDR | 2u);
+        physical_src = RAM_BASE + (src & 0xfffffu);
+        physical_acc = RAM_BASE + (acc & 0xfffffu);
+        set_reg_both(10u, ttb); set_reg_both(11u, 1u);
+        CHECK(arm920t_run(cpu_jit, 2u) == arm920t_run(cpu_ref, 2u), "xor MMU setup");
+    }
+    if (bus_ptr(&bus_ref, physical_src, count)) copy_seed(physical_src, count);
+    set_mem_both(physical_acc & ~3u, 0xdeadbeefu);
+    if (watched) prepare_native_block(cpu_jit, physical_acc);
+    set_reg_both(0u, src); set_reg_both(7u, initial);
+    set_reg_both(13u, acc - 0x40u); set_reg_both(5u, IO_ADDR);
+    set_reg_both(11u, 0u); set_reg_both(12u, 0u);
+    bus_jit.observe_cpu = cpu_jit; bus_ref.observe_cpu = cpu_ref;
+    static const uint32_t budgets[] = {129u,7u,95u,97u,255u};
+    uint32_t left = count * 8u + 88u;
+    for (unsigned step = 0; left; ++step) {
+        uint32_t n = ragged ? budgets[step % GP32_ARRAY_COUNT(budgets)] : left;
+        if (n > left) n = left;
+        CHECK(prepared_native_run(cpu_jit, n) == arm920t_run(cpu_ref, n), "xor budget");
+        compare_state(); left -= n;
+    }
+    CHECK(ref_reg(7) == initial + count && ref_reg(0) == src + count &&
+          ref_reg(11) == (unsigned)(initial + count == 256u) &&
+          ref_reg(12) == 85u && arm920t_get_pc(cpu_ref) == CODE_ADDR + (lead + 95u) * 4u,
+          "xor count, source, flags and tail");
+    CHECK(bus_ref.io_count == bus_jit.io_count && bus_ref.io_count >= 1u &&
+          !memcmp(bus_jit.io_regs, bus_ref.io_regs, sizeof(bus_ref.io_regs)) &&
+          !memcmp(bus_jit.io_cpsr, bus_ref.io_cpsr, sizeof(bus_ref.io_cpsr)),
+          "xor callback architectural state");
+    if (!ragged && !mmu && src != IO_ADDR && !watched && !(acc & 3u)) {
+        copy_native_proof("xor native calls/insns");
+        if (physical_src + count <= physical_acc || physical_src >= physical_acc + 4u) {
+            uint32_t expected = 0xefu;
+            for (unsigned i = 0; i < count; ++i) expected ^= copy_byte(i);
+            CHECK(gp32_ld32le(bus_ptr(&bus_ref, physical_acc, 4u)) == expected &&
+                  ref_reg(8) == expected && ref_reg(9) == copy_byte(count - 1u),
+                  "xor independent fold and upper-byte clearing");
+        }
+    }
+    teardown_pair();
+}
+static void case_xor_loop(void) {
+    const unsigned counts[] = {1u,15u,16u,17u,63u};
+    for (unsigned i = 0; i < GP32_ARRAY_COUNT(counts); ++i)
+        xor_case("xor-loop", counts[i], 0u, DATA_ADDR+0x200u, DATA_ADDR+0x800u, 0u, 0u);
+    xor_case("xor-ragged", 63u, 1u, DATA_ADDR+0x200u, DATA_ADDR+0x800u, 0u, 0u);
+    xor_case("xor-at-limit", 0u, 0u, DATA_ADDR+0x200u, DATA_ADDR+0x800u, 0u, 0u);
+    xor_case("xor-counter-wrap", 257u, 0u, DATA_ADDR+0x200u, DATA_ADDR+0x800u, 0u, 0u);
+    xor_case("xor-byte-alignment", 63u, 0u, DATA_ADDR+0x201u, DATA_ADDR+0x800u, 0u, 0u);
+    xor_case("xor-alias", 63u, 0u, DATA_ADDR+0x200u, DATA_ADDR+0x208u, 0u, 0u);
+    xor_case("xor-unaligned", 17u, 0u, DATA_ADDR+0x201u, DATA_ADDR+0x803u, 0u, 0u);
+    xor_case("xor-page-edge", 17u, 0u, DATA_ADDR+0xfffu, DATA_ADDR+0x800u, 0u, 0u);
+    xor_case("xor-mmio", 1u, 0u, IO_ADDR, DATA_ADDR+0x800u, 0u, 0u);
+    xor_case("xor-watched", 17u, 0u, DATA_ADDR+0x200u, DATA_ADDR+0x800u, 1u, 0u);
+    xor_case("xor-mmu-alias", 63u, 1u, 0x10000200u, 0x10100208u, 0u, 1u);
+    xor_case("xor-mmu", 63u, 0u, 0x10000200u, 0x10100800u, 0u, 1u);
+}
+
 static void case_copy_loop(void) {
     static const unsigned counts[] = {1u, 15u, 16u, 17u, 63u};
     for (size_t i = 0; i < GP32_ARRAY_COUNT(counts); ++i) {
@@ -6624,6 +6705,8 @@ int main(int argc, char **argv) {
         case_native_self_move_noop();
     } else if (copy_only) {
         case_copy_loop();
+    } else if (argc == 2 && !strcmp(argv[1], "--xor-loop")) {
+        case_xor_loop();
     } else if (argc == 2 && !strcmp(argv[1], "--psr-blocks")) {
         case_native_psr_continuation();
     } else if (argc == 2 && !strcmp(argv[1], "--cpsr")) {
@@ -6774,6 +6857,7 @@ int main(int argc, char **argv) {
     case_mem();
     case_half_modes();
     case_copy_loop();
+    case_xor_loop();
     case_block_modes();
     case_block_pairs();
     case_ldm_pc();
@@ -6824,7 +6908,7 @@ int main(int argc, char **argv) {
            (argc == 2 && !strcmp(argv[1], "--ldm-pc-native")) ? "ldm-pc-native" :
            (argc == 2 && !strcmp(argv[1], "--psr-blocks")) ? "psr-blocks" :
            (argc == 2 && !strcmp(argv[1], "--cpsr")) ? "cpsr" :
-           (argc == 2 && !strcmp(argv[1], "--carry-arith")) ? "carry-arith" : copy_only ? "copy-loop" : selfmove_only ? "self-move-nop" : psr_only ? "spsr" : poll_only ? "poll-progress" : io_only ? "io-direct" : access_only ? "checked-access" : pairs_only ? "block-pairs/fences" : portable_only ? "portable-callback" : block_only ? "block-callback" : irq_only ? "callback-IRQ" : chain_only ? "branch-chain" : forward_only ? "forward-loop" : callback_only ? "callback-PC" : (leaf_only ? "unframed-leaf" : (ram_end_only ? "mapped-page-RAM-end" : (loops_only ? "loop-fences" : "flags/shift/branch/mem/half/block/mul/seeded/budget/loop-fences"))),
+           (argc == 2 && !strcmp(argv[1], "--carry-arith")) ? "carry-arith" : (argc == 2 && !strcmp(argv[1], "--xor-loop")) ? "xor-loop" : copy_only ? "copy-loop" : selfmove_only ? "self-move-nop" : psr_only ? "spsr" : poll_only ? "poll-progress" : io_only ? "io-direct" : access_only ? "checked-access" : pairs_only ? "block-pairs/fences" : portable_only ? "portable-callback" : block_only ? "block-callback" : irq_only ? "callback-IRQ" : chain_only ? "branch-chain" : forward_only ? "forward-loop" : callback_only ? "callback-PC" : (leaf_only ? "unframed-leaf" : (ram_end_only ? "mapped-page-RAM-end" : (loops_only ? "loop-fences" : "flags/shift/branch/mem/half/block/mul/seeded/budget/loop-fences"))),
            jit_events, jit_fallbacks);
     return 0;
 }
