@@ -66,6 +66,7 @@ typedef struct {
     uint32_t mem_addr, mem_pc, mem_base, mem_value;
     uint32_t live_pa, live_value;
     unsigned live_reads, live_writes, live_rebind_rejected;
+    unsigned fastmem_excludes_calls[2];
 } test_bus_t;
 
 static test_bus_t bus_jit, bus_ref;
@@ -273,9 +274,17 @@ static uint8_t *tb_fastmem(void *u, uint32_t a, size_t bytes, int write) {
     (void)write;
     return bus_ptr((test_bus_t *)u, a, bytes);   /* must satisfy the RAM+BIOS probes */
 }
+/* Certify only the unbacked identity-I/O window; every other range remains
+ * unknown to this fixture rather than being asserted empty. */
+static int tb_fastmem_excludes_io(void *u, uint32_t a, size_t bytes, int write) {
+    test_bus_t *b = (test_bus_t *)u;
+    ++b->fastmem_excludes_calls[!!write];
+    return bytes && a >= 0x14000000u && bytes <= 0x02000000u &&
+           (uint64_t)(a - 0x14000000u) + bytes <= 0x02000000u;
+}
 static int portable_callbacks;
 
-static void setup_pair(void) {
+static void setup_pair_with_io_certificate(int certificate) {
     for (test_bus_t *b = &bus_jit; b; b = (b == &bus_jit) ? &bus_ref : NULL) {
         memset(b, 0, sizeof(*b));
         for (uint32_t a = 0; a < BIOS_SIZE; a += 4u)
@@ -287,6 +296,7 @@ static void setup_pair(void) {
         b->bus.write16 = tb_write16;
         b->bus.write32 = tb_write32;
         b->bus.fastmem = tb_fastmem;
+        if (certificate) b->bus.fastmem_excludes = tb_fastmem_excludes_io;
         b->bus.user = b;
         b->bus.is_stable_read32 = NULL;   /* isolate native execution: no fast-forward */
     }
@@ -298,6 +308,7 @@ static void setup_pair(void) {
     arm920t_set_jit(cpu_ref, 0);
     arm920t_set_jit(cpu_jit, !portable_callbacks);
 }
+static void setup_pair(void) { setup_pair_with_io_certificate(0); }
 static void teardown_pair(void) {
     jit_events += arm920t_get_jit_hits(cpu_jit) + arm920t_get_jit_misses(cpu_jit);
     jit_fallbacks += arm920t_get_jit_fallbacks(cpu_jit);
@@ -5636,7 +5647,7 @@ static void case_live_read32_cold_tlb(void) {
  * observe exactly one bus access at the proven physical address with the
  * callback-visible PC+4 and the pre-writeback base, run entirely native, and
  * still leave the block when the callback raises an IRQ. */
-static void case_io_direct_word(void) {
+static void case_io_direct_word_mode(int certificate) {
     const struct { uint32_t insn; unsigned wb; unsigned off; } cases[] = {
         {0xe5942000u, 0u, 0u}, /* LDR r2,[r4] */
         {0xe5b42004u, 1u, 4u}, /* LDR r2,[r4,#4]! */
@@ -5648,6 +5659,7 @@ static void case_io_direct_word(void) {
     };
     const uint32_t va = 0x10008000u;
     const uint32_t masks[] = {0xfffu, 0x3ffu}; /* 4 KiB small page and 1 KiB tiny page */
+    const char *mode = certificate ? "certified" : "generic";
     for (unsigned mmu = 0; mmu < 2u; ++mmu) {
         unsigned variants = mmu ? GP32_ARRAY_COUNT(masks) : 1u;
         for (unsigned v = 0; v < variants; ++v) {
@@ -5659,9 +5671,9 @@ static void case_io_direct_word(void) {
                 const char *shape = load ? (cases[i].wb ? "ldr-wb" : "ldr")
                                          : (cases[i].wb ? "str-wb" : "str");
                 char name[64];
-                snprintf(name, sizeof(name), "io-direct-word-%s-%s", map, shape);
+                snprintf(name, sizeof(name), "io-direct-word-%s-%s-%s", mode, map, shape);
                 current_case = name;
-                setup_pair();
+                setup_pair_with_io_certificate(certificate);
                 arm920t_set_trace(cpu_ref, 1, NULL, NULL); /* instruction-at-a-time oracle */
                 const uint32_t program[] = {cases[i].insn, 0xe3a06001u, 0xeafffffeu};
                 load_both(program, GP32_ARRAY_COUNT(program));
@@ -5704,9 +5716,12 @@ static void case_io_direct_word(void) {
                           "io-direct word path bypasses the access helpers");
                     CHECK(profile.slow_bail_single_nonram == 0u && profile.slow_bail_single_tlbmiss == 0u,
                           "io-direct word path is not attributed as a slow bail");
+                    if (certificate)
+                        CHECK(bus_jit.fastmem_excludes_calls[0] && bus_jit.fastmem_excludes_calls[1],
+                              "io-direct exact IO exclusion certificate consulted");
                 }
-                printf("io-direct %s %s insn=%08" PRIx32 " addr=%08" PRIx32 " wb=%08" PRIx32 " r2=%08" PRIx32 "\n",
-                       map, shape, cases[i].insn, bus_jit.mem_addr,
+                printf("io-direct[%s] %s %s insn=%08" PRIx32 " addr=%08" PRIx32 " wb=%08" PRIx32 " r2=%08" PRIx32 "\n",
+                       mode, map, shape, cases[i].insn, bus_jit.mem_addr,
                        arm920t_get_reg(cpu_jit, 4u), arm920t_get_reg(cpu_jit, 2u));
                 teardown_pair();
             }
@@ -5716,8 +5731,8 @@ static void case_io_direct_word(void) {
         /* A cold TLB entry must keep the checked helper for the same shape,
          * with its pre-access attribution intact. */
         const uint32_t program[] = {0xe5942000u, 0xe3a06001u, 0xeafffffeu};
-        current_case = "io-direct-cold-tlb";
-        setup_pair();
+        current_case = certificate ? "io-direct-cold-tlb-certified" : "io-direct-cold-tlb-generic";
+        setup_pair_with_io_certificate(certificate);
         arm920t_set_trace(cpu_ref, 1, NULL, NULL);
         load_both(program, GP32_ARRAY_COUNT(program));
         arm920t_state_image_t *state = calloc(1, sizeof(*state));
@@ -5741,8 +5756,8 @@ static void case_io_direct_word(void) {
                   "cold TLB keeps the checked slow-reason attribution");
             CHECK(profile.helper_ld_word == 1u, "cold TLB keeps the checked access helper");
         }
-        printf("io-direct cold-tlb addr=%08" PRIx32 " r2=%08" PRIx32 "\n",
-               bus_jit.mem_addr, arm920t_get_reg(cpu_jit, 2u));
+        printf("io-direct[%s] cold-tlb addr=%08" PRIx32 " r2=%08" PRIx32 "\n",
+               mode, bus_jit.mem_addr, arm920t_get_reg(cpu_jit, 2u));
         teardown_pair();
     }
     {
@@ -5753,10 +5768,13 @@ static void case_io_direct_word(void) {
          * mapping instead of a cold entry. */
         const uint32_t insns[] = {0xe5942000u, 0xe5842000u}; /* LDR r2,[r4]; STR r2,[r4] */
         const uint32_t va = 0x10008000u, pa = 0x13000000u;
+        char name_buf[64];
         for (unsigned i = 0; i < GP32_ARRAY_COUNT(insns); ++i) {
             const int load = (insns[i] & (1u << 20)) != 0u;
-            current_case = load ? "io-direct-mapped-nonio-ldr" : "io-direct-mapped-nonio-str";
-            setup_pair();
+            snprintf(name_buf, sizeof(name_buf), "io-direct-mapped-nonio-%s-%s",
+                     mode, load ? "ldr" : "str");
+            current_case = name_buf;
+            setup_pair_with_io_certificate(certificate);
             arm920t_set_trace(cpu_ref, 1, NULL, NULL);
             const uint32_t program[] = {insns[i], 0xe3a06001u, 0xeafffffeu};
             load_both(program, GP32_ARRAY_COUNT(program));
@@ -5787,8 +5805,9 @@ static void case_io_direct_word(void) {
                       profile.single_nonram_regions[pa >> 24] == 1u,
                       "non-IO mapped target keeps the non-RAM attribution");
             }
-            printf("io-direct mapped non-IO %s insn=%08" PRIx32 " addr=%08" PRIx32 " r2=%08" PRIx32 "\n",
-                   load ? "ldr" : "str", insns[i], bus_jit.mem_addr, arm920t_get_reg(cpu_jit, 2u));
+            printf("io-direct[%s] mapped non-IO %s insn=%08" PRIx32 " addr=%08" PRIx32 " r2=%08" PRIx32 "\n",
+                   mode, load ? "ldr" : "str", insns[i], bus_jit.mem_addr,
+                   arm920t_get_reg(cpu_jit, 2u));
             teardown_pair();
         }
     }
@@ -5802,8 +5821,8 @@ static void case_io_direct_word(void) {
             0xe25ef004u, /* SUBS pc,lr,#4: resume after the transfer */
         };
         const uint32_t program[] = {0xe4842004u, 0xe3a06001u, 0xeafffffeu};
-        current_case = "io-direct-irq-write";
-        setup_pair();
+        current_case = certificate ? "io-direct-irq-write-certified" : "io-direct-irq-write-generic";
+        setup_pair_with_io_certificate(certificate);
         arm920t_set_trace(cpu_ref, 1, NULL, NULL);
         load_both(program, GP32_ARRAY_COUNT(program));
         for (unsigned i = 0; i < GP32_ARRAY_COUNT(handler); ++i)
@@ -5834,12 +5853,19 @@ static void case_io_direct_word(void) {
         if (profile.supported && profile.native_backend == 2u) {
             CHECK(profile.helper_st_word == 0u && profile.slow_bail_single_nonram == 0u,
                   "direct IRQ write bypasses the checked helper");
+            if (certificate)
+                CHECK(bus_jit.fastmem_excludes_calls[1] != 0u,
+                      "IRQ continuation fence consulted the write certificate");
         }
-        printf("io-direct irq-write pc=%08" PRIx32 " wb=%08" PRIx32 " captured=%08" PRIx32 "\n",
-               bus_jit.io_pc[0], arm920t_get_reg(cpu_jit, 4u),
+        printf("io-direct[%s] irq-write pc=%08" PRIx32 " wb=%08" PRIx32 " captured=%08" PRIx32 "\n",
+               mode, bus_jit.io_pc[0], arm920t_get_reg(cpu_jit, 4u),
                gp32_ld32le(bus_ptr(&bus_jit, DATA_ADDR, 4u)));
         teardown_pair();
     }
+}
+static void case_io_direct_word(void) {
+    case_io_direct_word_mode(0);
+    case_io_direct_word_mode(1);
 }
 
 /* Compile-time constant folding must preserve intermediate values when a

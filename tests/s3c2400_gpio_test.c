@@ -153,8 +153,13 @@ static void check_button_mask(uint32_t mask) {
 
 int main(void) {
     uint8_t image[528u * 128u];
+    static const uint8_t serial[] = {
+        0x3cu, 0xa5u, 0x5au, 0xc3u, 0x7eu, 0x81u, 0x2du, 0xd2u
+    };
     memset(image, 0xff, sizeof(image));
     image[3u * 528u + 8u] = 0x96;
+    for (unsigned i = 0; i < sizeof(serial); ++i)
+        image[5u * 528u + 16u + i] = serial[i];
     for (width = 16; width <= 32; width += 16) {
         char error[128] = {0};
         soc = s3c2400_create(0);
@@ -190,6 +195,44 @@ int main(void) {
               "chip-off must clear the live data latch mirror");
         CHECK(live_read_count == 4 && (*live_at(0x30u) & 4u) == 0,
               "the loaded card must still be present in the live mirror");
+        /* Every store to these GPIO words clocks an open NAND read once,
+         * even when it repeats the current value. Chip-off must also publish
+         * its reset of dirty CLE/ALE state through the GPEDAT live word. */
+        static const struct { uint32_t off, value; const char *name; } triggers[] = {
+            { 0x30u, 8u, "GPEDAT" },
+            { 0x08u, 0u, "GPBCON" },
+            { 0x24u, 0x40u, "GPCDAT" }
+        };
+        char msg[160];
+        unsigned next = 1;
+        write_port(0x24, 0x140);     /* select the card */
+        send_byte(0x20, 0x00);       /* READ */
+        address(0x10, 5);
+        begin_read();
+        write_port(0x24, 0x40);      /* open the read window */
+        CHECK((uint8_t)bus.read32(bus.user, GPIO + 0x0c) == serial[0],
+              "read window must expose the first synthetic byte");
+        check_live_parity("initial NAND read activation");
+        for (unsigned pass = 0; pass < 2; ++pass) {
+            for (unsigned i = 0; i < sizeof(triggers) / sizeof(triggers[0]); ++i) {
+                write_port(triggers[i].off, triggers[i].value);
+                uint32_t got = bus.read32(bus.user, GPIO + 0x0c);
+                snprintf(msg, sizeof(msg),
+                         "%s same-value store %u must advance exactly once (got %02x, want %02x)",
+                         triggers[i].name, pass, (unsigned)(uint8_t)got,
+                         (unsigned)serial[next]);
+                CHECK((uint8_t)got == serial[next++], msg);
+                snprintf(msg, sizeof(msg), "%s same-value store %u live parity",
+                         triggers[i].name, pass);
+                check_live_parity(msg);
+            }
+        }
+        write_port(0x30, 0x38);      /* dirty CLE and ALE, write inactive */
+        check_live_parity("dirty command/address latches");
+        write_port(0x24, 0x1c0);     /* GPCDAT chip-off */
+        CHECK((bus.read32(bus.user, GPIO + 0x30) & 0x38u) == 0x08u,
+              "GPCDAT chip-off must clear dirty command/address latches");
+        check_live_parity("GPCDAT chip-off after dirty latches");
         /* Every GPIO write width must refresh both live words; the CPU loads
          * them instead of issuing the ordinary reads. */
         bus.write8(bus.user, GPIO + 0x08, 1);

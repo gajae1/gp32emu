@@ -755,7 +755,13 @@ static void gp32_smc_write(s3c2400_t *s, uint8_t data) {
 static uint8_t gp32_smc_read(s3c2400_t *s) { return smc_data_r(s->smc); }
 static void gp32_smc_update(s3c2400_t *s) {
     gp32_smc_lines_t *m = &s->smc_lines;
-    if (!m->chip) { smc_lines_reset(m); return; }
+    if (!m->chip) {
+        smc_lines_reset(m);
+        /* GPBCON/GPCDAT writes can reset the CLE/ALE lines exposed through
+         * GPEDAT too. Their callers refresh the other three live words. */
+        live_gpedat_refresh(s);
+        return;
+    }
     if (m->do_write && !m->read) gp32_smc_write(s, m->datatx);
     else if (!m->do_write && m->do_read && m->read && !m->cmd_latch && !m->add_latch) {
         m->datarx = gp32_smc_read(s);
