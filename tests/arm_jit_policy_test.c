@@ -92,6 +92,44 @@ static void policy_lifecycle(void) {
     CHECK(b && b->native,"later full budget permits promotion");
     teardown_pair();
 }
+#if defined(ARM_JIT_NATIVE_A64)
+/* Native promotion may split an unvisited exit tail, but that tail remains
+ * real guest code. Compare every execution against raw interpretation,
+ * including first exit, modified exit code, and an exit visited while cold. */
+static void policy_observed_exit(int visit_tail) {
+    const uint32_t outside=RAM_BASE+0x3000u, entry=outside+0x20u;
+    current_case=visit_tail?"observed-exit-kept":"unvisited-exit-split";
+    setup_cache_pair();
+    set_mem_both(outside,0xea000006u); /* B entry */
+    set_mem_both(entry,0xe2500001u); /* SUBS r0,r0,#1 */
+    set_mem_both(entry+4u,0x1afffff5u); /* BNE outside */
+    for(unsigned i=2;i<30u;++i) set_mem_both(entry+i*4u,0xe1a01001u);
+    set_mem_both(entry+120u,0xe3a04011u); /* MOV r4,#17 */
+    set_mem_both(entry+124u,0xe12fff1eu); /* BX lr */
+    set_reg_both(14u,outside+0x1000u);
+    for(unsigned i=0;i<ARM_JIT_COLD_PORTABLE_OBSERVATIONS;++i) {
+        set_reg_both(0u,visit_tail && i==0u ? 1u:100u);
+        run_cache_pair(entry,visit_tail && i==0u ? 32u:2u);
+    }
+    arm_jit_block_t *b=policy_block(entry);
+    CHECK(b && !b->native && b->count==32u,"cold collection keeps exit tail");
+    /* Build the old whole-block proof before promotion: a split must discard
+     * it, otherwise later revalidation could retain discarded code words. */
+    CHECK(arm_jit_fetch_unchanged(cpu_jit,b),"cold proof is valid");
+    set_reg_both(0u,100u);
+    run_cache_pair(entry,32u);b=policy_block(entry);
+    CHECK(b && b->native,"observed block reaches native execution");
+    CHECK(b && b->count==(visit_tail?32u:2u),"promotion honors observed exit");
+    set_reg_both(0u,1u);run_cache_pair(entry,32u);
+    CHECK(ref_reg(4u)==17u,"first exit executes the unvisited tail");
+    set_mem_both(entry+120u,0xe3a04022u);
+    run_cache_pair(CODE_ADDR,1u); /* real I-cache maintenance */
+    set_reg_both(0u,1u);run_cache_pair(entry,32u);
+    CHECK(ref_reg(4u)==34u,"changed exit code is fetched after maintenance");
+    teardown_pair();
+}
+#endif
+
 #endif
 
 /* A first revalidation must compare against the original decode even if
@@ -118,6 +156,9 @@ static void first_revalidation_changed(void) {
 int main(void) {
 #if ARM920T_NATIVE_BACKEND
     policy_lifecycle();
+#if defined(ARM_JIT_NATIVE_A64)
+    policy_observed_exit(0); policy_observed_exit(1);
+#endif
 #endif
     first_revalidation_changed();
     /* Preserve existing cache assertions; only warm both compilation tiers
