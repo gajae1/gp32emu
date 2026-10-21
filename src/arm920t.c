@@ -511,6 +511,8 @@ struct arm920t {
     uint8_t jit_code_nonram;
     arm_jit_storage_worker_t *jit_storage_worker;
     int jit_storage_started;
+    const arm_leaf_write32_t *leaf_write32;
+    size_t leaf_write32_count;
 };
 _Static_assert(offsetof(arm920t_t, jit_cache_epoch) == offsetof(arm920t_t, jit_generation) + 4u &&
                offsetof(arm_jit_block_t, tag_cache_epoch) == offsetof(arm_jit_block_t, generation) + 4u,
@@ -1384,6 +1386,17 @@ void arm920t_invalidate_icache_range(arm920t_t *c, uint32_t addr, uint32_t len) 
     }
 invalidate:
     arm920t_jit_invalidate_all(c, ARM_JIT_INV_CP15_CACHE);
+}
+int arm920t_set_leaf_write32(arm920t_t *c, const arm_leaf_write32_t *writes, size_t count) {
+    if (!c || c->running || (!writes && count)) return 0;
+    for (size_t i = 0; i < count; ++i) {
+        if ((writes[i].pa & 3u) || !writes[i].write) return 0;
+        for (size_t j = 0; j < i; ++j) if (writes[i].pa == writes[j].pa) return 0;
+    }
+    arm920t_jit_invalidate_all(c, ARM_JIT_INV_API_FLUSH);
+    c->leaf_write32 = writes;
+    c->leaf_write32_count = count;
+    return 1;
 }
 int arm920t_set_live_read32(arm920t_t *c, const arm_live_read32_t *reads, size_t count) {
     if (!c || c->running || (!reads && count)) return 0;
@@ -5460,8 +5473,7 @@ static void arm_jit_trim_cold_tail(arm920t_t *c, arm_jit_block_t *b) {
     if (last->kind != ARM_JIT_OP_BRANCH || last->cond >= 14u ||
         (last->insn & (1u << 24))) return;
     uint32_t target = arm_jit_branch_target(last->pc, last->insn);
-    if (target > last->pc) return;
-    for (unsigned i = 0; i < n; ++i) if (ops[i].pc == target) return;
+    for (unsigned i = 0; i < b->count; ++i) if (ops[i].pc == target) return;
     b->count = (uint8_t)n;
     if (b->poll_prefix > n) b->poll_prefix = (uint8_t)n;
     ps->flags &= (uint8_t)~ARM_JIT_PROOF_READY;

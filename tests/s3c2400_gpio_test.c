@@ -14,6 +14,7 @@ static size_t live_read_count;
 static uint32_t live_pa[4];
 static const volatile uint32_t *live_word[4];
 static unsigned width;
+static int use_leaf;
 static int failures;
 #define CHECK(c, m) do { if (!(c)) { fprintf(stderr, "FAIL: %s (%u-bit)\n", m, width); ++failures; } } while (0)
 
@@ -71,13 +72,24 @@ static void check_live_parity(const char *where) {
 }
 
 static void write_port(unsigned off, uint32_t value) {
+    if (width == 32u && use_leaf) {
+        size_t count = 0;
+        const arm_leaf_write32_t *writes = s3c2400_leaf_write32(soc, &count);
+        CHECK(writes && count == 3u, "three certified peripheral writes");
+        for (size_t i = 0; i < count; ++i) if (writes[i].pa == GPIO + off) {
+            writes[i].write(writes[i].user, GPIO + off, value);
+            return;
+        }
+    }
     if (width == 16) bus.write16(bus.user, GPIO + off, (uint16_t)value);
     else bus.write32(bus.user, GPIO + off, value);
 }
 static void send_byte(unsigned latch, uint8_t value) {
     write_port(0x08, 1);              /* output direction */
     write_port(0x30, latch | 8);      /* write inactive */
-    bus.write8(bus.user, GPIO + 0x0c, value);
+    if (use_leaf && width == 32u)
+        write_port(0x0c, (bus.read32(bus.user, GPIO + 0x0c) & ~0xffu) | value);
+    else bus.write8(bus.user, GPIO + 0x0c, value);
     write_port(0x30, latch);          /* one NAND write */
     write_port(0x30, latch | 8);
 }
@@ -151,7 +163,7 @@ static void check_button_mask(uint32_t mask) {
     check_live_buttons(mask, "button mask change");
 }
 
-int main(void) {
+static int run_suite(void) {
     uint8_t image[528u * 128u];
     static const uint8_t serial[] = {
         0x3cu, 0xa5u, 0x5au, 0xc3u, 0x7eu, 0x81u, 0x2du, 0xd2u
@@ -160,7 +172,7 @@ int main(void) {
     image[3u * 528u + 8u] = 0x96;
     for (unsigned i = 0; i < sizeof(serial); ++i)
         image[5u * 528u + 16u + i] = serial[i];
-    for (width = 16; width <= 32; width += 16) {
+    for (width = use_leaf ? 32u : 16u; width <= 32; width += 16) {
         char error[128] = {0};
         soc = s3c2400_create(0);
         if (!soc || !s3c2400_load_smartmedia_buffer(soc, image, sizeof(image), error, sizeof(error))) return 2;
@@ -351,4 +363,11 @@ int main(void) {
     if (failures) return 1;
     puts("PASS: GPIO NAND ID, program/read, latched reads, halfword/word control writes, button parity+state, live readback mirrors");
     return 0;
+}
+
+int main(void) {
+    int result = run_suite();
+    if (result) return result;
+    use_leaf = 1;
+    return run_suite();
 }

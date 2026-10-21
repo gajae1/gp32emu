@@ -178,6 +178,7 @@ struct s3c2400 {
      * returns, so ON/STOP bits alone cannot identify its old operation.
      * Compared only within an active trigger; never part of the state image. */
     uint64_t dma_stop_epoch[4];
+    arm_leaf_write32_t leaf_write32[3];
 };
 
 #if defined(_MSC_VER)
@@ -192,6 +193,7 @@ static uint8_t *s3c2400_fastmem(void *user, uint32_t addr, size_t bytes, int wri
 static int s3c2400_fastmem_excludes(void *user, uint32_t addr, size_t bytes, int write);
 static uint32_t s3c2400_read32_io(void *user, uint32_t addr);
 static void s3c2400_write32_io(void *user, uint32_t addr, uint32_t value);
+static void s3c2400_leaf_gpio_write32(void *user, uint32_t addr, uint32_t value);
 static void io_write32(s3c2400_t *s, uint32_t addr, uint32_t value, uint32_t mask);
 static GP32_IO_COLD uint32_t io_read32_rare(s3c2400_t *s, uint32_t addr);
 static GP32_IO_COLD void io_write32_rare(s3c2400_t *s, uint32_t addr, uint32_t value, uint32_t mask);
@@ -305,6 +307,9 @@ static void live_read32_refresh(s3c2400_t *s) {
  * Ordered by measured poll frequency so a matched probe exits early: the
  * SmartMedia driver reads GPCDAT, GPBCON, then GPBDAT and GPDDAT. */
 static void live_read32_init(s3c2400_t *s) {
+    static const uint32_t pa[] = {0x15600008u, 0x1560000cu, 0x15600024u};
+    for (size_t i = 0; i < GP32_ARRAY_COUNT(pa); ++i)
+        s->leaf_write32[i] = (arm_leaf_write32_t){pa[i], s3c2400_leaf_gpio_write32, s};
     s->live_read32[0].pa = 0x15600024u;
     s->live_read32[0].word = &s->live_gpcdat;
     s->live_read32[1].pa = 0x15600008u;
@@ -453,6 +458,10 @@ arm_bus_t s3c2400_get_bus(s3c2400_t *s) {
     return b;
 }
 
+const arm_leaf_write32_t *s3c2400_leaf_write32(const s3c2400_t *s, size_t *count) {
+    if (count) *count = s ? GP32_ARRAY_COUNT(s->leaf_write32) : 0;
+    return s ? s->leaf_write32 : NULL;
+}
 const arm_live_read32_t *s3c2400_live_read32(const s3c2400_t *s, size_t *count) {
     if (count) *count = 0u;
     if (!s || !s->live_read32[0].word) return NULL;
@@ -1462,6 +1471,12 @@ static GP32_IO_NOINLINE void gpio_card_write32(s3c2400_t *s, uint32_t off,
     else if (off != 0x08u && off != 0x24u) live_read32_refresh(s);
 }
 
+/* Only these three latched card endpoints are advertised. The implementation
+ * performs every NAND strobe and refresh; it cannot call the CPU, DMA, IRQ
+ * or logging paths used by the remaining GPIO/control registers. */
+static void s3c2400_leaf_gpio_write32(void *user, uint32_t addr, uint32_t value) {
+    gpio_card_write32((s3c2400_t *)user, addr & 0xffu, value, UINT32_MAX);
+}
 static GP32_IO_NOINLINE void io_write32_control(s3c2400_t *s, uint32_t addr,
                                                uint32_t value, uint32_t mask);
 static void io_write32(s3c2400_t *s, uint32_t addr, uint32_t value, uint32_t mask) {
