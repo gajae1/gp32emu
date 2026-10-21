@@ -2468,6 +2468,159 @@ static void case_native_alu_region(void) {
     }
 }
 
+static void alu_regions_require_native(void) {
+    gp32_cpu_profile_t profile;
+    arm920t_get_cpu_profile(cpu_jit, &profile);
+    if (profile.supported && profile.native_backend)
+        CHECK(profile.native_block_calls != 0u && profile.native_arm_insns != 0u,
+              "ALU region did not execute natively");
+}
+
+/* Preserve dependent ALU values at architectural fences. The dense
+ * span has repeated r0/r2 overwrites, nine live registers, a seeded ADC/RRX
+ * dependency and a partial logical flag update before its callback. */
+static void case_native_alu_regions(void) {
+    const uint32_t dense[] = {
+        0xe1b01060u, /* MOVS r1,r0,RRX: consume the seeded carry */
+        0xe0912001u, /* ADDS r2,r1,r1: produce carry and overflow */
+        0xe2a13000u, /* ADC  r3,r1,#0: consume that carry */
+        0xe0204001u, /* EOR  r4,r0,r1: overwritten before any observer */
+        0xe0124003u, /* ANDS r4,r2,r3: update NZC, retain V */
+        0xe0245003u, /* EOR  r5,r4,r3 */
+        0xe0850001u, /* ADD  r0,r5,r1 */
+        0xe0800002u, /* ADD  r0,r0,r2 */
+        0xe0802005u, /* ADD  r2,r0,r5 */
+        0xe0822001u, /* ADD  r2,r2,r1 */
+        0xe0826005u, /* ADD  r6,r2,r5 */
+        0xe0867002u, /* ADD  r7,r6,r2 */
+        0xe087b000u, /* ADD  r11,r7,r0 */
+        0xe599a000u, /* LDR  r10,[r9]: callback fence */
+        0xeafffffeu,
+    };
+    current_case = "alu-regions-dense";
+    setup_pair();
+    bus_jit.observe_cpu = cpu_jit;
+    bus_ref.observe_cpu = cpu_ref;
+    load_both(dense, GP32_ARRAY_COUNT(dense));
+    set_reg_both(0u, 0u);
+    set_reg_both(9u, IO_ADDR);
+    arm920t_set_cpsr(cpu_jit, 0x300000d3u); /* C=1,V=1 */
+    arm920t_set_cpsr(cpu_ref, 0x300000d3u);
+    CHECK(prepared_native_run(cpu_jit, 64u) == arm920t_run(cpu_ref, 64u),
+          "dense ALU region budget");
+    compare_state();
+    CHECK(bus_jit.io_count == 1u && bus_ref.io_count == 1u, "dense ALU callback count");
+    CHECK(!memcmp(bus_jit.io_regs, bus_ref.io_regs, sizeof(bus_ref.io_regs)),
+          "dense ALU callback lost a register");
+    CHECK(!memcmp(bus_jit.io_cpsr, bus_ref.io_cpsr, sizeof(bus_ref.io_cpsr)),
+          "dense ALU callback lost partial flags");
+    if (ref_reg(0u) != 1u) report("dense ALU r0 oracle", ref_reg(0u), 1u);
+    if (ref_reg(1u) != 0x80000000u) report("dense ALU r1 oracle", ref_reg(1u), 0x80000000u);
+    if (ref_reg(2u) != 2u) report("dense ALU r2 oracle", ref_reg(2u), 2u);
+    if (ref_reg(3u) != 0x80000001u) report("dense ALU r3 oracle", ref_reg(3u), 0x80000001u);
+    if (ref_reg(4u) != 0u) report("dense ALU r4 oracle", ref_reg(4u), 0u);
+    if (ref_reg(5u) != 0x80000001u) report("dense ALU r5 oracle", ref_reg(5u), 0x80000001u);
+    if (ref_reg(6u) != 0x80000003u) report("dense ALU r6 oracle", ref_reg(6u), 0x80000003u);
+    if (ref_reg(7u) != 0x80000005u) report("dense ALU r7 oracle", ref_reg(7u), 0x80000005u);
+    if (ref_reg(11u) != 0x80000006u) report("dense ALU r11 oracle", ref_reg(11u), 0x80000006u);
+    CHECK(arm920t_get_cpsr(cpu_ref) == 0x700000d3u, "dense ALU CPSR oracle");
+    alu_regions_require_native();
+    teardown_pair();
+
+    const uint32_t joined[] = {
+        0xe1a0a00cu, /* MOV r10,r12 */
+        0xe35a0001u, /* CMP r10,#1 */
+        0x1a000003u, /* BNE join at word 7 */
+        0xe3a00003u, /* region start: MOV r0,#3 */
+        0xe2801004u, /* ADD r1,r0,#4 */
+        0xe0212000u, /* EOR r2,r1,r0 */
+        0xe1a03002u, /* MOV r3,r2 */
+        0xe0824003u, /* join: ADD r4,r2,r3 */
+        0xe0845002u, /* ADD r5,r4,r2 */
+        0xe0856003u, /* ADD r6,r5,r3 */
+        0xe5987000u, /* LDR r7,[r8]: callback fence */
+        0xeafffffeu,
+    };
+    current_case = "alu-regions-portable-budget";
+    setup_pair();
+    bus_jit.observe_cpu = cpu_jit;
+    bus_ref.observe_cpu = cpu_ref;
+    load_both(joined, GP32_ARRAY_COUNT(joined));
+    for (unsigned r = 0; r < 4u; ++r) set_reg_both(r, 41u + r);
+    set_reg_both(8u, IO_ADDR);
+    set_reg_both(12u, 1u);
+    CHECK(prepared_native_run(cpu_jit, 6u) == arm920t_run(cpu_ref, 6u),
+          "short ALU region budget");
+    compare_state();
+    gp32_cpu_profile_t profile;
+    arm920t_get_cpu_profile(cpu_jit, &profile);
+    if (profile.supported && profile.native_backend) {
+        CHECK(profile.native_block_calls == 0u, "short ALU budget used native code");
+        CHECK(profile.block_interp_arm_insns >= 6u, "short ALU budget skipped portable ops");
+    }
+    teardown_pair();
+
+    for (unsigned taken = 0; taken < 2u; ++taken) {
+        current_case = taken ? "alu-regions-join-taken" : "alu-regions-join-fallthrough";
+        setup_pair();
+        bus_jit.observe_cpu = cpu_jit;
+        bus_ref.observe_cpu = cpu_ref;
+        load_both(joined, GP32_ARRAY_COUNT(joined));
+        for (unsigned r = 0; r < 4u; ++r) set_reg_both(r, 41u + r);
+        set_reg_both(8u, IO_ADDR);
+        set_reg_both(12u, taken ? 0u : 1u);
+        CHECK(prepared_native_run(cpu_jit, 64u) == arm920t_run(cpu_ref, 64u),
+              "joined ALU region budget");
+        compare_state();
+        CHECK(bus_jit.io_count == 1u && bus_ref.io_count == 1u,
+              "joined ALU callback count");
+        CHECK(!memcmp(bus_jit.io_regs, bus_ref.io_regs, sizeof(bus_ref.io_regs)),
+              "joined ALU callback lost a register");
+        const uint32_t *observed = bus_jit.io_regs[0];
+        if (taken)
+            CHECK(observed[0] == 41u && observed[1] == 42u && observed[2] == 43u &&
+                  observed[3] == 44u && observed[4] == 87u && observed[5] == 130u &&
+                  observed[6] == 174u, "taken join ALU oracle");
+        else
+            CHECK(observed[0] == 3u && observed[1] == 7u && observed[2] == 4u &&
+                  observed[3] == 4u && observed[4] == 8u && observed[5] == 12u &&
+                  observed[6] == 16u, "fallthrough ALU oracle");
+        alu_regions_require_native();
+        teardown_pair();
+    }
+
+    const uint32_t fetch_base = CODE_ADDR + 0x3e8u; /* ends at the 1KiB page edge */
+    const uint32_t boundary[] = {
+        0xe3a00001u, /* MOV r0,#1 */
+        0xe0801000u, /* ADD r1,r0,r0 */
+        0xe2812003u, /* ADD r2,r1,#3 */
+        0xe0823001u, /* ADD r3,r2,r1 */
+        0xe0830002u, /* ADD r0,r3,r2 */
+        0xe0801003u, /* ADD r1,r0,r3 */
+        0xe0814000u, /* 0x800: ADD r4,r1,r0 */
+        0xe5965000u, /* LDR r5,[r6]: callback fence */
+        0xeafffffeu,
+    };
+    current_case = "alu-regions-fetch-boundary";
+    setup_pair();
+    bus_jit.observe_cpu = cpu_jit;
+    bus_ref.observe_cpu = cpu_ref;
+    for (unsigned i = 0; i < GP32_ARRAY_COUNT(boundary); ++i)
+        set_mem_both(fetch_base + i * 4u, boundary[i]);
+    set_reg_both(6u, IO_ADDR);
+    set_reg_both(15u, fetch_base);
+    CHECK(prepared_native_run(cpu_jit, 32u) == arm920t_run(cpu_ref, 32u),
+          "page-boundary ALU region budget");
+    compare_state();
+    CHECK(bus_jit.io_count == 1u && bus_ref.io_count == 1u, "page-boundary callback count");
+    CHECK(!memcmp(bus_jit.io_regs, bus_ref.io_regs, sizeof(bus_ref.io_regs)),
+          "page-boundary callback lost a register");
+    CHECK(ref_reg(0u) == 12u && ref_reg(1u) == 19u && ref_reg(2u) == 5u &&
+          ref_reg(3u) == 7u && ref_reg(4u) == 31u, "page-boundary ALU oracle");
+    alu_regions_require_native();
+    teardown_pair();
+}
+
 /* Register dependencies must survive conditionals and scratch/helper clobbers. */
 static void case_native_forwarding(void) {
     const uint32_t program[] = {
@@ -6237,6 +6390,8 @@ int main(int argc, char **argv) {
     } else if (argc == 2 && !strcmp(argv[1], "--alu-callback-state")) {
         case_alu_callback_state();
         case_loop_callback_state();
+    } else if (argc == 2 && !strcmp(argv[1], "--alu-regions")) {
+        case_native_alu_regions();
     } else if (argc == 2 && !strcmp(argv[1], "--store-forwarding")) {
         case_native_store_forwarding();
     } else if (argc == 2 && !strcmp(argv[1], "--sflag-logic")) {
@@ -6395,6 +6550,7 @@ int main(int argc, char **argv) {
     case_cache_modified(0);
     case_cache_modified(1);
     case_native_alu_region();
+    case_native_alu_regions();
     case_native_const_data();
     case_native_const_chain();
     case_native_forwarding();
@@ -6480,6 +6636,7 @@ int main(int argc, char **argv) {
            (argc == 2 && !strcmp(argv[1], "--shift-pc")) ? "register-shift-PC" :
            (argc == 2 && !strcmp(argv[1], "--trace-lr")) ? "trace-lr" :
            (argc == 2 && !strcmp(argv[1], "--alu-callback-state")) ? "alu-callback-state" :
+           (argc == 2 && !strcmp(argv[1], "--alu-regions")) ? "alu-regions" :
            (argc == 2 && !strcmp(argv[1], "--literal-addresses")) ? "literal-addresses" :
            (argc == 2 && !strcmp(argv[1], "--word-probes")) ? "word-probes" :
            (argc == 2 && !strcmp(argv[1], "--read-windows")) ? "read-windows" :
