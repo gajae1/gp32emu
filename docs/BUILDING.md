@@ -47,6 +47,57 @@ features, glibc, and a 64-bit libretro frontend. A 32-bit RetroArch process
 cannot load this core, even on a 64-bit kernel. Android and Switch need their
 own platform builds.
 
+### Optional profile-guided optimization (Clang)
+
+PGO uses recorded execution counts to optimize the shared C core and libretro
+boundary. Optimized binaries use it automatically; there is no emulator setting
+or runtime collection. It does not change guest clocks or game code. Source
+builds without a training profile build normally. Clang 18 or newer with the
+GNU-style driver is required for this CMake workflow.
+Keep the compiler version, target CPU, build options and source revision the same
+between training and use. Use separate build directories:
+
+```sh
+cmake -S . -B build-pgo-train -DCMAKE_BUILD_TYPE=Release \
+  -DGP32EMU_BUILD_LIBRETRO=ON -DGP32EMU_BUILD_HEADLESS=OFF \
+  -DGP32EMU_PGO_MODE=GENERATE
+cmake --build build-pgo-train --parallel
+# Run this core in the target frontend with a writable profile destination:
+# LLVM_PROFILE_FILE=/absolute/path/profiles/run-%m-%p.profraw <frontend command>
+llvm-profdata merge -o games.profdata profiles/*.profraw
+cmake -S . -B build-pgo-use -DCMAKE_BUILD_TYPE=Release \
+  -DGP32EMU_BUILD_LIBRETRO=ON -DGP32EMU_BUILD_HEADLESS=OFF \
+  -DGP32EMU_PGO_MODE=USE -DGP32EMU_PGO_FILE=/absolute/path/games.profdata
+cmake --build build-pgo-use --parallel
+```
+
+Pass the same toolchain options to both configurations when cross-compiling.
+Use `llvm-profdata` from the compiler's LLVM release: raw profile versions are
+not interchangeable. A compiler distribution without the target profiling
+runtime, such as Zig 0.13 for Linux AArch64, also needs
+`-DGP32EMU_PGO_RUNTIME=/absolute/path/target-profile-runtime.a` in the training
+build. This is compiler-rt's profile archive built for the target, not a host
+library. The use build has no profiling-runtime dependency.
+
+Train on several games, including startup and gameplay, then compare an ordinary
+Release build against the use build with identical input and saved states.
+Include games outside the training set. Training instrumentation is expensive;
+never measure its speed as the optimized result or distribute the training core.
+The ELF training core stays mapped until process exit so that a frontend's
+`dlclose` cannot invalidate the profile runtime's exit handler. Exit the process
+normally to write the profile; forced termination can lose the current counts.
+
+Static function profile names retain repository-relative paths, so the training
+and use checkouts may live in different directories. Regenerate profiles after
+source or toolchain changes. Incompatible function profiles fail the build, but
+this is not a substitute for recording the training revision and options: some
+changes can remain structurally compatible while invalidating the old workload.
+Each configured PGO build records its mode, compiler and profile SHA-256 in
+`gp32-pgo-Release.txt`. Replacing the profile rebuilds affected core objects.
+Tests and third-party ZIP code do not inherit PGO compile flags. Frontends other
+than libretro still benefit from the shared core, but their UI sources are not
+profiled by this option. PGO does not enable IPO or change CPU/optimization flags.
+
 `scripts/package_release.ps1` assembles five independent ZIP releases from a
 clean, committed source tree. Pass a new output directory plus four build
 directories: one Windows build containing `gp32emu_win64.exe` and

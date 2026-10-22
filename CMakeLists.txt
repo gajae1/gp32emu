@@ -440,3 +440,5 @@ if (GP32EMU_BUILD_SDL12)
     target_include_directories(gp32_sdl12 PRIVATE src ${SDL_INCLUDE_DIR})
     target_link_libraries(gp32_sdl12 PRIVATE gp32emu gp32emu_sdl12 ${SDL_LIBRARY})
 endif()
+
+include(cmake/PGO.cmake)

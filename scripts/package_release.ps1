@@ -54,6 +54,13 @@ if ($IosIpa) { $required += $IosIpa }
 foreach ($file in $required) {
     if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { throw "Missing input: $file" }
 }
+foreach ($build in @($WindowsBuild, $LinuxArm64Build, $AndroidArm64Build, $AndroidArmv7Build)) {
+    $cache = Join-Path $build 'CMakeCache.txt'
+    if ((Test-Path -LiteralPath $cache) -and
+        (Select-String -LiteralPath $cache -Quiet -Pattern '^GP32EMU_PGO_MODE:STRING=GENERATE$')) {
+        throw "PGO training binaries must not be packaged: $build"
+    }
+}
 if (-not (Test-Path -LiteralPath $licenses -PathType Container)) { throw "Missing input directory: $licenses" }
 
 # Public iOS downloads must not contain the publisher's device signature or

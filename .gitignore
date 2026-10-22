@@ -23,3 +23,5 @@ __pycache__/
 # Android ndk-build outputs
 libs/
 obj/
+*.profraw
+*.profdata
