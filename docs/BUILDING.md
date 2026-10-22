@@ -47,11 +47,12 @@ features, glibc, and a 64-bit libretro frontend. A 32-bit RetroArch process
 cannot load this core, even on a 64-bit kernel. Android and Switch need their
 own platform builds.
 
-### Optional profile-guided optimization (Clang)
+### Profile-guided release builds (Clang)
 
 PGO uses recorded execution counts to optimize the shared C core and libretro
-boundary. Optimized binaries use it automatically; there is no emulator setting
-or runtime collection. It does not change guest clocks or game code. Source
+boundary. Linux ARM64 releases use it by default; there is no emulator setting
+or runtime collection. Other targets need their own training and validation.
+It does not change guest clocks or game code. Source
 builds without a training profile build normally. Clang 18 or newer with the
 GNU-style driver is required for this CMake workflow.
 Keep the compiler version, target CPU, build options and source revision the same
@@ -106,6 +107,10 @@ Android ABI. Also pass SDL3's DLL and licence notice and `llvm-strip` (included
 in the Android NDK). Debug information is removed only from packaged `.so`
 copies; original build outputs keep their symbols. Binary packages exclude
 tests, build caches and local results; source packages retain the tests.
+The Linux ARM64 input must be a validated PGO `USE` build with its generated
+`gp32-pgo-Release.txt`; packaging rejects an ordinary or training build. Its
+manifest records the training profile's SHA-256. All other CMake inputs also
+reject `GENERATE` mode, so profiling instrumentation cannot be shipped by mistake.
 
 The defaults produce `gp32emu-1.1.0-windows-x64.zip`,
 `gp32emu-1.1.0-libretro-windows-x64.zip`, `gp32emu-1.1.0-linux-aarch64.zip`,

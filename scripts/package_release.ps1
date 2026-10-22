@@ -61,6 +61,21 @@ foreach ($build in @($WindowsBuild, $LinuxArm64Build, $AndroidArm64Build, $Andro
         throw "PGO training binaries must not be packaged: $build"
     }
 }
+# The measured Linux ARM64 release uses PGO; do not silently package an ordinary
+# source build instead. Other targets retain their own validation requirements.
+$linuxPgoPath = Join-Path $LinuxArm64Build 'gp32-pgo-Release.txt'
+$linuxCachePath = Join-Path $LinuxArm64Build 'CMakeCache.txt'
+if (-not (Test-Path -LiteralPath $linuxPgoPath -PathType Leaf) -or
+    -not (Test-Path -LiteralPath $linuxCachePath -PathType Leaf) -or
+    -not (Select-String -LiteralPath $linuxCachePath -Quiet -Pattern '^GP32EMU_PGO_MODE:STRING=USE$')) {
+    throw 'Linux ARM64 release packaging requires a validated PGO USE build.'
+}
+$linuxPgo = Get-Content -LiteralPath $linuxPgoPath -Raw
+$profileHash = [regex]::Match($linuxPgo, '(?m)^profile_sha256=([0-9a-f]{64})\r?$')
+if ($linuxPgo -notmatch '(?m)^mode=USE\r?$' -or -not $profileHash.Success) {
+    throw 'Missing or invalid Linux ARM64 Release PGO metadata; rebuild before packaging.'
+}
+$linuxOptimization = [ordered]@{pgo='use';profile_sha256=$profileHash.Groups[1].Value}
 if (-not (Test-Path -LiteralPath $licenses -PathType Container)) { throw "Missing input directory: $licenses" }
 
 # Public iOS downloads must not contain the publisher's device signature or
@@ -129,6 +144,7 @@ foreach ($package in $packages) {
             }
         })
     }
+    if ($package.Platform -eq 'linux-aarch64') { $manifest.optimization = $linuxOptimization }
     $manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $root 'manifest.json') -Encoding utf8
     Compress-Archive -Path (Join-Path $root '*') -DestinationPath (Join-Path $out "$name.zip")
     $sums.Add("$((Get-FileHash -LiteralPath (Join-Path $out "$name.zip") -Algorithm SHA256).Hash.ToLowerInvariant())  $name.zip")
