@@ -97,10 +97,17 @@ typedef struct a64_fetch_fix {
     size_t branch, cont;
 } a64_fetch_fix_t;
 
+#include "arm920t_jit_a64_reloc.h"
+
+#define A64_RELOC_MAX (ARM_JIT_MAX_INSNS * 4u)
+_Static_assert(ARM_JIT_NATIVE_MAX_BYTES / sizeof(uint32_t) <= A64_RELOC_MAX_WORDS,
+               "packed relocation source index fits");
+
 typedef struct a64_emit {
     uint32_t *code;
     size_t pos, cap;
-    uint16_t *branch_map; /* one bit per emitted word; runtime stubs use NULL */
+    a64_reloc_t *reloc; /* crossing edges only; runtime stubs use NULL */
+    unsigned reloc_count; /* UINT_MAX: bounded records overflowed, scan scratch */
     int fail;
     int ram_read, ram_write, mmu, check_code_writes;
     int hop;         /* clean exits may link to a resident successor */
@@ -161,9 +168,11 @@ typedef struct a64_cold_op {
     size_t cont; /* hot continuation label this chain resumes at */
     uint32_t done, expected_next, generation;
     uint8_t kind, load, wb, access, byte, live, ro, nfixup;
-    size_t fixup[16]; /* hot branch sites that enter this chain */
+    uint16_t fixup[16]; /* bounded scratch-word indices, including cold XPAGE guards */
     unsigned sibling; /* chain that owns this chain's guard rejections (0 = none) */
 } a64_cold_op_t;
+_Static_assert(A64_RELOC_MAX_WORDS - 1u <= UINT16_MAX,
+               "cold fixup indices fit the bounded scratch buffer");
 
 ARM_FORCE_INLINE int arm_a64_can_continue(const arm920t_t *c, int stop,
                                          uint32_t expected_next, uint32_t generation,
@@ -336,8 +345,6 @@ static int a64_logical_imm32(uint32_t mask, uint32_t *encoding);
 
 /* Call only for PC-relative B/BL, B.cond, CBZ/CBNZ and TBZ/TBNZ. */
 static void a64_branch_word(a64_emit_t *e, uint32_t word) {
-    if (e->pos < e->cap && e->branch_map)
-        e->branch_map[e->pos >> 4] |= (uint16_t)(1u << (e->pos & 15u));
     a64_u32(e, word);
 }
 static void a64_imm(a64_emit_t *e, unsigned rd, uint32_t v) {
@@ -588,23 +595,53 @@ static size_t a64_jump(a64_emit_t *e, unsigned cond) {
     a64_branch_word(e, cond == 14u ? 0x14000000u : (0x54000000u | cond));
     return p;
 }
+/* hot_end is bound before any deferred cold chain is emitted. At that
+ * point all hot-local labels are already patched; only a hot/cold crossing
+ * needs a relocation record. No array clear or per-branch bitmap is needed.
+ * On overflow retain the original contiguous scratch for the scanner. */
+static void a64_record_reloc(a64_emit_t *e, size_t at, size_t target, unsigned kind) {
+    if (e->fail || !e->hot_end || (at < e->hot_end) == (target < e->hot_end)) return;
+    if (e->reloc_count >= A64_RELOC_MAX) { e->reloc_count = UINT_MAX; return; }
+    a64_reloc_t *r = &e->reloc[e->reloc_count++];
+    r->at_kind = (uint16_t)(at | (kind << A64_RELOC_INDEX_BITS));
+    r->target = (uint16_t)target;
+}
 static void a64_patch(a64_emit_t *e, size_t at, size_t target) {
     if (e->fail || at >= e->pos || target < at || target - at >= (1u << 18)) {
         e->fail = 1;
         return;
     }
     uint32_t delta = (uint32_t)(target - at);
-    if ((e->code[at] & 0xfc000000u) == 0x14000000u) e->code[at] |= delta;
-    else if ((e->code[at] & 0x7e000000u) == 0x36000000u) {
+    if ((e->code[at] & 0xfc000000u) == 0x14000000u) {
+        e->code[at] |= delta;
+    } else if ((e->code[at] & 0x7e000000u) == 0x36000000u) {
         if (delta >= (1u << 13)) { e->fail = 1; return; }
         e->code[at] |= delta << 5; /* tbz/tbnz: imm14 */
+    } else {
+        e->code[at] |= delta << 5;
     }
-    else e->code[at] |= delta << 5;
 }
 /* Emit an unconditional backward branch to an already emitted position. */
 static void a64_branch_back(a64_emit_t *e, size_t target) {
     if (e->fail || target > e->pos || e->pos - target >= (1u << 25)) { e->fail = 1; return; }
-    a64_branch_word(e, 0x14000000u | ((uint32_t)(target - e->pos) & 0x03ffffffu));
+    size_t at = e->pos;
+    a64_branch_word(e, 0x14000000u | ((uint32_t)(target - at) & 0x03ffffffu));
+}
+
+/* Deferred entries may also receive a cold-to-cold XPAGE retry. Keep the
+ * split check for those sites; local patching elsewhere does no bookkeeping. */
+static void a64_patch_cold(a64_emit_t *e, size_t at, size_t target) {
+    a64_patch(e, at, target);
+    if (e->fail || at >= e->hot_end) return;
+    uint32_t word = e->code[at];
+    unsigned kind = (word & 0xfc000000u) == 0x14000000u ? A64_RELOC_B26 :
+                    (word & 0x7e000000u) == 0x36000000u ? A64_RELOC_B14 : A64_RELOC_B19;
+    a64_record_reloc(e, at, target, kind);
+}
+static void a64_branch_hot(a64_emit_t *e, size_t target) {
+    size_t at = e->pos;
+    a64_branch_back(e, target);
+    a64_record_reloc(e, at, target, A64_RELOC_B26);
 }
 /* Record one cold chain; the hot body has already reached its continuation. */
 static a64_cold_op_t *a64_cold_open(a64_emit_t *e, const arm_jit_op_t *op,
@@ -624,13 +661,14 @@ static a64_cold_op_t *a64_cold_open(a64_emit_t *e, const arm_jit_op_t *op,
     c->kind = (uint8_t)kind;
     return c;
 }
-/* Defer one hot branch site to its chain entry (patched when the chain is
+/* Defer one branch site to its chain entry (patched when the chain is
  * emitted).  Overflow is unreachable with the per-emitter fixup counts and
  * fails closed if a future emitter ever exceeds them. */
 static void a64_cold_fix(a64_emit_t *e, a64_cold_op_t *c, size_t at) {
     if (e->fail || !c) return;
-    if (c->nfixup >= sizeof(c->fixup) / sizeof(c->fixup[0])) { e->fail = 1; return; }
-    c->fixup[c->nfixup++] = at;
+    if (c->nfixup >= sizeof(c->fixup) / sizeof(c->fixup[0]) ||
+        at >= A64_RELOC_MAX_WORDS) { e->fail = 1; return; }
+    c->fixup[c->nfixup++] = (uint16_t)at;
 }
 static void a64_cmp(a64_emit_t *e, unsigned rn, unsigned rm) {
     a64_rr(e, 0x6b000000u, 31, rn, rm);
@@ -644,7 +682,7 @@ static void a64_ext(a64_emit_t *e, uint32_t opcode, unsigned to) {
     e->ext_at[e->ext_count] = (uint32_t)e->pos;
     e->ext_to[e->ext_count++] = (uint8_t)to;
     /* The external link pass owns this placeholder. It has no target within
-     * tmp, so the ordinary hot/cold relocation scan need not visit it. */
+     * tmp, so it needs no ordinary hot/cold relocation record. */
     a64_u32(e, opcode);
 }
 
@@ -740,9 +778,9 @@ static void a64_fetch_guard(arm920t_t *c, a64_emit_t *e, uint32_t pc, uint32_t d
 static void a64_fetch_flush(a64_emit_t *e) {
     for (unsigned i = 0; i < e->fetch_count && !e->fail; ++i) {
         const a64_fetch_fix_t *f = &e->fetch[i];
-        a64_patch(e, f->branch, e->pos);
+        a64_patch_cold(e, f->branch, e->pos);
         a64_fetch_resident(e, f->pc, f->pa, f->done);
-        a64_branch_back(e, f->cont);
+        a64_branch_hot(e, f->cont);
     }
 }
 
@@ -883,7 +921,7 @@ static void a64_io_word_pa(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done,
     a64_return(e, done);
     a64_patch(e, keep, e->pos);
     a64_cache_reload(e);
-    a64_branch_back(e, cont);
+    a64_branch_hot(e, cont);
 }
 
 /* Immediate ARM shifter: w1 is the value, w3 the old CPSR, w4 the
@@ -1264,7 +1302,7 @@ static void a64_leaf_write32_pa(a64_emit_t *e, const arm_jit_op_t *op, size_t co
         a64_ptr(e, 0, (uintptr_t)w->user);
         a64_ptr(e, 16, (uintptr_t)w->write);
         a64_u32(e, 0xd63f0200u);
-        a64_branch_back(e, cont);
+        a64_branch_hot(e, cont);
         a64_patch(e, unmatched, e->pos);
     }
     a64_patch(e, unaligned, e->pos);
@@ -1290,7 +1328,7 @@ static void a64_live_read32_pa(a64_emit_t *e, unsigned rd, size_t cont) {
         a64_u32(e, 0xb9400000u | (10u << 5) | 1u); /* fresh ldr w1, [x10] */
         a64_put_guest(e, rd, 1);
         /* Cold area: the continuation is behind this branch. */
-        a64_branch_back(e, cont);
+        a64_branch_hot(e, cont);
         a64_patch(e, unmatched, e->pos);
     }
     a64_patch(e, unaligned, e->pos);
@@ -1328,7 +1366,7 @@ static void a64_ro_word_pa(a64_emit_t *e, const arm_jit_op_t *op, size_t cont) {
         }
         a64_put_guest(e, op->b, 1);
         if (!(op->d & ARM_BC_SD_P) || (op->d & ARM_BC_SD_W)) a64_put_guest(e, op->a, 2);
-        a64_branch_back(e, cont);
+        a64_branch_hot(e, cont);
         a64_patch(e, not_bios, e->pos);
     }
     if (e->open_bus) {
@@ -1356,7 +1394,7 @@ static void a64_ro_word_pa(a64_emit_t *e, const arm_jit_op_t *op, size_t cont) {
         }
         a64_put_guest(e, op->b, 1);
         if (!(op->d & ARM_BC_SD_P) || (op->d & ARM_BC_SD_W)) a64_put_guest(e, op->a, 2);
-        a64_branch_back(e, cont);
+        a64_branch_hot(e, cont);
     }
     for (unsigned i = 0; i < nreject; ++i) a64_patch(e, reject[i], e->pos);
 }
@@ -2085,11 +2123,13 @@ static ARM_NOINLINE int a64_copy_loop(a64_emit_t *e, const arm_jit_op_t *ops) {
  * chain by construction: only a flag-setting data op leaves nzcv_valid set and
  * those ops emit no cold chain, so no chain can sit between a flag producer
  * and the conditional code that consumes its flags. */
-static void a64_cold_flush(a64_emit_t *e) {
+/* Keep cold emission out of the hot-body generator: inlining expands its
+ * working set without removing work from executed guest blocks. */
+static ARM_NOINLINE void a64_cold_flush(a64_emit_t *e) {
     for (unsigned i = 0; i < e->cold_count && !e->fail; ++i) {
         a64_cold_op_t *c = &e->cold[i];
         size_t entry = e->pos;
-        for (unsigned j = 0; j < c->nfixup; ++j) a64_patch(e, c->fixup[j], entry);
+        for (unsigned j = 0; j < c->nfixup; ++j) a64_patch_cold(e, c->fixup[j], entry);
         e->expected_next = c->expected_next;
         e->generation = c->generation;
         switch (c->kind) {
@@ -2155,99 +2195,8 @@ static void a64_cold_flush(a64_emit_t *e) {
         /* The two-page retry falls through here; both checked helpers end
          * with a "may continue" edge that lands here. Emit one shared return
          * to the recorded hot continuation for each cold chain. */
-        a64_branch_back(e, c->cont);
+        a64_branch_hot(e, c->cont);
     }
-}
-
-/* Copy one emitted block into the arena with its hot words [0, hot) at
- * hot_dst and its cold words [hot, n) at cold_dst.  The buffer holds only
- * instructions (no literals), so every PC-relative branch is found by its
- * encoding; only branches crossing the hot/cold boundary change, and each is
- * re-encoded for the new distance.  Returns 0 if one would not reach. */
-static ARM_NOINLINE int a64_place_legacy(uint32_t *hot_dst, uint32_t *cold_dst, const uint32_t *src,
-                     size_t hot, size_t n) {
-    /* Each span moves by one fixed displacement. Only branches crossing the
-     * split need that displacement added to their existing immediate. */
-    intptr_t gap = ((intptr_t)cold_dst - (intptr_t)hot_dst) / 4 - (intptr_t)hot;
-    for (unsigned part = 0; part < 2u; ++part) {
-        size_t first = part ? hot : 0u, end = part ? n : hot;
-        uint32_t *dst = part ? cold_dst : hot_dst;
-        for (size_t i = first; i < end; ++i) {
-            uint32_t w = src[i];
-            /* All supported PC-relative branches have these bits in common;
-             * most emitted instructions need no further opcode tests. */
-            if ((w & 0x1c000000u) == 0x14000000u) {
-                uint32_t mask;
-                unsigned bits;
-                if ((w & 0x7c000000u) == 0x14000000u) { bits = 26; mask = 0x03ffffffu; }
-                else if ((w & 0xff000010u) == 0x54000000u || (w & 0x7e000000u) == 0x34000000u) { bits = 19; mask = 0x7ffffu << 5; }
-                else if ((w & 0x7e000000u) == 0x36000000u) { bits = 14; mask = 0x3fffu << 5; }
-                else bits = 0, mask = 0;
-                if (bits) {
-                    unsigned shift = bits == 26 ? 0u : 5u;
-                    int64_t imm = (int64_t)((w & mask) >> shift);
-                    if (imm & ((int64_t)1 << (bits - 1))) imm -= (int64_t)1 << bits;
-                    int64_t t = (int64_t)i + imm;
-                    if (t < 0 || t > (int64_t)n) return 0;
-                    if ((i < hot) != ((size_t)t < hot)) {
-                        int64_t d = imm + (part ? -gap : gap);
-                        if (d >= ((int64_t)1 << (bits - 1)) || d < -((int64_t)1 << (bits - 1))) return 0;
-                        w = (w & ~mask) | (((uint32_t)d << shift) & mask);
-                    }
-                }
-            }
-            dst[i - first] = w;
-        }
-    }
-    return 1;
-}
-
-static int a64_place(uint32_t *hot_dst, uint32_t *cold_dst, const uint32_t *src,
-                     size_t hot, size_t n, const uint16_t *branch_map) {
-    intptr_t gap = ((intptr_t)cold_dst - (intptr_t)hot_dst) / 4 - (intptr_t)hot;
-    /* Validate once and retain only crossing-branch replacements. Overflow
-     * returns to the original scanner before writing either output span. */
-    _Static_assert(ARM_JIT_NATIVE_MAX_BYTES / sizeof(uint32_t) <= UINT16_MAX, "fixup index fits");
-    enum { FIX_CAP = ARM_JIT_MAX_INSNS * 4u };
-    uint16_t fix_at[FIX_CAP];
-    uint32_t fix_word[FIX_CAP];
-    unsigned fixes = 0;
-    for (size_t group = 0; group < (n + 15u) / 16u; ++group) {
-        uint32_t pending = branch_map[group];
-        while (pending) {
-            size_t i = group * 16u + arm_ctz16(pending);
-            pending &= pending - 1u;
-            uint32_t w = src[i], mask;
-            unsigned bits;
-            if ((w & 0x7c000000u) == 0x14000000u) { bits = 26; mask = 0x03ffffffu; }
-            else if ((w & 0xff000010u) == 0x54000000u || (w & 0x7e000000u) == 0x34000000u) { bits = 19; mask = 0x7ffffu << 5; }
-            else if ((w & 0x7e000000u) == 0x36000000u) { bits = 14; mask = 0x3fffu << 5; }
-            else continue;
-            unsigned shift = bits == 26 ? 0u : 5u;
-            int64_t imm = (int64_t)((w & mask) >> shift);
-            if (imm & ((int64_t)1 << (bits - 1))) imm -= (int64_t)1 << bits;
-            int64_t t = (int64_t)i + imm;
-            if (t < 0 || t > (int64_t)n)
-                return a64_place_legacy(hot_dst, cold_dst, src, hot, n);
-            if ((i < hot) != ((size_t)t < hot)) {
-                int64_t d = imm + (i < hot ? gap : -gap);
-                if (d >= ((int64_t)1 << (bits - 1)) || d < -((int64_t)1 << (bits - 1)))
-                    return a64_place_legacy(hot_dst, cold_dst, src, hot, n);
-                if (fixes == FIX_CAP)
-                    return a64_place_legacy(hot_dst, cold_dst, src, hot, n);
-                fix_at[fixes] = (uint16_t)i;
-                fix_word[fixes++] = (w & ~mask) | (((uint32_t)d << shift) & mask);
-            }
-        }
-    }
-    memcpy(hot_dst, src, hot * sizeof(*src));
-    memcpy(cold_dst, src + hot, (n - hot) * sizeof(*src));
-    for (unsigned k = 0; k < fixes; ++k) {
-        size_t i = fix_at[k];
-        uint32_t *dst = i < hot ? hot_dst + i : cold_dst + i - hot;
-        *dst = fix_word[k];
-    }
-    return 1;
 }
 
 /* Emit rt_enter, rt_exit and rt_hop at the start of a fresh arena.
@@ -2546,19 +2495,20 @@ static int a64_emit_runtime(arm920t_t *c) {
     return a64_publish(c, 0, A64_RT_BYTES, 0, 0);
 }
 
-static void arm_jit_compile_host(arm920t_t *c, arm_jit_block_t *b) {
+/* Translation must not be inlined into the guest execution dispatcher. */
+static ARM_NOINLINE void arm_jit_compile_host(arm920t_t *c, arm_jit_block_t *b) {
     if (!c || !b || !b->count) return;
 #if defined(__SWITCH__)
     if (c->jit_memory_failed) return;
 #endif
     uint32_t tmp[ARM_JIT_NATIVE_MAX_BYTES / sizeof(uint32_t)];
-    uint16_t branches[(ARM_JIT_NATIVE_MAX_BYTES / sizeof(uint32_t) + 15u) / 16u] = {0};
+    a64_reloc_t reloc[A64_RELOC_MAX];
     a64_cold_op_t cold[ARM_JIT_MAX_INSNS];
     a64_fetch_fix_t fetch[ARM_JIT_MAX_INSNS];
     a64_emit_t e;
     memset(&e, 0, offsetof(a64_emit_t, ext_at));
     e.code = tmp;
-    e.branch_map = branches;
+    e.reloc = reloc;
     e.cap = sizeof(tmp) / sizeof(tmp[0]);
     e.cold = cold;
     e.fetch = fetch;
@@ -2771,7 +2721,7 @@ static void arm_jit_compile_host(arm920t_t *c, arm_jit_block_t *b) {
     }
     e.hot_end = e.pos;
     if (e.entry_exit) {
-        a64_patch(&e, e.entry_exit, e.pos);
+        a64_patch_cold(&e, e.entry_exit, e.pos);
         a64_imm(&e, 0, 0);
         a64_u32(&e, 0xd65f03c0u); /* ret: no frame was opened */
     }
@@ -2827,7 +2777,7 @@ static void arm_jit_compile_host(arm920t_t *c, arm_jit_block_t *b) {
     if (!a64_prepare_write(c)) return;
     uint32_t *hot_dst = (uint32_t *)(void *)(c->jit_code + start);
     uint32_t *cold_dst = (uint32_t *)(void *)(c->jit_code + cold_at);
-    if (!a64_place(hot_dst, cold_dst, tmp, e.hot_end, e.pos, branches)) {
+    if (!a64_place(hot_dst, cold_dst, tmp, e.hot_end, e.pos, reloc, e.reloc_count)) {
         c->jit_cold_floor = cold_at + cold_bytes;
         /* Restore old entries on permission-based libnx after a placement
          * failure. No new entry is published. */

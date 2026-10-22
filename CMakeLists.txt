@@ -97,6 +97,19 @@ if (GP32EMU_BUILD_TESTS)
     add_test(NAME input_script COMMAND input_script_test ${CMAKE_CURRENT_SOURCE_DIR}/tests/input_script_order.txt)
     add_test(NAME arm_poll COMMAND arm_poll_test)
     add_test(NAME arm_jit COMMAND arm_jit_test)
+    # The relocation encoder is host-independent; verify its A64 words even
+    # when this host runs the x64 backend. The second test also executes A64
+    # generated code when an A64 host (or CMake cross emulator) is available.
+    foreach(reloc_test arm_a64_reloc arm_a64_emit_reloc)
+        add_executable(${reloc_test}_test tests/${reloc_test}_test.c)
+        target_include_directories(${reloc_test}_test PRIVATE src include)
+        target_compile_definitions(${reloc_test}_test PRIVATE _XOPEN_SOURCE=700)
+        if (NOT MSVC)
+            target_compile_options(${reloc_test}_test PRIVATE -Wall -Wextra)
+        endif()
+        add_test(NAME ${reloc_test} COMMAND ${reloc_test}_test)
+    endforeach()
+    set_tests_properties(arm_a64_emit_reloc PROPERTIES SKIP_REGULAR_EXPRESSION "SKIP:")
     add_executable(arm_jit_storage_test tests/arm_jit_storage_test.c)
     target_include_directories(arm_jit_storage_test PRIVATE src include)
     target_compile_definitions(arm_jit_storage_test PRIVATE
