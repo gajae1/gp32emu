@@ -1309,6 +1309,130 @@ static void a64_leaf_write32_pa(a64_emit_t *e, const arm_jit_op_t *op, size_t co
     if (code_watch != SIZE_MAX) a64_patch(e, code_watch, e->pos);
 }
 
+/* A contiguous STR/LDR/AND/ORR/STR region can amortize physical endpoint
+ * proofs only through the existing peripheral-only write and live-read
+ * contracts. Both writes remain separate callbacks, and the live word is
+ * loaded after the first one. No callback may change CPU state, a deadline,
+ * a mapping or executable memory, so the second store's first proof remains
+ * valid. Every rejected guard falls into the original five native ops below.
+ * The original ops also remain entry points for in-block forward branches.
+ *
+ * The shared base and disjoint data registers make both addresses invariant.
+ * Descriptor offsets choose an economical candidate, never authorize a bus
+ * access: each current VA is translated and checked independently at runtime.
+ * No guest address, firmware bytes, title or fixed PC selects this region. */
+#ifndef ARM_JIT_A64_IO_SEQUENCE
+#define ARM_JIT_A64_IO_SEQUENCE 1
+#endif
+static int a64_io_sequence_shape(const arm_jit_op_t *op) {
+    /* Most positions are not a store; reject before touching four more ops. */
+    if (op[0].kind != ARM_JIT_OP_SINGLE_DT ||
+        (op[0].d & ~ARM_BC_SD_U) != ARM_BC_SD_P) return 0;
+    for (unsigned i = 0; i < 5u; ++i)
+        if (op[i].cond != 14u || op[i].stop || op[i].reserved ||
+            op[i].pc != op[0].pc + i * 4u) return 0;
+    if ((op[0].pc >> 10) != (op[4].pc >> 10)) return 0;
+    if (op[1].kind != ARM_JIT_OP_SINGLE_DT ||
+        (op[1].d & ~ARM_BC_SD_U) != (ARM_BC_SD_P | ARM_BC_SD_L) ||
+        op[4].kind != ARM_JIT_OP_SINGLE_DT || op[4].insn != op[0].insn ||
+        op[1].a != op[0].a) return 0;
+    if (op[2].kind != ARM_JIT_OP_DATA || op[2].a != 0u ||
+        (op[2].d & (ARM_BC_DATA_IMM | ARM_BC_DATA_S | ARM_BC_DATA_REGSHIFT)) != ARM_BC_DATA_IMM ||
+        op[2].b != op[1].b || op[2].c != op[1].b ||
+        op[3].kind != ARM_JIT_OP_DATA || op[3].a != 12u ||
+        op[3].d || op[3].g || op[3].b != op[0].b || op[3].c != op[0].b) return 0;
+    unsigned base = op[0].a, value = op[0].b, loaded = op[1].b, shift = op[3].e;
+    return base < 15u && value < 15u && loaded < 15u && shift < 15u &&
+        base != value && base != loaded && base != shift &&
+        value != loaded && value != shift && loaded != shift;
+}
+
+static void a64_io_sequence_store(a64_emit_t *e, const arm_jit_op_t *op,
+                                  const arm_leaf_write32_t *write) {
+    a64_guest(e, 2, op->b, op->pc);
+    a64_store_imm(e, offsetof(arm920t_t, r) + 15u * 4u, op->pc + 4u);
+    a64_ptr(e, 0, (uintptr_t)write->user);
+    a64_imm(e, 1, write->pa);
+    a64_ptr(e, 16, (uintptr_t)write->write);
+    a64_u32(e, 0xd63f0200u); /* blr x16: every original store still happens */
+}
+
+static int a64_io_sequence(arm920t_t *c, a64_emit_t *e, const arm_jit_op_t *op,
+                           uint32_t before, size_t *success) {
+    if (!ARM_JIT_A64_IO_SEQUENCE || e->counted || !e->leaf_write32_mask ||
+        !e->live_read32_count || e->live_read32_count > 8u ||
+        !a64_io_sequence_shape(op)) return 0;
+    uint32_t store_offset = (op[0].d & ARM_BC_SD_U) ? op[0].imm : 0u - op[0].imm;
+    uint32_t read_offset = (op[1].d & ARM_BC_SD_U) ? op[1].imm : 0u - op[1].imm;
+    const arm_leaf_write32_t *write = NULL;
+    const arm_live_read32_t *read = NULL;
+    for (size_t i = 0; !write && i < e->leaf_write32_count; ++i) {
+        if (!(e->leaf_write32_mask & (1u << i))) continue;
+        for (size_t j = 0; j < e->live_read32_count; ++j) {
+            if (e->live_read32[j].pa - e->leaf_write32[i].pa != read_offset - store_offset ||
+                !fastmem_excludes(c, e->live_read32[j].pa, 4u, 0)) continue;
+            write = &e->leaf_write32[i]; read = &e->live_read32[j]; break;
+        }
+    }
+    if (!write) return 0;
+
+    e->nzcv_valid = 0;
+    e->fwd_guest = -1;
+    size_t reject[12]; unsigned nreject = 0;
+    /* Entry already requires the whole block. Retain an explicit local
+     * bound as well: w22 includes earlier forward skips, before includes
+     * their original positions, so this proves all five actual retirements. */
+    a64_cmp_imm(e, 22, before + 5u);
+    reject[nreject++] = a64_jump(e, 3); /* LO */
+    /* Watches can be installed after compilation. Even a certified write
+     * must retain the normal code-invalidation path when its region was
+     * fetched as instructions; no new watch can appear inside this region. */
+    a64_cpu_mem(e, 0x39400000u, 6, offsetof(arm920t_t, jit_code_nonram), 0);
+    reject[nreject++] = e->pos;
+    a64_branch_word(e, 0x37080006u); /* tbnz w6, #1 */
+    for (unsigned access = 0; access < 2u; ++access) {
+        const arm_jit_op_t *mem = &op[access];
+        a64_guest(e, 12, mem->a, mem->pc);
+        if (mem->imm)
+            a64_u32(e, ((mem->d & ARM_BC_SD_U) ? 0x11000000u : 0x51000000u) |
+                       (mem->imm << 10) | (12u << 5) | 12u);
+        a64_mask(e, 6, 12, 3u);
+        reject[nreject++] = e->pos;
+        a64_branch_word(e, 0x35000006u); /* cbnz w6: original VA must be aligned */
+        a64_word_pa(e, reject, &nreject);
+        a64_imm(e, 6, access ? read->pa : write->pa);
+        a64_cmp(e, 0, 6);
+        reject[nreject++] = a64_jump(e, 1); /* NE: exact registered endpoint */
+    }
+    /* Nothing above mutated guest or peripheral state or filled a TLB.
+     * Both callbacks see write-through registers and their own original PC.
+     * The leaf contract preserves the callee-saved native register cache. */
+    a64_io_sequence_store(e, &op[0], write);
+    a64_ptr(e, 10, (uintptr_t)read->word);
+    a64_u32(e, 0xb9400142u); /* ldr w2, [x10]: fresh volatile read after store */
+    a64_put_guest(e, op[1].b, 2);
+    (void)a64_data(e, &op[2], before + 3u);
+    (void)a64_data(e, &op[3], before + 4u);
+    a64_io_sequence_store(e, &op[4], write);
+#if ARM920T_PROFILING
+    _Static_assert(offsetof(gp32_cpu_profile_t, native_io_sequence_insns) ==
+                   offsetof(gp32_cpu_profile_t, native_io_sequence_batches) + sizeof(uint64_t),
+                   "paired peripheral-region profile counters");
+    a64_cpu_addr(e, 17, offsetof(arm920t_t, prof.native_io_sequence_batches));
+    a64_u32(e, 0xa9401e26u); /* ldp x6, x7, [x17] */
+    a64_u32(e, 0x910004c6u); /* add x6, x6, #1 */
+    a64_u32(e, 0x910014e7u); /* add x7, x7, #5 */
+    a64_u32(e, 0xa9001e26u); /* stp x6, x7, [x17] */
+#endif
+    *success = a64_jump(e, 14u);
+    for (unsigned i = 0; i < nreject; ++i) a64_patch(e, reject[i], e->pos);
+    /* Rejected paths still enter the original first store with unchanged
+     * guest state. No caller-saved forwarding or host flags survive guards. */
+    e->fwd_guest = -1;
+    e->nzcv_valid = 0;
+    return 1;
+}
+
 /* The shared word probe has established the current physical address in w0.
  * Certificates require an aligned original VA and use the aligned physical
  * word; preserve w0 for the following ROM/open-bus/I/O probes on rejection.
@@ -2602,6 +2726,13 @@ static ARM_NOINLINE void arm_jit_compile_host(arm920t_t *c, arm_jit_block_t *b) 
         e.want_nzcv = i + 1u < b->count && arm_jit_ops(c, b)[i + 1u].cond < 14u;
         /* No TLB mutation on a resident I-side hit; semantic eviction
          * changes the epoch and checked helpers leave before continuing. */
+        if (!b->poll_backedge && i + 5u <= b->count) {
+            size_t sequence_success;
+            if (a64_io_sequence(c, &e, op, i, &sequence_success)) {
+                fwd_site[nfwd] = sequence_success;
+                fwd_to[nfwd++] = (uint16_t)(i + 5u);
+            }
+        }
         uint32_t folded;
         unsigned nfold = arm_jit_fold_const_data(arm_jit_ops(c, b), b->count, i, &folded);
         if (e.mmu && nfold && (arm_jit_ops(c, b)[i + nfold - 1u].pc >> 10) != (op->pc >> 10)) nfold = 0;
@@ -2709,8 +2840,14 @@ static ARM_NOINLINE void arm_jit_compile_host(arm920t_t *c, arm_jit_block_t *b) 
             break;
         }
     }
-    for (unsigned k = 0; k < nfwd; ++k)
+    for (unsigned k = 0; k < nfwd; ++k) {
+        /* A region ending at the decode limit joins the ordinary block exit. */
+        if (fwd_to[k] == b->count) {
+            a64_patch(&e, fwd_site[k], e.pos);
+            fwd_to[k] = UINT16_MAX;
+        }
         if (fwd_to[k] != UINT16_MAX) e.fail = 1; /* every target is a later op */
+    }
     if (!stopped) {
         /* The last op can itself be a stitched branch at the block-size limit. */
         const arm_jit_op_t *last = &arm_jit_ops(c, b)[b->count - 1u];

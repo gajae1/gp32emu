@@ -229,11 +229,14 @@ static int s3c2400_is_stable_read32(void *user, uint32_t addr) {
      * ends at the same edge with the same registers, flags and PC either way.
      * Disabled and STN panels report a constant status and set no deadline.
      * Other MMIO is deliberately excluded: reads can acknowledge hardware. */
+    /* Peripheral polls need no RAM-size load. Unsigned subtraction folds
+     * the GPIO lower/upper bounds into one range test; the alignment guard
+     * retains exactly the original set of certified words. */
+    uint32_t gpio_offset = addr - 0x15600000u;
+    if (!(gpio_offset & 3u) && gpio_offset <= 0x58u) return 1;
+    if ((addr | 0x10u) == 0x14a00010u) return 1;
     return addr <= BIOS_SIZE - 4u ||
-           (addr >= RAM_BASE && (uint64_t)(addr - RAM_BASE) + 4u <= s->ram_size) ||
-           addr == 0x14a00000u ||
-           addr == 0x14a00010u ||
-           (!(addr & 3u) && addr >= 0x15600000u && addr <= 0x15600058u);
+           (addr >= RAM_BASE && (uint64_t)(addr - RAM_BASE) + 4u <= s->ram_size);
 }
 
 static void slog(s3c2400_t *s, const char *fmt, ...) {

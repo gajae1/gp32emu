@@ -5442,22 +5442,19 @@ static int arm_poll_read_stable(arm920t_t *c, const arm_jit_op_t *op) {
      * intermediate accesses are side-effect-free. */
     uint32_t base = op->a == 15u ? op->pc + 8u : c->r[op->a];
     uint32_t addr = (op->d & ARM_BC_SD_U) ? base + op->imm : base - op->imm;
-    if (!(op->d & ARM_BC_SD_L)) {
-        if (addr & 3u) return 0;
-        uint32_t phys;
-        /* This proof runs before the guest condition check. Walking here can
-         * refill/evict a TLB entry (or fault) for a store that never executes. */
-        if (!arm_poll_cached_address(c, addr, &phys) || !arm_jit_addr_in_ram(phys, 4u)) return 0;
-        const uint8_t *p = fastmem(c, phys, 4u, 1);
-        /* A stable endpoint alone cannot prove intermediate writes harmless.
-         * Every store in the observed repetition must already be a no-op. */
-        return p && gp32_ld32le(p) == c->r[op->b];
-    }
+    /* Loads and stores need the same non-mutating mapping proof. Share it
+     * before selecting the endpoint check instead of duplicating the TLB
+     * lookup and physical-window branches in this hot observer. */
+    if (addr & 3u) return 0;
     uint32_t phys;
-    /* Reuse this check's proven translation; no callback or guest operation
-     * can replace the mapping between the lookup and its stable-read query. */
-    return !(addr & 3u) && arm_poll_cached_address(c, addr, &phys) && c->bus.is_stable_read32 &&
-           c->bus.is_stable_read32(c->bus.user, phys);
+    if (!arm_poll_cached_address(c, addr, &phys)) return 0;
+    if (op->d & ARM_BC_SD_L)
+        return c->bus.is_stable_read32 && c->bus.is_stable_read32(c->bus.user, phys);
+    /* This runs before the guest condition check; never refill a TLB here.
+     * Every observed store must already be a no-op in ordinary writable RAM. */
+    if (!arm_jit_addr_in_ram(phys, 4u)) return 0;
+    const uint8_t *p = fastmem(c, phys, 4u, 1);
+    return p && gp32_ld32le(p) == c->r[op->b];
 }
 
 /* No native block is active at lazy compilation. Recycle before emitting,
