@@ -1,16 +1,18 @@
 # Cross-build AArch64 Linux from Windows/macOS/Linux with Zig 0.13.0.
-# Retains the existing Cortex-A53 code-generation settings used on H700.
-# Other ARM64 systems need compatible CPU features and a 64-bit frontend.
+# Defaults to Cortex-A53 for H700; use -DGP32_AARCH64_CPU=cortex_a35 for RK3326.
+# The selected device still requires a 64-bit userspace and frontend.
 # The target's glibc must be >= 2.17. This is not an Android toolchain.
 set(CMAKE_SYSTEM_NAME Linux)
 set(CMAKE_SYSTEM_PROCESSOR aarch64)
-# Preserve an explicit -DGP32_ZIG path in CMake's compiler probe projects.
-list(APPEND CMAKE_TRY_COMPILE_PLATFORM_VARIABLES GP32_ZIG)
+# Preserve the selected compiler and CPU in CMake compiler probe projects.
+set(GP32_AARCH64_CPU "cortex_a53" CACHE STRING "AArch64 Zig CPU model")
+set_property(CACHE GP32_AARCH64_CPU PROPERTY STRINGS cortex_a53 cortex_a35)
+list(APPEND CMAKE_TRY_COMPILE_PLATFORM_VARIABLES GP32_ZIG GP32_AARCH64_CPU)
 find_program(GP32_ZIG zig REQUIRED)
 set(CMAKE_C_COMPILER "${GP32_ZIG}")
-set(CMAKE_C_COMPILER_ARG1 "cc -target aarch64-linux-gnu.2.17 -mcpu=cortex_a53")
+set(CMAKE_C_COMPILER_ARG1 "cc -target aarch64-linux-gnu.2.17 -mcpu=${GP32_AARCH64_CPU}")
 set(CMAKE_CXX_COMPILER "${GP32_ZIG}")
-set(CMAKE_CXX_COMPILER_ARG1 "c++ -target aarch64-linux-gnu.2.17 -mcpu=cortex_a53")
+set(CMAKE_CXX_COMPILER_ARG1 "c++ -target aarch64-linux-gnu.2.17 -mcpu=${GP32_AARCH64_CPU}")
 set(CMAKE_AR "${GP32_ZIG}")
 set(CMAKE_RANLIB "${GP32_ZIG}")
 set(CMAKE_C_ARCHIVE_CREATE "<CMAKE_AR> ar qc <TARGET> <LINK_FLAGS> <OBJECTS>")

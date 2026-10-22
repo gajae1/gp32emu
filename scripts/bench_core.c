@@ -151,6 +151,8 @@ typedef struct frame_counters {
     uint64_t helper_interp_ops;
     uint64_t poll_skip_events;
     uint64_t slow_bail_single_nonram;
+    uint64_t native_io_sequence_batches;
+    uint64_t native_io_sequence_insns;
 } frame_counters_t;
 
 static frame_counters_t frame_counters_snapshot(const gp32_t *g) {
@@ -168,6 +170,8 @@ static frame_counters_t frame_counters_snapshot(const gp32_t *g) {
     c.helper_interp_ops = p.helper_interp_ops;
     c.poll_skip_events = p.poll_skip_events;
     c.slow_bail_single_nonram = p.slow_bail_single_nonram;
+    c.native_io_sequence_batches = p.native_io_sequence_batches;
+    c.native_io_sequence_insns = p.native_io_sequence_insns;
     return c;
 }
 
@@ -183,6 +187,8 @@ static frame_counters_t frame_counters_delta(frame_counters_t after, frame_count
     d.helper_interp_ops = after.helper_interp_ops - before.helper_interp_ops;
     d.poll_skip_events = after.poll_skip_events - before.poll_skip_events;
     d.slow_bail_single_nonram = after.slow_bail_single_nonram - before.slow_bail_single_nonram;
+    d.native_io_sequence_batches = after.native_io_sequence_batches - before.native_io_sequence_batches;
+    d.native_io_sequence_insns = after.native_io_sequence_insns - before.native_io_sequence_insns;
     return d;
 }
 
@@ -214,6 +220,9 @@ static void print_frame_counters_json(const frame_counters_t *c) {
            c->cycles, c->jit_blocks_compiled, c->jit_native_compiled, c->jit_misses,
            c->jit_invalidations, c->jit_code_full_events, c->native_block_calls,
            c->helper_interp_ops, c->poll_skip_events, c->slow_bail_single_nonram);
+    printf(",\"native_io_sequence_batches\":%" PRIu64
+           ",\"native_io_sequence_insns\":%" PRIu64,
+           c->native_io_sequence_batches, c->native_io_sequence_insns);
 }
 
 static void print_frame_times_json(double *frame_ms, size_t count,
@@ -272,7 +281,9 @@ static int usage(const char *argv0) {
         "exceeded 16.67 ms and 33.3 ms, and the 10 slowest frames. With --cpu-profile as well, every\n"
         "slowest frame also carries that frame's delta of cycles, jit_blocks_compiled,\n"
         "jit_native_compiled, jit_misses, jit_invalidations, jit_code_full_events, native_block_calls,\n"
-        "helper_interp_ops, poll_skip_events and slow_bail_single_nonram. Default output is unchanged\n"
+        "helper_interp_ops, poll_skip_events, slow_bail_single_nonram and certified I/O region counts.\n"
+        "Region counters count successful batches and the original instructions retired by them.\n"
+        "Default output is unchanged\n"
         "without the option.\n"
         "Default pacing matches frontends; --legacy-cycle-frames replays the former clock/60 budget.\n",
         argv0);
@@ -380,11 +391,14 @@ static void print_cpu_profile_json(const gp32_cpu_profile_t *p) {
            ",\"native_exit_prediction_cold\":%" PRIu64
            ",\"native_exit_prediction_second_hits\":%" PRIu64
            ",\"native_exit_prediction_second_ready_hits\":%" PRIu64
-           ",\"native_chain_hops\":%" PRIu64 "}",
+           ",\"native_chain_hops\":%" PRIu64
+           ",\"native_io_sequence_batches\":%" PRIu64
+           ",\"native_io_sequence_insns\":%" PRIu64 "}",
            p->native_exit_predictions, p->native_exit_prediction_hits,
            p->native_exit_prediction_ready_hits, p->native_exit_prediction_cold,
            p->native_exit_prediction_second_hits, p->native_exit_prediction_second_ready_hits,
-           p->native_chain_hops);
+           p->native_chain_hops,
+           p->native_io_sequence_batches, p->native_io_sequence_insns);
 }
 
 int main(int argc, char **argv) {

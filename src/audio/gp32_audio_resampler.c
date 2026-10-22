@@ -7,6 +7,9 @@
 #if defined(__SSE2__) || defined(_M_X64) || (defined(_M_IX86_FP) && _M_IX86_FP >= 2)
 #include <emmintrin.h>
 #define GP32_AUDIO_SSE2 1
+#elif defined(__aarch64__) && (defined(__ARM_NEON) || defined(__ARM_NEON__))
+#include <arm_neon.h>
+#define GP32_AUDIO_NEON 1
 #endif
 
 #define GP32_AUDIO_Q32_ONE 4294967296.0
@@ -262,6 +265,23 @@ static inline __m128i poly_dot4_sse2(__m128i samples, __m128i coeff) {
         _mm_add_epi64(_mm_unpacklo_epi32(p0, sign0), _mm_unpackhi_epi32(p0, sign0)),
         _mm_add_epi64(_mm_unpacklo_epi32(p1, sign1), _mm_unpackhi_epi32(p1, sign1)));
 }
+#elif defined(GP32_AUDIO_NEON)
+/* Read source frames in their natural order and reverse only the coefficients.
+ * Both channels share the same coefficients, avoiding two sample reversals. */
+static inline int16x8_t poly_reverse8_neon(int16x8_t coeff) {
+    coeff = vrev64q_s16(coeff);
+    return vextq_s16(coeff, coeff, 4);
+}
+
+/* SMULL produces exact signed 32-bit products. SADALP widens each product
+ * before pairwise addition, so two (-32768 * -32768) terms cannot overflow
+ * a signed 32-bit partial sum. Even 65 maximal products fit in signed 64 bits.
+ * Keep two wide lanes per channel until the final horizontal reduction. */
+static inline int64x2_t poly_accum8_neon(int64x2_t sum, int16x8_t samples,
+                                        int16x8_t coeff) {
+    sum = vpadalq_s32(sum, vmull_s16(vget_low_s16(samples), vget_low_s16(coeff)));
+    return vpadalq_s32(sum, vmull_high_s16(samples, coeff));
+}
 #endif
 
 /* Band-limited value at the virtual source index n + frac, one filter delay
@@ -270,7 +290,14 @@ static inline __m128i poly_dot4_sse2(__m128i samples, __m128i coeff) {
  * previous sample, and src[k] otherwise.  Taps with a negative index read the
  * ring, the index-zero tap reads prev (or src[0] at the very start) and the
  * rest are contiguous in src, so no tap ever needs a future frame. */
-static void poly_gather(const gp32_audio_resampler_t *r, const int16_t *src,
+/* Keep the SIMD FIR in the output loop: a separate call regresses small,
+ * history-heavy input blocks on in-order AArch64 cores. */
+#if defined(GP32_AUDIO_NEON)
+static inline __attribute__((always_inline))
+#else
+static
+#endif
+void poly_gather(const gp32_audio_resampler_t *r, const int16_t *src,
                         int have_prev, size_t n, uint32_t frac,
                         int64_t *acc_l, int64_t *acc_r) {
     const int16_t *c = r->poly_coef[(frac >> 24) & (GP32_AUDIO_POLY_PHASES - 1u)];
@@ -297,8 +324,27 @@ static void poly_gather(const gp32_audio_resampler_t *r, const int16_t *src,
         sum_l = result[0];
         sum_r = result[1];
     }
+#elif defined(GP32_AUDIO_NEON)
+    const size_t src_end = src_taps & ~(size_t)7u;
+    if (src_end) {
+        int64x2_t left = vdupq_n_s64(0), right = vdupq_n_s64(0);
+        for (; i < src_end; i += 8u) {
+            const int16_t *p = src + ((n - i - 7u) - lead) * 2u;
+            int16x8x2_t samples = vld2q_s16(p);
+            int16x8_t coeff = poly_reverse8_neon(vld1q_s16(c + i));
+            left = poly_accum8_neon(left, samples.val[0], coeff);
+            right = poly_accum8_neon(right, samples.val[1], coeff);
+        }
+        sum_l = vaddvq_s64(left);
+        sum_r = vaddvq_s64(right);
+    }
+    i = src_end; /* Make the fewer-than-eight scalar tail explicit. */
 #endif
+#if defined(GP32_AUDIO_NEON)
+    for (size_t tail = src_taps & 7u; tail; --tail, ++i) {
+#else
     for (; i < src_taps; ++i) {
+#endif
         const int16_t *p = src + ((n - i) - lead) * 2u;
         sum_l += (int32_t)c[i] * (int32_t)p[0];
         sum_r += (int32_t)c[i] * (int32_t)p[1];
@@ -328,6 +374,20 @@ static void poly_gather(const gp32_audio_resampler_t *r, const int16_t *src,
             sum_l += result[0];
             sum_r += result[1];
         }
+#elif defined(GP32_AUDIO_NEON)
+        const size_t hist_end = GP32_AUDIO_POLY_TAPS - ((GP32_AUDIO_POLY_TAPS - i) & 7u);
+        if (i < hist_end) {
+            int64x2_t left = vdupq_n_s64(0), right = vdupq_n_s64(0);
+            for (; i < hist_end; i += 8u) {
+                size_t h = GP32_AUDIO_POLY_HISTORY + n - i - 7u;
+                int16x8_t coeff = poly_reverse8_neon(vld1q_s16(c + i));
+                left = poly_accum8_neon(left, vld1q_s16(r->poly_hist_l + h), coeff);
+                right = poly_accum8_neon(right, vld1q_s16(r->poly_hist_r + h), coeff);
+            }
+            sum_l += vaddvq_s64(left);
+            sum_r += vaddvq_s64(right);
+        }
+        i = hist_end;
 #endif
         for (; i < GP32_AUDIO_POLY_TAPS; ++i) {
             size_t h = GP32_AUDIO_POLY_HISTORY + n - i;

@@ -40,8 +40,9 @@ requires a manual NDK CMake configuration with `-DANDROID_ABI=x86_64` or
 as its minimum. See [ANDROID_BUILD.md](ANDROID_BUILD.md) for app packaging.
 
 For Linux AArch64 cross-compilation, put Zig 0.13.0 on PATH and use the toolchain
-file `cmake/toolchains/linux-aarch64-zig.cmake`. It retains the Cortex-A53
-code-generation settings and targets glibc 2.17 or newer. The old
+file `cmake/toolchains/linux-aarch64-zig.cmake`. It defaults to Cortex-A53
+code generation; select `-DGP32_AARCH64_CPU=cortex_a35` for a Cortex-A35 target.
+Both configurations target glibc 2.17 or newer. The old
 `h700-zig.cmake` name is a compatible alias. The target requires compatible CPU
 features, glibc, and a 64-bit libretro frontend. A 32-bit RetroArch process
 cannot load this core, even on a 64-bit kernel. Android and Switch need their
