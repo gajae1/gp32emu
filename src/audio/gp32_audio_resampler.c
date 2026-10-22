@@ -86,9 +86,12 @@ static double poly_cutoff(uint32_t src_rate, uint32_t dst_rate) {
  * an exact constant output; the remainder lands on the largest tap, where it
  * moves one coefficient by at most one LSB. */
 static void poly_build_table(gp32_audio_resampler_t *r, uint32_t src_rate, uint32_t dst_rate) {
+    _Static_assert(GP32_AUDIO_POLY_PHASES >= 2u &&
+        !(GP32_AUDIO_POLY_PHASES & (GP32_AUDIO_POLY_PHASES - 1u)),
+        "paired filter phases require an exact binary fractional grid");
     double fc = poly_cutoff(src_rate, dst_rate);
     double i0_beta = bessel_i0(GP32_AUDIO_POLY_BETA);
-    for (unsigned p = 0; p < GP32_AUDIO_POLY_PHASES; ++p) {
+    for (unsigned p = 0; p <= GP32_AUDIO_POLY_PHASES / 2u; ++p) {
         double frac = (double)p / (double)GP32_AUDIO_POLY_PHASES;
         int32_t sum = 0;
         unsigned peak = 0;
@@ -104,6 +107,23 @@ static void poly_build_table(gp32_audio_resampler_t *r, uint32_t src_rate, uint3
             r->poly_coef[p][i] = q;
             sum += q;
             if (q > peak_value) { peak_value = q; peak = i; }
+        }
+        if (p && p < GP32_AUDIO_POLY_PHASES / 2u) {
+            /* The windowed sinc is even. Complementary fractional phases
+             * reverse the first 2*half taps; the final tap is outside the
+             * window in both rows. Copy before DC normalization and choose
+             * the mirrored row's own first maximum, preserving Q15 ties. */
+            unsigned other = GP32_AUDIO_POLY_PHASES - p;
+            unsigned other_peak = 0;
+            int32_t other_peak_value = INT32_MIN;
+            for (unsigned i = 0; i < GP32_AUDIO_POLY_TAPS; ++i) {
+                int16_t q = i < GP32_AUDIO_POLY_HISTORY ?
+                    r->poly_coef[p][GP32_AUDIO_POLY_HISTORY - 1u - i] : 0;
+                r->poly_coef[other][i] = q;
+                if (q > other_peak_value) { other_peak_value = q; other_peak = i; }
+            }
+            r->poly_coef[other][other_peak] =
+                (int16_t)((int32_t)r->poly_coef[other][other_peak] + (32768 - sum));
         }
         r->poly_coef[p][peak] = (int16_t)((int32_t)r->poly_coef[p][peak] + (32768 - sum));
     }
