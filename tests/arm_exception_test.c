@@ -505,9 +505,9 @@ static void case_arm_undefined_dsp(void) {
             bios_w32(CODE_ADDR + 4u, cases[k].insn & 0x0fffffffu); /* EQ */
             bios_w32(CODE_ADDR + 8u, 0xe3a05042u); /* mov r5,#0x42 */
             bios_w32(0x04u, 0xe1b0f00eu); /* movs pc,lr */
-            /* Re-enter the same block with alternating Z. The last two runs
-             * exercise both predicate results after native compilation. */
-            for (unsigned phase = 0; phase < 4u; ++phase) {
+            /* A64 records eight portable observations before native promotion.
+             * Keep alternating Z; the final two runs measure both native predicates. */
+            for (unsigned phase = 0; phase < 10u; ++phase) {
                 int traps = (phase & 1u) != 0;
                 uint32_t cpsr = traps ? 0xe0000053u : 0xa0000053u;
                 char name[80];
@@ -523,7 +523,7 @@ static void case_arm_undefined_dsp(void) {
                 arm920t_set_reg(c, 14u, 0x55667788u);
                 arm920t_reset_cpu_profile(c);
                 CHECK(arm920t_run(c, 2u), 2u, "prefix and DSP instruction retire");
-                if (phase >= 2u) check_two_insn_engine(c, engine);
+                if (phase >= 8u) check_two_insn_engine(c, engine);
                 CHECK(arm920t_get_pc(c), traps ? 4u : CODE_ADDR + 8u, "live condition selects UND vector or fallthrough");
                 CHECK(arm920t_get_cpsr(c), traps ? 0xe00000dbu : cpsr, "DSP exception state");
                 for (unsigned r = 0; r < 4u; ++r)
@@ -582,7 +582,7 @@ static void case_arm_undefined_control(void) {
                     bios_w32(0x04u, 0xe1b0f00eu); /* MOVS pc,lr */
                     arm920t_set_cpsr(c, 0x000000dbu);
                     arm920t_set_reg(c, 13u, 0x55667788u); /* distinct UND stack */
-                    for (unsigned phase = 0; phase < 4u; ++phase) {
+                    for (unsigned phase = 0; phase < 10u; ++phase) {
                         int traps = (phase & 1u) != 0;
                         uint32_t cpsr = traps ? 0xe0000053u : 0xa0000053u;
                         char name[96];
@@ -593,7 +593,7 @@ static void case_arm_undefined_control(void) {
                         for (unsigned r = 0; r < 15u; ++r) arm920t_set_reg(c, r, 0x11223300u + r);
                         arm920t_reset_cpu_profile(c);
                         CHECK(arm920t_run(c, 2u), 2u, "prefix and extension word retire");
-                        if (phase >= 2u) check_two_insn_engine(c, engine);
+                        if (phase >= 8u) check_two_insn_engine(c, engine);
                         CHECK(arm920t_get_pc(c), traps ? 4u : CODE_ADDR + 8u, "control extension predicate selects UND or fallthrough");
                         CHECK(arm920t_get_cpsr(c), traps ? 0xe00000dbu : cpsr, "control extension exception state");
                         for (unsigned r = 0; r < 13u; ++r)
@@ -637,7 +637,7 @@ static void case_arm_multiply_decode(void) {
             if (engine == 0u) arm920t_set_trace(c, 1, NULL, NULL);
             bios_w32(CODE_ADDR, cases[k].insn);
             bios_w32(CODE_ADDR + 4u, 0xe12fff1cu); /* bx r12: bounds the block */
-            for (unsigned phase = 0; phase < 3u; ++phase) {
+            for (unsigned phase = 0; phase < 9u; ++phase) {
                 char name[64];
                 snprintf(name, sizeof(name), "%s-engine%u-phase%u", cases[k].name, engine, phase);
                 current_case = name;
@@ -651,7 +651,7 @@ static void case_arm_multiply_decode(void) {
                 arm920t_set_reg(c, 12u, CODE_ADDR + 0x40u);
                 arm920t_reset_cpu_profile(c);
                 CHECK(arm920t_run(c, 2u), 2u, "multiply and branch retire");
-                if (phase == 2u) check_two_insn_engine(c, engine);
+                if (phase == 8u) check_two_insn_engine(c, engine);
                 CHECK(arm920t_get_reg(c, 0u), cases[k].lo, "ARMv4 multiply low result");
                 CHECK(arm920t_get_reg(c, 1u), cases[k].hi, "ARMv4 multiply high result");
                 CHECK(arm920t_get_cpsr(c), 0xa0000053u, "multiply without S preserves CPSR");

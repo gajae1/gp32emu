@@ -56,7 +56,8 @@ static void check_zero_code(unsigned engine, unsigned instruction_cache) {
     s3c2400_write32(g->soc, code, 0xe3a00011u); /* MOV r0,#0x11 */
     s3c2400_write32(g->soc, code + 4u, 0xe12fff1cu); /* BX r12 */
     arm920t_set_reg(g->cpu, 12u, control);
-    for (unsigned warm = 0; warm < 2u; ++warm) {
+    /* Eight A64 portable observations, then one actual native encounter. */
+    for (unsigned warm = 0; warm < 9u; ++warm) {
         arm920t_set_reg(g->cpu, 0u, 0x66u);
         arm920t_set_reg(g->cpu, 15u, code);
         CHECK(arm920t_run(g->cpu, 2u) == 2u, "prime decoded/native code");
@@ -119,7 +120,8 @@ static void check_scalar_code(unsigned engine, unsigned instruction_cache,
     s3c2400_write32(g->soc, code, 0xe3a00011u); /* MOV r0,#0x11 */
     s3c2400_write32(g->soc, code + 4u, 0xe12fff1cu); /* BX r12 */
     arm920t_set_reg(g->cpu, 12u, control);
-    for (unsigned warm = 0; warm < 2u; ++warm) {
+    /* Eight A64 portable observations, then one actual native encounter. */
+    for (unsigned warm = 0; warm < 9u; ++warm) {
         arm920t_set_reg(g->cpu, 0u, 0x66u);
         arm920t_set_reg(g->cpu, 15u, code);
         CHECK(arm920t_run(g->cpu, 2u) == 2u, "prime scalar output code");
