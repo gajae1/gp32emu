@@ -97,7 +97,12 @@ Each configured PGO build records its mode, compiler and profile SHA-256 in
 `gp32-pgo-Release.txt`. Replacing the profile rebuilds affected core objects.
 Tests and third-party ZIP code do not inherit PGO compile flags. Frontends other
 than libretro still benefit from the shared core, but their UI sources are not
-profiled by this option. PGO does not enable IPO or change CPU/optimization flags.
+profiled by this option. PGO does not implicitly enable IPO or change CPU flags.
+For Linux ARM64 releases, also configure the final build with
+`-DGP32EMU_ENABLE_IPO=ON`. Clang uses ThinLTO to optimize across translation units;
+the Zig toolchain invokes its own archive tools without external wrapper scripts.
+Validate this final configuration against the ordinary PGO build. Other targets
+retain the default IPO setting until separately measured.
 
 `scripts/package_release.ps1` assembles five independent ZIP releases from a
 clean, committed source tree. Pass a new output directory plus four build
@@ -107,9 +112,9 @@ Android ABI. Also pass SDL3's DLL and licence notice and `llvm-strip` (included
 in the Android NDK). Debug information is removed only from packaged `.so`
 copies; original build outputs keep their symbols. Binary packages exclude
 tests, build caches and local results; source packages retain the tests.
-The Linux ARM64 input must be a validated PGO `USE` build with its generated
+The Linux ARM64 input must be a validated PGO `USE` build with IPO enabled and its generated
 `gp32-pgo-Release.txt`; packaging rejects an ordinary or training build. Its
-manifest records the training profile's SHA-256. All other CMake inputs also
+manifest records IPO and the training profile's SHA-256. All other CMake inputs also
 reject `GENERATE` mode, so profiling instrumentation cannot be shipped by mistake.
 
 The defaults produce `gp32emu-1.1.0-windows-x64.zip`,
