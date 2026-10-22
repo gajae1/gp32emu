@@ -101,6 +101,66 @@ static uint8_t *check_frame(const char *label, const char *dir, const gp32_frame
     return rgb;
 }
 
+static void check_portrait_pixels(void) {
+    enum { N = W * H, MAX_STRIDE = H + 3 };
+    _Alignas(16) static uint32_t source[W * MAX_STRIDE + 2], output[N + 2];
+    static uint32_t want[N];
+    const uint32_t strides[] = { H, MAX_STRIDE };
+    /* Valid uint32_t alignment, deliberately not 16-byte vector alignment. */
+    uint32_t *src = source + 1, *out = output + 1;
+    for (size_t c = 0; c < sizeof(strides) / sizeof(strides[0]); ++c) {
+        const char *label = c ? "portrait-padded-unaligned" : "portrait-tight-unaligned";
+        uint32_t stride = strides[c];
+        size_t span = (size_t)(W - 1) * stride + H;
+        memset(source, 0xa5, sizeof(source));
+        memset(output, 0xa5, sizeof(output));
+        /* Each RGB value uniquely identifies a source coordinate. Scatter the
+         * expected pixels: (column,row) -> (row,239-column), independently of
+         * the converter's destination traversal and 4x4 tile layout. */
+        for (uint32_t row = 0; row < W; ++row) {
+            for (uint32_t col = 0; col < H; ++col) {
+                uint32_t rgb = (col << 16) | row;
+                src[(size_t)row * stride + col] = 0xff000000u | rgb;
+                want[(size_t)(H - 1 - col) * W + row] = rgb;
+            }
+        }
+        src[0] = 0; /* Include an already-zero alpha alongside nonzero alpha. */
+        const gp32_framebuffer_desc_t fb = { src, H, W, stride, 0 };
+        CHECK(gp32_media_frame_to_bgra_320x240(&fb, out), "portrait conversion succeeds");
+        CHECK(!memcmp(out, want, sizeof(want)), "rotated coordinates and zero output alpha");
+        CHECK(source[0] == 0xa5a5a5a5u && src[span] == 0xa5a5a5a5u, "source bounds unchanged");
+        CHECK(output[0] == 0xa5a5a5a5u && out[N] == 0xa5a5a5a5u, "output bounds unchanged");
+    }
+}
+
+static void check_portrait_overlap(void) {
+    enum { N = W * H, WORDS = W * (H + 3) + 8, SRC = 4 };
+    static uint32_t actual[WORDS], want[WORDS];
+    static const struct { const char *label; uint32_t stride; int offset; } cases[] = {
+        { "portrait-in-place", H, 0 },
+        { "portrait-overlap-after", H + 3, 3 },
+        { "portrait-overlap-before", H + 3, -3 },
+    };
+    for (size_t c = 0; c < sizeof(cases) / sizeof(cases[0]); ++c) {
+        const char *label = cases[c].label;
+        size_t dst = (size_t)(SRC + cases[c].offset);
+        uint32_t stride = cases[c].stride;
+        for (size_t i = 0; i < WORDS; ++i)
+            actual[i] = want[i] = 0xa5000000u | (uint32_t)(i + 1);
+        /* ORIGINAL scalar order: advance one output pixel at a time, reading
+         * the already-mutated backing buffer. A snapshot/temporary transpose
+         * is intentionally NOT the overlap oracle. Unique RGB tags expose
+         * every read affected by an earlier write, including across rows. */
+        for (size_t i = 0; i < N; ++i) {
+            size_t row = i % W, col = H - 1 - i / W;
+            want[dst + i] = want[SRC + row * stride + col] & 0x00ffffffu;
+        }
+        const gp32_framebuffer_desc_t fb = { actual + SRC, H, W, stride, 0 };
+        CHECK(gp32_media_frame_to_bgra_320x240(&fb, actual + dst), "overlap conversion succeeds");
+        CHECK(!memcmp(actual, want, sizeof(want)), "original sequential pixels and untouched surrounding storage");
+    }
+}
+
 int main(int argc, char **argv) {
     const char *dir = argc > 1 ? argv[1] : ".";
     const char *label = "setup";
@@ -119,6 +179,9 @@ int main(int argc, char **argv) {
     CHECK(rgb && rgb[0] == 255 && rgb[1] == 0 && rgb[2] == 0, "red source pixel stays red");
     free(rgb);
     free(check_frame("rotated", dir, &raw_fb));
+
+    check_portrait_pixels();
+    check_portrait_overlap();
 
     label = "unwritable";
     char path[1024], err[256] = { 0 };
