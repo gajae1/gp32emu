@@ -513,6 +513,12 @@ struct arm920t {
     int jit_storage_started;
     const arm_leaf_write32_t *leaf_write32;
     size_t leaf_write32_count;
+#if defined(ARM_JIT_NATIVE_A64)
+    /* Runtime-only encodings of immutable host helper addresses, never guest
+     * code or serialized state. Existing hot offsets stay unchanged. */
+    uint32_t jit_helper_code[10][6];
+    int jit_helpers_ready;
+#endif
 };
 _Static_assert(offsetof(arm920t_t, jit_cache_epoch) == offsetof(arm920t_t, jit_generation) + 4u &&
                offsetof(arm_jit_block_t, tag_cache_epoch) == offsetof(arm_jit_block_t, generation) + 4u,

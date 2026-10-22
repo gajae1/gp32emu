@@ -67,6 +67,20 @@ static const uint8_t a64_cache_pool[A64_CACHE_REGS] = {26u, 27u, 28u};
 #define A64_CACHE_REGS 4u
 static const uint8_t a64_cache_pool[A64_CACHE_REGS] = {26u, 27u, 28u, 29u};
 #endif
+enum {
+    A64_HELPER_ARM_JIT_EXEC_SWI_NATIVE,
+    A64_HELPER_ARM_JIT_EXEC_CLASSIFIED,
+    A64_HELPER_ARM_A64_OBSERVE_CHECKED,
+    A64_HELPER_ARM_A64_EXEC_CHECKED,
+    A64_HELPER_ARM_A64_LDWORD_CHECKED,
+    A64_HELPER_ARM_A64_MEM_CHECKED,
+    A64_HELPER_ARM_A64_IO_WORD_CHECKED,
+    A64_HELPER_ARM_A64_IO_WORD_MAPPED_CHECKED,
+    A64_HELPER_ARM_JIT_EXCEPTION_RETURN_HELPER,
+    A64_HELPER_ARM_A64_MSR_CPSR,
+    A64_HELPER_COUNT
+};
+
 enum { A64_EXT_EXIT = 0, A64_EXT_HOP, A64_EXT_ENTER };
 #define A64_EXT_MAX (ARM_JIT_MAX_INSNS * 8u + 8u)
 /* Compile-time switch for linked exits (rt_hop); 0 returns every exit. */
@@ -96,6 +110,7 @@ typedef struct a64_emit {
      * (stores through a64_put_guest update it, helpers reload it), so a copy
      * stays valid across conditional skips, cold chains and the backedge. */
     uint8_t cache_host[16];
+    const uint32_t (*helper_code)[6];
     int bios_read;   /* jit_bios_base probes the whole read-only BIOS window */
     int open_bus;    /* bus promises open_bus_word32 outside every window */
     int io_read_callback, io_write_callback; /* proved no fastmem at device PAs */
@@ -375,6 +390,46 @@ static void a64_ptr(a64_emit_t *e, unsigned rd, uintptr_t v) {
         if ((v >> (16u * i)) & 0xffffu)
             a64_u32(e, 0xf2800000u | (i << 21) |
                     ((uint32_t)((v >> (16u * i)) & 0xffffu) << 5) | rd);
+}
+
+static void a64_init_helpers(arm920t_t *c) {
+    if (c->jit_helpers_ready) return;
+    const uintptr_t helpers[] = {
+        (uintptr_t)arm_jit_exec_swi_native,
+        (uintptr_t)arm_jit_exec_classified,
+        (uintptr_t)arm_a64_observe_checked,
+        (uintptr_t)arm_a64_exec_checked,
+        (uintptr_t)arm_a64_ldword_checked,
+        (uintptr_t)arm_a64_mem_checked,
+        (uintptr_t)arm_a64_io_word_checked,
+        (uintptr_t)arm_a64_io_word_mapped_checked,
+        (uintptr_t)arm_jit_exception_return_helper,
+        (uintptr_t)arm_a64_msr_cpsr
+    };
+    _Static_assert(sizeof(c->jit_helper_code) / sizeof(c->jit_helper_code[0]) == A64_HELPER_COUNT,
+                   "one instruction template per fixed host helper");
+    for (unsigned i = 0; i < A64_HELPER_COUNT; ++i) {
+        a64_emit_t tmp;
+        tmp.code = c->jit_helper_code[i] + 1;
+        tmp.pos = 0;
+        tmp.cap = 5;
+        tmp.fail = 0;
+        a64_ptr(&tmp, 16, helpers[i]);
+        a64_u32(&tmp, 0xd63f0200u); /* blr x16, same as per-block emission */
+        c->jit_helper_code[i][0] = (uint32_t)tmp.pos;
+    }
+    c->jit_helpers_ready = 1;
+}
+
+static void a64_helper_call(a64_emit_t *e, unsigned id) {
+    const uint32_t *code = e->helper_code[id];
+    size_t n = code[0];
+    if (e->pos <= e->cap && n <= e->cap - e->pos) {
+        memcpy(e->code + e->pos, code + 1, n * sizeof(*code));
+        e->pos += n;
+    } else {
+        for (size_t i = 0; i < n; ++i) a64_u32(e, code[i + 1u]);
+    }
 }
 
 static void a64_rr(a64_emit_t *e, uint32_t opcode, unsigned rd, unsigned rn, unsigned rm) {
@@ -717,8 +772,7 @@ static void a64_slow(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
     a64_rr(e, 0xaa000000u, 0, 31, 19);
     a64_ptr(e, 1, (uintptr_t)op);
     if (op->kind == ARM_JIT_OP_SWI) {
-        a64_ptr(e, 16, (uintptr_t)arm_jit_exec_swi_native);
-        a64_u32(e, 0xd63f0200u);
+        a64_helper_call(e, A64_HELPER_ARM_JIT_EXEC_SWI_NATIVE);
         a64_return(e, done);
         return;
     }
@@ -727,16 +781,14 @@ static void a64_slow(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
         /* This path always returns to dispatch. The classified operation
          * commits callback/exception state; continuation snapshots and checks
          * cannot affect the decision to leave this block. */
-        a64_ptr(e, 16, (uintptr_t)arm_jit_exec_classified);
-        a64_u32(e, 0xd63f0200u);
+        a64_helper_call(e, A64_HELPER_ARM_JIT_EXEC_CLASSIFIED);
         a64_return(e, done);
         return;
     }
     a64_imm(e, 2, e->expected_next);
     a64_imm(e, 3, e->generation);
-    a64_ptr(e, 16, e->counted && op->kind == ARM_JIT_OP_SINGLE_DT ?
-        (uintptr_t)arm_a64_observe_checked : (uintptr_t)arm_a64_exec_checked);
-    a64_u32(e, 0xd63f0200u); /* blr x16; helper commits PC and CPSR */
+    a64_helper_call(e, e->counted && op->kind == ARM_JIT_OP_SINGLE_DT ?
+        A64_HELPER_ARM_A64_OBSERVE_CHECKED : A64_HELPER_ARM_A64_EXEC_CHECKED);
     a64_cmp_imm(e, 0, 0);
     size_t next = a64_jump(e, 1);
     a64_return(e, done);
@@ -764,8 +816,8 @@ static void a64_mem_slow(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done,
     a64_mov(e, 2, 12);
     a64_rr(e, 0xaa000000u, 0, 31, 19);
     a64_ptr(e, 1, (uintptr_t)op);
-    a64_ptr(e, 16, word_load ? (uintptr_t)arm_a64_ldword_checked : (uintptr_t)arm_a64_mem_checked);
-    a64_u32(e, 0xd63f0200u);
+    a64_helper_call(e, word_load ?
+        A64_HELPER_ARM_A64_LDWORD_CHECKED : A64_HELPER_ARM_A64_MEM_CHECKED);
     a64_cmp_imm(e, 0, 0);
     size_t next = a64_jump(e, 1);
     a64_return(e, done);
@@ -824,9 +876,8 @@ static void a64_io_word_pa(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done,
     a64_rr(e, 0xaa000000u, 0, 31, 19);
     a64_ptr(e, 1, (uintptr_t)op);
     int callback_only = load ? e->io_read_callback : e->io_write_callback;
-    a64_ptr(e, 16, callback_only ? (uintptr_t)arm_a64_io_word_checked :
-                                  (uintptr_t)arm_a64_io_word_mapped_checked);
-    a64_u32(e, 0xd63f0200u); /* blr x16 */
+    a64_helper_call(e, callback_only ?
+        A64_HELPER_ARM_A64_IO_WORD_CHECKED : A64_HELPER_ARM_A64_IO_WORD_MAPPED_CHECKED);
     size_t keep = e->pos;
     a64_branch_word(e, 0x35000000u); /* cbnz w0: commits are done, may continue */
     a64_return(e, done);
@@ -873,8 +924,7 @@ static void a64_shift(a64_emit_t *e, unsigned type, unsigned amount, int carry) 
 static void a64_exception_return(a64_emit_t *e, unsigned result, uint32_t done) {
     a64_mov(e, 1, result); /* unaligned result, from the old register bank */
     a64_rr(e, 0xaa000000u, 0, 31, 19); /* x0 = CPU */
-    a64_ptr(e, 16, (uintptr_t)arm_jit_exception_return_helper);
-    a64_u32(e, 0xd63f0200u); /* blr x16 */
+    a64_helper_call(e, A64_HELPER_ARM_JIT_EXCEPTION_RETURN_HELPER);
     e->nzcv_valid = 0;
     a64_return(e, done); /* restored mode/IRQ/Thumb state reaches dispatch */
 }
@@ -2544,6 +2594,8 @@ static void arm_jit_compile_host(arm920t_t *c, arm_jit_block_t *b) {
             (size_t)UINT32_MAX - (ARM_JIT_RAM_BASE_ADDR + ARM_JIT_RAM_SIZE_BYTES) + 1u, 0);
     e.io_read_callback = fastmem_excludes(c, 0x14000000u, 0x02000000u, 0);
     e.io_write_callback = fastmem_excludes(c, 0x14000000u, 0x02000000u, 1);
+    a64_init_helpers(c);
+    e.helper_code = c->jit_helper_code;
     /* Counted and plain poll sources keep returning to the dispatcher, whose
      * general path owns their observation and skip bookkeeping. */
     e.hop = ARM_JIT_A64_LINK && !b->poll_backedge;
@@ -3012,8 +3064,7 @@ static int a64_local_p15(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
     size_t privileged = a64_jump(e, 1u); /* NE */
     a64_rr(e, 0xaa000000u, 0, 31, 19);
     a64_ptr(e, 1, (uintptr_t)op);
-    a64_ptr(e, 16, (uintptr_t)arm_jit_exec_classified);
-    a64_u32(e, 0xd63f0200u);
+    a64_helper_call(e, A64_HELPER_ARM_JIT_EXEC_CLASSIFIED);
     a64_return(e, done);
     a64_patch(e, privileged, e->pos);
     unsigned crn = (insn >> 16) & 0xfu, rd = (insn >> 12) & 0xfu;
@@ -3134,8 +3185,7 @@ static int a64_psr_mov(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
                 size_t updated = a64_jump(e, 14u);
                 a64_patch(e, switch_bank, e->pos);
                 a64_rr(e, 0xaa000000u, 0, 31, 19);
-                a64_ptr(e, 16, (uintptr_t)arm_a64_msr_cpsr);
-                a64_u32(e, 0xd63f0200u); /* blr x16: original operand and mask */
+                a64_helper_call(e, A64_HELPER_ARM_A64_MSR_CPSR);
                 a64_patch(e, updated, e->pos);
             }
             e->nzcv_valid = 0; /* compare/helper flags are not guest NZCV */
