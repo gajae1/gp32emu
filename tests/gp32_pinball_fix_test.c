@@ -315,9 +315,9 @@ static void check_site_instruction(int jit) {
      * extend the trace beyond that budget and never enter native execution. */
     ram_put(&f, 0x0c22a30cu, 0xe12fff1cu); /* park through BX r12 */
 
-    /* The first encounter is deliberately portable under lazy compilation.
-     * Execute each version again to test a mature native block as well. */
-    for (unsigned encounter = 0; encounter < 2u; ++encounter) {
+    /* Eight A64 encounters remain portable under lazy compilation.
+     * A ninth encounter executes each version as a mature native block. */
+    for (unsigned encounter = 0; encounter < 9u; ++encounter) {
         CHECK(run_site_instruction(&f, 0xdeadbeefu) == 3u, "the original call trace runs");
         CHECK(arm920t_get_reg(f.g->cpu, 0u) == 63u, "with the game's code resident the site runs mov r0, #63");
         CHECK(arm920t_get_pc(f.g->cpu) == 0x0c22a30cu, "the original block reaches its BL destination");
@@ -330,7 +330,7 @@ static void check_site_instruction(int jit) {
     CHECK(run_slice(&f), "run slice installs the fix");
     CHECK(ram_word(&f, GP32_PINBALL_FIX_PC) == GP32_PINBALL_FIX_NEW, "the site is patched");
 
-    for (unsigned encounter = 0; encounter < 2u; ++encounter) {
+    for (unsigned encounter = 0; encounter < 9u; ++encounter) {
         CHECK(run_site_instruction(&f, 0xdeadbeefu) == 3u, "the corrected call trace runs");
         CHECK(arm920t_get_reg(f.g->cpu, 0u) == 0u, "the site now runs mov r0, #0");
         CHECK(arm920t_get_pc(f.g->cpu) == 0x0c22a30cu, "the corrected block reaches its BL destination");
