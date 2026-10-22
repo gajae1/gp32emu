@@ -88,11 +88,10 @@ static double poly_cutoff(uint32_t src_rate, uint32_t dst_rate) {
  * Normalizing every row to sum to exactly 1.0 in Q15 keeps a constant input
  * an exact constant output; the remainder lands on the largest tap, where it
  * moves one coefficient by at most one LSB. */
-static void poly_build_table(gp32_audio_resampler_t *r, uint32_t src_rate, uint32_t dst_rate) {
+static void poly_build_table_math(gp32_audio_resampler_t *r, double fc) {
     _Static_assert(GP32_AUDIO_POLY_PHASES >= 2u &&
         !(GP32_AUDIO_POLY_PHASES & (GP32_AUDIO_POLY_PHASES - 1u)),
         "paired filter phases require an exact binary fractional grid");
-    double fc = poly_cutoff(src_rate, dst_rate);
     double i0_beta = bessel_i0(GP32_AUDIO_POLY_BETA);
     for (unsigned p = 0; p <= GP32_AUDIO_POLY_PHASES / 2u; ++p) {
         double frac = (double)p / (double)GP32_AUDIO_POLY_PHASES;
@@ -129,6 +128,24 @@ static void poly_build_table(gp32_audio_resampler_t *r, uint32_t src_rate, uint3
                 (int16_t)((int32_t)r->poly_coef[other][other_peak] + (32768 - sum));
         }
         r->poly_coef[p][peak] = (int16_t)((int32_t)r->poly_coef[p][peak] + (32768 - sum));
+    }
+}
+
+#include "gp32_audio_kernel.inc"
+
+static void poly_build_table(gp32_audio_resampler_t *r, uint32_t src_rate, uint32_t dst_rate) {
+    double fc = poly_cutoff(src_rate, dst_rate);
+    /* The usual upsampling kernel is immutable. Copying it avoids thousands
+     * of transcendental operations on the first audio callback after reset.
+     * The five adjacent double cutoffs centered on 0.480 produce identical
+     * Q15 tables (checked against the numerical path). They cover rounding
+     * in the rate multiply/divide without changing downsampling kernels. */
+    if (src_rate <= dst_rate && GP32_AUDIO_POLY_FC == 0.480 &&
+        GP32_AUDIO_POLY_BETA == 6.0 &&
+        GP32_AUDIO_POLY_PHASES == 256u && GP32_AUDIO_POLY_HALF == 32u) {
+        memcpy(r->poly_coef, poly_upsampling_coef, sizeof(r->poly_coef));
+    } else {
+        poly_build_table_math(r, fc);
     }
     r->poly_src_rate = src_rate;
     r->poly_dst_rate = dst_rate;
