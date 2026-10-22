@@ -57,8 +57,9 @@ static int failures;
 /* Scripted timeline. Frame shapes cycle through resampler rate changes, two
  * kinds of idle frame, and blocks the frontend only partially accepts, so a
  * queue residue survives frame boundaries. The frame counter repeats every
- * third step while the pixels still change: exactly the case where equality of
- * the counter alone cannot prove the presented pixels are unchanged. */
+ * third step with the same pixels, matching the completed LCD scanout. The
+ * frontend retains the later image across a rewind until the core uploads
+ * the restored one; a NULL callback cannot restore that image itself. */
 #define WARMUP_FRAMES 12u
 #define REPLAY_FRAMES 24u
 #define PCM_FRAMES 4096u
@@ -73,6 +74,8 @@ static uint32_t video_pixels[GP32_W * GP32_H];
 static size_t audio_per_call = AUDIO_PER_CALL;
 
 static uint64_t frame_hash;
+static uint64_t displayed_hash;
+static int have_displayed;
 static size_t audio_calls, audio_frames, audio_allowance;
 static size_t total_video_nulls, total_audio_calls;
 
@@ -89,7 +92,7 @@ static uint32_t script_rate(unsigned step) {
 static uint64_t script_counter(unsigned step) { return 1000u + step - step / 3u; }
 
 static void apply_script(unsigned step) {
-    uint32_t color = 0xff000000u | ((step * 2654435761u) & 0x00ffffffu);
+    uint32_t color = 0xff000000u | (((uint32_t)script_counter(step) * 2654435761u) & 0x00ffffffu);
     for (size_t i = 0; i < GP32_W * GP32_H; ++i) video_pixels[i] = color;
     scripted_fb = (gp32_framebuffer_desc_t){
         .pixels_rgba8888 = video_pixels,
@@ -134,15 +137,22 @@ static uint64_t hash_bytes(uint64_t h, const void *data, size_t bytes) {
     return h;
 }
 
-/* Content, not pointer identity: a resent duplicate must hash like the frame
- * it repeats. */
+/* Compare displayed pixels, not the choice between a NULL duplicate and a
+ * fresh upload. The frontend image deliberately survives state restoration. */
 static void record_video(const void *data, unsigned width, unsigned height, size_t pitch) {
-    uint8_t kind = data ? 2u : 1u;
-    frame_hash = hash_bytes(frame_hash, &kind, 1u);
-    if (!data) { ++total_video_nulls; return; }
-    uint32_t dims[3] = {width, height, (uint32_t)pitch};
-    frame_hash = hash_bytes(frame_hash, dims, sizeof(dims));
-    frame_hash = hash_bytes(frame_hash, data, (size_t)width * height * sizeof(uint32_t));
+    if (data) {
+        CHECK(width && height && pitch >= (size_t)width * sizeof(uint32_t), "valid video geometry");
+        uint32_t dims[2] = {width, height};
+        displayed_hash = hash_bytes(1469598103934665603ull, dims, sizeof(dims));
+        for (unsigned y = 0; y < height; ++y)
+            displayed_hash = hash_bytes(displayed_hash, (const uint8_t *)data + (size_t)y * pitch,
+                                        (size_t)width * sizeof(uint32_t));
+        have_displayed = 1;
+    } else {
+        ++total_video_nulls;
+        CHECK(have_displayed, "duplicate requires an existing frontend image");
+    }
+    frame_hash = hash_bytes(frame_hash, &displayed_hash, sizeof(displayed_hash));
 }
 
 /* Only part of each frame's output is accepted, so the queue keeps a residue
@@ -179,6 +189,8 @@ static bool test_environ(unsigned cmd, void *data) {
 
 static void start_core(void) {
     retro_deinit();
+    displayed_hash = 0;
+    have_displayed = 0;
     memset(content_path, 0, sizeof(content_path));
     memset(smartmedia_save_path, 0, sizeof(smartmedia_save_path));
     retro_set_environment(test_environ);
@@ -207,6 +219,7 @@ static uint64_t frame_delivery_hash(void) { return frame_hash; }
 static void test_rollback_replay(void) {
     start_core();
     for (unsigned step = 0; step < WARMUP_FRAMES; ++step) (void)run_scripted_frame(step);
+    uint64_t saved_display = displayed_hash;
 
     size_t size = retro_serialize_size();
     CHECK(size > 0, "retro_serialize_size must be known once content is loaded");
@@ -224,6 +237,7 @@ static void test_rollback_replay(void) {
         if (retro_serialize_size() != size) ++size_changes;
     }
     CHECK(retro_serialize(s1, size), "capture the state after the run-ahead frames");
+    CHECK(displayed_hash != saved_display, "frontend must hold a later image before rewind");
     CHECK(retro_unserialize(s0, size), "restore the state run-ahead captured");
     if (retro_serialize_size() != size) ++size_changes;
 

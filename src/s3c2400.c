@@ -2098,7 +2098,13 @@ void s3c2400_render_lcd(s3c2400_t *s) {
     switch(s->lcd.bppmode){case BPPMODE_TFT_01:pixels=32;bits=1;break;case BPPMODE_TFT_02:pixels=16;bits=2;break;case BPPMODE_TFT_04:pixels=8;bits=4;break;case BPPMODE_TFT_08:pixels=4;bits=8;break;case BPPMODE_TFT_16:pixels=2;bits=16;break;default:break;}
     if (!pixels) {
         memset(s->fb,0,sizeof(s->fb));
-        if (s->lcd.vramaddr_cur < s->lcd.vramaddr_max && h != 0u) { (void)lcd_dma_read(s); return; }
+        if (s->lcd.vramaddr_cur < s->lcd.vramaddr_max && h != 0u) {
+            (void)lcd_dma_read(s);
+            /* The black fallback changed the published pixels even though
+             * this unsupported scanout retains its early DMA return. */
+            ++s->frame_counter;
+            return;
+        }
     }
     else if (!lcd_render_contiguous(s, w, h, bits == 16 ? 2u : (uint32_t)pixels, (uint32_t)bits)) {
         memset(s->fb,0,sizeof(s->fb));
