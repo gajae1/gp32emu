@@ -2109,6 +2109,71 @@ ARM_FORCE_INLINE int arm_jit_peek_fetch(arm920t_t *c, uint32_t pc, uint32_t *ins
     return 1;
 }
 
+/* A collection owns this proof only until it returns. Every speculative
+ * helper shares it; an ordinary fetch or guest execution must not occur while
+ * it is live. Misses discard it before calling an untrusted bus mapping hook.
+ * No instruction or cached decode is retained: each hit reads the live word
+ * and records the same physical code watches as an individual peek. */
+typedef struct arm_jit_collect_fetch {
+    uint32_t key, generation;
+    uint64_t mutation;
+    const uint8_t *base;
+    uint32_t *watches; /* eight words for this aligned 1 KiB RAM subpage */
+} arm_jit_collect_fetch_t;
+_Static_assert(ARM_JIT_CODE_PAGE_SHIFT >= 10u && ARM_JIT_CODE_WATCH_SHIFT == 2u,
+               "collection subpage fits one code page and uses word watches");
+
+static ARM_NOINLINE int arm_jit_collect_peek_miss(arm920t_t *c,
+        arm_jit_collect_fetch_t *fetch, uint32_t pc, uint32_t *insn) {
+    fetch->key = UINT32_MAX;
+    if (pc & 3u) return 0;
+    uint32_t pa = pc;
+    if (c->cp15[1] & 1u) {
+        const arm_tlb_entry_t *e = &c->itlb_entry[arm_itlb_index(pc)];
+        if (!e->valid || (pc & ~e->mask) != e->va_base) return 0;
+        uint32_t mask = e->mask;
+        /* A canonical mapping covers this 1 KiB lookup subpage linearly.
+         * Retain exact OR-based semantics for unusual restored masks/bases. */
+        if ((mask != 0x3ffu && mask != 0xfffu && mask != 0xffffu && mask != 0xfffffu) ||
+            (e->pa_base & mask)) return arm_jit_peek_fetch(c, pc, insn);
+        pa = e->pa_base | (pc & mask);
+    }
+    uint32_t page_pa = pa & ~0x3ffu;
+    uint32_t off = page_pa - ARM_JIT_RAM_BASE_ADDR;
+    const uint8_t *p;
+    if (c->jit_ram_base && off <= ARM_JIT_RAM_SIZE_BYTES - 0x400u)
+        p = c->jit_ram_base + off;
+    else if (c->jit_bios_base && page_pa <= ARM_JIT_BIOS_SIZE_BYTES - 0x400u)
+        p = c->jit_bios_base + page_pa;
+    else return arm_jit_peek_fetch(c, pc, insn);
+    fetch->base = p;
+    fetch->watches = off < ARM_JIT_RAM_SIZE_BYTES ?
+        &c->jit_code_watches[off >> (ARM_JIT_CODE_WATCH_SHIFT + 5u)] : NULL;
+    fetch->generation = c->jit_generation;
+    fetch->mutation = c->tlb_mutation_serial;
+    fetch->key = (pc >> 10) | ((c->cp15[1] & 1u) << 22);
+    *insn = gp32_ld32le(p + (pc & 0x3ffu));
+    arm_jit_track_code(c, pa, 4u);
+    return 1;
+}
+
+ARM_FORCE_INLINE int arm_jit_collect_peek(arm920t_t *c,
+        arm_jit_collect_fetch_t *fetch, uint32_t pc, uint32_t *insn) {
+    uint32_t key = (pc >> 10) | ((c->cp15[1] & 1u) << 22);
+    if (!(pc & 3u) && fetch->key == key && fetch->generation == c->jit_generation &&
+        fetch->mutation == c->tlb_mutation_serial) {
+        uint32_t offset = pc & 0x3ffu;
+        *insn = gp32_ld32le(fetch->base + offset);
+        /* The miss already recorded this physical page/BIOS region.
+         * Only a new word watch is needed; a flush changes generation and
+         * rebuilds all tracking through the miss path before another hit. */
+        if (fetch->watches)
+            fetch->watches[offset >> 7] |= 1u << ((offset >> 2) & 31u);
+        return 1;
+    }
+    return arm_jit_collect_peek_miss(c, fetch, pc, insn);
+}
+
 /* Prove len consecutive fetches from pc against want (or the decoded ops when
  * want is NULL), using resident instruction mappings when the MMU is enabled.
  * A chunk stays inside one 4 KiB TLB slot and one mapping, where every word
@@ -2601,7 +2666,7 @@ static void arm_jit_compile_native(arm920t_t *c, arm_jit_block_t *b);
  * must check a loaded return against the decoded successor. Translation
  * peeks only mapped code, never speculative MMIO, and each callee stays on
  * its own fetch page. A failed collection publishes no partial trace. */
-static unsigned arm_jit_collect_framed(arm920t_t *c, uint32_t pc,
+static unsigned arm_jit_collect_framed(arm920t_t *c, arm_jit_collect_fetch_t *fetch, uint32_t pc,
                                       arm_jit_op_t *out, unsigned capacity,
                                       unsigned depth) {
     unsigned count = 0;
@@ -2610,7 +2675,7 @@ static unsigned arm_jit_collect_framed(arm920t_t *c, uint32_t pc,
     for (unsigned i = 0; i < (depth ? 8u : 16u); ++i) {
         uint32_t cur = pc + i * 4u, insn;
         if (count == capacity || ((cur ^ pc) & ~ARM_JIT_PAGE_MASK) ||
-            !arm_jit_peek_fetch(c, cur, &insn)) return 0;
+            !arm_jit_collect_peek(c, fetch, cur, &insn)) return 0;
         if (!i && !arm_jit_is_leaf_push_lr(insn)) return 0;
         arm_jit_op_t *op = &out[count++];
         *op = (arm_jit_op_t){.pc = cur, .insn = insn,
@@ -2625,7 +2690,7 @@ static unsigned arm_jit_collect_framed(arm920t_t *c, uint32_t pc,
             return count;
         }
         if (!depth && out[0].insn == 0xe52de004u && arm_jit_is_uncond_bl(insn)) {
-            unsigned nested = arm_jit_collect_framed(c,
+            unsigned nested = arm_jit_collect_framed(c, fetch,
                 arm_jit_branch_target(cur, insn), out + count, capacity - count, 1u);
             if (!nested) return 0;
             op->stop = 0;
@@ -2649,7 +2714,7 @@ static unsigned arm_jit_collect_framed(arm920t_t *c, uint32_t pc,
  * Keep plain loops on their existing path; joining them can create costly
  * portable polling candidates where native execution was already effective.
  * Speculative inspection must neither touch MMIO nor populate a mapping. */
-static int arm_jit_forward_loop(arm920t_t *c, uint32_t entry,
+static int arm_jit_forward_loop(arm920t_t *c, arm_jit_collect_fetch_t *fetch, uint32_t entry,
                                 uint32_t pc, uint32_t insn) {
     if ((insn >> 28) >= 14u || (insn & 0x0f000000u) != 0x0a000000u) return 0;
     uint32_t target = arm_jit_branch_target(pc, insn);
@@ -2659,7 +2724,7 @@ static int arm_jit_forward_loop(arm920t_t *c, uint32_t entry,
     for (unsigned i = 0; i < 8u; ++i) {
         uint32_t cur = target + i * 4u, next;
         if (((cur ^ entry) & ~ARM_JIT_PAGE_MASK) ||
-            !arm_jit_peek_fetch(c, cur, &next)) break;
+            !arm_jit_collect_peek(c, fetch, cur, &next)) break;
         if ((next & 0x0f000000u) == 0x0a000000u) {
             return call && (next >> 28) != 15u &&
                    arm_jit_branch_target(cur, next) == entry;
@@ -2818,6 +2883,7 @@ static ARM_NOINLINE arm_jit_block_t *arm_jit_translate(arm920t_t *c, uint32_t pc
     c->profile_native_variable_count[b - c->jit_blocks] = 0u;
     c->profile_exit_seen[b - c->jit_blocks] = 0u;
 #endif
+    arm_jit_collect_fetch_t fetch = {.key = UINT32_MAX};
     uint32_t cur = pc & ~3u;
     /* Superblock trace extension: an unconditional BL the leaf collectors
      * above cannot flatten still continues this trace inside its callee, and
@@ -2841,7 +2907,7 @@ static ARM_NOINLINE arm_jit_block_t *arm_jit_translate(arm920t_t *c, uint32_t pc
              * re-proves every recorded fetch through the live mapping, so a
              * loop that straddles a page boundary stays one block and keeps
              * its in-place backedge instead of two dispatches per pass. */
-            if (!arm_jit_peek_fetch(c, cur, &insn)) break;
+            if (!arm_jit_collect_peek(c, &fetch, cur, &insn)) break;
             page_anchor = cur;
         } else if (!i) {
             /* Dispatch proved this first word directly readable. Every
@@ -2849,7 +2915,7 @@ static ARM_NOINLINE arm_jit_block_t *arm_jit_translate(arm920t_t *c, uint32_t pc
              * callback belongs to its own instruction, even with MMU off. */
             insn = arm_jit_fetch_word(c, cur);
             if (c->jit_generation != collecting_generation) return NULL;
-        } else if (!arm_jit_peek_fetch(c, cur, &insn)) break;
+        } else if (!arm_jit_collect_peek(c, &fetch, cur, &insn)) break;
         arm_jit_op_t *op = &arm_jit_ops(c, b)[i];
         *op = (arm_jit_op_t){.pc = cur, .insn = insn,
             .cond = (uint8_t)(insn >> 28), .kind = (uint8_t)arm_jit_classify(insn),
@@ -2869,11 +2935,11 @@ static ARM_NOINLINE arm_jit_block_t *arm_jit_translate(arm920t_t *c, uint32_t pc
             /* If the live TLB cannot prove a callee fetch, keep the ordinary
              * call. Execution may supply a mapping that allows a later
              * side-effect-free collection. */
-            if (!arm_jit_peek_fetch(c, tpc, &first) && tpc)
+            if (!arm_jit_collect_peek(c, &fetch, tpc, &first) && tpc)
                 b->deferred_inline_pc = tpc;
             if (arm_jit_is_leaf_push_lr(first)) {
                 arm_jit_op_t leaf[32];
-                unsigned nleaf = arm_jit_collect_framed(c, tpc, leaf,
+                unsigned nleaf = arm_jit_collect_framed(c, &fetch, tpc, leaf,
                     GP32_ARRAY_COUNT(leaf), 0u);
                 if (arm_accel_in_span(c, leaf, nleaf)) nleaf = 0;
                 if (nleaf && i + nleaf < ARM_JIT_MAX_INSNS) {
@@ -2894,7 +2960,7 @@ static ARM_NOINLINE arm_jit_block_t *arm_jit_translate(arm920t_t *c, uint32_t pc
                     uint32_t cpc = tpc + (uint32_t)nleaf * 4u;
                     if (arm_accel_entry(c, cpc)) break;
                     if (((cpc ^ tpc) & ~ARM_JIT_PAGE_MASK) ||
-                        !arm_jit_peek_fetch(c, cpc, &leaf[nleaf])) break;
+                        !arm_jit_collect_peek(c, &fetch, cpc, &leaf[nleaf])) break;
                     if (leaf[nleaf] == 0xe1a0f00eu || leaf[nleaf] == 0xe12fff1eu) {
                         ok = 1; ++nleaf; break; /* unconditional MOV pc,lr / BX lr */
                     }
@@ -2938,7 +3004,7 @@ static ARM_NOINLINE arm_jit_block_t *arm_jit_translate(arm920t_t *c, uint32_t pc
             uint32_t tpc = arm_jit_branch_target(cur, insn);
             uint32_t first;
             if (i + 1u < ARM_JIT_TRACE_MAX_INSNS && tpc && !arm_accel_entry(c, tpc) &&
-                arm_jit_peek_fetch(c, tpc, &first)) {
+                arm_jit_collect_peek(c, &fetch, tpc, &first)) {
                 op->stop = 0;
                 op->reserved = 2u; /* real BL link, then the callee body */
                 trace_extended = 1u;
@@ -2988,7 +3054,7 @@ static ARM_NOINLINE arm_jit_block_t *arm_jit_translate(arm920t_t *c, uint32_t pc
             for (uint8_t k = 0; k < trace_depth; ++k) trace_lr[k] = 0u;
         }
 
-        if (i + 1u < ARM_JIT_MAX_INSNS && arm_jit_forward_loop(c, pc, cur, insn) &&
+        if (i + 1u < ARM_JIT_MAX_INSNS && arm_jit_forward_loop(c, &fetch, pc, cur, insn) &&
             !arm_accel_entry(c, arm_jit_branch_target(cur, insn))) {
             uint32_t target = arm_jit_branch_target(cur, insn);
             int seen = 0;
