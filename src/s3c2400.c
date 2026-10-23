@@ -767,19 +767,22 @@ static void gp32_smc_write(s3c2400_t *s, uint8_t data) {
     }
 }
 static uint8_t gp32_smc_read(s3c2400_t *s) { return smc_data_r(s->smc); }
+/* A data read changes only GPBDAT. A write can change the card status,
+ * while deselection clears every latched line. Refresh those readbacks here;
+ * callers separately refresh the register word they wrote. */
 static void gp32_smc_update(s3c2400_t *s) {
     gp32_smc_lines_t *m = &s->smc_lines;
     if (!m->chip) {
         smc_lines_reset(m);
-        /* GPBCON/GPCDAT writes can reset the CLE/ALE lines exposed through
-         * GPEDAT too. Their callers refresh the other three live words. */
-        live_gpedat_refresh(s);
-        return;
-    }
-    if (m->do_write && !m->read) gp32_smc_write(s, m->datatx);
-    else if (!m->do_write && m->do_read && m->read && !m->cmd_latch && !m->add_latch) {
+        live_read32_refresh(s);
+    } else if (m->do_write && !m->read) {
+        gp32_smc_write(s, m->datatx);
+        live_gpcdat_refresh(s);
+    } else if (!m->do_write && m->do_read && m->read &&
+               !m->cmd_latch && !m->add_latch) {
         m->datarx = gp32_smc_read(s);
         s->smc_bytes_read++;
+        live_gpbdat_refresh(s);
     }
 }
 
@@ -1437,30 +1440,25 @@ static void defer_io_write(s3c2400_t *s, uint32_t addr, uint32_t value, uint32_t
 static GP32_IO_NOINLINE void gpio_card_write32(s3c2400_t *s, uint32_t off,
                                               uint32_t value, uint32_t mask) {
     uint32_t *reg = &s->gpio[off >> 2];
-    *reg = (*reg & ~mask) | (value & mask);
+    uint32_t data = (*reg & ~mask) | (value & mask);
+    *reg = data;
     switch(off){
     case 0x08:
-        s->smc_lines.read = ((*reg & 1u) == 0);
-        live_gpcon_refresh(s);
-        if (gp32_smc_update_does_work(&s->smc_lines)) {
-            gp32_smc_update(s);
-            live_gpbdat_refresh(s);
-            live_gpcon_refresh(s);
-            live_gpcdat_refresh(s);
-        }
+        s->smc_lines.read = ((data & 1u) == 0);
+        s->live_gpcon = data;
+        if (gp32_smc_update_does_work(&s->smc_lines)) gp32_smc_update(s);
         break;
-    case 0x0c: s->smc_lines.datatx = (uint8_t)(*reg & 0xffu); break;
+    case 0x0c: s->smc_lines.datatx = (uint8_t)(data & 0xffu); break;
     case 0x24:
-        s->smc_lines.do_read=((*reg&0x100u)==0);
-        s->smc_lines.chip=((*reg&0x80u)==0);
-        s->smc_lines.wp=((*reg&0x40u)==0);
-        live_gpcdat_refresh(s);
-        if (gp32_smc_update_does_work(&s->smc_lines)) {
-            gp32_smc_update(s);
-            live_gpbdat_refresh(s);
-            live_gpcon_refresh(s);
-            live_gpcdat_refresh(s);
-        }
+        s->smc_lines.do_read=((data&0x100u)==0);
+        s->smc_lines.chip=((data&0x80u)==0);
+        s->smc_lines.wp=((data&0x40u)==0);
+        /* Read and chip-select just latched from data read back identically.
+         * Only ready and card write-protection override this written word. */
+        s->live_gpcdat = (data & ~0x240u) |
+            (s->smc_lines.busy ? 0u : 0x200u) |
+            (smc_is_protected(s->smc) ? 0u : 0x40u);
+        if (gp32_smc_update_does_work(&s->smc_lines)) gp32_smc_update(s);
         break;
     default: break;
     }
@@ -1515,15 +1513,7 @@ static GP32_IO_NOINLINE void io_write32_control(s3c2400_t *s, uint32_t addr, uin
             s->smc_lines.cmd_latch=((*reg&0x20u)!=0);
             s->smc_lines.add_latch=((*reg&0x10u)!=0);
             s->smc_lines.do_write=((*reg&0x08u)==0);
-            if (gp32_smc_update_does_work(&s->smc_lines)) {
-                gp32_smc_update(s);
-                /* A deselected card clears every latched line and a data-read
-                 * window advances datarx, so refresh every word that exposes
-                 * them. */
-                live_gpbdat_refresh(s);
-                live_gpcon_refresh(s);
-                live_gpcdat_refresh(s);
-            }
+            if (gp32_smc_update_does_work(&s->smc_lines)) gp32_smc_update(s);
             if (codec_output && ((old_gpe ^ *reg) & 0xe00u)) {
                 gp32_codec_gpio(&s->codec, old_gpe, *reg);
                 s->codec_gain_q16 = gp32_codec_gain_q16(&s->codec);
