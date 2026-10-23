@@ -2455,7 +2455,14 @@ static arm_jit_kind_t arm_jit_classify(uint32_t insn) {
     case 5: return (insn >> 28) == 15u ? ARM_JIT_OP_UNDEFINED : ARM_JIT_OP_BRANCH;
     case 6: return ARM_JIT_OP_COPROC;
     case 7: return (insn & 0x01000000u) ? ARM_JIT_OP_SWI : ARM_JIT_OP_COPROC;
-    default: break;
+    default:
+        /* Only classes 000/001 reach here. Ordinary data processing is
+         * outside both the control-extension slot and multiply/halfword
+         * slot; keep every reserved form on the exact classifier below. */
+        if ((insn & 0x01900000u) != 0x01000000u &&
+            (insn & 0x02000090u) != 0x00000090u)
+            return ARM_JIT_OP_DATA;
+        break;
     }
     if (arm920t_armv4t_invalid_arm_insn(insn)) return ARM_JIT_OP_UNDEFINED;
     if ((insn & 0x0ffffff0u) == 0x012fff10u) return ARM_JIT_OP_INTERP;
