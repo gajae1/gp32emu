@@ -2380,6 +2380,18 @@ ARM_JIT_NATIVE_ONLY static int arm_jit_is_side_effect_free_nop(uint32_t insn) {
 }
 
 static arm_jit_kind_t arm_jit_classify(uint32_t insn) {
+    /* Classes 010..111 do not overlap the ARMv4T control/multiply space.
+     * Only register-offset transfers and NV branches have undefined forms
+     * here; avoid decoding the unrelated extension masks for each fetch. */
+    switch ((insn >> 25) & 7u) {
+    case 2: return ARM_JIT_OP_SINGLE_DT;
+    case 3: return (insn & 0x10u) ? ARM_JIT_OP_UNDEFINED : ARM_JIT_OP_SINGLE_DT;
+    case 4: return ARM_JIT_OP_BLOCK_DT;
+    case 5: return (insn >> 28) == 15u ? ARM_JIT_OP_UNDEFINED : ARM_JIT_OP_BRANCH;
+    case 6: return ARM_JIT_OP_COPROC;
+    case 7: return (insn & 0x01000000u) ? ARM_JIT_OP_SWI : ARM_JIT_OP_COPROC;
+    default: break;
+    }
     if (arm920t_armv4t_invalid_arm_insn(insn)) return ARM_JIT_OP_UNDEFINED;
     if ((insn & 0x0ffffff0u) == 0x012fff10u) return ARM_JIT_OP_INTERP;
     if ((insn & 0x0fc000f0u) == 0x00000090u || (insn & 0x0f8000f0u) == 0x00800090u) return ARM_JIT_OP_MUL;
