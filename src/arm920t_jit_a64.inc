@@ -2141,6 +2141,128 @@ static uint32_t a64_selfloop_prefix(arm920t_t *c, arm_jit_block_t *b) {
     return 0;
 }
 
+/* Recognize a register-renamable masked multiply blend, not a guest address.
+ * Four independent words share the RAM/mapping/watch proof and are evaluated
+ * in caller-saved NEON lanes. Short budgets and unusual mappings retain every
+ * original instruction. The final lane supplies both live scratch registers. */
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((cold))
+#endif
+static ARM_NOINLINE int a64_packed_word_loop(a64_emit_t *e, const arm_jit_op_t *ops) {
+    if (e->loop_done != 24u || e->counted || !e->ram_read || !e->ram_write ||
+        ops[0].kind != ARM_JIT_OP_SINGLE_DT) return 0;
+    unsigned ptr = (ops[0].insn >> 16) & 15u, val = (ops[0].insn >> 12) & 15u;
+    unsigned ctr = (ops[1].insn >> 16) & 15u, other = (ops[2].insn >> 12) & 15u;
+    unsigned scale = ops[9].insn & 15u;
+    unsigned regs[] = {ptr, val, ctr, other, scale};
+    for (unsigned i = 0; i < GP32_ARRAY_COUNT(regs); ++i) {
+        if (regs[i] == 15u) return 0;
+        for (unsigned j = 0; j < i; ++j) if (regs[i] == regs[j]) return 0;
+    }
+    for (unsigned i = 0; i < 24u; ++i)
+        if (ops[i].reserved || ops[i].pc != ops[0].pc + 4u * i ||
+            ops[i].cond != (i == 23u ? 11u : 14u)) return 0;
+    if (ops[0].insn != (0xe5900000u | (ptr << 16) | (val << 12)) ||
+        ops[1].insn != (0xe2800001u | (ctr << 16) | (ctr << 12)) ||
+        ops[9].insn != (0xe0000090u | (val << 16) | (val << 8) | scale) ||
+        ops[11].insn != (0xe0000090u | (other << 16) | (other << 8) | scale) ||
+        ops[20].insn != (0xe1800000u | (other << 16) | (val << 12) | val) ||
+        ops[21].insn != (0xe4800004u | (ptr << 16) | (val << 12)) ||
+        (ops[22].insn & 0xfffff000u) != (0xe3500000u | (ctr << 16)) ||
+        ops[23].insn != 0xbaffffe7u) return 0;
+    unsigned shift_a = (ops[10].insn >> 7) & 31u;
+    unsigned shift_b = (ops[12].insn >> 7) & 31u;
+    if (ops[10].insn != (0xe1a00020u | (other << 12) | (shift_a << 7) | other) ||
+        ops[12].insn != (0xe1a00020u | (val << 12) | (shift_b << 7) | val)) return 0;
+    if (!shift_a) shift_a = 32u;
+    if (!shift_b) shift_b = 32u;
+    static const uint8_t indices[4][4] = {{3,4,5,6}, {2,7,8,255}, {13,14,17,18}, {15,16,19,255}};
+    uint32_t masks[4] = {UINT32_MAX,UINT32_MAX,UINT32_MAX,UINT32_MAX};
+    for (unsigned chain = 0; chain < 4u; ++chain) {
+        unsigned rd = chain & 1u ? other : val;
+        for (unsigned j = 0; j < 4u && indices[chain][j] != 255u; ++j) {
+            unsigned i = indices[chain][j], rn = i == 2u ? val : rd;
+            if (ops[i].kind != ARM_JIT_OP_DATA ||
+                (ops[i].insn & 0xfffff000u) != (0xe3c00000u | (rn << 16) | (rd << 12))) return 0;
+            masks[chain] &= ~ops[i].imm;
+        }
+    }
+    uint32_t limit = ops[22].imm;
+    if (limit < 4u || limit > INT32_MAX) return 0;
+
+    size_t slow[12]; unsigned nslow = 0;
+    a64_cmp_imm(e, 22, 96u);
+    slow[nslow++] = a64_jump(e, 3); /* less than four complete iterations */
+    a64_guest(e, 10, ctr, ops[0].pc);
+    a64_imm(e, 11, limit - 4u);
+    a64_cmp(e, 10, 11);
+    slow[nslow++] = a64_jump(e, 8); /* unsigned check also rejects negative counters */
+    a64_guest(e, 12, ptr, ops[0].pc);
+    a64_mask(e, 6, 12, 3u);
+    slow[nslow++] = e->pos;
+    a64_branch_word(e, 0x35000006u);
+    a64_mov(e, 0, 12);
+    a64_ram_offset(e, slow, &nslow, 16u, 0);
+    a64_mask(e, 6, 9, 0xfffu);
+    a64_cmp_imm(e, 6, 4096u - 16u);
+    slow[nslow++] = a64_jump(e, 8);
+    a64_guard_code_words(e, slow, &nslow, 9u, 4u, 0u);
+
+    /* Whole-block fetch validation already proves all instruction spans.
+     * There are no callbacks or TLB mutations in this RAM-only batch. */
+    a64_rr(e, 0x8b204000u, 14, 21, 9); /* host pointer */
+    for (unsigned i = 0; i < 4u; ++i) {
+        a64_imm(e, 6, masks[i]);
+        a64_u32(e, 0x4e040cc0u | (3u + i)); /* dup v3..v6.4s,w6 */
+    }
+    a64_guest(e, 11, scale, ops[0].pc);
+    a64_u32(e, 0x4e040d67u); /* dup v7.4s,w11 */
+    a64_u32(e, 0x3dc001c0u); /* ldr q0,[x14] */
+    a64_u32(e, 0x4e231c01u); /* and v1.16b,v0.16b,v3.16b */
+    a64_u32(e, 0x4e241c02u);
+    a64_u32(e, 0x4ea79c21u); /* mul v1.4s,v1.4s,v7.4s */
+    a64_u32(e, 0x6f000442u | ((64u - shift_a) << 16));
+    a64_u32(e, 0x4ea79c42u);
+    a64_u32(e, 0x6f000421u | ((64u - shift_b) << 16));
+    a64_u32(e, 0x4e251c21u);
+    a64_u32(e, 0x4e261c42u);
+    a64_u32(e, 0x4ea21c20u); /* orr v0.16b,v1.16b,v2.16b */
+    a64_u32(e, 0x3d8001c0u); /* str q0,[x14] */
+    a64_u32(e, 0x0e1c3c02u); /* umov w2,v0.s[3] */
+    a64_u32(e, 0x0e1c3c43u); /* umov w3,v2.s[3] */
+    a64_u32(e, 0x1100418cu); /* add w12,w12,#16 */
+    a64_u32(e, 0x1100114au); /* add w10,w10,#4 */
+    a64_put_guest(e, ptr, 12);
+    a64_put_guest(e, ctr, 10);
+    a64_put_guest(e, val, 2);
+    a64_put_guest(e, other, 3);
+#if ARM920T_PROFILING
+    a64_cpu_mem(e, 0xf9400000u, 6, offsetof(arm920t_t, prof.native_packed_word_batches), 3);
+    a64_u32(e, 0x910004c6u);
+    a64_cpu_mem(e, 0xf9000000u, 6, offsetof(arm920t_t, prof.native_packed_word_batches), 3);
+#endif
+    a64_imm(e, 11, limit);
+    a64_cmp(e, 10, 11);
+    a64_u32(e, 0xd53b4205u);
+    a64_load(e, 3, offsetof(arm920t_t, cpsr));
+    a64_bfxil_low(e, 5, 3, 28u);
+    a64_store(e, 5, offsetof(arm920t_t, cpsr));
+    a64_u32(e, 0x510182d6u); /* sub w22,w22,#96 */
+    a64_u32(e, 0x110182f7u); /* add w23,w23,#96 */
+    size_t remains = a64_jump(e, 11); /* signed LT uses the final guest CMP */
+    a64_exit_const(e, ops[23].pc + 4u, 0u);
+    a64_patch(e, remains, e->pos);
+    a64_cmp_imm(e, 22, e->block_count);
+    size_t leave = a64_jump(e, 3);
+    a64_branch_back(e, e->loop_head);
+    a64_patch(e, leave, e->pos);
+    a64_exit_const(e, ops[0].pc, 0u);
+    for (unsigned i = 0; i < nslow; ++i) a64_patch(e, slow[i], e->pos);
+    e->nzcv_valid = 0;
+    e->fwd_guest = -1;
+    return 1;
+}
+
 /* Bound a contiguous halfword-copy idiom by the guest instruction budget.
  * Every load still precedes its store, including overlapping forward copies.
  * A failed proof reaches the ordinary instruction sequence without changing
@@ -2693,6 +2815,7 @@ static ARM_NOINLINE void arm_jit_compile_host(arm920t_t *c, arm_jit_block_t *b) 
         if (e.cache_host[r]) a64_load(&e, e.cache_host[r], offsetof(arm920t_t, r) + r * 4u);
     e.loop_head = e.pos;
     int copy_loop = e.loop_done == 5u && a64_copy_loop(&e, arm_jit_ops(c, b));
+    if (e.loop_done == 24u) a64_packed_word_loop(&e, arm_jit_ops(c, b));
 #if ARM920T_PROFILING
     if (copy_loop) c->profile_native_variable_count[b - c->jit_blocks] = 1u;
 #else
