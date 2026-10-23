@@ -1,3 +1,4 @@
+#define _GNU_SOURCE 1 /* expose mremap before the allocation-failure wrapper */
 #define _POSIX_C_SOURCE 200809L
 #include <stdlib.h>
 static int reject_allocation;

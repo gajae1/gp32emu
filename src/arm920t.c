@@ -4,6 +4,9 @@
  * instruction grouping follow MAME's BSD-licensed ARM7/ARM9 core, but this is
  * a compact rewrite for a headless standalone GP32 target.
  */
+#if defined(__linux__) && defined(__aarch64__) && !defined(_GNU_SOURCE)
+#define _GNU_SOURCE 1 /* mremap for private, unpublished chunk donation */
+#endif
 /* Darwin hides anonymous mmap flags under the build's POSIX feature level. */
 #if defined(__APPLE__) && !defined(_DARWIN_C_SOURCE)
 #define _DARWIN_C_SOURCE 1
@@ -13,11 +16,15 @@
 #define GP32EMU_ENABLE_THREADS 0
 #endif
 /* Other hosts keep the same compact storage with synchronous allocation. */
+#ifndef ARM_JIT_STORAGE_THREADS
 #if GP32EMU_ENABLE_THREADS && !defined(_WIN32) && !defined(__SWITCH__) && !defined(GP32EMU_WASM)
 #define ARM_JIT_STORAGE_THREADS 1
-#include <pthread.h>
 #else
 #define ARM_JIT_STORAGE_THREADS 0
+#endif
+#endif
+#if ARM_JIT_STORAGE_THREADS && !defined(_WIN32)
+#include <pthread.h>
 #endif
 
 /* Sandboxed frontends can compile out every executable-memory backend. */
@@ -30,6 +37,19 @@
 /* Horizon uses libnx dual mappings; other A64 hosts retain their allocator. */
 #if !GP32EMU_DISABLE_JIT && (defined(__aarch64__) || defined(_M_ARM64)) && !defined(__AARCH64EB__)
 #define ARM_JIT_NATIVE_A64 1
+#endif
+
+#ifndef GP32EMU_JIT_PREPARE_CHUNKS
+#define GP32EMU_JIT_PREPARE_CHUNKS 1
+#endif
+/* The internal gates can be overridden by the isolated OS-adapter test. */
+#ifndef ARM_JIT_CHUNK_PREPARE
+#if GP32EMU_JIT_PREPARE_CHUNKS && ARM_JIT_STORAGE_THREADS && \
+    defined(ARM_JIT_NATIVE_A64) && defined(__linux__) && !defined(__ANDROID__)
+#define ARM_JIT_CHUNK_PREPARE 1
+#else
+#define ARM_JIT_CHUNK_PREPARE 0
+#endif
 #endif
 
 /*
@@ -519,6 +539,12 @@ struct arm920t {
     uint32_t jit_helper_code[10][6];
     int jit_helpers_ready;
 #endif
+#if ARM_JIT_CHUNK_PREPARE
+    /* Arena-lifetime high-water marks, never cleared by guest invalidation.
+     * Appended so existing native helper offsets do not move. */
+    size_t jit_code_opened, jit_chunk_requested;
+    int jit_chunk_disabled, jit_code_unusable;
+#endif
 };
 _Static_assert(offsetof(arm920t_t, jit_cache_epoch) == offsetof(arm920t_t, jit_generation) + 4u &&
                offsetof(arm_jit_block_t, tag_cache_epoch) == offsetof(arm_jit_block_t, generation) + 4u,
@@ -527,6 +553,10 @@ _Static_assert(offsetof(arm_jit_block_t, count) == 16u && offsetof(arm_jit_block
                offsetof(arm_jit_block_t, poll_backedge) == 19u &&
                offsetof(arm_jit_block_t, deferred_inline_pc) == 20u,
                "dispatcher reads the block's fast-path metadata as one 64-bit word");
+
+#if ARM_JIT_CHUNK_PREPARE
+#include "arm920t_chunks.inc"
+#endif
 
 /* Native dispatch only needs the compact header. Slot storage stays at its
  * original address so C helpers can retain decoded instruction pointers. */
