@@ -92,6 +92,21 @@ typedef struct arm_bus {
     int (*fastmem_excludes)(void *user, uint32_t addr, size_t bytes, int write);
 } arm_bus_t;
 
+/* An opt-in peripheral-only aligned word store. The function performs the
+ * same single access as the ordinary bus but must not change CPU registers,
+ * CPSR, interrupts, deadlines, mappings, execution policy or executable
+ * memory, directly or through another callback. Every write, including an
+ * identical repeated value, is still performed. Descriptors are immutable
+ * and outlive registration. Decorated buses must opt in explicitly. */
+typedef struct arm_leaf_write32 {
+    uint32_t pa;
+    arm_write32_fn write;
+    void *user;
+} arm_leaf_write32_t;
+/* Register outside a CPU run; replacement flushes translations. Reset/load
+ * preserve these host-only descriptors, which are never serialized. */
+int arm920t_set_leaf_write32(arm920t_t *cpu, const arm_leaf_write32_t *writes, size_t count);
+
 typedef struct arm_live_read32 {
     uint32_t pa;
     const volatile uint32_t *word;

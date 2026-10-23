@@ -22,7 +22,8 @@ static void check_reload(unsigned engine, unsigned icache, unsigned file, const 
     arm920t_set_reg(g->cpu, 15u, control);
     CHECK(arm920t_run(g->cpu, 1u) == 1u, "set guest I-cache control");
     arm920t_set_reg(g->cpu, 12u, control);
-    for (unsigned warm = 0; warm < 8u; ++warm) {
+    /* The ninth encounter follows A64's eight portable observations. */
+    for (unsigned warm = 0; warm < 9u; ++warm) {
         arm920t_set_reg(g->cpu, 15u, code);
         CHECK(arm920t_run(g->cpu, 2u) == 2u && arm920t_get_reg(g->cpu, 0u) == 0x11u,
               "prime original BIOS instruction pair");

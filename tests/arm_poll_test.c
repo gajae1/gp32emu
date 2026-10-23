@@ -1539,7 +1539,42 @@ static void case_counted_gpio(void) {
     s3c2400_destroy(soc_fast); s3c2400_destroy(soc_ref);
 }
 
+/* A straight-line load/return is revisited across separate runs. It must
+ * perform each real read, but a stable-loop query cannot save any work. */
+static void case_nonloop_observation(void) {
+    static const uint32_t program[] = {0xe5910000u, 0xe12fff1eu}; /* LDR; BX lr */
+    for (unsigned jit = 0; jit < 2u; ++jit) {
+        current_case = "nonloop-observation";
+        setup_pair(0);
+        load_prog(program, sizeof(program) / sizeof(program[0]));
+        add_stable(&bus_fast, MMIO_BASE);
+        set_reg_both(1u, MMIO_BASE);
+        set_reg_both(14u, CODE_ADDR + 0x1000u);
+        arm920t_set_jit(cpu_fast, (int)jit);
+        arm920t_set_trace(cpu_ref, 1, NULL, NULL);
+        for (unsigned visit = 0; visit < 16u; ++visit) {
+            /* The bus contract lasts only one run; change the next value. */
+            bus_fast.mmio_word = bus_ref.mmio_word = 0x12340000u + visit;
+            set_reg_both(15u, CODE_ADDR);
+            CHECK(arm920t_run(cpu_fast, 2u) == arm920t_run(cpu_ref, 2u),
+                  "nonloop budget mismatch");
+            compare_state(0);
+            CHECK(arm920t_get_reg(cpu_fast, 0u) == bus_fast.mmio_word,
+                  "nonloop must perform the current read");
+        }
+        CHECK(bus_fast.r32 == 16u, "nonloop must retain every MMIO read");
+        CHECK(bus_fast.stable_queries == 0u, "nonloop should not query loop stability");
+        teardown_pair();
+    }
+}
+
 int main(int argc, char **argv) {
+    if (argc == 2 && !strcmp(argv[1], "--nonloop-observation")) {
+        case_nonloop_observation();
+        if (failures) return 1;
+        puts("PASS: nonloop real reads without repetition probes");
+        return 0;
+    }
     if (argc == 2 && !strcmp(argv[1], "--poll-store-mmu")) {
         case_conditional_store_mmu_probe();
         if (failures) return 1;
@@ -1567,6 +1602,7 @@ int main(int argc, char **argv) {
         puts("PASS: counted native exit and positive reentry");
         return 0;
     }
+    case_nonloop_observation();
     case_poll_stable(0);
     case_poll_stable(1);   /* identical contract when RAM loads ride fastmem */
     case_false_progress();

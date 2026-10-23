@@ -21,6 +21,9 @@ arm_bus_t s3c2400_get_bus(s3c2400_t *soc);
  * with *count == 0 when unavailable. */
 const arm_live_read32_t *s3c2400_live_read32(const s3c2400_t *soc, size_t *count);
 
+/* Immutable, CPU-independent SmartMedia GPIO word writes; explicit CPU opt-in. */
+const arm_leaf_write32_t *s3c2400_leaf_write32(const s3c2400_t *soc, size_t *count);
+
 int s3c2400_load_bios(s3c2400_t *soc, const char *path, char *err, size_t err_len);
 int s3c2400_load_bios_buffer(s3c2400_t *soc, const uint8_t *data, size_t size, char *err, size_t err_len);
 /* Fixed RAM table the retail firmware's IRQ dispatcher indexes by INTOFFSET.

@@ -141,6 +141,25 @@ static int check_mode(s3c2400_t *s, uint32_t bppmode, uint32_t bpp, uint32_t mod
     return 1;
 }
 
+/* An unsupported mode already publishes black pixels. Its host-visible
+ * identity must change too, or a frontend can repeat the old coloured frame. */
+static int check_blank_identity(s3c2400_t *s) {
+    uint64_t before, after;
+    const uint32_t *fb = s3c2400_framebuffer(s, NULL, NULL, NULL, &before);
+    if (!fb || !fb[0]) { fputs("FAIL: blank test needs a coloured frame\n", stderr); return 0; }
+    s3c2400_write32(s, LCDCON1_ADDR, (0x0fu << 1) | 1u);
+    s3c2400_render_lcd(s);
+    fb = s3c2400_framebuffer(s, NULL, NULL, NULL, &after);
+    for (size_t i = 0; i < FRAME_PIXELS; ++i)
+        if (fb[i]) { fputs("FAIL: unsupported mode must retain the black fallback\n", stderr); return 0; }
+    if (before == after) {
+        fputs("FAIL: changed black framebuffer retained the old frame identity\n", stderr);
+        return 0;
+    }
+    puts("PASS: black fallback publishes a new framebuffer identity");
+    return 1;
+}
+
 int main(void) {
     s3c2400_t *s = s3c2400_create(8u * 1024u * 1024u);
     if (!s) { fputs("FAIL: allocate scanout test SoC\n", stderr); return 2; }
@@ -163,6 +182,7 @@ int main(void) {
         ok = check_mode(s, 0x0cu, 16u, mode, vram, vram_bytes) && ok;
     for (uint32_t mode = 0; mode < 4u; ++mode)
         ok = check_mode(s, 0x0bu, 8u, mode, vram, vram_bytes) && ok;
+    ok = check_blank_identity(s) && ok;
 
     free(vram);
     s3c2400_destroy(s);

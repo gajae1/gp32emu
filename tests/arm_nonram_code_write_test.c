@@ -89,7 +89,7 @@ static void prepare_code(arm920t_t *cpu,uint32_t pc) {
     check(b!=NULL,1u,"derived block");
 #if ARM920T_NATIVE_BACKEND
     if(b && execution==2u) {
-        if(b->native_ok==4u)b->native_ok=0u;
+        if(b->native_ok>=4u)b->native_ok=0u;
         check((uint32_t)arm_jit_lazy_compile(cpu,b),0u,"native arena retained");
         check(b->native!=NULL,1u,"native entry");
     }
@@ -305,7 +305,7 @@ static void stitched_leaf(uint32_t pa,unsigned mode,unsigned mmu,unsigned cache,
     gp32_st32le(backing(pa+4u,4u),0xe12fff1eu); /* BX lr */
     /* Only public CPU entry points prime this path. A normal RAM/BIOS BL
      * produces a cached trace containing the extra-memory callee. */
-    for(unsigned warm=0;warm<3u;++warm) {
+    for(unsigned warm=0;warm<ARM_JIT_COLD_PORTABLE_OBSERVATIONS+2u;++warm) {
         arm920t_set_reg(cpu,15u,caller);
         check(arm920t_run(cpu,4u),4u,"stitched warm-up retirement");
         check(arm920t_get_reg(cpu,0u),0x11u,"stitched old immediate");
