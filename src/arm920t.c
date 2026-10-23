@@ -6023,7 +6023,10 @@ static uint32_t arm_jit_run(arm920t_t *c, uint32_t run_done) {
         }
 
         if (!done) {
-            stable_reads = c->bus.is_stable_read32 && b->poll_prefix;
+            /* Repetition proofs are useful only for a decoded backedge.
+             * Ordinary cold observations still execute every instruction and
+             * retain the same fetch, callback, budget and interrupt fences. */
+            stable_reads = b->poll_backedge && c->bus.is_stable_read32 && b->poll_prefix;
             /* A real complete repetition may already be a fixed point of
              * its entry state. Seed that comparison once, rather than always
              * requiring a second observed repetition. Per-access stability,
