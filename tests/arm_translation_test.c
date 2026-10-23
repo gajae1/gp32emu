@@ -362,7 +362,123 @@ static void case_state_commit_execution(void) {
     }
 }
 
+
+static void collect_peek_pair(arm_jit_collect_fetch_t *fetch, uint32_t pc) {
+    uint32_t before=0xdeadbeef, after=before;
+    int reference=arm_jit_peek_fetch(cpu_ref,pc,&before);
+    int candidate=arm_jit_collect_peek(cpu_jit,fetch,pc,&after);
+    CHECK(candidate==reference && before==after,"collection peek result differs from scalar fetch");
+    CHECK(cpu_ref->jit_code_nonram==cpu_jit->jit_code_nonram &&
+          !memcmp(cpu_ref->jit_code_pages,cpu_jit->jit_code_pages,sizeof(cpu_ref->jit_code_pages)) &&
+          !memcmp(cpu_ref->jit_code_watches,cpu_jit->jit_code_watches,sizeof(cpu_ref->jit_code_watches)),
+          "collection peek changed physical write watches");
+}
+static void case_collect_fetch(void) {
+    const uint32_t masks[]={0x3ffu,0xfffu,0xffffu,0xfffffu,0x7ffu,0x3fbu,3u,1u};
+    const uint32_t offsets[]={0,4,124,128,1020,1024,4092,4096,1,2,3};
+    unsigned cases=0;
+    for(unsigned m=0;m<GP32_ARRAY_COUNT(masks);++m) {
+        for(unsigned bios=0;bios<2;++bios) {
+            current_case="collection subpage proof vs scalar fetch";
+            setup_pair();
+            const uint32_t va=0x10000000u,pa=bios?0u:RAM_BASE+0x100000u;
+            cpu_ref->cp15[1]=cpu_jit->cp15[1]=1u;
+            arm_jit_refresh_bus_windows(cpu_ref);arm_jit_refresh_bus_windows(cpu_jit);
+            const arm_tlb_entry_t entry={va,pa,masks[m],1u};
+            cpu_ref->itlb_entry[arm_itlb_index(va)]=cpu_jit->itlb_entry[arm_itlb_index(va)]=entry;
+            for(unsigned i=0;i<0x1100u;i+=4u)set_mem_both(pa+i,0xe3a00000u | ((i>>2)&0xffu));
+            arm_jit_collect_fetch_t fetch={.key=UINT32_MAX};
+            for(unsigned k=0;k<GP32_ARRAY_COUNT(offsets);++k) {
+                collect_peek_pair(&fetch,va+offsets[k]);++cases;
+            }
+            /* Live bytes are reread even when the mapping proof is reused. */
+            collect_peek_pair(&fetch,va);set_mem_both(pa,0xe3a0007bu);
+            collect_peek_pair(&fetch,va);
+            /* Full flush clears watches; the proof must not bypass rebuild. */
+            arm920t_flush_jit(cpu_ref);arm920t_flush_jit(cpu_jit);
+            collect_peek_pair(&fetch,va);
+            if(m<4u) {
+                /* Semantic TLB mutation changes the physical mapping. */
+                cpu_ref->itlb_entry[arm_itlb_index(va)].pa_base=RAM_BASE;
+                cpu_jit->itlb_entry[arm_itlb_index(va)].pa_base=RAM_BASE;
+                ++cpu_ref->tlb_mutation_serial;++cpu_jit->tlb_mutation_serial;
+                set_mem_both(RAM_BASE,0xe3a00055u);collect_peek_pair(&fetch,va);
+            }
+            teardown_pair();
+        }
+    }
+    /* No MMU: reuse, flush and the ends of the two certified windows. */
+    const uint32_t physical[]={RAM_BASE, RAM_BASE+RAM_SIZE-0x400u,
+                               ARM_JIT_BIOS_SIZE_BYTES-0x400u};
+    for(unsigned i=0;i<GP32_ARRAY_COUNT(physical);++i) {
+        current_case="physical collection window and watch rebuild";
+        setup_pair();
+        cpu_ref->cp15[1]=cpu_jit->cp15[1]=0u;
+        arm_jit_refresh_bus_windows(cpu_ref);arm_jit_refresh_bus_windows(cpu_jit);
+        arm_jit_collect_fetch_t fetch={.key=UINT32_MAX};
+        collect_peek_pair(&fetch,physical[i]);
+        collect_peek_pair(&fetch,physical[i]+4u);
+        collect_peek_pair(&fetch,physical[i]+1020u);
+        arm920t_flush_jit(cpu_ref);arm920t_flush_jit(cpu_jit);
+        collect_peek_pair(&fetch,physical[i]+1020u);
+        collect_peek_pair(&fetch,physical[i]+1024u);
+        teardown_pair();
+    }
+    current_case="bank-only instruction entry remains uncollectable";
+    setup_pair();
+    uint32_t va=0x10000000u,decoy=0x11001000u;
+    CHECK(arm_itlb_index(va)==arm_itlb_index(decoy),"fixture must collide in fast I-TLB");
+    cpu_ref->cp15[1]=cpu_jit->cp15[1]=1u;
+    arm_jit_refresh_bus_windows(cpu_ref);arm_jit_refresh_bus_windows(cpu_jit);
+    cpu_ref->itlb_bank[0]=cpu_jit->itlb_bank[0]=(arm_tlb_entry_t){va,RAM_BASE,0x3ffu,1u};
+    cpu_ref->itlb_entry[arm_itlb_index(va)]=cpu_jit->itlb_entry[arm_itlb_index(va)]=
+        (arm_tlb_entry_t){decoy,RAM_BASE+0x400u,0x3ffu,1u};
+    uint32_t pa=0,mask=0,word=0;
+    CHECK(arm_jit_peek_translate(cpu_ref,va,&pa,&mask),"fixture bank entry must still be resident");
+    CHECK(!arm_jit_peek_fetch(cpu_ref,va,&word),"scalar speculative collection needs the fast slot");
+    arm_jit_collect_fetch_t fetch={.key=UINT32_MAX};collect_peek_pair(&fetch,va);
+    teardown_pair();
+    printf("collection fetch comparisons=%u failures=%d\n",cases,failures);
+}
+
+static unsigned collect_hook_calls[2];
+static uint8_t *collect_mapping_hook(void *u,uint32_t pa,size_t bytes,int write) {
+    test_bus_t *b=u;unsigned side=b==&bus_jit;
+    ++collect_hook_calls[side];
+    if(pa==IO_ADDR && bytes==4u) {
+        arm920t_t *c=side?cpu_jit:cpu_ref;
+        (void)itlb_install_lookup(c,0x11001000u,2u);
+        return NULL;
+    }
+    return tb_fastmem(u,pa,bytes,write);
+}
+static void case_collect_mapping_hook(void) {
+    current_case="unproved mapping hook cannot retain a previous collection proof";
+    setup_pair();
+    for(unsigned side=0;side<2;++side) {
+        arm920t_t *c=side?cpu_jit:cpu_ref;
+        c->cp15[1]=1u;
+        c->bus.fastmem=collect_mapping_hook;
+        arm_jit_refresh_bus_windows(c);
+        c->itlb_bank[0]=(arm_tlb_entry_t){0x10000000u,RAM_BASE,0x3ffu,1u};
+        c->itlb_bank[1]=(arm_tlb_entry_t){0x20000000u,IO_ADDR,0x3ffu,1u};
+        c->itlb_bank[2]=(arm_tlb_entry_t){0x11001000u,RAM_BASE+0x400u,0x3ffu,1u};
+        (void)itlb_install_lookup(c,0x10000000u,0u);
+        (void)itlb_install_lookup(c,0x20000000u,1u);
+    }
+    memset(collect_hook_calls,0,sizeof(collect_hook_calls));
+    arm_jit_collect_fetch_t fetch={.key=UINT32_MAX};
+    collect_peek_pair(&fetch,0x10000000u);
+    CHECK(fetch.key!=UINT32_MAX,"first direct peek must seed the proof");
+    collect_peek_pair(&fetch,0x20000000u);
+    CHECK(fetch.key==UINT32_MAX,"mapping hook must discard the previous proof");
+    collect_peek_pair(&fetch,0x10000000u);
+    CHECK(collect_hook_calls[0]==1u && collect_hook_calls[1]==1u,"mapping hook invocation count changed");
+    teardown_pair();
+}
+
 int main(void) {
+    case_collect_fetch(); case_collect_mapping_hook();
     case_conflicting_refill(); case_walk_callback(); case_restored_minimum();
     reachable_ranges(); bounds_and_history(); same_descriptor_refill();
     case_instruction_lookup_invalidation();
