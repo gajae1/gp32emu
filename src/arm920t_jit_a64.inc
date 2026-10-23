@@ -2142,7 +2142,7 @@ static uint32_t a64_selfloop_prefix(arm920t_t *c, arm_jit_block_t *b) {
 }
 
 /* Recognize a register-renamable masked multiply blend, not a guest address.
- * Four independent words share the RAM/mapping/watch proof and are evaluated
+ * Independent words share the RAM/mapping/watch proof and are evaluated
  * in caller-saved NEON lanes. Short budgets and unusual mappings retain every
  * original instruction. The final lane supplies both live scratch registers. */
 #if defined(__GNUC__) || defined(__clang__)
@@ -2190,78 +2190,88 @@ static ARM_NOINLINE int a64_packed_word_loop(a64_emit_t *e, const arm_jit_op_t *
     uint32_t limit = ops[22].imm;
     if (limit < 4u || limit > INT32_MAX) return 0;
 
-    size_t slow[12]; unsigned nslow = 0;
-    a64_cmp_imm(e, 22, 96u);
-    slow[nslow++] = a64_jump(e, 3); /* less than four complete iterations */
-    a64_guest(e, 10, ctr, ops[0].pc);
-    a64_imm(e, 11, limit - 4u);
-    a64_cmp(e, 10, 11);
-    slow[nslow++] = a64_jump(e, 8); /* unsigned check also rejects negative counters */
-    a64_guest(e, 12, ptr, ops[0].pc);
-    a64_mask(e, 6, 12, 3u);
-    slow[nslow++] = e->pos;
-    a64_branch_word(e, 0x35000006u);
-    a64_mov(e, 0, 12);
-    a64_ram_offset(e, slow, &nslow, 16u, 0);
-    a64_mask(e, 6, 9, 0xfffu);
-    a64_cmp_imm(e, 6, 4096u - 16u);
-    slow[nslow++] = a64_jump(e, 8);
-    a64_guard_code_words(e, slow, &nslow, 9u, 4u, 0u);
+    /* Share one mapping/watch proof over four vectors when the guest deadline
+     * and complete span permit it; retain the four-word and scalar paths. */
+    for (unsigned words = 16u; words >= 4u; words /= 4u) {
+        if (limit < words) continue;
+        unsigned retired = words * 24u;
+        size_t slow[12]; unsigned nslow = 0;
+        a64_cmp_imm(e, 22, retired);
+        slow[nslow++] = a64_jump(e, 3); /* incomplete batch */
+        a64_guest(e, 10, ctr, ops[0].pc);
+        a64_imm(e, 11, limit - words);
+        a64_cmp(e, 10, 11);
+        slow[nslow++] = a64_jump(e, 8); /* unsigned check also rejects negative counters */
+        a64_guest(e, 12, ptr, ops[0].pc);
+        a64_mask(e, 6, 12, 3u);
+        slow[nslow++] = e->pos;
+        a64_branch_word(e, 0x35000006u);
+        a64_mov(e, 0, 12);
+        a64_ram_offset(e, slow, &nslow, words * 4u, 0);
+        a64_mask(e, 6, 9, 0xfffu);
+        a64_cmp_imm(e, 6, 4096u - words * 4u);
+        slow[nslow++] = a64_jump(e, 8);
+        a64_guard_code_words(e, slow, &nslow, 9u, words, 0u);
 
-    /* Whole-block fetch validation already proves all instruction spans.
-     * There are no callbacks or TLB mutations in this RAM-only batch. */
-    a64_rr(e, 0x8b204000u, 14, 21, 9); /* host pointer */
-    for (unsigned i = 0; i < 4u; ++i) {
-        a64_imm(e, 6, masks[i]);
-        a64_u32(e, 0x4e040cc0u | (3u + i)); /* dup v3..v6.4s,w6 */
-    }
-    a64_guest(e, 11, scale, ops[0].pc);
-    a64_u32(e, 0x4e040d67u); /* dup v7.4s,w11 */
-    a64_u32(e, 0x3dc001c0u); /* ldr q0,[x14] */
-    a64_u32(e, 0x4e231c01u); /* and v1.16b,v0.16b,v3.16b */
-    a64_u32(e, 0x4e241c02u);
-    a64_u32(e, 0x4ea79c21u); /* mul v1.4s,v1.4s,v7.4s */
-    a64_u32(e, 0x6f000442u | ((64u - shift_a) << 16));
-    a64_u32(e, 0x4ea79c42u);
-    a64_u32(e, 0x6f000421u | ((64u - shift_b) << 16));
-    a64_u32(e, 0x4e251c21u);
-    a64_u32(e, 0x4e261c42u);
-    a64_u32(e, 0x4ea21c20u); /* orr v0.16b,v1.16b,v2.16b */
-    a64_u32(e, 0x3d8001c0u); /* str q0,[x14] */
-    a64_u32(e, 0x0e1c3c02u); /* umov w2,v0.s[3] */
-    a64_u32(e, 0x0e1c3c43u); /* umov w3,v2.s[3] */
-    a64_u32(e, 0x1100418cu); /* add w12,w12,#16 */
-    a64_u32(e, 0x1100114au); /* add w10,w10,#4 */
-    a64_put_guest(e, ptr, 12);
-    a64_put_guest(e, ctr, 10);
-    a64_put_guest(e, val, 2);
-    a64_put_guest(e, other, 3);
+        /* Whole-block fetch validation already proves all instruction spans.
+         * There are no callbacks or TLB mutations in this RAM-only batch. */
+        a64_rr(e, 0x8b204000u, 14, 21, 9); /* host pointer */
+        for (unsigned i = 0; i < 4u; ++i) {
+            a64_imm(e, 6, masks[i]);
+            a64_u32(e, 0x4e040cc0u | (3u + i)); /* dup v3..v6.4s,w6 */
+        }
+        a64_guest(e, 11, scale, ops[0].pc);
+        a64_u32(e, 0x4e040d67u); /* dup v7.4s,w11 */
+        for (unsigned lane = 0; lane < words; lane += 4u) {
+            a64_u32(e, 0x3dc001c0u); /* ldr q0,[x14] */
+            a64_u32(e, 0x4e231c01u); /* and v1.16b,v0.16b,v3.16b */
+            a64_u32(e, 0x4e241c02u);
+            a64_u32(e, 0x4ea79c21u); /* mul v1.4s,v1.4s,v7.4s */
+            a64_u32(e, 0x6f000442u | ((64u - shift_a) << 16));
+            a64_u32(e, 0x4ea79c42u);
+            a64_u32(e, 0x6f000421u | ((64u - shift_b) << 16));
+            a64_u32(e, 0x4e251c21u);
+            a64_u32(e, 0x4e261c42u);
+            a64_u32(e, 0x4ea21c20u); /* orr v0.16b,v1.16b,v2.16b */
+            a64_u32(e, 0x3d8001c0u); /* str q0,[x14] */
+            if (lane + 4u < words) a64_u32(e, 0x910041ceu); /* add x14,x14,#16 */
+        }
+        a64_u32(e, 0x0e1c3c02u); /* umov w2,v0.s[3] */
+        a64_u32(e, 0x0e1c3c43u); /* umov w3,v2.s[3] */
+        a64_u32(e, 0x1100018cu | (words * 4u << 10));
+        a64_u32(e, 0x1100014au | (words << 10));
+        a64_put_guest(e, ptr, 12);
+        a64_put_guest(e, ctr, 10);
+        a64_put_guest(e, val, 2);
+        a64_put_guest(e, other, 3);
 #if ARM920T_PROFILING
-    a64_cpu_mem(e, 0xf9400000u, 6, offsetof(arm920t_t, prof.native_packed_word_batches), 3);
-    a64_u32(e, 0x910004c6u);
-    a64_cpu_mem(e, 0xf9000000u, 6, offsetof(arm920t_t, prof.native_packed_word_batches), 3);
+        a64_cpu_mem(e, 0xf9400000u, 6, offsetof(arm920t_t, prof.native_packed_word_batches), 3);
+        a64_u32(e, 0x910004c6u);
+        a64_cpu_mem(e, 0xf9000000u, 6, offsetof(arm920t_t, prof.native_packed_word_batches), 3);
 #endif
-    a64_imm(e, 11, limit);
-    a64_cmp(e, 10, 11);
-    a64_u32(e, 0xd53b4205u);
-    a64_load(e, 3, offsetof(arm920t_t, cpsr));
-    a64_bfxil_low(e, 5, 3, 28u);
-    a64_store(e, 5, offsetof(arm920t_t, cpsr));
-    a64_u32(e, 0x510182d6u); /* sub w22,w22,#96 */
-    a64_u32(e, 0x110182f7u); /* add w23,w23,#96 */
-    size_t remains = a64_jump(e, 11); /* signed LT uses the final guest CMP */
-    a64_exit_const(e, ops[23].pc + 4u, 0u);
-    a64_patch(e, remains, e->pos);
-    a64_cmp_imm(e, 22, e->block_count);
-    size_t leave = a64_jump(e, 3);
-    a64_branch_back(e, e->loop_head);
-    a64_patch(e, leave, e->pos);
-    a64_exit_const(e, ops[0].pc, 0u);
-    for (unsigned i = 0; i < nslow; ++i) a64_patch(e, slow[i], e->pos);
-    e->nzcv_valid = 0;
-    e->fwd_guest = -1;
+        a64_imm(e, 11, limit);
+        a64_cmp(e, 10, 11);
+        a64_u32(e, 0xd53b4205u);
+        a64_load(e, 3, offsetof(arm920t_t, cpsr));
+        a64_bfxil_low(e, 5, 3, 28u);
+        a64_store(e, 5, offsetof(arm920t_t, cpsr));
+        a64_u32(e, 0x510002d6u | (retired << 10));
+        a64_u32(e, 0x110002f7u | (retired << 10));
+        size_t remains = a64_jump(e, 11); /* signed LT uses the final guest CMP */
+        a64_exit_const(e, ops[23].pc + 4u, 0u);
+        a64_patch(e, remains, e->pos);
+        a64_cmp_imm(e, 22, e->block_count);
+        size_t leave = a64_jump(e, 3);
+        a64_branch_back(e, e->loop_head);
+        a64_patch(e, leave, e->pos);
+        a64_exit_const(e, ops[0].pc, 0u);
+        for (unsigned i = 0; i < nslow; ++i) a64_patch(e, slow[i], e->pos);
+        e->nzcv_valid = 0;
+        e->fwd_guest = -1;
+    }
     return 1;
 }
+
 
 /* Bound a contiguous halfword-copy idiom by the guest instruction budget.
  * Every load still precedes its store, including overlapping forward copies.
@@ -2744,6 +2754,9 @@ static int a64_emit_runtime(arm920t_t *c) {
 /* Translation must not be inlined into the guest execution dispatcher. */
 static ARM_NOINLINE void arm_jit_compile_host(arm920t_t *c, arm_jit_block_t *b) {
     if (!c || !b || !b->count) return;
+#if ARM_JIT_CHUNK_PREPARE
+    if (c->jit_code_unusable) return;
+#endif
 #if defined(__SWITCH__)
     if (c->jit_memory_failed) return;
 #endif
@@ -3034,6 +3047,12 @@ static ARM_NOINLINE void arm_jit_compile_host(arm920t_t *c, arm_jit_block_t *b) 
             a64_evict_chunk(c, ns, c->jit_code_size - ns > ARM_JIT_A64_CHUNK ? ns + ARM_JIT_A64_CHUNK : c->jit_code_size);
         }
     }
+#if ARM_JIT_CHUNK_PREPARE
+    size_t chunk_start = start & ~(size_t)(ARM_JIT_A64_CHUNK - 1u);
+    size_t chunk_end = c->jit_code_size - chunk_start > ARM_JIT_A64_CHUNK ?
+                       chunk_start + ARM_JIT_A64_CHUNK : c->jit_code_size;
+    if (!arm_jit_chunk_open(c, ARM_JIT_A64_CHUNK, chunk_start, chunk_end)) return;
+#endif
     if (!a64_prepare_write(c)) return;
     uint32_t *hot_dst = (uint32_t *)(void *)(c->jit_code + start);
     uint32_t *cold_dst = (uint32_t *)(void *)(c->jit_code + cold_at);
@@ -3060,6 +3079,9 @@ static ARM_NOINLINE void arm_jit_compile_host(arm920t_t *c, arm_jit_block_t *b) 
     cvt.p = dst;
     b->native = cvt.f;
     b->native_ok = 1;
+#if ARM_JIT_CHUNK_PREPARE
+    arm_jit_chunk_request(c, ARM_JIT_A64_CHUNK, start, cold_at);
+#endif
 }
 
 /* -------------------------------------------------------------------------

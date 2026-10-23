@@ -11,13 +11,52 @@ struct arm_jit_storage_worker {
     pthread_cond_t wake;
     int stop, count;
     arm_jit_op_slab_t *spare[2];
+#if ARM_JIT_CHUNK_PREPARE
+    size_t chunk_bytes; /* one request, including preparation or ready storage */
+    uint8_t *chunk;     /* ready RW-only mapping; ownership passes on take */
+    int chunk_failed;
+#endif
 };
 
 static void *arm_jit_storage_prepare(void *opaque) {
     arm_jit_storage_worker_t *w = opaque;
+#if ARM_JIT_CHUNK_PREPARE
+    uint8_t *chunk = NULL; /* worker-private until every page is touched */
+    size_t touched = 0, bytes = 0;
+#endif
     pthread_mutex_lock(&w->mutex);
     while (!w->stop) {
         if (w->count == 2) {
+#if ARM_JIT_CHUNK_PREPARE
+            if (w->chunk_bytes && !w->chunk && !w->chunk_failed) {
+                bytes = w->chunk_bytes;
+                pthread_mutex_unlock(&w->mutex);
+                if (!chunk) {
+                    long page = sysconf(_SC_PAGESIZE);
+                    if (page > 0 && bytes % (size_t)page == 0) {
+                        void *p = mmap(NULL, bytes, PROT_READ | PROT_WRITE,
+                                       MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+                        if (p != MAP_FAILED) chunk = p;
+                    }
+                }
+                if (chunk) {
+                    size_t end = bytes - touched > 65536u ? touched + 65536u : bytes;
+                    volatile uint8_t *p = chunk;
+                    for (size_t at = touched; at < end; at += 4096u) p[at] = 0;
+                    p[end - 1u] = 0;
+                    touched = end;
+                }
+                pthread_mutex_lock(&w->mutex);
+                if (!chunk) { w->chunk_failed = 1; w->chunk_bytes = 0; }
+                else if (touched == bytes && !w->stop) {
+                    w->chunk = chunk;
+                    chunk = NULL;
+                    touched = 0;
+                }
+                /* Refill decoded spares before the next <=64 KiB quantum. */
+                continue;
+            }
+#endif
             pthread_cond_wait(&w->wake, &w->mutex);
             continue;
         }
@@ -33,12 +72,18 @@ static void *arm_jit_storage_prepare(void *opaque) {
         }
         pthread_mutex_lock(&w->mutex);
         if (w->stop || !slab) {
+#if ARM_JIT_CHUNK_PREPARE
+            w->chunk_failed = 1; /* do not enqueue work after producer failure */
+#endif
             free(slab);
             break;
         }
         w->spare[w->count++] = slab;
     }
     pthread_mutex_unlock(&w->mutex);
+#if ARM_JIT_CHUNK_PREPARE
+    if (chunk) munmap(chunk, bytes);
+#endif
     return NULL;
 }
 
@@ -67,6 +112,9 @@ static void arm_jit_storage_stop(arm_jit_storage_worker_t *w) {
     pthread_cond_signal(&w->wake);
     pthread_mutex_unlock(&w->mutex);
     pthread_join(w->thread, NULL);
+#if ARM_JIT_CHUNK_PREPARE
+    if (w->chunk) munmap(w->chunk, w->chunk_bytes);
+#endif
     for (int i = 0; i < w->count; ++i) free(w->spare[i]);
     pthread_cond_destroy(&w->wake);
     pthread_mutex_destroy(&w->mutex);
@@ -82,6 +130,29 @@ static arm_jit_op_slab_t *arm_jit_storage_take(arm_jit_storage_worker_t *w) {
     }
     return slab ? slab : malloc(sizeof(*slab));
 }
+
+#if ARM_JIT_CHUNK_PREPARE
+static void arm_jit_storage_request_chunk(arm_jit_storage_worker_t *w, size_t bytes) {
+    if (!w || pthread_mutex_trylock(&w->mutex)) return;
+    if (!w->stop && !w->chunk_failed && !w->chunk_bytes) {
+        w->chunk_bytes = bytes;
+        pthread_cond_signal(&w->wake);
+    }
+    pthread_mutex_unlock(&w->mutex);
+}
+
+static uint8_t *arm_jit_storage_take_chunk(arm_jit_storage_worker_t *w, size_t bytes) {
+    uint8_t *p = NULL;
+    if (!w || pthread_mutex_trylock(&w->mutex)) return NULL;
+    if (w->chunk && w->chunk_bytes == bytes) {
+        p = w->chunk;
+        w->chunk = NULL;
+        w->chunk_bytes = 0;
+    }
+    pthread_mutex_unlock(&w->mutex);
+    return p;
+}
+#endif
 #else
 static arm_jit_storage_worker_t *arm_jit_storage_start(void) { return NULL; }
 static void arm_jit_storage_stop(arm_jit_storage_worker_t *w) { GP32_UNUSED(w); }

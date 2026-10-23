@@ -332,7 +332,7 @@ typedef struct gp32_cpu_profile {
     /* A64 certified peripheral regions; counters are never serialized. */
     uint64_t native_io_sequence_batches;
     uint64_t native_io_sequence_insns;
-    /* Bounded A64 four-word masked multiply batches; runtime only. */
+    /* Bounded A64 masked multiply vector batches; runtime only. */
     uint64_t native_packed_word_batches;
 } gp32_cpu_profile_t;
 

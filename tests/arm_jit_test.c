@@ -1218,8 +1218,8 @@ static void packed_case(unsigned count, uint32_t factor, unsigned flags) {
         input[i] = 0x13274b6du ^ (0x0102070bu * i);
         set_mem_both((physical & ~3u)+i*4u,input[i]);
     }
-    if (flags & (128u|2048u)) {
-        unsigned watched = flags & 2048u ? 3u : 0u;
+    if (flags & (128u|2048u|8192u)) {
+        unsigned watched = flags & 8192u ? 15u : flags & 2048u ? 3u : 0u;
         set_mem_both(physical+4u*watched,0xe3a04011u);
         input[watched]=0xe3a04011u;
         prepare_native_block(cpu_jit,physical+4u*watched);
@@ -1256,6 +1256,8 @@ static void packed_case(unsigned count, uint32_t factor, unsigned flags) {
     gp32_cpu_profile_t p; arm920t_get_cpu_profile(cpu_jit,&p);
     if (p.supported && p.native_backend==2u && count>=4u && !(flags & (16u|32u|128u|256u|2048u)))
         CHECK(p.native_packed_word_batches>0u,"packed SIMD path was not executed");
+    if (p.supported && p.native_backend==2u && (count==16u || count==64u) && !flags)
+        CHECK(p.native_packed_word_batches==count/16u,"wide SIMD path was not executed");
     if (p.supported && p.native_backend==2u && count==4u && (flags & 2048u))
         CHECK(p.native_packed_word_batches==0u,"last watched word rejects full vector write");
     teardown_pair();
@@ -1271,6 +1273,10 @@ static void case_packed_word_loop(void) {
     packed_case(17u,0xffffffffu,512u|1u|2u|1024u);
     packed_case(17u,0x92345678u,1024u);
     packed_case(4u,17u,2048u|4096u);
+    packed_case(16u,0xf1234567u,8192u);
+    packed_case(33u,32u,16u);
+    packed_case(64u,31u,0u);
+    packed_case(64u,31u,256u);
 }
 
 static void case_copy_loop(void) {
