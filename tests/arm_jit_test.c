@@ -1144,6 +1144,135 @@ static void case_xor_loop(void) {
     xor_case("xor-mmu", 63u, 0u, 0x10000200u, 0x10100800u, 0u, 1u);
 }
 
+/* A two-mask, modulo-32-bit multiply blend. The scalar equation is independent
+ * of the JIT emitter; the raw CPU also checks every intermediate budget. */
+static uint32_t packed_expected(uint32_t x, uint32_t factor, unsigned shift_a,
+                                unsigned shift_b, unsigned flags, uint32_t *last_other) {
+    uint32_t a = (uint32_t)((uint64_t)(x & (flags & 512u ? UINT32_MAX : 0x07c0f83eu)) * factor);
+    a = shift_b == 32u ? 0u : a >> shift_b;
+    uint32_t b = x & (flags & 512u ? ~0xa5u : 0xf83e07c0u);
+    b = shift_a == 32u ? 0u : b >> shift_a;
+    b = (uint32_t)((uint64_t)b * factor) & (flags & 512u ? ~0xf0u : 0xf83e07c0u);
+    if (last_other) *last_other = b;
+    return (a & (flags & 512u ? ~0xffu : 0x07c0f83eu)) | b;
+}
+static void packed_case(unsigned count, uint32_t factor, unsigned flags) {
+    current_case = "packed-word-loop";
+    setup_pair();
+    arm920t_set_trace(cpu_ref, 1, NULL, NULL);
+    unsigned scale = flags & 1u ? 7u : 0u, ptr = flags & 1u ? 6u : 1u;
+    unsigned val = flags & 1u ? 5u : 2u, ctr = flags & 1u ? 9u : 3u;
+    unsigned other = flags & 1u ? 10u : 14u;
+    unsigned shift_a = flags & 2u ? 32u : 5u;
+    unsigned shift_b = flags & 1024u ? 32u : flags & 4u ? 1u : 5u;
+    uint32_t code = CODE_ADDR + (flags & 8u ? 0x3d8u : 0u);
+    uint32_t physical = DATA_ADDR + (flags & 16u ? 0xff8u : 0x200u);
+    if (flags & 4096u) physical = DATA_ADDR + 0x274u;
+    if (flags & 32u) physical += 1u;
+    uint32_t address = flags & 64u ? 0x10000000u + physical - RAM_BASE : physical;
+    uint32_t program[26] = {
+        0xe5900000u | (ptr << 16) | (val << 12),
+        0xe2800001u | (ctr << 16) | (ctr << 12),
+        0xe3c0051fu | (val << 16) | (other << 12),
+        0xe3c0033eu | (val << 16) | (val << 12),
+        0xe3c0083fu | (val << 16) | (val << 12),
+        0xe3c00c07u | (val << 16) | (val << 12),
+        0xe3c000c1u | (val << 16) | (val << 12),
+        0xe3c00b7eu | (other << 16) | (other << 12),
+        0xe3c0003fu | (other << 16) | (other << 12),
+        0xe0000090u | (val << 16) | (val << 8) | scale,
+        0xe1a00020u | (other << 12) | ((shift_a & 31u) << 7) | other,
+        0xe0000090u | (other << 16) | (other << 8) | scale,
+        0xe1a00020u | (val << 12) | ((shift_b & 31u) << 7) | val,
+        0xe3c0033eu | (val << 16) | (val << 12),
+        0xe3c0083fu | (val << 16) | (val << 12),
+        0xe3c0051fu | (other << 16) | (other << 12),
+        0xe3c00b7eu | (other << 16) | (other << 12),
+        0xe3c00c07u | (val << 16) | (val << 12),
+        0xe3c000c1u | (val << 16) | (val << 12),
+        0xe3c0003fu | (other << 16) | (other << 12),
+        0xe1800000u | (other << 16) | (val << 12) | val,
+        0xe4800004u | (ptr << 16) | (val << 12),
+        0xe3500000u | (ctr << 16) | count,
+        0xbaffffe7u,
+        0xe59d8000u, /* callback observes the state after the complete loop */
+        0xeafffffeu
+    };
+    if (flags & 512u) {
+        const unsigned positions[]={2u,3u,4u,5u,6u,7u,8u,13u,14u,15u,16u,17u,18u,19u};
+        for (unsigned i=0;i<GP32_ARRAY_COUNT(positions);++i) program[positions[i]] &= ~0xfffu;
+        program[2] |= 0xa5u; program[13] |= 0xffu; program[15] |= 0xf0u;
+    }
+    if (flags & 64u) {
+        const uint32_t setup[] = {0xee02bf10u, 0xee01cf10u};
+        load_both(setup, 2u);
+        set_reg_both(11u, RAM_BASE+0x4000u); set_reg_both(12u, 1u);
+        set_mem_both(RAM_BASE+0x4000u, 2u);
+        set_mem_both(RAM_BASE+0x4400u, RAM_BASE|2u);
+        set_mem_both(RAM_BASE+0x4500u, IO_ADDR|2u);
+        CHECK(prepared_native_run(cpu_jit,2u) == arm920t_run(cpu_ref,2u), "packed MMU setup");
+    }
+    for (unsigned i=0;i<GP32_ARRAY_COUNT(program);++i) set_mem_both(code+4u*i, program[i]);
+    uint32_t input[64];
+    for (unsigned i=0;i<count;++i) {
+        input[i] = 0x13274b6du ^ (0x0102070bu * i);
+        set_mem_both((physical & ~3u)+i*4u,input[i]);
+    }
+    if (flags & (128u|2048u)) {
+        unsigned watched = flags & 2048u ? 3u : 0u;
+        set_mem_both(physical+4u*watched,0xe3a04011u);
+        input[watched]=0xe3a04011u;
+        prepare_native_block(cpu_jit,physical+4u*watched);
+    }
+    set_reg_both(scale,factor); set_reg_both(ptr,address); set_reg_both(ctr,0u);
+    set_reg_both(13u,IO_ADDR); set_reg_both(15u,code);
+    bus_jit.observe_cpu=cpu_jit; bus_ref.observe_cpu=cpu_ref;
+    arm920t_reset_cpu_profile(cpu_jit);
+    unsigned left=count*24u+2u;
+    static const unsigned pieces[]={1u,22u,1u,25u,95u,96u,97u,192u,385u,2048u};
+    if (flags & 256u) {
+        for (unsigned i=0;left && i<GP32_ARRAY_COUNT(pieces);++i) {
+            unsigned n=left<pieces[i]?left:pieces[i];
+            CHECK(prepared_native_run(cpu_jit,n)==arm920t_run(cpu_ref,n),"packed split budget");
+            compare_state(); left-=n;
+        }
+        CHECK(!left,"packed split fixture budget");
+    } else {
+        CHECK(prepared_native_run(cpu_jit,left)==arm920t_run(cpu_ref,left),"packed full budget");
+        compare_state();
+    }
+    CHECK(ref_reg(ctr)==count && ref_reg(ptr)==address+4u*count,"packed count/address");
+    CHECK(bus_jit.io_count==1u && bus_ref.io_count==1u &&
+          !memcmp(bus_jit.io_regs,bus_ref.io_regs,sizeof(bus_jit.io_regs)) &&
+          !memcmp(bus_jit.io_cpsr,bus_ref.io_cpsr,sizeof(bus_jit.io_cpsr)),"packed callback state");
+    if (!(flags & 32u)) {
+        uint32_t last_other=0,last=0;
+        for (unsigned i=0;i<count;++i) {
+            last=packed_expected(input[i],factor,shift_a,shift_b,flags,&last_other);
+            CHECK(gp32_ld32le(bus_ptr(&bus_jit,physical+4u*i,4u))==last,"packed independent word");
+        }
+        CHECK(ref_reg(val)==last && ref_reg(other)==last_other,"packed last scalar registers");
+    }
+    gp32_cpu_profile_t p; arm920t_get_cpu_profile(cpu_jit,&p);
+    if (p.supported && p.native_backend==2u && count>=4u && !(flags & (16u|32u|128u|256u|2048u)))
+        CHECK(p.native_packed_word_batches>0u,"packed SIMD path was not executed");
+    if (p.supported && p.native_backend==2u && count==4u && (flags & 2048u))
+        CHECK(p.native_packed_word_batches==0u,"last watched word rejects full vector write");
+    teardown_pair();
+}
+static void case_packed_word_loop(void) {
+    static const unsigned counts[]={1u,3u,4u,5u,16u,33u};
+    static const uint32_t factors[]={0u,1u,31u,32u,33u,UINT32_MAX};
+    for(unsigned i=0;i<GP32_ARRAY_COUNT(counts);++i)
+        for(unsigned j=0;j<GP32_ARRAY_COUNT(factors);++j) packed_case(counts[i],factors[j],0u);
+    for(unsigned bit=0;bit<9u;++bit) packed_case(17u,0xf1234567u,1u<<bit);
+    packed_case(17u,32u,8u|64u);
+    packed_case(17u,0xf1234567u,512u);
+    packed_case(17u,0xffffffffu,512u|1u|2u|1024u);
+    packed_case(17u,0x92345678u,1024u);
+    packed_case(4u,17u,2048u|4096u);
+}
+
 static void case_copy_loop(void) {
     static const unsigned counts[] = {1u, 15u, 16u, 17u, 63u};
     for (size_t i = 0; i < GP32_ARRAY_COUNT(counts); ++i) {
@@ -6826,6 +6955,8 @@ int main(int argc, char **argv) {
         case_native_carry_arith();
     } else if (selfmove_only) {
         case_native_self_move_noop();
+    } else if (argc == 2 && !strcmp(argv[1], "--packed-word-loop")) {
+        case_packed_word_loop();
     } else if (copy_only) {
         case_copy_loop();
     } else if (argc == 2 && !strcmp(argv[1], "--xor-loop")) {
@@ -6981,6 +7112,7 @@ int main(int argc, char **argv) {
     case_native_bx();
     case_mem();
     case_half_modes();
+    case_packed_word_loop();
     case_copy_loop();
     case_xor_loop();
     case_block_modes();
