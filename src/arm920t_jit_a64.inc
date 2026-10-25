@@ -117,6 +117,9 @@ typedef struct a64_emit {
      * (stores through a64_put_guest update it, helpers reload it), so a copy
      * stays valid across conditional skips, cold chains and the backedge. */
     uint8_t cache_host[16];
+    /* Temporary forward call lists; zero terminates, otherwise word index + 1.
+     * The unfinished BL immediate holds the previous site until cold flush. */
+    uint32_t checked_head[A64_HELPER_COUNT];
     const uint32_t (*helper_code)[6];
     int bios_read;   /* jit_bios_base probes the whole read-only BIOS window */
     int open_bus;    /* bus promises open_bus_word32 outside every window */
@@ -806,6 +809,50 @@ static void a64_selfloop(a64_emit_t *e, uint32_t done, uint32_t target) {
     a64_store(e, 16, offsetof(arm920t_t, r) + 15u * 4u);
     a64_return(e, done);
 }
+/* A block shares its checked helper call, continuation test and register
+ * reload. Each site supplies the ordinary C arguments and retired count;
+ * its BL return address identifies the exact native continuation. */
+static void a64_checked_call(a64_emit_t *e, unsigned helper, uint32_t done) {
+    if (e->fail || helper >= A64_HELPER_COUNT || e->pos >= A64_RELOC_MAX_WORDS) {
+        e->fail = 1;
+        return;
+    }
+    size_t at = e->pos;
+    a64_u32(e, 0x94000000u | e->checked_head[helper]);
+    if (!e->fail) e->checked_head[helper] = (uint32_t)at + 1u;
+    a64_u32(e, done); /* BL return address points at this non-executed count. */
+}
+
+static void a64_checked_flush(a64_emit_t *e) {
+    for (unsigned helper = 0; helper < A64_HELPER_COUNT && !e->fail; ++helper) {
+        uint32_t link = e->checked_head[helper];
+        if (!link) continue;
+        size_t entry = e->pos;
+        while (link) {
+            size_t at = link - 1u;
+            if (at >= entry || entry - at >= (1u << 25)) { e->fail = 1; return; }
+            link = e->code[at] & 0x03ffffffu;
+            e->code[at] = 0x94000000u | (uint32_t)(entry - at);
+            a64_record_reloc(e, at, entry, A64_RELOC_B26);
+        }
+        /* All C arguments are ready and cached guest values are already
+         * committed to c->r[]. Borrow x26 across this C call, whose ABI
+         * preserves it. Restore the native return address before reloading
+         * every assigned cache register, including x26. No extra host frame
+         * or change to Apple's x29 frame chain is needed. */
+        a64_rr(e, 0xaa000000u, 26, 31, 30); /* mov x26, x30 */
+        a64_helper_call(e, helper);
+        size_t keep = e->pos;
+        a64_branch_word(e, 0x35000000u); /* cbnz w0, continue */
+        a64_u32(e, 0xb9400340u); /* ldr w0, [x26]: retired count */
+        a64_ext(e, 0x14000000u, A64_EXT_EXIT);
+        a64_patch(e, keep, e->pos);
+        a64_u32(e, 0x9100135eu); /* add x30, x26, #4: skip the count */
+        a64_cache_reload(e);
+        a64_u32(e, 0xd65f03c0u); /* ret to this site's native continuation */
+    }
+}
+
 static void a64_slow(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
     a64_rr(e, 0xaa000000u, 0, 31, 19);
     a64_ptr(e, 1, (uintptr_t)op);
@@ -825,6 +872,10 @@ static void a64_slow(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
     }
     a64_imm(e, 2, e->expected_next);
     a64_imm(e, 3, e->generation);
+    if (!e->counted) {
+        a64_checked_call(e, A64_HELPER_ARM_A64_EXEC_CHECKED, done);
+        return;
+    }
     a64_helper_call(e, e->counted && op->kind == ARM_JIT_OP_SINGLE_DT ?
         A64_HELPER_ARM_A64_OBSERVE_CHECKED : A64_HELPER_ARM_A64_EXEC_CHECKED);
     a64_cmp_imm(e, 0, 0);
@@ -854,6 +905,10 @@ static void a64_mem_slow(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done,
     a64_mov(e, 2, 12);
     a64_rr(e, 0xaa000000u, 0, 31, 19);
     a64_ptr(e, 1, (uintptr_t)op);
+    if (!e->counted) {
+        a64_checked_call(e, word_load ? A64_HELPER_ARM_A64_LDWORD_CHECKED : A64_HELPER_ARM_A64_MEM_CHECKED, done);
+        return;
+    }
     a64_helper_call(e, word_load ?
         A64_HELPER_ARM_A64_LDWORD_CHECKED : A64_HELPER_ARM_A64_MEM_CHECKED);
     a64_cmp_imm(e, 0, 0);
@@ -914,6 +969,11 @@ static void a64_io_word_pa(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done,
     a64_rr(e, 0xaa000000u, 0, 31, 19);
     a64_ptr(e, 1, (uintptr_t)op);
     int callback_only = load ? e->io_read_callback : e->io_write_callback;
+    if (!e->counted) {
+        a64_checked_call(e, callback_only ? A64_HELPER_ARM_A64_IO_WORD_CHECKED : A64_HELPER_ARM_A64_IO_WORD_MAPPED_CHECKED, done);
+        a64_branch_hot(e, cont);
+        return;
+    }
     a64_helper_call(e, callback_only ?
         A64_HELPER_ARM_A64_IO_WORD_CHECKED : A64_HELPER_ARM_A64_IO_WORD_MAPPED_CHECKED);
     size_t keep = e->pos;
@@ -3000,6 +3060,7 @@ static ARM_NOINLINE void arm_jit_compile_host(arm920t_t *c, arm_jit_block_t *b) 
     }
     a64_fetch_flush(&e);
     a64_cold_flush(&e);
+    a64_checked_flush(&e);
     if (e.fail) return;
     size_t hot_bytes = e.hot_end * sizeof(tmp[0]);
     size_t cold_bytes = (e.pos - e.hot_end) * sizeof(tmp[0]);
