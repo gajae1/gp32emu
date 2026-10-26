@@ -76,10 +76,15 @@ static void write_port(unsigned off, uint32_t value) {
         size_t count = 0;
         const arm_leaf_write32_t *writes = s3c2400_leaf_write32(soc, &count);
         CHECK(writes && count == 3u, "three certified peripheral writes");
+        if (!writes || count != 3u) return;
         for (size_t i = 0; i < count; ++i) if (writes[i].pa == GPIO + off) {
+            CHECK(writes[i].write && writes[i].user == soc, "leaf callback targets this SoC");
+            if (!writes[i].write || writes[i].user != soc) return;
             writes[i].write(writes[i].user, GPIO + off, value);
             return;
         }
+        CHECK(off != 0x08u && off != 0x0cu && off != 0x24u,
+              "certified card endpoints must not silently fall back to the bus");
     }
     if (width == 16) bus.write16(bus.user, GPIO + off, (uint16_t)value);
     else bus.write32(bus.user, GPIO + off, value);
