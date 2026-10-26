@@ -5,6 +5,7 @@
 #include "smc_direct.h"
 #include <errno.h>
 #include <stdarg.h>
+#include <stdalign.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -40,8 +41,9 @@ static retro_input_state_t input_state_cb;
 static retro_log_printf_t log_cb;
 
 static gp32_t *emu;
-static uint32_t frame_rgb[GP32_W * GP32_H];
-static uint32_t effect_rgb[GP32_W * GP32_H];
+/* Keep staging-buffer alignment independent of unrelated linked code/data. */
+alignas(64) static uint32_t frame_rgb[GP32_W * GP32_H];
+alignas(64) static uint32_t effect_rgb[GP32_W * GP32_H];
 static gp32_video_effects_t effects;
 static gp32_audio_resampler_t audio_resampler;
 static int16_t *audio_resample_buf;
