@@ -16,6 +16,7 @@ static void chunk_pause(void) { struct timespec t = {0, 1000000}; nanosleep(&t, 
 static void chunk_make_hole(void *p, size_t bytes) { munmap(p, bytes); }
 #endif
 
+#define TEST_DONOR_BYTES (512u * 1024u)
 static atomic_int hold_map, entered_map, fail_map, fail_protect, fail_remap, fail_restore;
 static atomic_int fail_malloc, fail_calloc, fail_thread, live_maps, remap_calls;
 static _Atomic(void *) private_map;
@@ -25,10 +26,14 @@ static int chunk_create(pthread_t *t, const void *a, void *(*fn)(void *), void *
     return atomic_load(&fail_thread) ? 1 : pthread_create(t,a,fn,arg);
 }
 static void *chunk_mmap(void *p, size_t n, int prot, int flags, int fd, long off) {
-    int donor = !(prot & PROT_EXEC) && !(flags & MAP_FIXED);
+    int donor = n == TEST_DONOR_BYTES && !(flags & MAP_FIXED);
     if (donor) {
         atomic_store(&entered_map, 1);
         while (atomic_load(&hold_map)) chunk_pause();
+        if (!(prot & PROT_EXEC)) {
+            fputs("FAIL: donor lacks final executable permission\n",stderr);
+            abort();
+        }
         if (atomic_load(&fail_map)) return MAP_FAILED;
     }
     if ((flags & MAP_FIXED) && atomic_load(&fail_restore)) return MAP_FAILED;
@@ -73,11 +78,11 @@ static void *chunk_mremap(void *p, size_t old, size_t n, int flags, void *at) {
 #undef mremap
 
 #ifndef ARM_JIT_CHUNKS_INCLUDED
-int main(void) { fputs("FAIL: private RW chunk preparation is not implemented\n",stderr); return 1; }
+int main(void) { fputs("FAIL: private chunk preparation is not implemented\n",stderr); return 1; }
 #elif !ARM920T_NATIVE_BACKEND
 int main(void) { puts("SKIP: native executable-memory backend unavailable"); return 77; }
 #else
-#define CHUNK (512u * 1024u)
+#define CHUNK TEST_DONOR_BYTES
 #define REQUIRE(x) do { if (!(x)) { fprintf(stderr,"FAIL line %d: %s\n",__LINE__,#x); exit(1); } } while (0)
 static uint8_t rd8(void *p,uint32_t a) { (void)p; (void)a; return 0; }
 static uint16_t rd16(void *p,uint32_t a) { (void)p; (void)a; return 0; }
@@ -157,6 +162,13 @@ static void test_lifecycle(void) {
         REQUIRE(c->jit_code[at]==0 && c->jit_code[at+CHUNK-1u]==0);
         REQUIRE(c->jit_code[at-1u]==0x5a && c->jit_code[at+CHUNK]==0x5a);
         REQUIRE(atomic_load(&live_maps)==0);
+#if defined(__aarch64__)
+        uint32_t code[2]={0x52800540u,0xd65f03c0u}; /* mov w0,#42; ret */
+        memcpy(c->jit_code+at,code,sizeof(code));
+        arm_jit_flush_exec(c->jit_code+at,sizeof(code));
+        union {void *p;unsigned (*fn)(void);} entry={.p=c->jit_code+at};
+        REQUIRE(entry.fn()==42u);
+#endif
         arm920t_destroy(c);
     }
 }

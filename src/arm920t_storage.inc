@@ -13,7 +13,7 @@ struct arm_jit_storage_worker {
     arm_jit_op_slab_t *spare[2];
 #if ARM_JIT_CHUNK_PREPARE
     size_t chunk_bytes; /* one request, including preparation or ready storage */
-    uint8_t *chunk;     /* ready RW-only mapping; ownership passes on take */
+    uint8_t *chunk;     /* ready private mapping; ownership passes on take */
     int chunk_failed;
 #endif
 };
@@ -34,7 +34,12 @@ static void *arm_jit_storage_prepare(void *opaque) {
                 if (!chunk) {
                     long page = sysconf(_SC_PAGESIZE);
                     if (page > 0 && bytes % (size_t)page == 0) {
-                        void *p = mmap(NULL, bytes, PROT_READ | PROT_WRITE,
+                        /* Match the Linux arena's final permissions before
+                         * prefaulting. Changing RW pages to executable on the
+                         * owner can trigger another per-page dirty fault and
+                         * cache synchronization when code is copied later.
+                         * This mapping remains unpublished and worker-owned. */
+                        void *p = mmap(NULL, bytes, PROT_READ | PROT_WRITE | PROT_EXEC,
                                        MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
                         if (p != MAP_FAILED) chunk = p;
                     }
