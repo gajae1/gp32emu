@@ -73,7 +73,6 @@ typedef struct audio_boundary {
 static_assert(sizeof(audio_boundary_t) == 16u, "audio span wire record");
 
 struct s3c2400 {
-    uint8_t bios[BIOS_SIZE];
     uint8_t *ram;
     size_t ram_size;
     smc_t *smc;
@@ -85,7 +84,6 @@ struct s3c2400 {
      * ten-branch mapping below. button_in0 feeds GPBDAT[15:8], button_in1
      * feeds GPEDAT[7:6]. Derived state; never serialized. */
     uint32_t button_in0, button_in1;
-    uint32_t fb[320 * 240];
     uint32_t fb_w, fb_h;
     uint64_t frame_counter;
     uint32_t lcd_vpos;
@@ -97,7 +95,6 @@ struct s3c2400 {
     uint8_t lcd_timing_valid;
     uint64_t lcd_cached_frame_cycles, lcd_cached_line_cycles;
     uint32_t lcd_cached_visible, lcd_cached_total_lines;
-    uint8_t eeprom[0x2000];
     uint8_t iic_data[4];
     int iic_data_index;
     uint16_t iic_address;
@@ -157,9 +154,8 @@ struct s3c2400 {
     /* Live GPIO readback mirrors and their CPU-facing descriptors: every word
      * the SmartMedia bit-bang driver polls of its port window, GPBCON's strobe
      * 0x15600008, GPBDAT 0x1560000c, GPCDAT's card status 0x15600024 and
-     * GPEDAT 0x15600030. Appended last so every earlier field keeps its offset.
-     * Derived state: never serialized, refreshed after every mutation, storage
-     * stable until s3c2400_destroy. */
+     * GPEDAT 0x15600030. The descriptors retain stable addresses for the lifetime
+     * of the SoC. Derived state: never serialized, refreshed after every mutation. */
     volatile uint32_t live_gpbdat, live_gpedat;
     volatile uint32_t live_gpcon, live_gpcdat;
     arm_live_read32_t live_read32[4];
@@ -179,6 +175,12 @@ struct s3c2400 {
      * Compared only within an active trigger; never part of the state image. */
     uint64_t dma_stop_epoch[4];
     arm_leaf_write32_t leaf_write32[3];
+
+    /* Keep frequently accessed control state together. Bulk storage follows
+     * it; the separately defined state image preserves the file layout. */
+    uint8_t bios[BIOS_SIZE];
+    uint32_t fb[320 * 240];
+    uint8_t eeprom[0x2000];
 };
 
 #if defined(_MSC_VER)
