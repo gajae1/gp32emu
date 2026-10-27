@@ -1,19 +1,42 @@
 #define _GNU_SOURCE 1 /* expose mremap before the allocation-failure wrapper */
 #define _POSIX_C_SOURCE 200809L
 #include <stdlib.h>
-static int reject_allocation;
+#include <time.h>
+#include <stdatomic.h>
+static atomic_int reject_allocation, rejected_allocations;
+static unsigned fail_calloc_at;
 static void *storage_malloc(size_t bytes) {
-    return reject_allocation ? NULL : malloc(bytes);
+    if (atomic_load(&reject_allocation)) {
+        atomic_fetch_add(&rejected_allocations, 1);
+        return NULL;
+    }
+    return malloc(bytes);
+}
+static void *storage_calloc(size_t count, size_t bytes) {
+    return fail_calloc_at && !--fail_calloc_at ? NULL : calloc(count, bytes);
 }
 #define malloc storage_malloc
+#define calloc storage_calloc
 #define GP32EMU_CPU_PROFILE 1
 #include "../src/arm920t.c"
 #undef malloc
+#undef calloc
 #define main original_test_main
 #include "arm_jit_test.c"
 #undef main
 
 int main(void) {
+    current_case="decoded-metadata-allocation-failure";
+    for (unsigned failure=1; failure<=3; ++failure) {
+        setup_cache_pair();
+        fail_calloc_at=failure;
+        CHECK(!arm_jit_alloc(cpu_jit),"metadata allocation failure");
+        CHECK(!cpu_jit->jit_blocks && !cpu_jit->jit_data && !cpu_jit->jit_poll,
+              "partial metadata allocation cleared");
+        fail_calloc_at=0;
+        CHECK(arm_jit_alloc(cpu_jit),"metadata allocation retry");
+        teardown_pair();
+    }
     current_case="stable-decoded-storage";
     setup_cache_pair();
     const uint32_t pc=RAM_BASE+0x3000u;
@@ -60,8 +83,16 @@ int main(void) {
     /* Private allocation failure terminates the producer; consumption still
      * falls back without waiting and shutdown must join the failed worker. */
     reject_allocation=1;
+    atomic_store(&rejected_allocations,0);
     arm_jit_storage_worker_t *w=arm_jit_storage_start();
     CHECK(w!=NULL,"create worker for allocation failure");
+    /* Observe the producer's failed allocation before taking on the owner.
+     * Otherwise an empty queue followed by stop could skip the OOM path. */
+    for (unsigned n=0;n<5000u && !atomic_load(&rejected_allocations);++n) {
+        struct timespec pause={0,1000000};
+        nanosleep(&pause,NULL);
+    }
+    CHECK(atomic_load(&rejected_allocations)>0,"producer attempted allocation");
     CHECK(arm_jit_storage_take(w)==NULL,"empty queue preserves allocation failure");
     arm_jit_storage_stop(w);
     reject_allocation=0;

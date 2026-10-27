@@ -1245,9 +1245,11 @@ static void arm_jit_flush_exec(void *ptr, size_t bytes) {
      * API and MAP_JIT allocation policy remain separately gated above. */
     sys_icache_invalidate(ptr, bytes);
 #elif defined(ARM_JIT_NATIVE_A64)
-    /* Hand-rolled A64 maintenance. The linked __clear_cache (Zig 0.13
-     * compiler-rt and comparable bare implementations) strides by the running
-     * core's own CTR_EL0 line size and omits the completion DSB after IC IVAU.
+    /* Explicit A64 maintenance for toolchain-independent publication. The
+     * Zig 0.13 compiler-rt used by our cross-build omitted the completion DSB
+     * after IC IVAU; current upstream compiler-rt includes it. Both obtain
+     * line sizes from CTR_EL0, so changing toolchains alone does not replace
+     * the conservative stride used here.
      * On big.LITTLE parts different cores report different line sizes, so a
      * range written by one core can leave lines the invalidating core never
      * touches; either hazard yields stale instruction fetches. Stride by the
@@ -2646,13 +2648,15 @@ static int arm_jit_alloc_ops(arm920t_t *c, arm_jit_block_t *b) {
     size_t slot = (size_t)(b - c->jit_blocks);
     if (c->jit_data[slot]) return 1;
     arm_jit_op_slab_t *slab = c->jit_op_slabs;
+    /* Give the producer the remaining half of the first slab as lead time.
+     * Tiny block sets still need no worker, and startup failure is remembered.
+     * This only runs for new slots; execution and reused slots do not poll it. */
+    if (slab && !c->jit_storage_started &&
+        slab->used >= ARM_JIT_OP_SLAB_SLOTS / 2u) {
+        c->jit_storage_started = 1;
+        c->jit_storage_worker = arm_jit_storage_start();
+    }
     if (!slab || slab->used == ARM_JIT_OP_SLAB_SLOTS) {
-        /* One small block set needs no worker. Start at the first exhausted
-         * slab, and remember failure so resource pressure cannot spawn retries. */
-        if (slab && !c->jit_storage_started) {
-            c->jit_storage_started = 1;
-            c->jit_storage_worker = arm_jit_storage_start();
-        }
         slab = arm_jit_storage_take(c->jit_storage_worker);
         if (!slab) return 0;
         slab->next = c->jit_op_slabs;
@@ -2877,6 +2881,25 @@ static int arm_jit_needs_poll(arm920t_t *c, arm_jit_block_t *b) {
            !arm_jit_poll_has_progress(c, b);
 }
 
+/* Only an entry-prefix indirect call asks for a target hint. Keep its
+ * RAM/mapping/eligibility work off the ordinary collector path. This does
+ * not replace the guest load or its loaded-PC continuation guard. */
+static ARM_NOINLINE uint32_t arm_jit_indirect_hint(arm920t_t *c,
+        arm_jit_collect_fetch_t *fetch, arm_jit_block_t *b, const arm_jit_op_t *op) {
+    const uint32_t insn = op->insn;
+    if ((insn & 0xff70f000u) != 0xe510f000u || op->a >= 14u) return 0;
+    uint32_t base = c->r[op->a];
+    uint32_t addr = (insn & (1u << 23)) ? base + op->imm : base - op->imm;
+    const uint8_t *hint = !(addr & 3u) ? arm920t_peek_identity_ram(c, addr, 4u, 0) : NULL;
+    uint32_t target = hint ? gp32_ld32le(hint) & ~3u : 0u, first;
+    if (!target || arm_accel_entry(c, target)) return 0;
+    if (!arm_jit_collect_peek(c, fetch, target, &first)) {
+        b->deferred_inline_pc = target;
+        return 0;
+    }
+    return target;
+}
+
 /* Keep translation (including the native emitter's large scratch buffer) out
  * of the dispatch loop. Inlining it inflates the hot frame and register spills
  * even when every block lookup hits already compiled code. */
@@ -3023,6 +3046,26 @@ static ARM_NOINLINE arm_jit_block_t *arm_jit_translate(arm920t_t *c, uint32_t pc
                     cur += 4u;
                     continue;
                 }
+            }
+        }
+
+        /* The leading MOV writes only LR. Rn excludes LR/PC, so the hint
+         * uses the same base that the real LDR will see. It remains merely
+         * a hint: the existing loaded-PC guard leaves at any actual mismatch. */
+        if (i == 1u && arm_jit_ops(c, b)[0].insn == 0xe1a0e00fu &&
+            arm_jit_ops(c, b)[0].pc + 4u == cur) {
+            uint32_t target = arm_jit_indirect_hint(c, &fetch, b, op);
+            if (target) {
+                op->stop = 0;
+                op->reserved = 3u; /* real loaded-PC guard, also used by returns */
+                trace_extended = 1u;
+                trace_resume[0] = cur + 4u;
+                trace_anchor[0] = page_anchor;
+                trace_lr[0] = 1u;
+                trace_depth = 1u;
+                page_anchor = target;
+                cur = target;
+                continue;
             }
         }
 
