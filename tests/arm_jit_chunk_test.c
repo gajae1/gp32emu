@@ -19,8 +19,16 @@ static void chunk_make_hole(void *p, size_t bytes) { munmap(p, bytes); }
 #define TEST_DONOR_BYTES (512u * 1024u)
 static atomic_int hold_map, entered_map, fail_map, fail_protect, fail_remap, fail_restore;
 static atomic_int fail_malloc, fail_calloc, fail_thread, live_maps, remap_calls;
+static atomic_int rejected_malloc;
+static int wait_request_lock; /* owner-only positive-test orchestration */
 static _Atomic(void *) private_map;
-static void *chunk_malloc(size_t n) { return atomic_load(&fail_malloc) ? NULL : malloc(n); }
+static void *chunk_malloc(size_t n) {
+    if (atomic_load(&fail_malloc)) { atomic_fetch_add(&rejected_malloc,1); return NULL; }
+    return malloc(n);
+}
+static int chunk_trylock(pthread_mutex_t *m) {
+    return wait_request_lock ? pthread_mutex_lock(m) : pthread_mutex_trylock(m);
+}
 static void *chunk_calloc(size_t n, size_t s) { return atomic_load(&fail_calloc) ? NULL : calloc(n,s); }
 static int chunk_create(pthread_t *t, const void *a, void *(*fn)(void *), void *arg) {
     return atomic_load(&fail_thread) ? 1 : pthread_create(t,a,fn,arg);
@@ -64,6 +72,7 @@ static void *chunk_mremap(void *p, size_t old, size_t n, int flags, void *at) {
 #define malloc chunk_malloc
 #define calloc chunk_calloc
 #define pthread_create chunk_create
+#define pthread_mutex_trylock chunk_trylock
 #define mmap chunk_mmap
 #define munmap chunk_munmap
 #define mprotect chunk_mprotect
@@ -72,6 +81,7 @@ static void *chunk_mremap(void *p, size_t old, size_t n, int flags, void *at) {
 #undef malloc
 #undef calloc
 #undef pthread_create
+#undef pthread_mutex_trylock
 #undef mmap
 #undef munmap
 #undef mprotect
@@ -117,7 +127,11 @@ static int wait_entered(void) {
 }
 static void request_next(arm920t_t *c) {
     c->jit_code_used=CHUNK/2u;
+    /* Positive lifecycle tests require an accepted hint. Serialize only this
+     * test call; production still drops contended hints without waiting. */
+    wait_request_lock=1;
     arm_jit_chunk_request(c,CHUNK,0,CHUNK);
+    wait_request_lock=0;
 }
 static void apply_lifecycle(arm920t_t *c, unsigned event) {
     if(event==0) arm920t_reset(c,0);
@@ -210,12 +224,29 @@ static void test_failures(void) {
         arm920t_destroy(c);
     }
     atomic_store(&fail_malloc,1);
+    atomic_store(&rejected_malloc,0);
     arm_jit_storage_worker_t *w=arm_jit_storage_start(); REQUIRE(w);
+    for(unsigned n=0;n<5000u && !atomic_load(&rejected_malloc);++n) chunk_pause();
+    REQUIRE(atomic_load(&rejected_malloc)>0);
     REQUIRE(arm_jit_storage_take(w)==NULL);
     arm_jit_storage_stop(w); atomic_store(&fail_malloc,0);
 }
 static void *destroy_cpu(void *p) { arm920t_destroy(p); return NULL; }
+static unsigned native_value(uint8_t *p, unsigned value);
 static void test_shutdown_and_contention(void) {
+    /* A busy producer may discard a best-effort request. The owner must
+     * still open the next untouched range synchronously without waiting. */
+    arm920t_t *busy=new_cpu();
+    REQUIRE(arm_jit_chunk_open(busy,CHUNK,0,CHUNK));
+    busy->jit_code_used=CHUNK/2u;
+    pthread_mutex_lock(&busy->jit_storage_worker->mutex);
+    arm_jit_chunk_request(busy,CHUNK,0,CHUNK);
+    REQUIRE(busy->jit_storage_worker->chunk_bytes==0);
+    REQUIRE(arm_jit_chunk_open(busy,CHUNK,CHUNK,2u*CHUNK));
+    pthread_mutex_unlock(&busy->jit_storage_worker->mutex);
+    REQUIRE(busy->jit_code[CHUNK]==0x5a);
+    REQUIRE(native_value(busy->jit_code+CHUNK,37)==37);
+    arm920t_destroy(busy);
     for(unsigned ready=0;ready<2u;++ready) {
         arm920t_t *c=new_cpu();
         REQUIRE(arm_jit_chunk_open(c,CHUNK,0,CHUNK));
