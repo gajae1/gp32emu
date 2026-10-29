@@ -4881,7 +4881,8 @@ static void x64_emit_live_read32(x64_emit_t *e, unsigned rd, x64_dt_fixup_t *fx)
     for (size_t i = 0; i < e->live_read32_count && !e->fail; ++i) {
         /* A live value replaces the callback, never a direct mapping. Without
          * a negative mapping certificate, the checked load keeps precedence. */
-        if (!fastmem_excludes(e->cpu, e->live_read32[i].pa, 4u, 0)) continue;
+        if (!(e->io_read_callback && arm_jit_addr_in_identity_io(e->live_read32[i].pa, 4u)) &&
+            !fastmem_excludes(e->cpu, e->live_read32[i].pa, 4u, 0)) continue;
         x64_alu_r32_imm(e, 7, X64_EDX, e->live_read32[i].pa);
         size_t miss = x64_jcc32(e, 0x5);
         x64_mov_r64_imm(e, X64_R11D, (uint64_t)(uintptr_t)e->live_read32[i].word);

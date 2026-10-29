@@ -1507,7 +1507,8 @@ static void a64_live_read32_pa(a64_emit_t *e, unsigned rd, size_t cont) {
     for (size_t i = 0; i < e->live_read32_count && !e->fail; ++i) {
         /* The callback's live word cannot override direct memory. Keep the
          * normal mapped helper unless absence is certified for this word. */
-        if (!fastmem_excludes(e->leaf_sample, e->live_read32[i].pa, 4u, 0)) continue;
+        if (!(e->io_read_callback && arm_jit_addr_in_identity_io(e->live_read32[i].pa, 4u)) &&
+            !fastmem_excludes(e->leaf_sample, e->live_read32[i].pa, 4u, 0)) continue;
         a64_imm(e, 6, e->live_read32[i].pa);
         a64_cmp(e, 7, 6);
         size_t unmatched = a64_jump(e, 1);
