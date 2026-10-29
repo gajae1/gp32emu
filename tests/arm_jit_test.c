@@ -3613,6 +3613,80 @@ static void case_native_partial_flags(void) {
     }
 }
 
+/* Adjacent ALU flags may be dead, but run cuts, conditional consumers,
+ * CPSR reads, shifter carry and MMIO still expose architectural state. */
+static void case_native_dead_nz(void) {
+    static const uint32_t first[] = {
+        0xe2102001u, /* ANDS r2,r0,#1 */
+        0xe2102001u, 0xe2102001u, 0xe2102001u,
+        0xe2102102u, /* ANDS r2,r0,#0x80000000: rotated immediate sets C */
+        0xe0102080u, /* ANDS r2,r0,r0,LSL #1: shifter sets C */
+        0xe3100001u, /* TST r0,#1: no register result */
+        0xe0102000u, /* ANDS r2,r0,r0: preserves C for ADC */
+        0xe2102001u, /* ANDS r2,r0,#1: preserves C for RRX */
+    };
+    static const uint32_t second[] = {
+        0xe31100ffu, /* TST r1,#0xff */
+        0x031100ffu, /* TSTEQ: observes the first Z */
+        0xe10f3000u, /* MRS r3,CPSR: observes the first flags */
+        0xe5956000u, /* LDR r6,[r5]: callback observes the first flags */
+        0xe2b43000u, /* ADCS r3,r4,#0: consumes the first C */
+        0xe31100ffu, 0xe31100ffu,
+        0xe2b43000u, 0xe1b03060u, /* ADCS; MOVS r3,r0,RRX */
+    };
+    static const uint32_t values[] = {0u, 1u, 0x80000000u};
+    for (unsigned shape = 0; shape < GP32_ARRAY_COUNT(first); ++shape)
+    for (unsigned cv = 0; cv < 4u; ++cv)
+    for (unsigned value = 0; value < GP32_ARRAY_COUNT(values); ++value)
+    for (unsigned boundary = 0; boundary < 2u; ++boundary)
+    for (unsigned split = 0; split < 2u; ++split) {
+        uint32_t pc = CODE_ADDR + (boundary ? 0x3fcu : 0u);
+        uint32_t program[] = {first[shape], second[shape], 0xe5956000u, 0xeafffffeu};
+        current_case = "dead-nz-observation-boundaries";
+        setup_pair();
+        for (unsigned i = 0; i < GP32_ARRAY_COUNT(program); ++i) {
+            gp32_st32le(bus_ptr(&bus_jit, pc + i * 4u, 4u), program[i]);
+            gp32_st32le(bus_ptr(&bus_ref, pc + i * 4u, 4u), program[i]);
+        }
+        arm920t_set_trace(cpu_ref, 1, NULL, NULL);
+        set_reg_both(0u, values[value]); set_reg_both(1u, value == 0u ? 1u : 0u);
+        set_reg_both(2u, 0x12345678u); set_reg_both(4u, UINT32_MAX);
+        set_reg_both(5u, IO_ADDR); set_reg_both(15u, pc);
+        uint32_t initial = 0xc00000d3u | (cv << 28);
+        arm920t_set_cpsr(cpu_jit, initial);
+        arm920t_set_cpsr(cpu_ref, initial);
+        bus_jit.observe_cpu = cpu_jit; bus_ref.observe_cpu = cpu_ref;
+        if (split) {
+            CHECK(prepared_native_run(cpu_jit, 1u) == arm920t_run(cpu_ref, 1u), "first-op cut");
+            compare_state();
+            if (shape != 4u && shape != 5u) {
+                uint32_t result = shape == 7u ? values[value] : values[value] & 1u;
+                uint32_t expected = (initial & 0x3fffffffu) | (result & 0x80000000u) |
+                                    (!result ? 0x40000000u : 0u);
+                CHECK(arm920t_get_cpsr(cpu_jit) == expected, "intermediate logical NZ must remain visible");
+            }
+        }
+        CHECK(prepared_native_run(cpu_jit, 32u) == arm920t_run(cpu_ref, 32u), "remaining budget");
+        compare_state();
+        CHECK(bus_jit.io_count == (shape == 3u ? 2u : 1u), "callback count");
+        CHECK(!memcmp(bus_jit.io_regs, bus_ref.io_regs, sizeof(bus_ref.io_regs)),
+              "callback must observe all registers");
+        CHECK(!memcmp(bus_jit.io_cpsr, bus_ref.io_cpsr, sizeof(bus_ref.io_cpsr)),
+              "callback must observe committed flags");
+        if (shape == 4u) CHECK(ref_reg(3u) == 0u, "rotated immediate carry reaches ADC");
+        if (shape == 6u) CHECK(ref_reg(2u) == 0x12345678u, "TST has no register result");
+        if (shape == 7u) CHECK(ref_reg(3u) == ((cv & 2u) ? 0u : UINT32_MAX),
+                              "unchanged carry reaches ADC");
+        if (shape == 8u) CHECK(ref_reg(3u) == ((values[value] >> 1) | ((cv & 2u) << 30)),
+                              "unchanged carry reaches RRX");
+        gp32_cpu_profile_t profile;
+        arm920t_get_cpu_profile(cpu_jit, &profile);
+        if (!split && profile.supported && profile.native_backend)
+            CHECK(profile.native_arm_insns > 0u, "whole-pair native execution");
+        teardown_pair();
+    }
+}
+
 static void case_native_regshift(void) {
     const unsigned amounts[] = {0, 1, 31, 32, 33, 255, 256};
     for (unsigned carry = 0; carry != 2; ++carry) {
@@ -6985,6 +7059,9 @@ int main(int argc, char **argv) {
     } else if (argc == 2 && !strcmp(argv[1], "--sflag-logic")) {
         case_native_sflag_logic();
         case_native_partial_flags();
+        case_native_dead_nz();
+    } else if (argc == 2 && !strcmp(argv[1], "--dead-nz")) {
+        case_native_dead_nz();
     } else if (argc == 2 && !strcmp(argv[1], "--stm-base")) {
         case_stm_base();
     } else if (argc == 2 && !strcmp(argv[1], "--store-pc")) {
@@ -7161,6 +7238,7 @@ int main(int argc, char **argv) {
     case_native_sflag_logic();
     case_native_condition_flags();
     case_native_partial_flags();
+    case_native_dead_nz();
     case_native_regshift();
     case_native_carry_arith();
     case_native_longmul_psr();
