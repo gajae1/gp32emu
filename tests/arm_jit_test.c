@@ -65,6 +65,7 @@ typedef struct {
     unsigned mem_probe, mem_effect, mem_calls;
     uint32_t mem_addr, mem_pc, mem_base, mem_value;
     uint32_t live_pa, live_value;
+    unsigned live_mapped;
     unsigned live_reads, live_writes, live_rebind_rejected;
     unsigned fastmem_excludes_calls[2];
 } test_bus_t;
@@ -272,13 +273,18 @@ static void tb_write32(void *u, uint32_t a, uint32_t v) {
 }
 static uint8_t *tb_fastmem(void *u, uint32_t a, size_t bytes, int write) {
     (void)write;
-    return bus_ptr((test_bus_t *)u, a, bytes);   /* must satisfy the RAM+BIOS probes */
+    test_bus_t *b = u;
+    if (b->live_mapped && a >= b->live_pa && a - b->live_pa < 4u &&
+        bytes <= 4u - (a - b->live_pa)) return b->ram + (a - b->live_pa);
+    return bus_ptr(b, a, bytes);   /* must satisfy the RAM+BIOS probes */
 }
 /* Certify only the unbacked identity-I/O window; every other range remains
  * unknown to this fixture rather than being asserted empty. */
 static int tb_fastmem_excludes_io(void *u, uint32_t a, size_t bytes, int write) {
     test_bus_t *b = (test_bus_t *)u;
     ++b->fastmem_excludes_calls[!!write];
+    if (b->live_mapped && (uint64_t)a < (uint64_t)b->live_pa + 4u &&
+        (uint64_t)b->live_pa < (uint64_t)a + bytes) return 0;
     return bytes && a >= 0x14000000u && bytes <= 0x02000000u &&
            (uint64_t)(a - 0x14000000u) + bytes <= 0x02000000u;
 }
@@ -6211,7 +6217,7 @@ static void case_live_read32(void) {
     };
     for (unsigned k = 0; k < GP32_ARRAY_COUNT(masks); ++k) {
         current_case = k == 0 ? "live-word-MMU-off" : k == 1 ? "live-word-mapped" : "live-word-tiny-page";
-        setup_pair();
+        setup_pair_with_io_certificate(1);
         load_both(program, GP32_ARRAY_COUNT(program));
         uint32_t addr = k ? va : IO_ADDR;
         uint32_t pa = IO_ADDR | (k ? va & masks[k] : 0u);
@@ -6263,6 +6269,32 @@ static void case_live_read32(void) {
     }
 }
 
+
+/* A live certificate describes the callback value. Direct memory retains
+ * precedence, including after mapping changes and the required full flush. */
+static void case_live_read32_mapping(void) {
+    const uint32_t program[] = {0xe5901000u, 0xeafffffeu};
+    for (unsigned certificate = 0; certificate < 2u; ++certificate) {
+        current_case = "live-word-direct-mapping";
+        setup_pair_with_io_certificate(certificate);
+        load_both(program, GP32_ARRAY_COUNT(program));
+        bus_jit.live_pa = bus_ref.live_pa = IO_ADDR;
+        bus_jit.live_value = bus_ref.live_value = 0x87654321u;
+        gp32_st32le(bus_jit.ram, 0x12340000u); gp32_st32le(bus_ref.ram, 0x12340000u);
+        arm_live_read32_t read = {IO_ADDR, &bus_jit.live_value};
+        CHECK(arm920t_set_live_read32(cpu_jit, &read, 1u), "register mapped live word");
+        for (unsigned phase = 0; phase < 3u; ++phase) {
+            bus_jit.live_mapped = bus_ref.live_mapped = phase == 1u;
+            arm920t_flush_jit(cpu_jit); arm920t_flush_jit(cpu_ref);
+            set_reg_both(0u, IO_ADDR);
+            prepare_native_block(cpu_jit, CODE_ADDR);
+            run_cache_pair(CODE_ADDR, 8u);
+            CHECK(ref_reg(1u) == (phase == 1u ? 0x12340000u : 0x87654321u),
+                  "live word follows direct mapping across flush");
+        }
+        teardown_pair();
+    }
+}
 
 /* A stale physical target must not authorize a live read when its TLB entry
  * is invalid. The ordinary unmapped access returns open bus, not the live
@@ -6882,6 +6914,7 @@ int main(int argc, char **argv) {
         case_checked_access_translation();
     } else if (argc == 2 && !strcmp(argv[1], "--promotion-fixtures")) {
         case_live_read32();
+        case_live_read32_mapping();
         case_cache_unchanged();
         case_terminal_swi_yield();
         case_native_ldm_pc();
@@ -6926,6 +6959,7 @@ int main(int argc, char **argv) {
     } else if (argc == 2 && !strcmp(argv[1], "--word-probes")) {
         case_native_read_windows();
         case_live_read32();
+        case_live_read32_mapping();
         case_live_read32_cold_tlb();
         case_io_direct_word();
         case_checked_access_translation();
@@ -6933,6 +6967,7 @@ int main(int argc, char **argv) {
         case_native_read_windows();
     } else if (argc == 2 && !strcmp(argv[1], "--live-read32")) {
         case_live_read32();
+        case_live_read32_mapping();
         case_live_read32_cold_tlb();
         case_io_direct_word();
     } else if (argc == 2 && !strcmp(argv[1], "--ram-page-tags")) {
@@ -7047,6 +7082,7 @@ int main(int argc, char **argv) {
     case_leaf_write32();
     case_leaf_write32_code_watch();
     case_live_read32();
+    case_live_read32_mapping();
     case_live_read32_cold_tlb();
     case_io_direct_word();
     case_terminal_swi_yield();
