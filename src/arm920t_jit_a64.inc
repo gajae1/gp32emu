@@ -2450,16 +2450,21 @@ static ARM_NOINLINE int a64_packed_word_loop(a64_emit_t *e, const arm_jit_op_t *
 /* Two byte reads assembled through a nonzero sentinel into one halfword.
  * Batch only complete iterations with an empty accumulator. A nonzero,
  * byte-aligned sentinel proves that the first byte never wraps it to zero.
- * Preserve each pair's load-before-store order, including overlapping RAM. */
+ * The byte-counted form also stores the partial accumulator before its next
+ * byte read. Preserve that order when source and destination overlap. */
 #if defined(__GNUC__) || defined(__clang__)
 __attribute__((cold))
 #endif
 static ARM_NOINLINE void a64_byte_pair_loop(a64_emit_t *e, const arm_jit_op_t *ops) {
-    if (!e->ram_read || !e->ram_write || e->counted || e->loop_done != 16u ||
-        (ops[0].pc >> 10) != (ops[15].pc >> 10)) return;
-    unsigned src = (ops[0].insn >> 16) & 15u, byte = (ops[0].insn >> 12) & 15u;
-    unsigned acc = (ops[1].insn >> 16) & 15u, bias = ops[2].insn & 15u;
-    unsigned dst = (ops[5].insn >> 16) & 15u, cnt = (ops[14].insn >> 16) & 15u;
+    const int partial = e->loop_done == 11u;
+    if (!e->ram_read || !e->ram_write || e->counted || (!partial && e->loop_done != 16u) ||
+        (ops[0].pc >> 10) != (ops[e->loop_done - 1u].pc >> 10)) return;
+    const arm_jit_op_t *read = &ops[partial ? 2u : 0u];
+    unsigned src = (read->insn >> 16) & 15u, byte = (read->insn >> 12) & 15u;
+    unsigned acc = (ops[partial ? 0u : 1u].insn >> 16) & 15u;
+    unsigned bias = ops[partial ? 4u : 2u].insn & 15u;
+    unsigned dst = (ops[partial ? 1u : 5u].insn >> 16) & 15u;
+    unsigned cnt = (ops[e->loop_done - 2u].insn >> 16) & 15u;
     const unsigned regs[] = {src, byte, acc, bias, dst, cnt};
     for (unsigned i = 0; i < GP32_ARRAY_COUNT(regs); ++i) {
         if (regs[i] == 15u) return;
@@ -2474,13 +2479,22 @@ static ARM_NOINLINE void a64_byte_pair_loop(a64_emit_t *e, const arm_jit_op_t *o
         0xe0c000b2u | dst << 16 | acc << 12,
         0xe3a00000u | acc << 12
     };
-    for (unsigned i = 0; i < 16u; ++i) {
+    for (unsigned i = 0; i < e->loop_done; ++i) {
         if (ops[i].reserved || ops[i].pc != ops[0].pc + 4u * i) return;
-        uint32_t want = i < 14u ? body[i % 7u] : i == 14u ?
-            (0xe2500001u | cnt << 16 | cnt << 12) : 0x1affffefu;
+        uint32_t want;
+        if (i == e->loop_done - 1u) want = partial ? 0x1afffff4u : 0x1affffefu;
+        else if (i == e->loop_done - 2u) want = 0xe2500001u | cnt << 16 | cnt << 12;
+        else if (!partial) want = body[i % 7u];
+        else if (i == 0u) want = body[1];
+        else if (i == 1u) want = 0x11c000b0u | dst << 16 | acc << 12;
+        else want = body[i - 2u];
         if (ops[i].insn != want) return;
     }
     size_t slow[16]; unsigned ns = 0;
+    if (partial && e->block_count < 19u) {
+        a64_cmp_imm(e, 22, 19u);
+        slow[ns++] = a64_jump(e, 3); /* entry budget can cover only one byte */
+    }
     a64_guest(e, 6, acc, ops[0].pc);
     slow[ns++] = e->pos; a64_branch_word(e, 0x35000006u);
     a64_guest(e, 8, bias, ops[0].pc);
@@ -2488,8 +2502,8 @@ static ARM_NOINLINE void a64_byte_pair_loop(a64_emit_t *e, const arm_jit_op_t *o
     a64_mask(e, 6, 8, 255u);
     slow[ns++] = e->pos; a64_branch_word(e, 0x35000006u);
     a64_guest(e, 10, cnt, ops[0].pc);
-    a64_cmp_imm(e, 10, 0);
-    slow[ns++] = a64_jump(e, 13); /* nonpositive count keeps scalar wrap rules */
+    a64_cmp_imm(e, 10, partial ? 1u : 0u);
+    slow[ns++] = a64_jump(e, 13); /* incomplete pair or nonpositive count */
     a64_guest(e, 12, src, ops[0].pc);
     a64_guest(e, 13, dst, ops[0].pc);
     a64_mask(e, 6, 13, 1u);
@@ -2501,36 +2515,44 @@ static ARM_NOINLINE void a64_byte_pair_loop(a64_emit_t *e, const arm_jit_op_t *o
         slow[ns++] = a64_jump(e, 8);
     }
     a64_guard_code_words(e, slow, &ns, 15u, 9u, 0u);
-    /* Three instructions are skipped by the first byte's taken forward B.
-     * The second byte's failed ADD/B still retire, giving 13 per pair. */
-    a64_imm(e, 6, 13u);
+    /* The first byte's taken B skips three instructions. The two forms
+     * retire 13 per pair or 8+11 per two byte-counted iterations. */
+    const unsigned retired = partial ? 19u : 13u;
+    a64_imm(e, 6, retired);
     a64_rr(e, 0x1ac00800u, 11, 22, 6);
-    a64_cmp(e, 11, 10);
-    a64_u32(e, 0x1a800000u | (10u << 16) | (9u << 12) | (11u << 5) | 11u);
+    unsigned available = 10u;
+    if (partial) { a64_ubfx(e, 6, 10, 1u, 31u); available = 6u; }
+    a64_cmp(e, 11, available);
+    a64_u32(e, 0x1a800000u | (available << 16) | (9u << 12) | (11u << 5) | 11u);
     a64_imm(e, 6, 16u); a64_cmp(e, 11, 6);
     a64_u32(e, 0x1a800000u | (6u << 16) | (9u << 12) | (11u << 5) | 11u);
     a64_rr(e, 0x8b204000u, 0, 21, 14);
     a64_rr(e, 0x8b204000u, 1, 21, 15);
     a64_mov(e, 3, 11);
     size_t loop = e->pos;
-    a64_u32(e, 0x78402402u); /* ldrh w2,[x0],#2: both bytes precede the store */
+    a64_u32(e, partial ? 0x38401402u : 0x78402402u); /* ldrb #1 / ldrh #2 post-index */
     a64_rr(e, 0x0b000000u, 4, 2, 8);
+    if (partial) {
+        a64_u32(e, 0x79000024u); /* strh w4,[x1]: can change the next source byte */
+        a64_u32(e, 0x38401402u); /* ldrb w2,[x0],#1 */
+        a64_rr(e, 0x0b002000u, 4, 4, 2); /* add w4,w4,w2,lsl #8 */
+    }
     a64_u32(e, 0x78002424u); /* strh w4,[x1],#2 */
     a64_u32(e, 0x71000463u);
     a64_branch_word(e, 0x54000001u | (((uint32_t)(loop - e->pos) & 0x7ffffu) << 5));
-    a64_ubfx(e, 2, 2, 8u, 8u); /* last byte, before bias addition */
+    if (!partial) a64_ubfx(e, 2, 2, 8u, 8u); /* last byte, before bias addition */
     a64_rr(e, 0x0b000400u, 12, 12, 11);
     a64_rr(e, 0x0b000400u, 13, 13, 11);
-    a64_rr(e, 0x4b000000u, 10, 10, 11);
+    a64_rr(e, partial ? 0x4b000400u : 0x4b000000u, 10, 10, 11);
     a64_put_guest(e, src, 12); a64_put_guest(e, dst, 13);
     a64_put_guest(e, cnt, 10); a64_put_guest(e, byte, 2); a64_put_guest(e, acc, 31);
     a64_cmp_imm(e, 10, 0); /* final positive counter SUBS: C=1,V=0 */
     a64_u32(e, 0xd53b4205u); a64_load(e, 3, offsetof(arm920t_t, cpsr));
     a64_bfxil_low(e, 5, 3, 28u); a64_store(e, 5, offsetof(arm920t_t, cpsr));
-    a64_imm(e, 6, 13u); a64_rr(e, 0x1b007c00u, 16, 11, 6);
+    a64_imm(e, 6, retired); a64_rr(e, 0x1b007c00u, 16, 11, 6);
     a64_rr(e, 0x4b000000u, 22, 22, 16); a64_rr(e, 0x0b000000u, 23, 23, 16);
     size_t remains = a64_jump(e, 1);
-    a64_exit_const(e, ops[15].pc + 4u, 0u);
+    a64_exit_const(e, ops[e->loop_done - 1u].pc + 4u, 0u);
     a64_patch(e, remains, e->pos);
     a64_cmp_imm(e, 22, e->block_count);
     size_t leave = a64_jump(e, 3);
@@ -3096,7 +3118,7 @@ static ARM_NOINLINE void arm_jit_compile_host(arm920t_t *c, arm_jit_block_t *b) 
     e.loop_head = e.pos;
     int copy_loop = e.loop_done == 5u && a64_copy_loop(&e, arm_jit_ops(c, b));
     if (e.loop_done == 24u) a64_packed_word_loop(&e, arm_jit_ops(c, b));
-    if (e.loop_done == 16u) a64_byte_pair_loop(&e, arm_jit_ops(c, b));
+    if (e.loop_done == 16u || e.loop_done == 11u) a64_byte_pair_loop(&e, arm_jit_ops(c, b));
 #if ARM920T_PROFILING
     if (copy_loop) c->profile_native_variable_count[b - c->jit_blocks] = 1u;
 #else

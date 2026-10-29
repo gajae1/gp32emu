@@ -1373,17 +1373,33 @@ static void case_copy_loop(void) {
     }
 }
 
-static void byte_pair_case(unsigned variant, unsigned ragged) {
-    current_case = "byte-pair-loop";
+static void byte_pair_case(unsigned variant, unsigned ragged, unsigned partial) {
+    char name[48];
+    snprintf(name, sizeof(name), "%s-%u-%u", partial ? "partial-byte-loop" : "byte-pair-loop", variant, ragged);
+    current_case = name;
     setup_pair(); arm920t_set_trace(cpu_ref, 1, NULL, NULL);
-    const uint32_t program[] = {
+    const uint32_t paired[] = {
         0xe4d02001u,0xe35a0000u,0x0082a004u,0x0a000002u,
         0xe08aa402u,0xe0c1a0b2u,0xe3a0a000u,
         0xe4d02001u,0xe35a0000u,0x0082a004u,0x0a000002u,
         0xe08aa402u,0xe0c1a0b2u,0xe3a0a000u,0xe2577001u,0x1affffefu,
         0xe5996000u,0xeafffffeu
     };
-    load_both(program, GP32_ARRAY_COUNT(program));
+    const uint32_t bytes[] = {
+        0xe35a0000u,0x11c1a0b0u,0xe4d02001u,0xe35a0000u,0x0082a004u,
+        0x0a000002u,0xe08aa402u,0xe0c1a0b2u,0xe3a0a000u,0xe2577001u,0x1afffff4u,
+        0xe5996000u,0xeafffffeu
+    };
+    const uint32_t renamed[] = {
+        0xe3500000u,0x11c300b0u,0xe4dc2001u,0xe3500000u,0x00820008u,
+        0x0a000002u,0xe0800402u,0xe0c300b2u,0xe3a00000u,0xe2577001u,0x1afffff4u,
+        0xe5996000u,0xeafffffeu
+    };
+    const uint32_t *program = variant == 25u ? renamed : partial ? bytes : paired;
+    unsigned length = partial ? GP32_ARRAY_COUNT(bytes) : GP32_ARRAY_COUNT(paired);
+    unsigned sr = variant == 25u ? 12u : 0u, dr = variant == 25u ? 3u : 1u;
+    unsigned br = variant == 25u ? 8u : 4u, ar = variant == 25u ? 0u : 10u;
+    load_both(program, length);
     uint32_t src = DATA_ADDR + 0x200u, dst = DATA_ADDR + 0x800u;
     uint32_t count = variant < 5u ? (uint32_t[]){1u,15u,16u,17u,63u}[variant] : 17u;
     uint32_t bias = 0x10000u, acc = 0u;
@@ -1398,11 +1414,12 @@ static void byte_pair_case(unsigned variant, unsigned ragged) {
     if (variant == 13u) bias = 0u;
     if (variant == 14u) bias = 0xffffffffu;
     if (variant == 15u) acc = 0x10023u;
-    if (variant == 16u) { src = IO_ADDR; count = 1u; }
-    if (variant == 17u) { dst = IO_ADDR; count = 1u; }
+    if (variant == 16u) { src = IO_ADDR; count = partial ? 2u : 1u; }
+    if (variant == 17u) { dst = IO_ADDR; count = partial ? 2u : 1u; }
     if (variant == 18u) count = 0x80000000u;
     if (variant == 19u) count = 0u;
     if (variant == 20u) bias = 0x100u;
+    if (variant == 26u) dst = src;
     if (src != IO_ADDR) copy_seed(src, 128u);
     if (variant == 22u || variant == 23u) {
         const uint32_t ttb = RAM_BASE + 0x4000u;
@@ -1413,7 +1430,7 @@ static void byte_pair_case(unsigned variant, unsigned ragged) {
         cp15_write(cpu_jit, 1u, 0u, 0u, 0u, 1u); cp15_write(cpu_ref, 1u, 0u, 0u, 0u, 1u);
     }
     if (variant == 24u) {
-        for (unsigned i = 0; i < GP32_ARRAY_COUNT(program); ++i)
+        for (unsigned i = 0; i < length; ++i)
             set_mem_both(0x7e0u + 4u*i, program[i]);
         set_reg_both(15u, 0x7e0u);
     }
@@ -1424,33 +1441,54 @@ static void byte_pair_case(unsigned variant, unsigned ragged) {
         CHECK(prepared_native_run(cpu_jit, 1u) == arm920t_run(cpu_ref, 1u), "pair watch prime");
         compare_state(); set_reg_both(15u, CODE_ADDR);
     }
-    set_reg_both(0u, src); set_reg_both(1u, dst); set_reg_both(4u, bias);
-    set_reg_both(7u, count); set_reg_both(10u, acc); set_reg_both(9u, IO_ADDR);
+    set_reg_both(sr, src); set_reg_both(dr, dst); set_reg_both(br, bias);
+    set_reg_both(7u, count); set_reg_both(ar, acc); set_reg_both(9u, IO_ADDR);
     arm920t_set_cpsr(cpu_jit, 0x900000d3u); arm920t_set_cpsr(cpu_ref, 0x900000d3u);
     bus_jit.observe_cpu = cpu_jit; bus_ref.observe_cpu = cpu_ref;
     const unsigned cuts[] = {1u,2u,3u,4u,7u,11u,13u,16u,17u,31u,63u,257u,1021u};
     for (unsigned i = 0; i < (ragged ? GP32_ARRAY_COUNT(cuts) : 1u); ++i) {
-        unsigned budget = ragged ? cuts[i] : 1024u;
+        unsigned budget = ragged ? cuts[i] : variant >= 27u ?
+            (unsigned[]){13u,18u,19u}[variant - 27u] : 1024u;
         CHECK(prepared_native_run(cpu_jit, budget) == arm920t_run(cpu_ref, budget), "pair budget");
         compare_state();
     }
     CHECK(bus_ref.io_count == bus_jit.io_count &&
           !memcmp(bus_ref.io_regs, bus_jit.io_regs, sizeof(bus_ref.io_regs)) &&
           !memcmp(bus_ref.io_cpsr, bus_jit.io_cpsr, sizeof(bus_ref.io_cpsr)), "pair callback state");
-    if (variant < 5u || variant == 12u || variant == 20u) {
-        CHECK(ref_reg(0u) == src + count*2u && ref_reg(1u) == dst + count*2u &&
-              ref_reg(7u) == 0u && ref_reg(10u) == 0u &&
-              ref_reg(2u) == copy_byte(count*2u-1u), "pair independent final registers");
-        for (unsigned i = 0; i < count; ++i)
+    if (variant < 5u || variant == 12u || variant == 20u || variant == 25u) {
+        unsigned nbytes = partial ? count : count*2u, words = nbytes/2u;
+        uint32_t pending = (nbytes & 1u) ? bias + copy_byte(nbytes-1u) : 0u;
+        CHECK(ref_reg(sr) == src + nbytes && ref_reg(dr) == dst + words*2u &&
+              ref_reg(7u) == 0u && ref_reg(ar) == pending &&
+              ref_reg(2u) == copy_byte(nbytes-1u), "pair independent final registers");
+        for (unsigned i = 0; i < words; ++i)
             CHECK(gp32_ld16le(bus_ptr(&bus_ref,dst+i*2u,2u)) ==
                   (uint16_t)(copy_byte(i*2u)+(copy_byte(i*2u+1u)<<8)+bias), "pair independent word");
     }
-    if (!ragged) copy_native_proof("pair native calls");
+    if (partial && (variant == 8u || variant == 26u)) {
+        for (unsigned i = 0; i < count/2u; ++i) {
+            uint16_t expected = variant == 8u ? (uint16_t)(copy_byte(0)*0x101u) : copy_byte(i*2u);
+            CHECK(gp32_ld16le(bus_ptr(&bus_ref,dst+i*2u,2u)) == expected,
+                  "partial store must change the following source read");
+        }
+    }
+    if (variant == 27u) {
+        /* This cut is below the public dispatcher's complete-block span.
+         * Observe the partial store before the second byte is assembled. */
+        CHECK(arm920t_get_pc(cpu_ref) == CODE_ADDR + 20u && ref_reg(0u) == src + 2u &&
+              ref_reg(1u) == dst && ref_reg(7u) == count - 1u &&
+              ref_reg(10u) == bias + copy_byte(0) && ref_reg(2u) == copy_byte(1) &&
+              gp32_ld16le(bus_ptr(&bus_ref,dst,2u)) == (uint16_t)(bias + copy_byte(0)),
+              "short dispatch preserves the intermediate partial store");
+    } else if (!ragged) copy_native_proof("pair native calls");
     teardown_pair();
 }
 static void case_byte_pair_loop(void) {
     for (unsigned variant = 0; variant < 25u; ++variant)
-        for (unsigned ragged = 0; ragged < 2u; ++ragged) byte_pair_case(variant, ragged);
+        for (unsigned ragged = 0; ragged < 2u; ++ragged) byte_pair_case(variant, ragged, 0u);
+    for (unsigned variant = 0; variant < 30u; ++variant)
+        for (unsigned ragged = 0; ragged < (variant < 27u ? 2u : 1u); ++ragged)
+            byte_pair_case(variant, ragged, 1u);
 }
 
 static uint32_t block_insn(unsigned p, unsigned u, unsigned s, unsigned w,
