@@ -68,7 +68,14 @@ static uint32_t seq_read32(void *user, uint32_t pa) {
     uint8_t *p = seq_fastmem(user, pa, 4u, 0);
     if (p) return gp32_ld32le(p);
     if (pa == b->read_pa) return b->live;
-    if (pa == b->port_pa) return b->latch;
+    if (pa == b->port_pa) {
+        if (b->decorate==2u) {
+            b->cpu->cpsr ^= N_FLAG | Z_FLAG;
+            b->cpu->r[7]=0x17ac3962u;
+            arm920t_stop_run(b->cpu);
+        }
+        return b->latch;
+    }
     return UINT32_MAX;
 }
 static uint16_t seq_read16(void *user, uint32_t pa) { return (uint16_t)seq_read32(user, pa); }
@@ -401,8 +408,139 @@ static void boundary_cases(void) {
     prepare(); run_pair(6u); expect_batches(0u);
     check(cpus[0]->r[15] == SEQ_RETURN, "cross-page sequence retains original return"); teardown();
 }
+
+
+
+static void ram_update_callback_cases(void) {
+    const uint32_t update[]={0xe5912024u,0xe2822001u,0xe5812024u,0xe12fff1eu};
+    for(unsigned stop=1;stop<=2u;++stop) {
+        case_name="RAM-region-fallback-callback-deadline";
+        setup(0u,0u,0u);code_count=4u;
+        for(unsigned side=0;side<2u;++side) {
+            for(unsigned i=0;i<4u;++i) gp32_st32le(buses[side].bios+SEQ_CODE+i*4u,update[i]);
+            buses[side].decorate=stop;
+            buses[side].latch=0x1786a3ffu;
+        }
+        prepare();
+        uint32_t ref=arm920t_run(cpus[0],4u),native=arm920t_run(cpus[1],4u);
+        check(ref==native && ref==(stop==2u ? 1u : 3u),"stop exactly at the load or store callback");
+        compare();
+        buses[0].decorate=buses[1].decorate=0u;
+        run_pair(4u-ref);
+        check(cpus[0]->r[15]==SEQ_RETURN,"resume after callback without duplicate operation");
+        teardown();
+    }
+}
+
+static void ram_update_control_cases(void) {
+    const uint32_t update[]={0xe5912024u,0xe2822001u,0xe5812024u,0xe12fff1eu};
+    for (unsigned taken=0;taken<2u;++taken) {
+        case_name="RAM-update-middle-entry";
+        setup(0u,0u,0u);code_count=6u;
+        for(unsigned side=0;side<2u;++side) {
+            cpus[side]->r[1]=ARM_JIT_RAM_BASE_ADDR+0x1000u;
+            cpus[side]->r[4]=taken ? 0u : 1u;
+            gp32_st32le(buses[side].ram+0x1024u,7u);
+            gp32_st32le(buses[side].bios+SEQ_CODE,0xe3540000u);
+            gp32_st32le(buses[side].bios+SEQ_CODE+4u,0x0a000000u);
+            for(unsigned i=0;i<4u;++i) gp32_st32le(buses[side].bios+SEQ_CODE+8u+i*4u,update[i]);
+        }
+        prepare();run_pair(taken ? 5u : 6u);
+        check(cpus[0]->r[15]==SEQ_RETURN,"middle entry uses original update and store");
+        teardown();
+    }
+    case_name="RAM-update-watch-after-compile";
+    setup(0u,0u,0u);code_count=4u;
+    for(unsigned side=0;side<2u;++side) {
+        cpus[side]->r[1]=ARM_JIT_RAM_BASE_ADDR+0x1000u;
+        gp32_st32le(buses[side].ram+0x1024u,0xe3a04001u); /* MOV r4,#1 -> #2 */
+        gp32_st32le(buses[side].ram+0x1028u,0xeafffffeu);
+        for(unsigned i=0;i<4u;++i) gp32_st32le(buses[side].bios+SEQ_CODE+i*4u,update[i]);
+    }
+    prepare();
+    check(arm_jit_translate(cpus[1],ARM_JIT_RAM_BASE_ADDR+0x1024u)!=NULL,"watch a real later instruction fetch");
+    run_pair(4u);
+    for(unsigned side=0;side<2u;++side) cpus[side]->r[15]=ARM_JIT_RAM_BASE_ADDR+0x1024u;
+    run_pair(1u);
+    check(cpus[0]->r[4]==2u && cpus[1]->r[4]==2u,"updated code executes after guarded fallback");
+    teardown();
+}
+
+static void ram_update_skipped_prefix_cases(void) {
+    const uint32_t words[] = {
+        0xe3540000u, 0x0a000001u, /* CMP r4,#0; BEQ to LDR (skip two ops) */
+        0xe3a07001u, 0xe3a07002u,
+        0xe5912024u, 0xe2822001u, 0xe5812024u,
+        0xe5886024u, 0xe12fff1eu /* observable store stops, then BX lr */
+    };
+    for (unsigned wide = 0; wide < 2u; ++wide) {
+        case_name = "RAM-update-skipped-prefix-budget";
+        setup(0u, 0u, 0u); code_count = GP32_ARRAY_COUNT(words);
+        for (unsigned side = 0; side < 2u; ++side) {
+            for (unsigned i = 0; i < code_count; ++i)
+                gp32_st32le(buses[side].bios + SEQ_CODE + i * 4u, words[i]);
+            cpus[side]->r[1] = ARM_JIT_RAM_BASE_ADDR + 0x1000u;
+            cpus[side]->r[4] = 0u;
+            cpus[side]->r[8] = SEQ_PORT - 0x24u;
+            gp32_st32le(buses[side].ram + 0x1024u, UINT32_MAX);
+            buses[side].decorate = 1u;
+        }
+        prepare();
+        uint32_t budget = wide ? UINT32_MAX : code_count;
+        uint32_t ref = arm920t_run(cpus[0], budget);
+        uint32_t native = arm920t_run(cpus[1], budget);
+        check(ref == 6u && native == ref, "skipped instructions never retire, even after unsigned refund wrap");
+        compare();
+        check(cpus[1]->r[2] == 0u && gp32_ld32le(buses[1].ram + 0x1024u) == 0u,
+              "RAM addition wraps once before the observing callback");
+        buses[0].decorate = buses[1].decorate = 0u;
+        run_pair(1u);
+        check(cpus[1]->r[15] == SEQ_RETURN, "resume at BX without repeating either store");
+        teardown();
+    }
+}
+
+static void ram_update_cases(void) {
+    for (unsigned variant=0;variant<10u;++variant)
+      for (unsigned first=1;first<=4u;++first) {
+        case_name="RAM-load-update-store";
+        setup(0u,variant % 3u,0u);
+        code_count=4u;
+        const uint32_t words[]={0xe5912024u,0xe2822001u,0xe5812024u,0xe12fff1eu};
+        for(unsigned side=0;side<2u;++side) {
+            arm920t_t *c=cpus[side];
+            for(unsigned i=0;i<4u;++i) gp32_st32le(buses[side].bios+SEQ_CODE+i*4u,words[i]);
+            c->r[1]=(variant%3u ? SEQ_ALIAS : ARM_JIT_RAM_BASE_ADDR)+0x1000u;
+            if(variant%3u) tlb_store_checked(c,c->r[1],ARM_JIT_RAM_BASE_ADDR+0x1000u,
+                variant%3u==2u ? 0x3ffu : 0xfffu,NULL);
+            gp32_st32le(buses[side].ram+0x1024u,0xffffffffu);
+            if(variant==3u) c->r[1]+=1u; /* unaligned rotate + store */
+            if(variant==4u) { /* current TLB now resolves to a different word */
+                tlb_store_checked(c,c->r[1],ARM_JIT_RAM_BASE_ADDR+0x2000u,0xfffu,NULL);
+                gp32_st32le(buses[side].ram+0x2024u,0x7fffffffu);
+            }
+            if(variant==5u) { /* ordinary I/O must retain each callback */
+                tlb_store_checked(c,c->r[1],SEQ_PORT&~0xfffu,0xfffu,NULL);
+                buses[side].latch=0x17263544u;
+            }
+            if(variant==6u) gp32_st32le(buses[side].bios+SEQ_CODE+4u,0xe2422001u); /* SUB */
+            if(variant==7u) gp32_st32le(buses[side].bios+SEQ_CODE+4u,0xe2822401u); /* large ADD */
+            if(variant==8u) gp32_st32le(buses[side].bios+SEQ_CODE+4u,0xe2922001u); /* ADDS excluded */
+            if(variant==9u) gp32_st32le(buses[side].bios+SEQ_CODE+4u,0x02822001u); /* conditional excluded */
+        }
+        prepare();run_pair(first);
+        if(first<4u)run_pair(4u-first);
+        check(cpus[0]->r[15]==SEQ_RETURN,"RAM update returns after every ragged boundary");
+        teardown();
+      }
+}
+
 int main(int argc, char **argv) {
     negative_control = argc > 1 && !strcmp(argv[1], "--negative-control");
+    ram_update_callback_cases();
+    ram_update_control_cases();
+    ram_update_skipped_prefix_cases();
+    ram_update_cases();
     basic_cases();
     rejection_cases();
     boundary_cases();
