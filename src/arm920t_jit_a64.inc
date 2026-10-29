@@ -157,7 +157,7 @@ enum a64_cold_kind {
      * branch, re-runs the translation and the transfer for a span that crosses
      * one 4 KiB boundary, and resumes the hot continuation behind it. Its own
      * guard rejections join the sibling classified-helper chain. */
-    A64_COLD_BLOCK_DT_XPAGE, A64_COLD_BX_THUMB
+    A64_COLD_BLOCK_DT_XPAGE, A64_COLD_BX_THUMB, A64_COLD_RAM_UPDATE
 };
 
 /* One deferred cold chain.  The hot body records what to emit and where the
@@ -1406,6 +1406,59 @@ static void a64_guard_code_write(a64_emit_t *e, size_t *slow, unsigned *nslow,
         slow[(*nslow)++] = e->pos;
         a64_branch_word(e, 0x35000000u | 7u); /* cbnz w7 -> checked instruction */
     }
+}
+
+
+/* Adjacent word load, immediate add/subtract and matching store share one
+ * current RAM proof. Failed guards replay the original operations through
+ * checked cold helpers; a branch into the middle prevents region folding. */
+static int a64_ram_update(a64_emit_t *e, const arm_jit_op_t *op,
+                           uint32_t before) {
+    if (op[0].kind != ARM_JIT_OP_SINGLE_DT ||
+        (op[0].d & ~ARM_BC_SD_U) != (ARM_BC_SD_P | ARM_BC_SD_L) ||
+        !e->ram_read || !e->ram_write || e->counted) return 0;
+    if (op[0].a >= 15u || op[0].b >= 15u || op[0].a == op[0].b ||
+        op[1].kind != ARM_JIT_OP_DATA ||
+        (op[1].a != 2u && op[1].a != 4u) || op[1].d != ARM_BC_DATA_IMM ||
+        op[1].b != op[0].b || op[1].c != op[0].b ||
+        op[2].insn != (op[0].insn & ~(1u << 20))) return 0;
+    for (unsigned i=0; i<3u; ++i)
+        if (op[i].cond != 14u || op[i].stop || op[i].reserved ||
+            op[i].pc != op[0].pc + i*4u) return 0;
+    if ((op[0].pc >> 10) != (op[2].pc >> 10)) return 0;
+
+    size_t reject[6]; unsigned nreject=0;
+    e->nzcv_valid=0; e->fwd_guest=-1;
+    /* Entry, linked entry and each self-loop pass already reserve the full
+     * block. Forward skips refund that reservation, possibly wrapping w22;
+     * a second local budget test would only reject an already safe span. */
+    a64_guest(e,0,op[0].a,op[0].pc);
+    if (op[0].imm)
+        a64_u32(e,((op[0].d & ARM_BC_SD_U) ? 0x11000000u : 0x51000000u) |
+            (op[0].imm << 10) | 0u); /* W arithmetic keeps address wrap */
+    a64_mask(e,6,0,3u);
+    reject[nreject++]=e->pos;
+    a64_branch_word(e,0x35000006u); /* unaligned LDR keeps its rotation path */
+    a64_ram_offset(e,reject,&nreject,4u,0);
+    a64_guard_code_write(e,reject,&nreject,0u);
+    /* No callback, mapping change or guest mutation has occurred. The
+     * aligned word fits a certified readable/writable physical RAM page. */
+    a64_u32(e,0xb8606800u | (9u << 16) | (21u << 5) | 2u);
+    /* The loaded register is overwritten by the non-faulting arithmetic.
+     * This proved RAM span has no intervening callback or observable exit. */
+    if (op[1].imm <= 0xfffu)
+        a64_u32(e,(op[1].a == 4u ? 0x11000000u : 0x51000000u) |
+            (op[1].imm << 10) | (2u << 5) | 2u);
+    else {
+        a64_imm(e,1u,op[1].imm);
+        a64_rr(e,op[1].a == 4u ? 0x0b000000u : 0x4b000000u,2u,2u,1u);
+    }
+    a64_put_guest(e,op[1].c,2u);
+    a64_u32(e,0xb8206800u | (9u << 16) | (21u << 5) | 2u);
+    a64_cold_op_t *cold=a64_cold_open(e,op,before+3u,A64_COLD_RAM_UPDATE);
+    if (cold) for(unsigned i=0;i<nreject;++i) a64_cold_fix(e,cold,reject[i]);
+    e->nzcv_valid=0; e->fwd_guest=-1;
+    return 1;
 }
 
 /* Only the already translated, aligned physical endpoint is selected.
@@ -2729,6 +2782,19 @@ static ARM_NOINLINE void a64_cold_flush(a64_emit_t *e) {
             else a64_slow(e, c->op, c->done);
             break;
         }
+        case A64_COLD_RAM_UPDATE:
+            /* Replay each original operation when a proof fails. A load or
+             * store callback can change the deadline, mappings or CPU state;
+             * its existing checked continuation exits before the next op. */
+            e->fwd_guest=-1; e->nzcv_valid=0;
+            e->expected_next=c->op[0].pc+4u;
+            a64_slow(e,&c->op[0],c->done-2u);
+            e->fwd_guest=-1; e->nzcv_valid=0;
+            (void)a64_data(e,&c->op[1],c->done-1u);
+            e->expected_next=c->op[2].pc+4u;
+            a64_slow(e,&c->op[2],c->done);
+            e->fwd_guest=-1; e->nzcv_valid=0;
+            break;
         case A64_COLD_HALF:
             a64_mov(e, 12, 0); /* the hot body keeps the VA in w0 */
             a64_mem_slow(e, c->op, c->done, c->load, c->wb);
@@ -3157,6 +3223,16 @@ static ARM_NOINLINE void arm_jit_compile_host(arm920t_t *c, arm_jit_block_t *b) 
             if (a64_io_sequence(c, &e, op, i, &sequence_success)) {
                 fwd_site[nfwd] = sequence_success;
                 fwd_to[nfwd++] = (uint16_t)(i + 5u);
+            }
+        }
+        if (!b->poll_backedge && i+3u <= b->count && op->kind == ARM_JIT_OP_SINGLE_DT &&
+            (op->d & ARM_BC_SD_L)) {
+            int middle_entry=0;
+            for(unsigned k=0;k<nfwd;++k)
+                if(fwd_to[k]>i && fwd_to[k]<i+3u) middle_entry=1;
+            if (!middle_entry && a64_ram_update(&e,op,i)) {
+                i+=2u;
+                continue;
             }
         }
         uint32_t folded;
