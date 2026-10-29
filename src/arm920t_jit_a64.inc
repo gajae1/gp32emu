@@ -130,7 +130,7 @@ typedef struct a64_emit {
                      * pre-indexed store without writeback. Other emitters and
                      * all helper/cold continuations clear it. */
     uint32_t expected_next, generation;
-    unsigned next_cond; /* next decoded condition, 14 when unconditional/end */
+    const arm_jit_op_t *next_op; /* next decoded op, NULL at the block end */
     uint32_t loop_done, block_count;
     size_t loop_head;
     const arm920t_t *leaf_sample;
@@ -1105,6 +1105,21 @@ static void a64_exception_return(a64_emit_t *e, unsigned result, uint32_t done) 
     a64_return(e, done); /* restored mode/IRQ/Thumb state reaches dispatch */
 }
 
+/* A logical producer with an unchanged shifter carry writes only N/Z.
+ * Those bits are dead if the next unconditional native ALU replaces them.
+ * Both instructions must fit in the same fetch page; callbacks, control flow,
+ * PC writes and partial-budget entries retain their ordinary flag commits. */
+static int a64_dead_nz(const arm_jit_op_t *op, const arm_jit_op_t *next) {
+    if (!next || op->cond != 14u || op->stop || op->c == 15u ||
+        next->kind != ARM_JIT_OP_DATA || next->cond != 14u || next->stop ||
+        next->pc != op->pc + 4u || ((next->pc ^ op->pc) >> 10) ||
+        (next->d & ARM_BC_DATA_REGSHIFT)) return 0;
+    int next_test = next->a >= 8u && next->a <= 11u;
+    if (!next_test && (!(next->d & ARM_BC_DATA_S) || next->c == 15u)) return 0;
+    return (op->d & ARM_BC_DATA_IMM) ? !(op->d & ARM_BC_DATA_IMM_CV) :
+                                     !op->g && !op->h;
+}
+
 static int a64_data(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
     unsigned code = op->a;
     int test = code >= 8u && code <= 11u;
@@ -1115,6 +1130,10 @@ static int a64_data(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
     int fwd = e->fwd_guest;
     e->fwd_guest = -1;
     if (op->d & ARM_BC_DATA_REGSHIFT) return 0;
+    if (flags && logical && a64_dead_nz(op, e->next_op)) {
+        flags = 0;
+        if (test) return 1; /* no register result; instruction count is unchanged */
+    }
     /* Write a cached destination directly. Its old value remains available
      * to operand selection until the ALU instruction retires. Uncached and
      * PC destinations retain w2 and the existing one-instruction forwarding. */
@@ -1244,8 +1263,9 @@ static int a64_data(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
          * those for EQ/NE/MI/PL; only a C/V consumer needs the merged flags.
          * Classify the next condition here, not for every decoded operation. */
         e->nzcv_valid = !logical;
-        if (logical && e->next_cond < 14u) {
-            if ((e->next_cond & ~1u) == 0u || (e->next_cond & ~1u) == 4u)
+        unsigned next_cond = e->next_op ? e->next_op->cond : 14u;
+        if (logical && next_cond < 14u) {
+            if ((next_cond & ~1u) == 0u || (next_cond & ~1u) == 4u)
                 e->nzcv_valid = 2;
             else {
                 a64_u32(e, 0xd51b4205u); /* msr nzcv, x5 */
@@ -3013,7 +3033,7 @@ static ARM_NOINLINE void arm_jit_compile_host(arm920t_t *c, arm_jit_block_t *b) 
         }
         e.expected_next = i + 1u < b->count ? arm_jit_ops(c, b)[i + 1u].pc : op->pc + 4u;
         e.generation = b->generation;
-        e.next_cond = i + 1u < b->count ? arm_jit_ops(c, b)[i + 1u].cond : 14u;
+        e.next_op = i + 1u < b->count ? &arm_jit_ops(c, b)[i + 1u] : NULL;
         /* No TLB mutation on a resident I-side hit; semantic eviction
          * changes the epoch and checked helpers leave before continuing. */
         if (!b->poll_backedge && i + 5u <= b->count) {
