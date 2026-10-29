@@ -124,13 +124,13 @@ typedef struct a64_emit {
     int bios_read;   /* jit_bios_base probes the whole read-only BIOS window */
     int open_bus;    /* bus promises open_bus_word32 outside every window */
     int io_read_callback, io_write_callback; /* proved no fastmem at device PAs */
-    int nzcv_valid; /* host NZCV equals the committed guest flags */
+    int nzcv_valid; /* 1: all guest flags; 2: only N/Z match committed CPSR */
     int fwd_guest;  /* guest register whose committed value is still in w2, -1 = none.
                      * A plain data op publishes it for the next data op or a
                      * pre-indexed store without writeback. Other emitters and
                      * all helper/cold continuations clear it. */
     uint32_t expected_next, generation;
-    int want_nzcv;  /* the next decoded op is conditional */
+    unsigned next_cond; /* next decoded condition, 14 when unconditional/end */
     uint32_t loop_done, block_count;
     size_t loop_head;
     const arm920t_t *leaf_sample;
@@ -212,7 +212,7 @@ static int arm_a64_exec_checked(arm920t_t *c, const arm_jit_op_t *op,
 
 /* The portable observer queries stability before committing PC+4 and
  * performing the real load. Keep that order and the checked helper's fence. */
-static int arm_a64_observe_checked(arm920t_t *c, const arm_jit_op_t *op,
+static ARM_NOINLINE int arm_a64_observe_slow(arm920t_t *c, const arm_jit_op_t *op,
                                    uint32_t expected_next, uint32_t generation) {
     int stop = op->stop;
     uint32_t status = c->cpsr & 0xffu, epoch = c->jit_cache_epoch, run_limit = c->run_limit;
@@ -228,6 +228,57 @@ static int arm_a64_observe_checked(arm920t_t *c, const arm_jit_op_t *op,
     int next = arm_a64_can_continue(c, stop, expected_next, generation, status, epoch, run_limit, ram_base);
     if (!next) c->jit_counted_stable = 0;
     return next;
+}
+
+/* A stable live word can be observed without the general transfer decoder.
+ * Keep the implementation shared by all blocks. Reject
+ * before changing CPU state; the original observer owns every other case. */
+ARM_FORCE_INLINE int arm_a64_observe_live(arm920t_t *c, const arm_jit_op_t *op,
+                                         uint32_t expected_next, uint32_t generation,
+                                         uint32_t io_callback_only) {
+    /* a64_slow proves the immutable operation shape before emitting this
+     * target. Addresses, descriptors and CPU exit conditions remain live. */
+    if (c->live_read32_count && !c->trace) {
+        uint32_t base = c->r[op->a];
+        uint32_t addr = (op->d & ARM_BC_SD_U) ? base + op->imm : base - op->imm;
+        uint32_t phys;
+        if (!(addr & 3u) && arm_poll_cached_address(c, addr, &phys) &&
+            !(c->jit_ram_base && arm_jit_addr_in_ram(phys, 4u)) &&
+            !(c->jit_bios_base && arm_jit_addr_in_bios(phys, 4u))) {
+            for (size_t i = 0; i < c->live_read32_count; ++i) {
+                const arm_live_read32_t *read = &c->live_read32[i];
+                if (read->pa != phys || !read->stable) continue;
+                /* Direct mappings precede the ordinary bus read. Reuse the block's whole-I/O negative mapping proof. A
+                 * descriptor outside that range still needs an exact probe.
+                 * Mapping changes invalidate the proof with the block. */
+                if (!(io_callback_only && arm_jit_addr_in_identity_io(phys, 4u)) &&
+                    fastmem(c, phys, 4u, 0)) break;
+                uint32_t status = c->cpsr & 0xffu, epoch = c->jit_cache_epoch;
+                uint32_t run_limit = c->run_limit;
+                uint8_t *ram_base = c->jit_ram_base;
+                arm_profile_helper_op(c, op);
+                c->r[15] = op->pc + 4u;
+                write_r(c, op->b, *read->word);
+                int next = arm_a64_can_continue(c, 0, expected_next, generation,
+                                                status, epoch, run_limit, ram_base);
+                if (!next) c->jit_counted_stable = 0;
+                return next;
+            }
+        }
+    }
+    return arm_a64_observe_slow(c, op, expected_next, generation);
+}
+
+/* Select the mapping contract while compiling, so every observed load keeps
+ * the four-argument helper ABI without materializing a redundant flag. */
+static int arm_a64_observe_checked(arm920t_t *c, const arm_jit_op_t *op,
+                                  uint32_t expected_next, uint32_t generation) {
+    return arm_a64_observe_live(c, op, expected_next, generation, 1u);
+}
+
+static int arm_a64_observe_uncertified(arm920t_t *c, const arm_jit_op_t *op,
+                                      uint32_t expected_next, uint32_t generation) {
+    return arm_a64_observe_live(c, op, expected_next, generation, 0u);
 }
 
 /* Only used for a terminating MSR. No callback can observe an intermediate
@@ -876,8 +927,27 @@ static void a64_slow(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
         a64_checked_call(e, A64_HELPER_ARM_A64_EXEC_CHECKED, done);
         return;
     }
-    a64_helper_call(e, e->counted && op->kind == ARM_JIT_OP_SINGLE_DT ?
-        A64_HELPER_ARM_A64_OBSERVE_CHECKED : A64_HELPER_ARM_A64_EXEC_CHECKED);
+    if (e->counted && op->kind == ARM_JIT_OP_SINGLE_DT) {
+        /* Decoded operations live as long as their native block. Select the
+         * shared specialized observer once; do not repeat these static tests
+         * at every executed load. Both targets preserve observation and the
+         * same continuation fence. Other shapes keep the original observer. */
+        if (op->cond == 14u && !op->stop && op->a < 15u && op->b < 15u &&
+            e->expected_next == op->pc + 4u &&
+            (op->d & ~ARM_BC_SD_U) == (ARM_BC_SD_P | ARM_BC_SD_L)) {
+            if (e->io_read_callback) {
+                a64_helper_call(e, A64_HELPER_ARM_A64_OBSERVE_CHECKED);
+            } else {
+                a64_ptr(e, 16, (uintptr_t)arm_a64_observe_uncertified);
+                a64_u32(e, 0xd63f0200u); /* blr x16 */
+            }
+        } else {
+            a64_ptr(e, 16, (uintptr_t)arm_a64_observe_slow);
+            a64_u32(e, 0xd63f0200u); /* blr x16 */
+        }
+    } else {
+        a64_helper_call(e, A64_HELPER_ARM_A64_EXEC_CHECKED);
+    }
     a64_cmp_imm(e, 0, 0);
     size_t next = a64_jump(e, 1);
     a64_return(e, done);
@@ -1019,6 +1089,14 @@ static void a64_shift(a64_emit_t *e, unsigned type, unsigned amount, int carry) 
     }
 }
 
+/* EQ/NE and MI/PL depend only on N/Z. Logical flag producers can leave
+ * those bits in host NZCV while committing the full architectural CPSR.
+ * A later carry/overflow predicate still reloads the complete guest flags. */
+static int a64_nzcv_ready(const a64_emit_t *e, unsigned cond) {
+    return e->nzcv_valid == 1 || (e->nzcv_valid == 2 &&
+        ((cond & ~1u) == 0u || (cond & ~1u) == 4u));
+}
+
 static void a64_exception_return(a64_emit_t *e, unsigned result, uint32_t done) {
     a64_mov(e, 1, result); /* unaligned result, from the old register bank */
     a64_rr(e, 0xaa000000u, 0, 31, 19); /* x0 = CPU */
@@ -1120,12 +1198,16 @@ static int a64_data(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
         if (!folded_shift) a64_shift(e, op->g, op->h, flags && logical);
     }
     uint32_t s = flags ? 0x20000000u : 0u;
+    /* ANDS/BICS produce N/Z with C/V clear. The guest carry still comes
+     * from its shifter and V from CPSR; no separate compare/mask is needed. */
+    int logical_nz = flags && (code == 0u || code == 8u || code == 14u);
+    uint32_t logical_s = logical_nz ? 0x60000000u : 0u;
     /* and/eor/orr result, <first operand or wzr>, #imm */
     if (logic_op)
-        a64_u32(e, logic_op | logic_enc |
+        a64_u32(e, logic_op | logic_enc | logical_s |
                     ((code == 13u || code == 15u ? 31u : rn) << 5) | result);
     else switch (code) {
-    case 0: case 8: a64_rr(e, 0x0a000000u | shift_bits, result, rn, rm); break;
+    case 0: case 8: a64_rr(e, 0x0a000000u | logical_s | shift_bits, result, rn, rm); break;
     case 1: case 9: a64_rr(e, 0x4a000000u | shift_bits, result, rn, rm); break;
     case 2: case 10:
         if (arith_imm) a64_u32(e, 0x51000000u | s | imm_bits | (rn << 5) | result);
@@ -1146,22 +1228,30 @@ static int a64_data(a64_emit_t *e, const arm_jit_op_t *op, uint32_t done) {
         if (!(op->d & ARM_BC_DATA_IMM) && (!direct_mov || rm != result))
             a64_rr(e, 0x2a000000u | shift_bits, result, 31, rm);
         break;
-    case 14: a64_rr(e, 0x0a200000u | shift_bits, result, rn, rm); break;
+    case 14: a64_rr(e, 0x0a200000u | logical_s | shift_bits, result, rn, rm); break;
     case 15: a64_rr(e, 0x2a200000u | shift_bits, result, 31, rm); break;
     }
     if (flags) {
-        if (logical) a64_cmp_imm(e, result, 0);
+        if (logical && !logical_nz) a64_cmp_imm(e, result, 0);
         a64_u32(e, 0xd53b4205u); /* mrs x5, nzcv */
         if (logical) {
-            a64_mask(e, 5, 5, N_FLAG | Z_FLAG);
+            if (!logical_nz) a64_mask(e, 5, 5, N_FLAG | Z_FLAG);
             a64_rr(e, 0x2a000000u, 5, 5, 4);
         }
         a64_bfxil_low(e, 5, 3, logical ? 29u : 28u);
         a64_store(e, 5, offsetof(arm920t_t, cpsr));
-        /* Logical flags merge the old C/V; when the next op is conditional,
-         * hand it the merged flags in NZCV instead of a CPSR reload. */
-        if (logical && e->want_nzcv) a64_u32(e, 0xd51b4205u); /* msr nzcv, x5 */
-        e->nzcv_valid = !logical || e->want_nzcv;
+        /* The logical operation or compare left the result's N/Z in host flags. Keep
+         * those for EQ/NE/MI/PL; only a C/V consumer needs the merged flags.
+         * Classify the next condition here, not for every decoded operation. */
+        e->nzcv_valid = !logical;
+        if (logical && e->next_cond < 14u) {
+            if ((e->next_cond & ~1u) == 0u || (e->next_cond & ~1u) == 4u)
+                e->nzcv_valid = 2;
+            else {
+                a64_u32(e, 0xd51b4205u); /* msr nzcv, x5 */
+                e->nzcv_valid = 1;
+            }
+        }
     }
     if (!test) {
         if (op->c == 15u && flags) {
@@ -2923,7 +3013,7 @@ static ARM_NOINLINE void arm_jit_compile_host(arm920t_t *c, arm_jit_block_t *b) 
         }
         e.expected_next = i + 1u < b->count ? arm_jit_ops(c, b)[i + 1u].pc : op->pc + 4u;
         e.generation = b->generation;
-        e.want_nzcv = i + 1u < b->count && arm_jit_ops(c, b)[i + 1u].cond < 14u;
+        e.next_cond = i + 1u < b->count ? arm_jit_ops(c, b)[i + 1u].cond : 14u;
         /* No TLB mutation on a resident I-side hit; semantic eviction
          * changes the epoch and checked helpers leave before continuing. */
         if (!b->poll_backedge && i + 5u <= b->count) {
@@ -2955,7 +3045,7 @@ static ARM_NOINLINE void arm_jit_compile_host(arm920t_t *c, arm_jit_block_t *b) 
             continue;
         }
         if (op->reserved == 8u) {
-            if (!e.nzcv_valid) {
+            if (!a64_nzcv_ready(&e, op->cond)) {
                 a64_load(&e, 3, offsetof(arm920t_t, cpsr));
                 a64_u32(&e, 0xd51b4203u);
             }
@@ -2983,9 +3073,10 @@ static ARM_NOINLINE void arm_jit_compile_host(arm920t_t *c, arm_jit_block_t *b) 
 #if ARM920T_PROFILING
             c->profile_native_variable_count[b - c->jit_blocks] = 1u;
 #endif
-            if (!e.nzcv_valid) {
+            if (!a64_nzcv_ready(&e, op->cond)) {
                 a64_load(&e, 3, offsetof(arm920t_t, cpsr));
                 a64_u32(&e, 0xd51b4203u);
+                e.nzcv_valid = 1;
             }
             size_t fall = a64_jump(&e, op->cond ^ 1u);
             a64_u32(&e, 0x11000000u | (skipped << 10) | (22u << 5) | 22u); /* add w22, w22, #skipped */
@@ -2993,7 +3084,7 @@ static ARM_NOINLINE void arm_jit_compile_host(arm920t_t *c, arm_jit_block_t *b) 
             fwd_site[nfwd] = a64_jump(&e, 14u);
             fwd_to[nfwd++] = (uint16_t)fwd;
             a64_patch(&e, fall, e.pos);
-            e.nzcv_valid = 1; /* the fall-through still holds the committed flags */
+            /* Fall-through retains whichever guest flag subset was valid. */
             continue;
         }
         size_t skip = 0;
@@ -3005,7 +3096,7 @@ static ARM_NOINLINE void arm_jit_compile_host(arm920t_t *c, arm_jit_block_t *b) 
             if (op->cond != 14u) {
                 /* An immediately preceding unconditional arithmetic flag
                  * producer already left precisely these flags in NZCV. */
-                if (!e.nzcv_valid) {
+                if (!a64_nzcv_ready(&e, op->cond)) {
                     a64_load(&e, 3, offsetof(arm920t_t, cpsr));
                     a64_u32(&e, 0xd51b4203u);
                 }

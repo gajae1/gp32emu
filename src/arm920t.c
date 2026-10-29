@@ -5532,6 +5532,7 @@ static void arm_jit_compile_host(arm920t_t *c, arm_jit_block_t *b) {
     b->native_ok = 1;
 }
 #elif defined(ARM_JIT_NATIVE_A64)
+static int arm_poll_cached_address(const arm920t_t *c, uint32_t va, uint32_t *phys);
 static int arm_poll_read_stable(arm920t_t *c, const arm_jit_op_t *op);
 #include "arm920t_jit_a64.inc"
 #else
