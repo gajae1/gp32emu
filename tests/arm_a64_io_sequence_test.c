@@ -114,7 +114,7 @@ static void register_certificates(unsigned certificates) {
     static arm_leaf_write32_t leaf;
     static arm_live_read32_t live;
     leaf = (arm_leaf_write32_t){buses[1].port_pa,seq_write32,&buses[1]};
-    live = (arm_live_read32_t){buses[1].read_pa,&buses[1].live};
+    live = (arm_live_read32_t){.pa=buses[1].read_pa, .word=&buses[1].live};
     check(arm920t_set_leaf_write32(cpus[1], certificates & 1u ? &leaf : NULL,
                                  certificates & 1u ? 1u : 0u), "register leaf write");
     check(arm920t_set_live_read32(cpus[1], certificates & 2u ? &live : NULL,

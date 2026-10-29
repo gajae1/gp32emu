@@ -323,6 +323,10 @@ static void live_read32_init(s3c2400_t *s) {
     s->live_read32[2].word = &s->live_gpbdat;
     s->live_read32[3].pa = 0x15600030u;
     s->live_read32[3].word = &s->live_gpedat;
+    /* GPIO mirrors change only on synchronous writes, ticks or host input.
+     * None of those can occur inside a write-free counted poll. */
+    for (size_t i = 0; i < GP32_ARRAY_COUNT(s->live_read32); ++i)
+        s->live_read32[i].stable = 1u;
 }
 
 /* Recompute the guest-visible GPIO input bits from the host button mask.

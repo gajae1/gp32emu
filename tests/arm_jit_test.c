@@ -3571,6 +3571,48 @@ static void case_native_condition_flags(void) {
     }
 }
 
+/* An N/Z-only consumer may be optimized away (MOV r2,r2). A later
+ * C/V predicate still needs the complete committed flags, including at MMIO. */
+static int expected_condition(unsigned c, uint32_t f) {
+    int n=(f>>31)&1,z=(f>>30)&1,carry=(f>>29)&1,v=(f>>28)&1;
+    switch(c) {
+    case 0:return z; case 1:return !z; case 2:return carry;case 3:return !carry;
+    case 4:return n;case 5:return !n;case 6:return v;case 7:return !v;
+    case 8:return carry&&!z;case 9:return !carry||z;
+    case 10:return n==v;case 11:return n!=v;
+    case 12:return !z&&n==v;case 13:return z||n!=v;default:return 1;
+    }
+}
+static void case_native_partial_flags(void) {
+    static const uint32_t values[]={0u,1u,0x80000000u};
+    static const unsigned conditions[]={0u,1u,4u,5u};
+    for(unsigned cv=0;cv<4;++cv) for(unsigned vi=0;vi<3;++vi)
+    for(unsigned ci=0;ci<4;++ci) for(unsigned next=0;next<14;++next) {
+        uint32_t program[]={0xe1100000u, /* TST r0,r0: preserves guest C/V */
+            (conditions[ci]<<28)|0x01a02002u, /* conditional MOV r2,r2: no-op */
+            (next<<28)|0x02844001u, /* conditional ADD r4,r4,#1 */
+            0xe5910000u, /* MMIO must observe full architectural flags */
+            0xeafffffeu};
+        current_case="partial-nzcv-followed-by-full-condition";
+        setup_pair();load_both(program,GP32_ARRAY_COUNT(program));
+        arm920t_set_trace(cpu_ref,1,NULL,NULL);
+        set_reg_both(0,values[vi]);set_reg_both(1,IO_ADDR);set_reg_both(4,10u);
+        uint32_t initial=0xd3u|(cv<<28);
+        arm920t_set_cpsr(cpu_jit,initial);arm920t_set_cpsr(cpu_ref,initial);
+        bus_jit.observe_cpu=cpu_jit;bus_ref.observe_cpu=cpu_ref;
+        CHECK(prepared_native_run(cpu_jit,32u)==arm920t_run(cpu_ref,32u),"budget");
+        compare_state();
+        uint32_t expected=initial|(values[vi]&0x80000000u)|(!values[vi]?0x40000000u:0u);
+        CHECK(ref_reg(4)==10u+(unsigned)expected_condition(next,expected),"independent predicate");
+        CHECK(bus_jit.io_count==1u&&bus_ref.io_count==1u,"callback count");
+        CHECK(bus_jit.io_cpsr[0]==expected&&bus_ref.io_cpsr[0]==expected,"callback full flags");
+        gp32_cpu_profile_t profile;arm920t_get_cpu_profile(cpu_jit,&profile);
+        if (profile.supported && profile.native_backend)
+            CHECK(profile.native_arm_insns >= 4u, "native execution required");
+        teardown_pair();
+    }
+}
+
 static void case_native_regshift(void) {
     const unsigned amounts[] = {0, 1, 31, 32, 33, 255, 256};
     for (unsigned carry = 0; carry != 2; ++carry) {
@@ -6237,7 +6279,7 @@ static void case_live_read32(void) {
         bus_ref.live_pa = bus_jit.live_pa = pa;
         bus_ref.live_value = bus_jit.live_value = 0x12345678u;
         bus_ref.observe_cpu = cpu_ref; bus_jit.observe_cpu = cpu_jit;
-        arm_live_read32_t reads[] = {{pa, &bus_jit.live_value}};
+        arm_live_read32_t reads[] = {{pa, 0u, &bus_jit.live_value}};
         CHECK(arm920t_set_live_read32(cpu_jit, reads, 1), "register live word");
         prepare_native_block(cpu_jit, CODE_ADDR);
         run_cache_pair(CODE_ADDR, 64u);
@@ -6262,7 +6304,7 @@ static void case_live_read32(void) {
         unsigned before = bus_jit.live_reads;
         run_cache_pair(CODE_ADDR, 64u);
         CHECK(bus_jit.live_reads - before == 4u, "disabling invalidates compiled pointers");
-        arm_live_read32_t bad = {pa | 1u, &bus_jit.live_value};
+        arm_live_read32_t bad = {pa | 1u, 0u, &bus_jit.live_value};
         CHECK(!arm920t_set_live_read32(cpu_jit, &bad, 1) &&
               !arm920t_set_live_read32(cpu_jit, NULL, 1), "invalid registration rejected");
         teardown_pair();
@@ -6281,7 +6323,7 @@ static void case_live_read32_mapping(void) {
         bus_jit.live_pa = bus_ref.live_pa = IO_ADDR;
         bus_jit.live_value = bus_ref.live_value = 0x87654321u;
         gp32_st32le(bus_jit.ram, 0x12340000u); gp32_st32le(bus_ref.ram, 0x12340000u);
-        arm_live_read32_t read = {IO_ADDR, &bus_jit.live_value};
+        arm_live_read32_t read = {IO_ADDR, 0u, &bus_jit.live_value};
         CHECK(arm920t_set_live_read32(cpu_jit, &read, 1u), "register mapped live word");
         for (unsigned phase = 0; phase < 3u; ++phase) {
             bus_jit.live_mapped = bus_ref.live_mapped = phase == 1u;
@@ -6318,7 +6360,7 @@ static void case_live_read32_cold_tlb(void) {
     set_reg_both(4u, va);
     bus_ref.live_pa = bus_jit.live_pa = IO_ADDR;
     bus_ref.live_value = bus_jit.live_value = 0x12345678u;
-    arm_live_read32_t reads[] = {{IO_ADDR, &bus_jit.live_value}};
+    arm_live_read32_t reads[] = {{IO_ADDR, 0u, &bus_jit.live_value}};
     CHECK(arm920t_set_live_read32(cpu_jit, reads, 1), "register cold-TLB live word");
     prepare_native_block(cpu_jit, CODE_ADDR);
     run_cache_pair(CODE_ADDR, 32u);
@@ -6942,6 +6984,7 @@ int main(int argc, char **argv) {
         case_native_store_forwarding();
     } else if (argc == 2 && !strcmp(argv[1], "--sflag-logic")) {
         case_native_sflag_logic();
+        case_native_partial_flags();
     } else if (argc == 2 && !strcmp(argv[1], "--stm-base")) {
         case_stm_base();
     } else if (argc == 2 && !strcmp(argv[1], "--store-pc")) {
@@ -7117,6 +7160,7 @@ int main(int argc, char **argv) {
     case_native_immshift();
     case_native_sflag_logic();
     case_native_condition_flags();
+    case_native_partial_flags();
     case_native_regshift();
     case_native_carry_arith();
     case_native_longmul_psr();

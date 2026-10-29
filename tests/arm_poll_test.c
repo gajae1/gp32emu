@@ -25,6 +25,8 @@
 #define STORE_ADDR (RAM_BASE + 0x2000u)
 #define STACK_TOP (RAM_BASE + 0x8000u)
 #define MMIO_BASE 0x14000000u         /* S3C2400-style register window, no memory */
+#define LIVE_MMIO_PA_A MMIO_BASE
+#define LIVE_MMIO_PA_B (MMIO_BASE + 0x00100000u)
 #define PAGE_TABLE_BASE 0x12000000u   /* callback-backed memory outside BIOS/RAM */
 #define PAGE_TABLE_SIZE 0x4000u
 #define IRQ_VECTOR 0x18u
@@ -47,6 +49,8 @@ typedef struct {
     unsigned nstable;
     uint32_t mmio_word;                    /* single latched MMIO cell */
     uint64_t r8, r16, r32, w8, w16, w32, stable_queries;
+    uint64_t certified_probes;
+    uint32_t live_mmio_reads[2];           /* physical reads for live-MMU remap */
 } test_bus_t;
 
 static test_bus_t bus_fast, bus_ref;
@@ -133,6 +137,20 @@ static int tb_stable(void *u, uint32_t a) {
     for (unsigned i = 0; i < b->nstable; ++i)
         if (b->stable_addrs[i] == a) return 1;
     return 0;
+}
+
+static uint32_t tb_live_mmio_words[2];
+static uint32_t tb_live_mmio_read32(void *u, uint32_t a) {
+    test_bus_t *b = (test_bus_t *)u;
+    for (unsigned i = 0; i < 2u; ++i) {
+        const uint32_t pa = i ? LIVE_MMIO_PA_B : LIVE_MMIO_PA_A;
+        if (a == pa || a == pa + 4u) {
+            b->r32++;
+            b->live_mmio_reads[i]++;
+            return tb_live_mmio_words[i];
+        }
+    }
+    return tb_read32(u, a);
 }
 
 static void add_stable(test_bus_t *b, uint32_t addr) {
@@ -1182,6 +1200,375 @@ static void case_counted_native_exit(void) {
     teardown_pair();
 }
 
+/* A live read certificate replaces the bus transfer, not the per-run stable
+ * proof. Exercise fresh values and registration changes on an observed loop. */
+static void case_counted_live_observation(void) {
+    current_case = "counted-live-observation";
+    counted_setup(1, 10000u);
+    arm920t_destroy(cpu_fast); arm920t_destroy(cpu_ref);
+    bus_fast.fastmem_ram = bus_ref.fastmem_ram = 1;
+    bus_fast.bus.read32 = bus_ref.bus.read32 = counted_fallback_read;
+    bus_fast.bus.read32_io = bus_ref.bus.read32_io = counted_fallback_read;
+    cpu_fast = arm920t_create(&bus_fast.bus); cpu_ref = arm920t_create(&bus_ref.bus);
+    if (!cpu_fast || !cpu_ref) exit(2);
+    arm920t_reset(cpu_fast, CODE_ADDR); arm920t_reset(cpu_ref, CODE_ADDR);
+    arm920t_set_jit(cpu_fast, 1);
+    arm920t_set_trace(cpu_ref, 1, NULL, NULL);
+    counted_volatile = 0;
+    volatile uint32_t first = 0, second = 0;
+    arm_live_read32_t a[] = {{MMIO_BASE, 0u, &first}, {MMIO_BASE + 4u, 0u, &first}};
+    arm_live_read32_t b[] = {{MMIO_BASE, 1u, &second}, {MMIO_BASE + 4u, 1u, &second}};
+    for (unsigned phase = 0; phase < 3u; ++phase) {
+        const uint32_t value = 0xa5a55a5au ^ (phase * 0x11111111u);
+        first = second = bus_fast.mmio_word = bus_ref.mmio_word = value;
+        CHECK(arm920t_set_live_read32(cpu_fast, phase == 0u ? a : phase == 1u ? b : NULL,
+                                     phase < 2u ? 2u : 0u), "live observation registration");
+        if (phase == 1u) first = ~value; /* Old storage must no longer be read. */
+        bus_fast.nstable = 0;
+        for (unsigned stable = 0; stable < 2u; ++stable) {
+            if (stable) {
+                add_stable(&bus_fast, MMIO_BASE); add_stable(&bus_fast, MMIO_BASE + 4u);
+                second = bus_fast.mmio_word = bus_ref.mmio_word = value ^ 0x0000ffffu;
+                if (phase == 0u) first = second;
+            }
+            set_reg_both(0, MMIO_BASE); set_reg_both(1, MMIO_BASE + 4u);
+            set_reg_both(2, 10000u); set_reg_both(3, UINT32_MAX); set_reg_both(4, UINT32_MAX);
+            set_reg_both(15, CODE_ADDR); set_cpsr_both(0xf00000d3u);
+            arm920t_reset_cpu_profile(cpu_fast);
+            uint64_t reads = bus_fast.r32, queries = bus_fast.stable_queries;
+            CHECK(arm920t_run(cpu_fast, 512u) == arm920t_run(cpu_ref, 512u), "live observation budget");
+            compare_state(1);
+            gp32_cpu_profile_t p;
+            arm920t_get_cpu_profile(cpu_fast, &p);
+            if (p.supported) {
+                CHECK(stable ? p.poll_skipped_insns > 0u : p.poll_skipped_insns == 0u,
+                      "live transfer must not authorize skipping without stability");
+                if (p.native_backend && (!stable || p.native_backend == 2u))
+                    CHECK(p.native_arm_insns > 0u, "eligible live observation needs native execution");
+                if (stable && p.native_backend == 2u) {
+                    CHECK(phase == 1u ? bus_fast.stable_queries == queries : bus_fast.stable_queries > queries,
+                          "only explicit stable certificates may omit the stability query");
+                    CHECK(phase == 1u ? bus_fast.r32 == reads : bus_fast.r32 > reads,
+                          "observed live read must honor current registration");
+                }
+            }
+        }
+    }
+    teardown_pair();
+}
+
+static uint8_t mapped_live_word[4];
+static uint8_t *tb_mapped_live(void *u, uint32_t a, size_t bytes, int write) {
+    if (!write && bytes == 4u && (a == MMIO_BASE || a == MMIO_BASE + 4u))
+        return mapped_live_word;
+    return tb_fastmem(u, a, bytes, write);
+}
+
+/* The descriptor represents the callback, which loses to direct mapping.
+ * Make those values deliberately different and warm a native counted loop. */
+static void case_counted_live_mapping_precedence(void) {
+    current_case = "counted-live-mapping-precedence";
+    counted_setup(1, 10000u);
+    arm920t_destroy(cpu_fast); arm920t_destroy(cpu_ref);
+    bus_fast.fastmem_ram = bus_ref.fastmem_ram = 1;
+    bus_fast.bus.fastmem = bus_ref.bus.fastmem = tb_mapped_live;
+    bus_fast.bus.read32 = bus_ref.bus.read32 = counted_fallback_read;
+    bus_fast.bus.read32_io = bus_ref.bus.read32_io = counted_fallback_read;
+    cpu_fast = arm920t_create(&bus_fast.bus); cpu_ref = arm920t_create(&bus_ref.bus);
+    if (!cpu_fast || !cpu_ref) exit(2);
+    arm920t_reset(cpu_fast, CODE_ADDR); arm920t_reset(cpu_ref, CODE_ADDR);
+    arm920t_set_jit(cpu_fast, 1); arm920t_set_trace(cpu_ref, 1, NULL, NULL);
+    counted_volatile = 0;
+    volatile uint32_t callback_word = 0x87654321u;
+    bus_fast.mmio_word = bus_ref.mmio_word = callback_word;
+    arm_live_read32_t reads[] = {
+        {MMIO_BASE, 1u, &callback_word}, {MMIO_BASE + 4u, 1u, &callback_word}
+    };
+    CHECK(arm920t_set_live_read32(cpu_fast, reads, 2u), "mapped live registration");
+    bus_fast.nstable = 0;
+    for (unsigned run = 0; run < 3u; ++run) {
+        if (run == 1u) {
+            add_stable(&bus_fast, MMIO_BASE); add_stable(&bus_fast, MMIO_BASE + 4u);
+        }
+        uint32_t value = 0x12340000u + run;
+        st32le(mapped_live_word, value);
+        set_reg_both(0, MMIO_BASE); set_reg_both(1, MMIO_BASE + 4u);
+        set_reg_both(2, 10000u); set_reg_both(15, CODE_ADDR);
+        set_reg_both(3, UINT32_MAX); set_reg_both(4, UINT32_MAX);
+        set_cpsr_both(0xf00000d3u);
+        CHECK(arm920t_run(cpu_fast, 512u) == arm920t_run(cpu_ref, 512u), "mapped live budget");
+        printf("mapped-live run=%u want=%08x fast=%08x/%08x ref=%08x/%08x\n", run, value,
+               arm920t_get_reg(cpu_fast, 3u), arm920t_get_reg(cpu_fast, 4u),
+               arm920t_get_reg(cpu_ref, 3u), arm920t_get_reg(cpu_ref, 4u));
+        compare_state(1);
+        CHECK(arm920t_get_reg(cpu_fast, 3u) == value && arm920t_get_reg(cpu_fast, 4u) == value,
+              "direct mapping must precede the live callback certificate");
+    }
+    teardown_pair();
+}
+
+
+/* The negative proof covers only the complete I/O window. Changing the
+ * mapping flushes both CPUs; changing the accessed PA alone must not turn
+ * that range proof into a certificate for a disjoint direct mapping. */
+static uint32_t certified_addr;
+static int certified_mapped;
+static uint8_t *tb_certified_map(void *u, uint32_t a, size_t bytes, int write) {
+    test_bus_t *b = u;
+    if (!write && bytes == 4u && (a == certified_addr || a == certified_addr + 4u)) {
+        ++b->certified_probes;
+        if (certified_mapped) return mapped_live_word;
+        return NULL;
+    }
+    return tb_fastmem(u, a, bytes, write);
+}
+static int tb_certified_excludes(void *u, uint32_t a, size_t bytes, int write) {
+    (void)u;
+    if (write || a != MMIO_BASE || bytes != 0x02000000u) return 0;
+    return !certified_mapped || certified_addr >= MMIO_BASE + 0x02000000u;
+}
+static uint32_t tb_certified_read(void *u, uint32_t a) {
+    test_bus_t *b = u;
+    if (a == certified_addr || a == certified_addr + 4u) {
+        ++b->r32;
+        return b->mmio_word;
+    }
+    return tb_read32(u, a);
+}
+static void case_counted_live_io_certificate(void) {
+    current_case = "counted-live-io-certificate";
+    counted_setup(1, 10000u);
+    arm920t_destroy(cpu_fast); arm920t_destroy(cpu_ref);
+    bus_fast.fastmem_ram = bus_ref.fastmem_ram = 1;
+    bus_fast.bus.fastmem = bus_ref.bus.fastmem = tb_certified_map;
+    bus_fast.bus.fastmem_excludes = bus_ref.bus.fastmem_excludes = tb_certified_excludes;
+    bus_fast.bus.read32 = bus_ref.bus.read32 = tb_certified_read;
+    bus_fast.bus.read32_io = bus_ref.bus.read32_io = tb_certified_read;
+    certified_addr = MMIO_BASE; certified_mapped = 0;
+    cpu_fast = arm920t_create(&bus_fast.bus); cpu_ref = arm920t_create(&bus_ref.bus);
+    if (!cpu_fast || !cpu_ref) exit(2);
+    arm920t_reset(cpu_fast, CODE_ADDR); arm920t_reset(cpu_ref, CODE_ADDR);
+    arm920t_set_jit(cpu_fast, 1); arm920t_set_trace(cpu_ref, 1, NULL, NULL);
+    volatile uint32_t callback_word = 0xa5a51234u;
+    bus_fast.mmio_word = bus_ref.mmio_word = callback_word;
+    arm_live_read32_t reads[2];
+    for (unsigned phase = 0; phase < 4u; ++phase) {
+        CHECK(arm920t_set_live_read32(cpu_fast, NULL, 0u), "release previous certificate descriptors");
+        certified_addr = phase == 1u ? 0x18000000u : MMIO_BASE;
+        certified_mapped = phase == 1u || phase == 2u;
+        st32le(mapped_live_word, 0x12340000u + phase);
+        arm920t_flush_jit(cpu_fast); arm920t_flush_jit(cpu_ref);
+        reads[0] = (arm_live_read32_t){certified_addr, 1u, &callback_word};
+        reads[1] = (arm_live_read32_t){certified_addr + 4u, 1u, &callback_word};
+        CHECK(arm920t_set_live_read32(cpu_fast, reads, 2u), "certificate phase registration");
+        bus_fast.nstable = 0;
+        for (unsigned warm = 0; warm < 2u; ++warm) {
+            /* First force compilation through the unproven polling path.
+             * Only then expose stability and exercise native observation. */
+            if (warm) {
+                add_stable(&bus_fast, certified_addr); add_stable(&bus_fast, certified_addr + 4u);
+            }
+            set_reg_both(0, certified_addr); set_reg_both(1, certified_addr + 4u);
+            set_reg_both(2, 10000u); set_reg_both(3, UINT32_MAX); set_reg_both(4, UINT32_MAX);
+            set_reg_both(15, CODE_ADDR); set_cpsr_both(0xf00000d3u);
+            arm920t_reset_cpu_profile(cpu_fast);
+            uint64_t before = bus_fast.certified_probes;
+            CHECK(arm920t_run(cpu_fast, 512u) == arm920t_run(cpu_ref, 512u), "certificate run budget");
+            compare_state(1);
+            const uint32_t expected = certified_mapped ? 0x12340000u + phase : callback_word;
+            CHECK(arm920t_get_reg(cpu_fast, 3u) == expected && arm920t_get_reg(cpu_fast, 4u) == expected,
+                  "range proof or flush incorrectly displaced direct memory");
+            gp32_cpu_profile_t prof;
+            arm920t_get_cpu_profile(cpu_fast, &prof);
+            if (warm && prof.supported && prof.native_backend == 2u) {
+                printf("io-certificate phase=%u native=%" PRIu64 " helpers=%" PRIu64 " probes=%" PRIu64 "\n",
+                       phase, prof.native_arm_insns, prof.helper_op_kinds[6u], bus_fast.certified_probes-before);
+                CHECK(prof.native_arm_insns > 0u && prof.helper_op_kinds[6u] > 0u,
+                      "range certificate test did not execute the native observer");
+                CHECK(certified_mapped ? bus_fast.certified_probes > before :
+                                       bus_fast.certified_probes == before,
+                      "mapping lookup must be omitted only inside a certified empty range");
+            }
+        }
+    }
+    teardown_pair();
+}
+
+static void compare_cpu_images(void);
+
+static void set_live_mmio_poll_regs(uint32_t va) {
+    set_reg_both(0, va);
+    set_reg_both(1, va + 4u);
+    set_reg_both(2, 10000u);
+    set_reg_both(3, UINT32_MAX);
+    set_reg_both(4, UINT32_MAX);
+    set_reg_both(5, 0u);
+    set_reg_both(15, CODE_ADDR);
+    set_cpsr_both(0xf00000d3u);
+}
+
+/* A counted observer's stable live word still depends on the current cached
+ * translation. Map an alternate VA to certified MMIO, remove the data TLB
+ * entry, then remap that VA to another certified MMIO section. The compiled
+ * loop is reused without an API flush. A64 may consume the stable word
+ * directly once the current mapping is valid, but the cold first access must
+ * perform the real translated transfer rather than refilling ahead of it. */
+static void case_counted_live_mmu_remap(void) {
+    const uint32_t va = 0x10000000u;
+    const uint32_t table_entry = PAGE_TABLE_BASE + ((va >> 20) * 4u);
+    const uint32_t invalidate_pc = CODE_ADDR + 0x800u;
+    current_case = "counted-live-mmu-remap";
+    counted_setup(1, 10000u);
+    arm920t_destroy(cpu_fast); arm920t_destroy(cpu_ref);
+    bus_fast.fastmem_ram = bus_ref.fastmem_ram = 1;
+    bus_fast.bus.read32 = bus_ref.bus.read32 = tb_live_mmio_read32;
+    bus_fast.bus.read32_io = bus_ref.bus.read32_io = tb_live_mmio_read32;
+    bus_fast.no_fast_lo = bus_ref.no_fast_lo = PAGE_TABLE_BASE;
+    bus_fast.no_fast_hi = bus_ref.no_fast_hi = PAGE_TABLE_BASE + PAGE_TABLE_SIZE;
+    cpu_fast = arm920t_create(&bus_fast.bus); cpu_ref = arm920t_create(&bus_ref.bus);
+    if (!cpu_fast || !cpu_ref) exit(2);
+    arm920t_reset(cpu_fast, CODE_ADDR); arm920t_reset(cpu_ref, CODE_ADDR);
+
+    volatile uint32_t word_a = 0x0000ffffu, word_b = 0xf0f0f0f0u;
+    tb_live_mmio_words[0] = word_a;
+    tb_live_mmio_words[1] = word_b;
+    store_both(PAGE_TABLE_BASE, 2u); /* Code VA zero section -> BIOS. */
+    store_both(table_entry, LIVE_MMIO_PA_A | 2u);
+    arm920t_state_image_t *image = calloc(1, sizeof(*image));
+    CHECK(image != NULL, "MMU image allocation");
+    if (image) {
+        const unsigned index = (va >> 12) & 0xfffu;
+        image->r[15] = CODE_ADDR;
+        image->cpsr = 0xf00000d3u;
+        image->cp15[1] = 0x71u;
+        image->cp15[2] = PAGE_TABLE_BASE;
+        image->tlb_valid[index] = 1u;
+        image->tlb_mask[index] = 0xfffu;
+        image->tlb_va_base[index] = va;
+        image->tlb_pa_base[index] = LIVE_MMIO_PA_A;
+        arm920t_state_apply(cpu_fast, image);
+        arm920t_state_apply(cpu_ref, image);
+        free(image);
+    }
+    arm920t_set_jit(cpu_fast, 1);
+    arm920t_set_trace(cpu_ref, 1, NULL, NULL);
+    arm_live_read32_t reads[] = {
+        {LIVE_MMIO_PA_A, 1u, &word_a},
+        {LIVE_MMIO_PA_A + 4u, 1u, &word_a},
+        {LIVE_MMIO_PA_B, 1u, &word_b},
+        {LIVE_MMIO_PA_B + 4u, 1u, &word_b},
+    };
+    CHECK(arm920t_set_live_read32(cpu_fast, reads, 4u), "register stable live MMIO words");
+
+    /* First run rejects the portable observation, then compiles the counted
+     * block. The next run enters the backend's native observation path. */
+    bus_fast.nstable = 0;
+    set_live_mmio_poll_regs(va);
+    arm920t_reset_cpu_profile(cpu_fast);
+    CHECK(arm920t_run(cpu_fast, 512u) == arm920t_run(cpu_ref, 512u), "warmup budget");
+    compare_state(1);
+    gp32_cpu_profile_t p;
+    arm920t_get_cpu_profile(cpu_fast, &p);
+    if (p.supported && p.native_backend == 2u)
+        CHECK(p.native_arm_insns > 0u, "MMU live-word warmup must compile native observation");
+
+    set_live_mmio_poll_regs(va);
+    const uint64_t queries_a = bus_fast.stable_queries;
+    const uint32_t mmio_a = bus_fast.live_mmio_reads[0];
+    arm920t_reset_cpu_profile(cpu_fast);
+    CHECK(arm920t_run(cpu_fast, 512u) == arm920t_run(cpu_ref, 512u), "mapped live budget");
+    compare_state(1);
+    compare_cpu_images();
+    CHECK(arm920t_get_reg(cpu_fast, 3u) == word_a && arm920t_get_reg(cpu_fast, 4u) == word_a,
+          "mapped live words were not consumed");
+    arm920t_get_cpu_profile(cpu_fast, &p);
+    if (p.supported && p.native_backend == 2u) {
+        CHECK(p.native_arm_insns > 0u && p.poll_skipped_insns > 0u,
+              "A64 mapped stable live observation did not run natively and skip");
+        CHECK(bus_fast.stable_queries == queries_a,
+              "A64 stable certificate must omit the redundant stability query");
+        CHECK(bus_fast.live_mmio_reads[0] == mmio_a,
+              "A64 stable live observation must read the certified word directly");
+        CHECK(p.helper_op_kinds[6u] > 0u,
+              "certified shared observation must execute the SINGLE_DT helper");
+    } else if (p.supported && p.native_backend == 1u) {
+        CHECK(bus_fast.stable_queries > queries_a && bus_fast.live_mmio_reads[0] > mmio_a,
+              "x64 must observe mapped MMIO through the portable real-access path");
+    }
+
+    /* Remove the mapping while the counted block stays compiled. With no
+     * current translation, the stale descriptor at physical page A must not
+     * authorize a live value; ordinary unmapped reads expose open bus. */
+    store_both(table_entry, 0u);
+    store_both(invalidate_pc, 0xee080f16u); /* MCR p15,0,r0,c8,c6,0 */
+    store_both(invalidate_pc + 4u, 0xeafffffeu);
+    set_reg_both(0, va);
+    set_reg_both(15, invalidate_pc);
+    CHECK(arm920t_run(cpu_fast, 1u) == arm920t_run(cpu_ref, 1u), "TLB invalidation budget");
+    compare_state(1);
+    compare_cpu_images();
+
+    set_live_mmio_poll_regs(va);
+    const uint32_t mmio_cold = bus_fast.live_mmio_reads[0];
+    const uint64_t fast_reads = bus_fast.r32, ref_reads = bus_ref.r32;
+    arm920t_reset_cpu_profile(cpu_fast);
+    CHECK(arm920t_run(cpu_fast, 512u) == arm920t_run(cpu_ref, 512u), "invalidated live budget");
+    compare_state(1);
+    compare_cpu_images();
+    CHECK(arm920t_get_reg(cpu_fast, 3u) == UINT32_MAX && arm920t_get_reg(cpu_fast, 4u) == UINT32_MAX,
+          "invalidated mapping consumed a stale live descriptor");
+    CHECK(bus_fast.live_mmio_reads[0] == mmio_cold,
+          "invalidated mapping reached the stale certified physical page");
+    CHECK(bus_fast.r32 - fast_reads == bus_ref.r32 - ref_reads,
+          "invalidated observation changed real translation reads");
+    arm920t_get_cpu_profile(cpu_fast, &p);
+    if (p.supported && p.native_backend == 2u)
+        CHECK(p.poll_skipped_insns == 0u, "invalid cached mapping must not authorize a native skip");
+
+    /* Remap the same VA through the page table while the cached entry remains
+     * absent. The first real load must translate and read physical page B;
+     * only after that may the observer use B's stable certificate directly. */
+    store_both(table_entry, LIVE_MMIO_PA_B | 2u);
+    set_live_mmio_poll_regs(va);
+    const uint32_t mmio_remap = bus_fast.live_mmio_reads[1];
+    arm920t_reset_cpu_profile(cpu_fast);
+    CHECK(arm920t_run(cpu_fast, 512u) == arm920t_run(cpu_ref, 512u), "remapped live budget");
+    compare_state(1);
+    compare_cpu_images();
+    CHECK(arm920t_get_reg(cpu_fast, 3u) == word_b && arm920t_get_reg(cpu_fast, 4u) == word_b,
+          "remapped observation consumed the old physical page's live word");
+    CHECK(bus_fast.live_mmio_reads[1] > mmio_remap,
+          "cold remap must perform the real physical MMIO read before live observation");
+    arm920t_get_cpu_profile(cpu_fast, &p);
+    if (p.supported && p.native_backend == 2u)
+        CHECK(p.native_arm_insns > 0u, "remapped observation must reuse native code");
+
+    set_live_mmio_poll_regs(va);
+    const uint64_t queries_b = bus_fast.stable_queries;
+    const uint32_t mmio_b = bus_fast.live_mmio_reads[1];
+    arm920t_reset_cpu_profile(cpu_fast);
+    CHECK(arm920t_run(cpu_fast, 512u) == arm920t_run(cpu_ref, 512u), "hot remapped live budget");
+    compare_state(1);
+    compare_cpu_images();
+    CHECK(arm920t_get_reg(cpu_fast, 3u) == word_b && arm920t_get_reg(cpu_fast, 4u) == word_b,
+          "hot remap lost the current certified word");
+    arm920t_get_cpu_profile(cpu_fast, &p);
+    if (p.supported && p.native_backend == 2u) {
+        CHECK(p.native_arm_insns > 0u && p.poll_skipped_insns > 0u,
+              "A64 hot remap did not retain stable native observation");
+        CHECK(bus_fast.stable_queries == queries_b && bus_fast.live_mmio_reads[1] == mmio_b,
+              "A64 hot remap must read the certified word without a bus transfer or query");
+        CHECK(p.helper_op_kinds[6u] > 0u,
+              "certified shared observation must execute the SINGLE_DT helper");
+    } else if (p.supported && p.native_backend == 1u) {
+        CHECK(bus_fast.stable_queries > queries_b && bus_fast.live_mmio_reads[1] > mmio_b,
+              "x64 hot remap must retain portable real-access observation");
+    }
+    printf("counted-live-mmu A=%08" PRIx32 " B=%08" PRIx32 " native=%" PRIu64 " skipped=%" PRIu64 "\n",
+           word_a, word_b, p.native_arm_insns, p.poll_skipped_insns);
+    teardown_pair();
+}
+
 static const uint32_t PROG_COUNTED_ACCEL[] = {
     0xe3500000u, 0xda000002u, 0xe5921000u, 0xe2400001u, 0xeafffffau, 0xeafffffeu
 }; /* CMP r0,#0; BLE exit; LDR r1,[r2]; SUB r0,r0,#1; B entry; B . */
@@ -1590,10 +1977,14 @@ int main(int argc, char **argv) {
     if (argc == 2 && !strcmp(argv[1], "--counted-observe")) {
         case_counted_native_fallback();
         case_counted_native_exit();
+        case_counted_live_observation();
+        case_counted_live_mapping_precedence();
+        case_counted_live_io_certificate();
+        case_counted_live_mmu_remap();
         case_counted_callbacks();
         case_counted_accelerator_observation();
         if (failures) return 1;
-        puts("PASS: counted observation, rejection, exit and positive reentry");
+        puts("PASS: counted observation, live MMU remap, rejection, exit and positive reentry");
         return 0;
     }
     if (argc == 2 && !strcmp(argv[1], "--counted-native-exit")) {
@@ -1627,6 +2018,10 @@ int main(int argc, char **argv) {
     case_counted_refusals();
     case_counted_native_fallback();
     case_counted_native_exit();
+    case_counted_live_observation();
+    case_counted_live_mapping_precedence();
+    case_counted_live_io_certificate();
+    case_counted_live_mmu_remap();
     case_counted_accelerator_observation();
     case_counted_callbacks();
     case_conditional_store_mmu_probe();

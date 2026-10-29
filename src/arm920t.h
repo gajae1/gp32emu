@@ -109,6 +109,7 @@ int arm920t_set_leaf_write32(arm920t_t *cpu, const arm_leaf_write32_t *writes, s
 
 typedef struct arm_live_read32 {
     uint32_t pa;
+    uint32_t stable; /* Nonzero opts into the additional poll contract below. */
     const volatile uint32_t *word;
 } arm_live_read32_t;
 
@@ -116,6 +117,11 @@ typedef struct arm_live_read32 {
  * host-order word must always equal the ordinary bus read, without observers,
  * logging, CPU mutation or deadline changes. Values are read anew per access;
  * volatile is not synchronization: CPU/bus mutation remains synchronous.
+ * A nonzero stable additionally certifies that write-free polling can reuse
+ * this word until the current CPU run ends, just like is_stable_read32. It
+ * permits the stability query itself to be omitted; decorated buses must not
+ * opt in if querying performs observations or mutates CPU/bus state. Zero
+ * retains the ordinary per-access query. This does not cache the word value.
  * Direct memory keeps precedence. Native code may inline the callback value
  * only when fastmem_excludes certifies that word has no direct read mapping
  * (or the bus has no fastmem callback); otherwise ordinary loads are retained.
