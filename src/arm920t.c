@@ -643,7 +643,7 @@ static void set_cpsr_full(arm920t_t *c, uint32_t value) {
 ARM_FORCE_INLINE uint8_t *fastmem(arm920t_t *c, uint32_t a, size_t bytes, int write) {
     return c->bus.fastmem ? c->bus.fastmem(c->bus.user, a, bytes, write) : NULL;
 }
-ARM_FORCE_INLINE int fastmem_excludes(arm920t_t *c, uint32_t a, size_t bytes, int write) {
+ARM_FORCE_INLINE int fastmem_excludes(const arm920t_t *c, uint32_t a, size_t bytes, int write) {
     return !c->bus.fastmem || (c->bus.fastmem_excludes &&
            c->bus.fastmem_excludes(c->bus.user, a, bytes, write));
 }
@@ -3877,6 +3877,7 @@ struct x64_cold_op;
 
 typedef struct x64_emit {
     uint8_t *b;
+    const arm920t_t *cpu;
     size_t cap;
     size_t pos;
     int fail, mmu, ram_read, ram_write, check_code_writes;
@@ -4878,6 +4879,9 @@ static void x64_emit_live_read32(x64_emit_t *e, unsigned rd, x64_dt_fixup_t *fx)
         x64_alu_r32_imm(e, 4, X64_EDX, ~3u);
     } else x64_mov_r32_r32(e, X64_EDX, X64_R10D);
     for (size_t i = 0; i < e->live_read32_count && !e->fail; ++i) {
+        /* A live value replaces the callback, never a direct mapping. Without
+         * a negative mapping certificate, the checked load keeps precedence. */
+        if (!fastmem_excludes(e->cpu, e->live_read32[i].pa, 4u, 0)) continue;
         x64_alu_r32_imm(e, 7, X64_EDX, e->live_read32[i].pa);
         size_t miss = x64_jcc32(e, 0x5);
         x64_mov_r64_imm(e, X64_R11D, (uint64_t)(uintptr_t)e->live_read32[i].word);
@@ -5364,6 +5368,7 @@ static void arm_jit_compile_host(arm920t_t *c, arm_jit_block_t *b) {
     x64_emit_t e;
     memset(&e, 0, sizeof(e));
     e.b = tmp;
+    e.cpu = c;
     e.cap = sizeof(tmp);
     e.cold = cold;
     e.cold_cap = ARM_JIT_MAX_INSNS;

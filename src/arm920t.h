@@ -116,6 +116,9 @@ typedef struct arm_live_read32 {
  * host-order word must always equal the ordinary bus read, without observers,
  * logging, CPU mutation or deadline changes. Values are read anew per access;
  * volatile is not synchronization: CPU/bus mutation remains synchronous.
+ * Direct memory keeps precedence. Native code may inline the callback value
+ * only when fastmem_excludes certifies that word has no direct read mapping
+ * (or the bus has no fastmem callback); otherwise ordinary loads are retained.
  * The immutable descriptors and word storage must outlive this registration.
  * Register/replace/disable only outside arm920t_run; success flushes native
  * code, reset/state load preserve registration. NULL + zero disables it.
