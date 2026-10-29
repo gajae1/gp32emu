@@ -29,7 +29,7 @@ typedef struct seq_bus {
     arm920t_t *cpu;
     volatile uint32_t live;
     uint32_t latch;
-    uint32_t port_pa, read_pa;
+    uint32_t port_pa, read_pa, stop_pa;
     seq_observation_t observation[8];
     unsigned writes, hot_writes;
     uintptr_t native_begin, native_end;
@@ -93,6 +93,8 @@ static ARM_NOINLINE void seq_write32(void *user, uint32_t pa, uint32_t value) {
     ++b->writes;
     b->latch = value;
     b->live = (b->live << 5) ^ (b->live >> 3) ^ (value + 0x8172e35bu);
+    /* Only the separate, uncertified endpoint may stop this fixture. */
+    if (pa == b->stop_pa) arm920t_stop_run(b->cpu);
     if (b->decorate && b->writes == 1u) {
         /* This bus is deliberately NOT certified. The ordinary checked
          * path must commit the access and respect its changed deadline. */
@@ -535,12 +537,67 @@ static void ram_update_cases(void) {
       }
 }
 
+static void io_sequence_skipped_prefix_cases(void) {
+    for (unsigned wide = 0; wide < 2u; ++wide) {
+        case_name = "IO-sequence-skipped-prefix-budget";
+        setup(3u, 0u, 0u);
+        code_count = 4u + GP32_ARRAY_COUNT(program);
+        for (unsigned side = 0; side < 2u; ++side) {
+            seq_bus_t *b = &buses[side];
+            memmove(b->bios + SEQ_CODE + 16u, b->bios + SEQ_CODE, sizeof(program));
+            gp32_st32le(b->bios + SEQ_CODE, 0xe3540000u); /* CMP r4,#0 */
+            gp32_st32le(b->bios + SEQ_CODE + 4u, 0x0a000001u); /* skip two MOVs */
+            gp32_st32le(b->bios + SEQ_CODE + 8u, 0xe3a07001u);
+            gp32_st32le(b->bios + SEQ_CODE + 12u, 0xe3a07002u);
+            cpus[side]->r[4] = 0u;
+            b->stop_pa = SEQ_PORT + 4u;
+            gp32_st32le(b->bios + SEQ_RETURN, 0xe5812028u); /* uncertified stop */
+            gp32_st32le(b->bios + SEQ_RETURN + 4u, 0xe12fff1eu);
+        }
+        prepare();
+        uint32_t budget = wide ? UINT32_MAX : code_count;
+        uint32_t ref = arm920t_run(cpus[0], budget);
+        uint32_t native = arm920t_run(cpus[1], budget);
+        check(ref == 9u && native == ref, "only executed prefix, region, return and stop retire");
+        compare();
+        check(buses[1].writes == 3u, "both certified writes precede the checked stop");
+        expect_batches(1u);
+        teardown();
+    }
+}
+
+static void io_sequence_wrapped_base_cases(void) {
+    for (unsigned changed = 0; changed < 2u; ++changed) {
+        case_name = "IO-sequence-wrapped-identity-base";
+        setup(0u, 0u, 0u);
+        for (unsigned side = 0; side < 2u; ++side) {
+            seq_bus_t *b = &buses[side];
+            cpus[side]->r[1] = 0x10u;
+            b->port_pa = 0xffffffecu;
+            b->read_pa = 0xffffffd4u;
+            gp32_st32le(b->bios + SEQ_CODE, 0xe5012024u); /* STR r2,[r1,-0x24] */
+            gp32_st32le(b->bios + SEQ_CODE + 4u, 0xe511003cu); /* LDR r0,[r1,-0x3c] */
+            gp32_st32le(b->bios + SEQ_CODE + 16u, 0xe5012024u);
+        }
+        register_certificates(3u); prepare();
+        if (changed) cpus[0]->r[1] = cpus[1]->r[1] = 0x14u;
+        run_pair(6u);
+        expect_batches(!changed);
+        check(buses[1].writes == 2u && buses[1].observation[0].pa ==
+              (changed ? 0xfffffff0u : 0xffffffecu), "current base keeps wrapped store address");
+        if (changed) check(cpus[1]->r[0] == 0xffu, "changed base uses ordinary unmapped read");
+        teardown();
+    }
+}
+
 int main(int argc, char **argv) {
     negative_control = argc > 1 && !strcmp(argv[1], "--negative-control");
     ram_update_callback_cases();
     ram_update_control_cases();
     ram_update_skipped_prefix_cases();
     ram_update_cases();
+    io_sequence_skipped_prefix_cases();
+    io_sequence_wrapped_base_cases();
     basic_cases();
     rejection_cases();
     boundary_cases();

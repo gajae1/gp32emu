@@ -1542,7 +1542,8 @@ static void a64_leaf_write32_pa(a64_emit_t *e, const arm_jit_op_t *op, size_t co
  *
  * The shared base and disjoint data registers make both addresses invariant.
  * Descriptor offsets choose an economical candidate, never authorize a bus
- * access: each current VA is translated and checked independently at runtime.
+ * access. Identity mappings prove both endpoints with the shared base; MMU
+ * mappings still translate and check each current VA independently.
  * No guest address, firmware bytes, title or fixed PC selects this region. */
 #ifndef ARM_JIT_A64_IO_SEQUENCE
 #define ARM_JIT_A64_IO_SEQUENCE 1
@@ -1602,27 +1603,51 @@ static int a64_io_sequence(arm920t_t *c, a64_emit_t *e, const arm_jit_op_t *op,
     e->nzcv_valid = 0;
     e->fwd_guest = -1;
     size_t reject[12]; unsigned nreject = 0;
-    /* Entry already requires the whole block. Retain an explicit local
-     * bound as well: w22 includes earlier forward skips, before includes
-     * their original positions, so this proves all five actual retirements. */
-    a64_cmp_imm(e, 22, before + 5u);
-    reject[nreject++] = a64_jump(e, 3); /* LO */
+    /* Normal, linked and self-loop entries already reserve the full block.
+     * Certified accesses cannot shorten its deadline. A local budget check
+     * would only reject safe spans after an unsigned forward-skip refund. */
     /* Watches can be installed after compilation. Even a certified write
      * must retain the normal code-invalidation path when its region was
      * fetched as instructions; no new watch can appear inside this region. */
     a64_cpu_mem(e, 0x39400000u, 6, offsetof(arm920t_t, jit_code_nonram), 0);
     reject[nreject++] = e->pos;
     a64_branch_word(e, 0x37080006u); /* tbnz w6, #1 */
-    for (unsigned access = 0; access < 2u; ++access) {
+    if (!e->mmu) {
+        /* The descriptor difference above equals the decoded offset
+         * difference modulo 2^32. Exact base equality therefore proves both
+         * aligned physical endpoints, including subtract-offset wrap. */
+        a64_guest(e, 12, op[0].a, op[0].pc);
+        a64_imm(e, 6, write->pa - store_offset);
+        a64_cmp(e, 12, 6);
+        reject[nreject++] = a64_jump(e, 1);
+    } else for (unsigned access = 0; access < 2u; ++access) {
         const arm_jit_op_t *mem = &op[access];
         a64_guest(e, 12, mem->a, mem->pc);
         if (mem->imm)
             a64_u32(e, ((mem->d & ARM_BC_SD_U) ? 0x11000000u : 0x51000000u) |
                        (mem->imm << 10) | (12u << 5) | 12u);
-        a64_mask(e, 6, 12, 3u);
-        reject[nreject++] = e->pos;
-        a64_branch_word(e, 0x35000006u); /* cbnz w6: original VA must be aligned */
-        a64_word_pa(e, reject, &nreject);
+        if (!access) {
+            a64_mask(e, 6, 12, 3u);
+            reject[nreject++] = e->pos;
+            a64_branch_word(e, 0x35000006u); /* first original VA must be aligned */
+        }
+        /* Both certified endpoints are aligned and their offset difference
+         * matches the decoded one, so the second VA shares that alignment. */
+        if (access && (write->pa >> 12) == (read->pa >> 12)) {
+            /* No callback ran between these proofs. Reuse the first slot's
+             * authoritative VA/PA/mask only for this same virtual page, then
+             * check the second address against its exact (possibly tiny)
+             * mask. A different slot or uncovered address rejects the region. */
+            a64_rr(e, 0x4a000000u, 6, 3, 12);
+            a64_ubfx(e, 6, 6, 12, 20);
+            reject[nreject++] = e->pos;
+            a64_branch_word(e, 0x35000006u);
+            a64_rr(e, 0x0a200000u, 6, 12, 5);
+            a64_cmp(e, 6, 7);
+            reject[nreject++] = a64_jump(e, 1);
+            a64_rr(e, 0x0a000000u, 6, 12, 5);
+            a64_rr(e, 0x2a000000u, 0, 6, 9);
+        } else a64_word_pa(e, reject, &nreject);
         a64_imm(e, 6, access ? read->pa : write->pa);
         a64_cmp(e, 0, 6);
         reject[nreject++] = a64_jump(e, 1); /* NE: exact registered endpoint */
