@@ -4294,6 +4294,9 @@ gp32_t *gp32_create(const gp32_options_t *opt) {
     size_t live_read_count = 0;
     const arm_live_read32_t *live_reads = s3c2400_live_read32(g->soc, &live_read_count);
     if (!arm920t_set_live_read32(g->cpu, live_reads, live_read_count)) { gp32_destroy(g); return NULL; }
+    size_t leaf_write_count = 0;
+    const arm_leaf_write32_t *leaf_writes = s3c2400_leaf_write32(g->soc, &leaf_write_count);
+    if (!arm920t_set_leaf_write32(g->cpu, leaf_writes, leaf_write_count)) { gp32_destroy(g); return NULL; }
     s3c2400_set_irq_sink(g->soc, g->cpu);
     if (opt && opt->enable_trace) arm920t_set_trace(g->cpu, 1, bridge_log, g);
 #if defined(GP32EMU_WASM)

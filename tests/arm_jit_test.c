@@ -65,7 +65,9 @@ typedef struct {
     unsigned mem_probe, mem_effect, mem_calls;
     uint32_t mem_addr, mem_pc, mem_base, mem_value;
     uint32_t live_pa, live_value;
+    unsigned live_mapped;
     unsigned live_reads, live_writes, live_rebind_rejected;
+    unsigned fastmem_excludes_calls[2];
 } test_bus_t;
 
 static test_bus_t bus_jit, bus_ref;
@@ -271,11 +273,24 @@ static void tb_write32(void *u, uint32_t a, uint32_t v) {
 }
 static uint8_t *tb_fastmem(void *u, uint32_t a, size_t bytes, int write) {
     (void)write;
-    return bus_ptr((test_bus_t *)u, a, bytes);   /* must satisfy the RAM+BIOS probes */
+    test_bus_t *b = u;
+    if (b->live_mapped && a >= b->live_pa && a - b->live_pa < 4u &&
+        bytes <= 4u - (a - b->live_pa)) return b->ram + (a - b->live_pa);
+    return bus_ptr(b, a, bytes);   /* must satisfy the RAM+BIOS probes */
+}
+/* Certify only the unbacked identity-I/O window; every other range remains
+ * unknown to this fixture rather than being asserted empty. */
+static int tb_fastmem_excludes_io(void *u, uint32_t a, size_t bytes, int write) {
+    test_bus_t *b = (test_bus_t *)u;
+    ++b->fastmem_excludes_calls[!!write];
+    if (b->live_mapped && (uint64_t)a < (uint64_t)b->live_pa + 4u &&
+        (uint64_t)b->live_pa < (uint64_t)a + bytes) return 0;
+    return bytes && a >= 0x14000000u && bytes <= 0x02000000u &&
+           (uint64_t)(a - 0x14000000u) + bytes <= 0x02000000u;
 }
 static int portable_callbacks;
 
-static void setup_pair(void) {
+static void setup_pair_with_io_certificate(int certificate) {
     for (test_bus_t *b = &bus_jit; b; b = (b == &bus_jit) ? &bus_ref : NULL) {
         memset(b, 0, sizeof(*b));
         for (uint32_t a = 0; a < BIOS_SIZE; a += 4u)
@@ -287,6 +302,7 @@ static void setup_pair(void) {
         b->bus.write16 = tb_write16;
         b->bus.write32 = tb_write32;
         b->bus.fastmem = tb_fastmem;
+        if (certificate) b->bus.fastmem_excludes = tb_fastmem_excludes_io;
         b->bus.user = b;
         b->bus.is_stable_read32 = NULL;   /* isolate native execution: no fast-forward */
     }
@@ -298,6 +314,7 @@ static void setup_pair(void) {
     arm920t_set_jit(cpu_ref, 0);
     arm920t_set_jit(cpu_jit, !portable_callbacks);
 }
+static void setup_pair(void) { setup_pair_with_io_certificate(0); }
 static void teardown_pair(void) {
     jit_events += arm920t_get_jit_hits(cpu_jit) + arm920t_get_jit_misses(cpu_jit);
     jit_fallbacks += arm920t_get_jit_fallbacks(cpu_jit);
@@ -967,6 +984,513 @@ static void case_half_modes(void) {
     teardown_pair();
 }
 
+/* A positive seed gives exactly that many copies: the branch observes the
+ * decremented count. Zero and negatives other than INT32_MIN copy once. */
+static const uint32_t P_COPY_LOOP[] = {
+    0xe0dc20b2u, /* LDRH r2,[r12],#2 */  0xe2400001u, /* SUB r0,r0,#1 */
+    0xe3500000u, /* CMP r0,#0 */         0xe0c320b2u, /* STRH r2,[r3],#2 */
+    0xcafffffau, /* BGT first */         0xe5996000u, /* LDR r6,[r9] */
+    0xeafffffeu, /* B . */
+};
+static uint8_t copy_byte(unsigned i) { return (uint8_t)(0x31u + i * 37u); }
+static void copy_seed(uint32_t a, unsigned n) {
+    uint8_t *j = bus_ptr(&bus_jit, a, n), *r = bus_ptr(&bus_ref, a, n);
+    CHECK(j && r, "copy seed range");
+    if (j && r) for (unsigned i = 0; i < n; ++i) j[i] = r[i] = copy_byte(i);
+}
+static int copy_ok(uint32_t a, unsigned n) {
+    uint8_t *p = bus_ptr(&bus_ref, a, n);
+    if (!p) return 0;
+    for (unsigned i = 0; i < n; ++i) if (p[i] != copy_byte(i)) return 0;
+    return 1;
+}
+static void copy_start(const char *name, const uint32_t *program, unsigned words,
+                       uint32_t seed, uint32_t src, uint32_t dst) {
+    current_case = name; setup_pair(); arm920t_set_trace(cpu_ref, 1, NULL, NULL);
+    load_both(program, words);
+    set_reg_both(0u, seed); set_reg_both(3u, dst); set_reg_both(12u, src);
+    set_reg_both(9u, IO_ADDR);
+    bus_jit.observe_cpu = cpu_jit; bus_ref.observe_cpu = cpu_ref;
+}
+static void copy_budgets(uint32_t end_pc) {
+    static const uint32_t budgets[] = {1u,2u,4u,7u,3u,11u,5u,19u,23u,31u,47u,63u,127u,257u};
+    for (size_t i = 0; i < GP32_ARRAY_COUNT(budgets); ++i) {
+        uint32_t j = prepared_native_run(cpu_jit, budgets[i]);
+        uint32_t r = arm920t_run(cpu_ref, budgets[i]);
+        if (j != r) report("copy-loop budget", j, r);
+        compare_state();
+        if (arm920t_get_pc(cpu_jit) == end_pc && arm920t_get_pc(cpu_ref) == end_pc) break;
+    }
+    CHECK(arm920t_get_pc(cpu_jit) == end_pc && arm920t_get_pc(cpu_ref) == end_pc,
+          "copy loop did not finish");
+}
+static void copy_native_proof(const char *msg) {
+    gp32_cpu_profile_t p; arm920t_get_cpu_profile(cpu_jit, &p);
+    if (p.supported && p.native_backend)
+        CHECK(p.native_block_calls != 0u && p.native_arm_insns != 0u, msg);
+}
+static void copy_case(const char *name, unsigned count, uint32_t src, uint32_t dst,
+                      unsigned repeat, unsigned proof) {
+    copy_start(name, P_COPY_LOOP, GP32_ARRAY_COUNT(P_COPY_LOOP), count, src, dst);
+    copy_seed(src, 2u * count);
+    if (count == 1u) {
+        CHECK(prepared_native_run(cpu_jit, 32u) == arm920t_run(cpu_ref, 32u),
+              "single copy full native budget");
+        compare_state();
+    } else copy_budgets(CODE_ADDR + 24u);
+    CHECK(ref_reg(0) == 0u, "copy-loop final count");
+    CHECK(ref_reg(3) == dst + 2u * count && ref_reg(12) == src + 2u * count,
+          "copy-loop writeback");
+    CHECK(ref_reg(6) == CODE_ADDR + 24u && bus_ref.io_count == 1u && bus_jit.io_count == 1u,
+          "copy-loop callback");
+    CHECK(!memcmp(bus_jit.io_regs, bus_ref.io_regs, sizeof(bus_ref.io_regs)) &&
+          !memcmp(bus_jit.io_cpsr, bus_ref.io_cpsr, sizeof(bus_ref.io_cpsr)),
+          "copy-loop callback architectural state");
+    if (repeat) {
+        uint16_t first = gp32_ld16le(bus_ptr(&bus_ref, dst, 2u)), ok = 1u;
+        for (unsigned i = 0; i < count; ++i)
+            ok &= gp32_ld16le(bus_ptr(&bus_ref, dst + 2u * i, 2u)) == first;
+        CHECK(ok && first == (uint16_t)(copy_byte(0) | copy_byte(1) << 8),
+              "forward-overlap halfword pattern");
+    } else CHECK(copy_ok(dst, 2u * count), "copy-loop data");
+    if (proof) copy_native_proof("copy-loop native calls/insns");
+    teardown_pair();
+}
+static void copy_stop(const char *name, uint32_t seed, uint32_t final) {
+    const uint32_t src = DATA_ADDR + 0x600u, dst = DATA_ADDR + 0x700u;
+    copy_start(name, P_COPY_LOOP, GP32_ARRAY_COUNT(P_COPY_LOOP), seed, src, dst);
+    copy_seed(src, 2u);
+    CHECK(prepared_native_run(cpu_jit, 7u) == arm920t_run(cpu_ref, 7u),
+          "nonpositive copy full native budget");
+    compare_state();
+    CHECK(arm920t_get_pc(cpu_ref) == CODE_ADDR + 24u && ref_reg(0) == final &&
+          ref_reg(3) == dst + 2u && ref_reg(12) == src + 2u &&
+          ref_reg(2) == gp32_ld16le(bus_ptr(&bus_ref, src, 2u)) && bus_ref.io_count == 1u,
+          "nonpositive copy count");
+    teardown_pair();
+}
+/* A memory accumulator, byte post-index and rotated CMP immediate. The
+ * long tail observes the final flags and architectural state via MMIO. */
+static void xor_case(const char *name, unsigned count, unsigned ragged,
+                     uint32_t src, uint32_t acc, unsigned watched, unsigned mmu) {
+    current_case = name; setup_pair(); arm920t_set_trace(cpu_ref, 1, NULL, NULL);
+    uint32_t initial = 256u - count;
+    if (!count) count = 1u; /* initial >= limit still executes the do-while body */
+    uint32_t program[98]; unsigned lead = mmu ? 2u : 0u;
+    if (mmu) { program[0] = 0xee02af10u; program[1] = 0xee01bf10u; }
+    const uint32_t loop[] = {0xe59d8040u,0xe4d09001u,0xe2877001u,0xe0288009u,
+                            0xe20880ffu,0xe58d8040u,0xe3570c01u,0x3afffff7u};
+    memcpy(program + lead, loop, sizeof(loop));
+    program[lead + 8u] = 0x028bb001u; /* ADDEQ r11,r11,#1 */
+    for (unsigned i = 9u; i < 94u; ++i) program[lead + i] = 0xe28cc001u;
+    program[lead + 94u] = 0xe5956000u; /* LDR r6,[r5]: observe committed state */
+    program[lead + 95u] = 0xeafffffeu;
+    load_both(program, lead + 96u);
+    uint32_t physical_src = src, physical_acc = acc;
+    if (mmu) {
+        const uint32_t ttb = RAM_BASE + 0x4000u;
+        set_mem_both(ttb, 2u);
+        set_mem_both(ttb + 0x400u, RAM_BASE | 2u);
+        set_mem_both(ttb + 0x404u, RAM_BASE | 2u); /* two VAs alias one section */
+        set_mem_both(ttb + 0x540u, IO_ADDR | 2u);
+        physical_src = RAM_BASE + (src & 0xfffffu);
+        physical_acc = RAM_BASE + (acc & 0xfffffu);
+        set_reg_both(10u, ttb); set_reg_both(11u, 1u);
+        CHECK(arm920t_run(cpu_jit, 2u) == arm920t_run(cpu_ref, 2u), "xor MMU setup");
+    }
+    if (bus_ptr(&bus_ref, physical_src, count)) copy_seed(physical_src, count);
+    set_mem_both(physical_acc & ~3u, 0xdeadbeefu);
+    if (watched) prepare_native_block(cpu_jit, physical_acc);
+    set_reg_both(0u, src); set_reg_both(7u, initial);
+    set_reg_both(13u, acc - 0x40u); set_reg_both(5u, IO_ADDR);
+    set_reg_both(11u, 0u); set_reg_both(12u, 0u);
+    bus_jit.observe_cpu = cpu_jit; bus_ref.observe_cpu = cpu_ref;
+    static const uint32_t budgets[] = {129u,7u,95u,97u,255u};
+    uint32_t left = count * 8u + 88u;
+    for (unsigned step = 0; left; ++step) {
+        uint32_t n = ragged ? budgets[step % GP32_ARRAY_COUNT(budgets)] : left;
+        if (n > left) n = left;
+        CHECK(prepared_native_run(cpu_jit, n) == arm920t_run(cpu_ref, n), "xor budget");
+        compare_state(); left -= n;
+    }
+    CHECK(ref_reg(7) == initial + count && ref_reg(0) == src + count &&
+          ref_reg(11) == (unsigned)(initial + count == 256u) &&
+          ref_reg(12) == 85u && arm920t_get_pc(cpu_ref) == CODE_ADDR + (lead + 95u) * 4u,
+          "xor count, source, flags and tail");
+    CHECK(bus_ref.io_count == bus_jit.io_count && bus_ref.io_count >= 1u &&
+          !memcmp(bus_jit.io_regs, bus_ref.io_regs, sizeof(bus_ref.io_regs)) &&
+          !memcmp(bus_jit.io_cpsr, bus_ref.io_cpsr, sizeof(bus_ref.io_cpsr)),
+          "xor callback architectural state");
+    if (!ragged && !mmu && src != IO_ADDR && !watched && !(acc & 3u)) {
+        copy_native_proof("xor native calls/insns");
+        if (physical_src + count <= physical_acc || physical_src >= physical_acc + 4u) {
+            uint32_t expected = 0xefu;
+            for (unsigned i = 0; i < count; ++i) expected ^= copy_byte(i);
+            CHECK(gp32_ld32le(bus_ptr(&bus_ref, physical_acc, 4u)) == expected &&
+                  ref_reg(8) == expected && ref_reg(9) == copy_byte(count - 1u),
+                  "xor independent fold and upper-byte clearing");
+        }
+    }
+    teardown_pair();
+}
+static void case_xor_loop(void) {
+    const unsigned counts[] = {1u,15u,16u,17u,63u};
+    for (unsigned i = 0; i < GP32_ARRAY_COUNT(counts); ++i)
+        xor_case("xor-loop", counts[i], 0u, DATA_ADDR+0x200u, DATA_ADDR+0x800u, 0u, 0u);
+    xor_case("xor-ragged", 63u, 1u, DATA_ADDR+0x200u, DATA_ADDR+0x800u, 0u, 0u);
+    xor_case("xor-at-limit", 0u, 0u, DATA_ADDR+0x200u, DATA_ADDR+0x800u, 0u, 0u);
+    xor_case("xor-counter-wrap", 257u, 0u, DATA_ADDR+0x200u, DATA_ADDR+0x800u, 0u, 0u);
+    xor_case("xor-byte-alignment", 63u, 0u, DATA_ADDR+0x201u, DATA_ADDR+0x800u, 0u, 0u);
+    xor_case("xor-alias", 63u, 0u, DATA_ADDR+0x200u, DATA_ADDR+0x208u, 0u, 0u);
+    xor_case("xor-unaligned", 17u, 0u, DATA_ADDR+0x201u, DATA_ADDR+0x803u, 0u, 0u);
+    xor_case("xor-page-edge", 17u, 0u, DATA_ADDR+0xfffu, DATA_ADDR+0x800u, 0u, 0u);
+    xor_case("xor-mmio", 1u, 0u, IO_ADDR, DATA_ADDR+0x800u, 0u, 0u);
+    xor_case("xor-watched", 17u, 0u, DATA_ADDR+0x200u, DATA_ADDR+0x800u, 1u, 0u);
+    xor_case("xor-mmu-alias", 63u, 1u, 0x10000200u, 0x10100208u, 0u, 1u);
+    xor_case("xor-mmu", 63u, 0u, 0x10000200u, 0x10100800u, 0u, 1u);
+}
+
+/* A two-mask, modulo-32-bit multiply blend. The scalar equation is independent
+ * of the JIT emitter; the raw CPU also checks every intermediate budget. */
+static uint32_t packed_expected(uint32_t x, uint32_t factor, unsigned shift_a,
+                                unsigned shift_b, unsigned flags, uint32_t *last_other) {
+    uint32_t a = (uint32_t)((uint64_t)(x & (flags & 512u ? UINT32_MAX : 0x07c0f83eu)) * factor);
+    a = shift_b == 32u ? 0u : a >> shift_b;
+    uint32_t b = x & (flags & 512u ? ~0xa5u : 0xf83e07c0u);
+    b = shift_a == 32u ? 0u : b >> shift_a;
+    b = (uint32_t)((uint64_t)b * factor) & (flags & 512u ? ~0xf0u : 0xf83e07c0u);
+    if (last_other) *last_other = b;
+    return (a & (flags & 512u ? ~0xffu : 0x07c0f83eu)) | b;
+}
+static void packed_case(unsigned count, uint32_t factor, unsigned flags) {
+    current_case = "packed-word-loop";
+    setup_pair();
+    arm920t_set_trace(cpu_ref, 1, NULL, NULL);
+    unsigned scale = flags & 1u ? 7u : 0u, ptr = flags & 1u ? 6u : 1u;
+    unsigned val = flags & 1u ? 5u : 2u, ctr = flags & 1u ? 9u : 3u;
+    unsigned other = flags & 1u ? 10u : 14u;
+    unsigned shift_a = flags & 2u ? 32u : 5u;
+    unsigned shift_b = flags & 1024u ? 32u : flags & 4u ? 1u : 5u;
+    uint32_t code = CODE_ADDR + (flags & 8u ? 0x3d8u : 0u);
+    uint32_t physical = DATA_ADDR + (flags & 16u ? 0xff8u : 0x200u);
+    if (flags & 4096u) physical = DATA_ADDR + 0x274u;
+    if (flags & 32u) physical += 1u;
+    uint32_t address = flags & 64u ? 0x10000000u + physical - RAM_BASE : physical;
+    uint32_t program[26] = {
+        0xe5900000u | (ptr << 16) | (val << 12),
+        0xe2800001u | (ctr << 16) | (ctr << 12),
+        0xe3c0051fu | (val << 16) | (other << 12),
+        0xe3c0033eu | (val << 16) | (val << 12),
+        0xe3c0083fu | (val << 16) | (val << 12),
+        0xe3c00c07u | (val << 16) | (val << 12),
+        0xe3c000c1u | (val << 16) | (val << 12),
+        0xe3c00b7eu | (other << 16) | (other << 12),
+        0xe3c0003fu | (other << 16) | (other << 12),
+        0xe0000090u | (val << 16) | (val << 8) | scale,
+        0xe1a00020u | (other << 12) | ((shift_a & 31u) << 7) | other,
+        0xe0000090u | (other << 16) | (other << 8) | scale,
+        0xe1a00020u | (val << 12) | ((shift_b & 31u) << 7) | val,
+        0xe3c0033eu | (val << 16) | (val << 12),
+        0xe3c0083fu | (val << 16) | (val << 12),
+        0xe3c0051fu | (other << 16) | (other << 12),
+        0xe3c00b7eu | (other << 16) | (other << 12),
+        0xe3c00c07u | (val << 16) | (val << 12),
+        0xe3c000c1u | (val << 16) | (val << 12),
+        0xe3c0003fu | (other << 16) | (other << 12),
+        0xe1800000u | (other << 16) | (val << 12) | val,
+        0xe4800004u | (ptr << 16) | (val << 12),
+        0xe3500000u | (ctr << 16) | count,
+        0xbaffffe7u,
+        0xe59d8000u, /* callback observes the state after the complete loop */
+        0xeafffffeu
+    };
+    if (flags & 512u) {
+        const unsigned positions[]={2u,3u,4u,5u,6u,7u,8u,13u,14u,15u,16u,17u,18u,19u};
+        for (unsigned i=0;i<GP32_ARRAY_COUNT(positions);++i) program[positions[i]] &= ~0xfffu;
+        program[2] |= 0xa5u; program[13] |= 0xffu; program[15] |= 0xf0u;
+    }
+    if (flags & 64u) {
+        const uint32_t setup[] = {0xee02bf10u, 0xee01cf10u};
+        load_both(setup, 2u);
+        set_reg_both(11u, RAM_BASE+0x4000u); set_reg_both(12u, 1u);
+        set_mem_both(RAM_BASE+0x4000u, 2u);
+        set_mem_both(RAM_BASE+0x4400u, RAM_BASE|2u);
+        set_mem_both(RAM_BASE+0x4500u, IO_ADDR|2u);
+        CHECK(prepared_native_run(cpu_jit,2u) == arm920t_run(cpu_ref,2u), "packed MMU setup");
+    }
+    for (unsigned i=0;i<GP32_ARRAY_COUNT(program);++i) set_mem_both(code+4u*i, program[i]);
+    uint32_t input[64];
+    for (unsigned i=0;i<count;++i) {
+        input[i] = 0x13274b6du ^ (0x0102070bu * i);
+        set_mem_both((physical & ~3u)+i*4u,input[i]);
+    }
+    if (flags & (128u|2048u|8192u)) {
+        unsigned watched = flags & 8192u ? 15u : flags & 2048u ? 3u : 0u;
+        set_mem_both(physical+4u*watched,0xe3a04011u);
+        input[watched]=0xe3a04011u;
+        prepare_native_block(cpu_jit,physical+4u*watched);
+    }
+    set_reg_both(scale,factor); set_reg_both(ptr,address); set_reg_both(ctr,0u);
+    set_reg_both(13u,IO_ADDR); set_reg_both(15u,code);
+    bus_jit.observe_cpu=cpu_jit; bus_ref.observe_cpu=cpu_ref;
+    arm920t_reset_cpu_profile(cpu_jit);
+    unsigned left=count*24u+2u;
+    static const unsigned pieces[]={1u,22u,1u,25u,95u,96u,97u,192u,385u,2048u};
+    if (flags & 256u) {
+        for (unsigned i=0;left && i<GP32_ARRAY_COUNT(pieces);++i) {
+            unsigned n=left<pieces[i]?left:pieces[i];
+            CHECK(prepared_native_run(cpu_jit,n)==arm920t_run(cpu_ref,n),"packed split budget");
+            compare_state(); left-=n;
+        }
+        CHECK(!left,"packed split fixture budget");
+    } else {
+        CHECK(prepared_native_run(cpu_jit,left)==arm920t_run(cpu_ref,left),"packed full budget");
+        compare_state();
+    }
+    CHECK(ref_reg(ctr)==count && ref_reg(ptr)==address+4u*count,"packed count/address");
+    CHECK(bus_jit.io_count==1u && bus_ref.io_count==1u &&
+          !memcmp(bus_jit.io_regs,bus_ref.io_regs,sizeof(bus_jit.io_regs)) &&
+          !memcmp(bus_jit.io_cpsr,bus_ref.io_cpsr,sizeof(bus_jit.io_cpsr)),"packed callback state");
+    if (!(flags & 32u)) {
+        uint32_t last_other=0,last=0;
+        for (unsigned i=0;i<count;++i) {
+            last=packed_expected(input[i],factor,shift_a,shift_b,flags,&last_other);
+            CHECK(gp32_ld32le(bus_ptr(&bus_jit,physical+4u*i,4u))==last,"packed independent word");
+        }
+        CHECK(ref_reg(val)==last && ref_reg(other)==last_other,"packed last scalar registers");
+    }
+    gp32_cpu_profile_t p; arm920t_get_cpu_profile(cpu_jit,&p);
+    if (p.supported && p.native_backend==2u && count>=4u && !(flags & (16u|32u|128u|256u|2048u)))
+        CHECK(p.native_packed_word_batches>0u,"packed SIMD path was not executed");
+    if (p.supported && p.native_backend==2u && (count==16u || count==64u) && !flags)
+        CHECK(p.native_packed_word_batches==count/16u,"wide SIMD path was not executed");
+    if (p.supported && p.native_backend==2u && count==4u && (flags & 2048u))
+        CHECK(p.native_packed_word_batches==0u,"last watched word rejects full vector write");
+    teardown_pair();
+}
+static void case_packed_word_loop(void) {
+    static const unsigned counts[]={1u,3u,4u,5u,16u,33u};
+    static const uint32_t factors[]={0u,1u,31u,32u,33u,UINT32_MAX};
+    for(unsigned i=0;i<GP32_ARRAY_COUNT(counts);++i)
+        for(unsigned j=0;j<GP32_ARRAY_COUNT(factors);++j) packed_case(counts[i],factors[j],0u);
+    for(unsigned bit=0;bit<9u;++bit) packed_case(17u,0xf1234567u,1u<<bit);
+    packed_case(17u,32u,8u|64u);
+    packed_case(17u,0xf1234567u,512u);
+    packed_case(17u,0xffffffffu,512u|1u|2u|1024u);
+    packed_case(17u,0x92345678u,1024u);
+    packed_case(4u,17u,2048u|4096u);
+    packed_case(16u,0xf1234567u,8192u);
+    packed_case(33u,32u,16u);
+    packed_case(64u,31u,0u);
+    packed_case(64u,31u,256u);
+}
+
+static void case_copy_loop(void) {
+    static const unsigned counts[] = {1u, 15u, 16u, 17u, 63u};
+    for (size_t i = 0; i < GP32_ARRAY_COUNT(counts); ++i) {
+        char name[24]; snprintf(name, sizeof(name), "copy-loop-%u", counts[i]);
+        copy_case(name, counts[i], DATA_ADDR + 0x200u, DATA_ADDR + 0x800u, 0u, 1u);
+    }
+    copy_case("copy-loop-overlap-forward", 17u, DATA_ADDR + 0x400u, DATA_ADDR + 0x402u, 1u, 0u);
+    copy_case("copy-loop-overlap-backward", 17u, DATA_ADDR + 0x400u, DATA_ADDR + 0x3feu, 0u, 0u);
+    copy_case("copy-loop-unaligned", 17u, DATA_ADDR + 0x201u, DATA_ADDR + 0x812u, 0u, 0u);
+    copy_case("copy-loop-page-edge", 5u, DATA_ADDR + 0xffeu, DATA_ADDR + 0x2ffeu, 0u, 0u);
+    copy_stop("copy-loop-count-zero", 0u, UINT32_MAX);
+    copy_stop("copy-loop-count-negative", 0xfffffffeu, 0xfffffffdu);
+    copy_start("copy-loop-signed-wrap", P_COPY_LOOP, GP32_ARRAY_COUNT(P_COPY_LOOP),
+               0x80000000u, DATA_ADDR + 0x200u, DATA_ADDR + 0x800u);
+    copy_seed(DATA_ADDR + 0x200u, 4u);
+    CHECK(prepared_native_run(cpu_jit, 7u) == arm920t_run(cpu_ref, 7u),
+          "signed wrap copy budget");
+    compare_state();
+    CHECK(ref_reg(0) == 0x7ffffffeu && arm920t_get_pc(cpu_ref) == CODE_ADDR + 8u &&
+          ref_reg(12) == DATA_ADDR + 0x204u && ref_reg(3) == DATA_ADDR + 0x802u,
+          "INT32_MIN copies once before becoming positive");
+    teardown_pair();
+
+    {
+        const uint32_t dst = DATA_ADDR + 0x700u;
+        copy_start("copy-loop-mmio-source", P_COPY_LOOP, GP32_ARRAY_COUNT(P_COPY_LOOP),
+                   1u, IO_ADDR, dst);
+        CHECK(prepared_native_run(cpu_jit, 7u) == arm920t_run(cpu_ref, 7u),
+              "copy-loop MMIO source budget");
+        compare_state();
+        CHECK(bus_ref.io_count == 2u && bus_jit.io_count == 2u &&
+              bus_ref.io_pc[0] == CODE_ADDR + 4u && bus_ref.io_pc[1] == CODE_ADDR + 24u &&
+              !memcmp(bus_ref.io_pc, bus_jit.io_pc, 2u * sizeof(bus_ref.io_pc[0])) &&
+              ref_reg(2) == CODE_ADDR + 4u && ref_reg(6) == CODE_ADDR + 24u &&
+              gp32_ld16le(bus_ptr(&bus_ref, dst, 2u)) == 0x0404u,
+              "MMIO source callback/fallback");
+        teardown_pair();
+    }
+    {
+        const uint32_t target = DATA_ADDR + 0x1000u, src = DATA_ADDR + 0x600u;
+        copy_start("copy-loop-code-watch", P_COPY_LOOP, GP32_ARRAY_COUNT(P_COPY_LOOP),
+                   1u, src, target);
+        set_mem_both(target, 0xe3a07011u); /* MOV r7,#0x11 */
+        set_mem_both(target + 4u, 0xeafffffeu);
+        set_reg_both(15u, target);
+        CHECK(prepared_native_run(cpu_jit, 1u) == arm920t_run(cpu_ref, 1u),
+              "prime decoded RAM instruction");
+        compare_state();
+        gp32_st16le(bus_ptr(&bus_jit, src, 2u), 0x7022u);
+        gp32_st16le(bus_ptr(&bus_ref, src, 2u), 0x7022u);
+        set_reg_both(15u, CODE_ADDR);
+        CHECK(prepared_native_run(cpu_jit, 7u) == arm920t_run(cpu_ref, 7u),
+              "copy into watched code");
+        compare_state();
+        CHECK(ref_reg(0) == 0u && ref_reg(6) == CODE_ADDR + 24u &&
+              bus_ref.io_count == 1u && bus_jit.io_count == 1u &&
+              gp32_ld32le(bus_ptr(&bus_ref, target, 4u)) == 0xe3a07022u,
+              "watched halfword write/callback");
+        set_reg_both(15u, target);
+        CHECK(prepared_native_run(cpu_jit, 2u) == arm920t_run(cpu_ref, 2u),
+              "execute watched destination");
+        compare_state();
+        CHECK(ref_reg(7) == 0x22u && arm920t_get_pc(cpu_ref) == target + 4u,
+              "stale decoded instruction after watched store");
+        teardown_pair();
+    }
+    {
+        const uint32_t ttb = RAM_BASE + 0x4000u, sva = 0x10001200u, dva = 0x10003200u;
+        const uint32_t program[] = {0xee02af10u, 0xee01bf10u, P_COPY_LOOP[0], P_COPY_LOOP[1],
+            P_COPY_LOOP[2], P_COPY_LOOP[3], P_COPY_LOOP[4], P_COPY_LOOP[5], P_COPY_LOOP[6]};
+        copy_start("copy-loop-mmu-remap", program, GP32_ARRAY_COUNT(program), 17u, sva, dva);
+        set_reg_both(10u, ttb); set_reg_both(11u, 1u);
+        set_mem_both(ttb, 2u); set_mem_both(ttb + 0x400u, RAM_BASE | 2u);
+        set_mem_both(ttb + 0x500u, IO_ADDR | 2u);
+        copy_seed(RAM_BASE + 0x1200u, 34u);
+        CHECK(prepared_native_run(cpu_jit, 2u) == arm920t_run(cpu_ref, 2u),
+              "copy-loop MMU setup");
+        compare_state();
+        CHECK(arm920t_get_cp15(cpu_ref, 1u) & 1u, "copy-loop MMU not enabled");
+        copy_budgets(CODE_ADDR + 0x20u);
+        CHECK(ref_reg(0) == 0u && ref_reg(3) == dva + 34u && ref_reg(12) == sva + 34u &&
+              ref_reg(6) == CODE_ADDR + 0x20u && copy_ok(RAM_BASE + 0x3200u, 34u),
+              "remapped copy-loop result");
+        copy_native_proof("remapped copy-loop native calls/insns");
+        teardown_pair();
+    }
+}
+
+static void byte_pair_case(unsigned variant, unsigned ragged, unsigned partial) {
+    char name[48];
+    snprintf(name, sizeof(name), "%s-%u-%u", partial ? "partial-byte-loop" : "byte-pair-loop", variant, ragged);
+    current_case = name;
+    setup_pair(); arm920t_set_trace(cpu_ref, 1, NULL, NULL);
+    const uint32_t paired[] = {
+        0xe4d02001u,0xe35a0000u,0x0082a004u,0x0a000002u,
+        0xe08aa402u,0xe0c1a0b2u,0xe3a0a000u,
+        0xe4d02001u,0xe35a0000u,0x0082a004u,0x0a000002u,
+        0xe08aa402u,0xe0c1a0b2u,0xe3a0a000u,0xe2577001u,0x1affffefu,
+        0xe5996000u,0xeafffffeu
+    };
+    const uint32_t bytes[] = {
+        0xe35a0000u,0x11c1a0b0u,0xe4d02001u,0xe35a0000u,0x0082a004u,
+        0x0a000002u,0xe08aa402u,0xe0c1a0b2u,0xe3a0a000u,0xe2577001u,0x1afffff4u,
+        0xe5996000u,0xeafffffeu
+    };
+    const uint32_t renamed[] = {
+        0xe3500000u,0x11c300b0u,0xe4dc2001u,0xe3500000u,0x00820008u,
+        0x0a000002u,0xe0800402u,0xe0c300b2u,0xe3a00000u,0xe2577001u,0x1afffff4u,
+        0xe5996000u,0xeafffffeu
+    };
+    const uint32_t *program = variant == 25u ? renamed : partial ? bytes : paired;
+    unsigned length = partial ? GP32_ARRAY_COUNT(bytes) : GP32_ARRAY_COUNT(paired);
+    unsigned sr = variant == 25u ? 12u : 0u, dr = variant == 25u ? 3u : 1u;
+    unsigned br = variant == 25u ? 8u : 4u, ar = variant == 25u ? 0u : 10u;
+    load_both(program, length);
+    uint32_t src = DATA_ADDR + 0x200u, dst = DATA_ADDR + 0x800u;
+    uint32_t count = variant < 5u ? (uint32_t[]){1u,15u,16u,17u,63u}[variant] : 17u;
+    uint32_t bias = 0x10000u, acc = 0u;
+    if (variant == 5u) ++src;
+    if (variant == 6u) dst = src + 2u;
+    if (variant == 7u) dst = src - 2u;
+    if (variant == 8u) { ++src; dst = src + 1u; }
+    if (variant == 9u) ++dst;
+    if (variant == 10u) src = DATA_ADDR + 0xfffu;
+    if (variant == 11u) dst = DATA_ADDR + 0xffeu;
+    if (variant == 12u) bias = 0xffffff00u;
+    if (variant == 13u) bias = 0u;
+    if (variant == 14u) bias = 0xffffffffu;
+    if (variant == 15u) acc = 0x10023u;
+    if (variant == 16u) { src = IO_ADDR; count = partial ? 2u : 1u; }
+    if (variant == 17u) { dst = IO_ADDR; count = partial ? 2u : 1u; }
+    if (variant == 18u) count = 0x80000000u;
+    if (variant == 19u) count = 0u;
+    if (variant == 20u) bias = 0x100u;
+    if (variant == 26u) dst = src;
+    if (src != IO_ADDR) copy_seed(src, 128u);
+    if (variant == 22u || variant == 23u) {
+        const uint32_t ttb = RAM_BASE + 0x4000u;
+        set_mem_both(ttb, 2u); set_mem_both(ttb + 0x400u, RAM_BASE | 2u);
+        set_mem_both(ttb + 0x500u, IO_ADDR | 2u);
+        src = 0x10001200u; dst = variant == 23u ? 0x10001202u : 0x10001800u;
+        cp15_write(cpu_jit, 2u, 0u, 0u, 0u, ttb); cp15_write(cpu_ref, 2u, 0u, 0u, 0u, ttb);
+        cp15_write(cpu_jit, 1u, 0u, 0u, 0u, 1u); cp15_write(cpu_ref, 1u, 0u, 0u, 0u, 1u);
+    }
+    if (variant == 24u) {
+        for (unsigned i = 0; i < length; ++i)
+            set_mem_both(0x7e0u + 4u*i, program[i]);
+        set_reg_both(15u, 0x7e0u);
+    }
+    if (variant == 21u) {
+        dst = DATA_ADDR + 0x1000u;
+        set_mem_both(dst, 0xe3a08011u); set_mem_both(dst + 4u, 0xeafffffeu);
+        set_reg_both(15u, dst);
+        CHECK(prepared_native_run(cpu_jit, 1u) == arm920t_run(cpu_ref, 1u), "pair watch prime");
+        compare_state(); set_reg_both(15u, CODE_ADDR);
+    }
+    set_reg_both(sr, src); set_reg_both(dr, dst); set_reg_both(br, bias);
+    set_reg_both(7u, count); set_reg_both(ar, acc); set_reg_both(9u, IO_ADDR);
+    arm920t_set_cpsr(cpu_jit, 0x900000d3u); arm920t_set_cpsr(cpu_ref, 0x900000d3u);
+    bus_jit.observe_cpu = cpu_jit; bus_ref.observe_cpu = cpu_ref;
+    const unsigned cuts[] = {1u,2u,3u,4u,7u,11u,13u,16u,17u,31u,63u,257u,1021u};
+    for (unsigned i = 0; i < (ragged ? GP32_ARRAY_COUNT(cuts) : 1u); ++i) {
+        unsigned budget = ragged ? cuts[i] : variant >= 27u ?
+            (unsigned[]){13u,18u,19u}[variant - 27u] : 1024u;
+        CHECK(prepared_native_run(cpu_jit, budget) == arm920t_run(cpu_ref, budget), "pair budget");
+        compare_state();
+    }
+    CHECK(bus_ref.io_count == bus_jit.io_count &&
+          !memcmp(bus_ref.io_regs, bus_jit.io_regs, sizeof(bus_ref.io_regs)) &&
+          !memcmp(bus_ref.io_cpsr, bus_jit.io_cpsr, sizeof(bus_ref.io_cpsr)), "pair callback state");
+    if (variant < 5u || variant == 12u || variant == 20u || variant == 25u) {
+        unsigned nbytes = partial ? count : count*2u, words = nbytes/2u;
+        uint32_t pending = (nbytes & 1u) ? bias + copy_byte(nbytes-1u) : 0u;
+        CHECK(ref_reg(sr) == src + nbytes && ref_reg(dr) == dst + words*2u &&
+              ref_reg(7u) == 0u && ref_reg(ar) == pending &&
+              ref_reg(2u) == copy_byte(nbytes-1u), "pair independent final registers");
+        for (unsigned i = 0; i < words; ++i)
+            CHECK(gp32_ld16le(bus_ptr(&bus_ref,dst+i*2u,2u)) ==
+                  (uint16_t)(copy_byte(i*2u)+(copy_byte(i*2u+1u)<<8)+bias), "pair independent word");
+    }
+    if (partial && (variant == 8u || variant == 26u)) {
+        for (unsigned i = 0; i < count/2u; ++i) {
+            uint16_t expected = variant == 8u ? (uint16_t)(copy_byte(0)*0x101u) : copy_byte(i*2u);
+            CHECK(gp32_ld16le(bus_ptr(&bus_ref,dst+i*2u,2u)) == expected,
+                  "partial store must change the following source read");
+        }
+    }
+    if (variant == 27u) {
+        /* This cut is below the public dispatcher's complete-block span.
+         * Observe the partial store before the second byte is assembled. */
+        CHECK(arm920t_get_pc(cpu_ref) == CODE_ADDR + 20u && ref_reg(0u) == src + 2u &&
+              ref_reg(1u) == dst && ref_reg(7u) == count - 1u &&
+              ref_reg(10u) == bias + copy_byte(0) && ref_reg(2u) == copy_byte(1) &&
+              gp32_ld16le(bus_ptr(&bus_ref,dst,2u)) == (uint16_t)(bias + copy_byte(0)),
+              "short dispatch preserves the intermediate partial store");
+    } else if (!ragged) copy_native_proof("pair native calls");
+    teardown_pair();
+}
+static void case_byte_pair_loop(void) {
+    for (unsigned variant = 0; variant < 25u; ++variant)
+        for (unsigned ragged = 0; ragged < 2u; ++ragged) byte_pair_case(variant, ragged, 0u);
+    for (unsigned variant = 0; variant < 30u; ++variant)
+        for (unsigned ragged = 0; ragged < (variant < 27u ? 2u : 1u); ++ragged)
+            byte_pair_case(variant, ragged, 1u);
+}
+
 static uint32_t block_insn(unsigned p, unsigned u, unsigned s, unsigned w,
                            unsigned l, unsigned rn, unsigned regs) {
     return 0xE8000000u | (p << 24) | (u << 23) | (s << 22) |
@@ -1472,8 +1996,10 @@ static void case_block_pairs(void) {
                     if (!(lists[shape] & (1u << r))) continue;
                     set_mem_both(starts[edge] + 4u * lane++, 0xaabb0000u + r);
                 }
-                /* Warm a complete native block, then revisit it with a
+                /* Prepare a complete native block without executing guest
+                 * instructions, then revisit it with a
                  * one-instruction remainder and with a full-block budget. */
+                prepare_native_block(cpu_jit, CODE_ADDR);
                 const uint32_t budgets[] = {2u, 1u, 2u};
                 for (unsigned step = 0; step < GP32_ARRAY_COUNT(budgets); ++step) {
                     set_reg_both(0u, starts[edge]);
@@ -2455,6 +2981,159 @@ static void case_native_alu_region(void) {
     }
 }
 
+static void alu_regions_require_native(void) {
+    gp32_cpu_profile_t profile;
+    arm920t_get_cpu_profile(cpu_jit, &profile);
+    if (profile.supported && profile.native_backend)
+        CHECK(profile.native_block_calls != 0u && profile.native_arm_insns != 0u,
+              "ALU region did not execute natively");
+}
+
+/* Preserve dependent ALU values at architectural fences. The dense
+ * span has repeated r0/r2 overwrites, nine live registers, a seeded ADC/RRX
+ * dependency and a partial logical flag update before its callback. */
+static void case_native_alu_regions(void) {
+    const uint32_t dense[] = {
+        0xe1b01060u, /* MOVS r1,r0,RRX: consume the seeded carry */
+        0xe0912001u, /* ADDS r2,r1,r1: produce carry and overflow */
+        0xe2a13000u, /* ADC  r3,r1,#0: consume that carry */
+        0xe0204001u, /* EOR  r4,r0,r1: overwritten before any observer */
+        0xe0124003u, /* ANDS r4,r2,r3: update NZC, retain V */
+        0xe0245003u, /* EOR  r5,r4,r3 */
+        0xe0850001u, /* ADD  r0,r5,r1 */
+        0xe0800002u, /* ADD  r0,r0,r2 */
+        0xe0802005u, /* ADD  r2,r0,r5 */
+        0xe0822001u, /* ADD  r2,r2,r1 */
+        0xe0826005u, /* ADD  r6,r2,r5 */
+        0xe0867002u, /* ADD  r7,r6,r2 */
+        0xe087b000u, /* ADD  r11,r7,r0 */
+        0xe599a000u, /* LDR  r10,[r9]: callback fence */
+        0xeafffffeu,
+    };
+    current_case = "alu-regions-dense";
+    setup_pair();
+    bus_jit.observe_cpu = cpu_jit;
+    bus_ref.observe_cpu = cpu_ref;
+    load_both(dense, GP32_ARRAY_COUNT(dense));
+    set_reg_both(0u, 0u);
+    set_reg_both(9u, IO_ADDR);
+    arm920t_set_cpsr(cpu_jit, 0x300000d3u); /* C=1,V=1 */
+    arm920t_set_cpsr(cpu_ref, 0x300000d3u);
+    CHECK(prepared_native_run(cpu_jit, 64u) == arm920t_run(cpu_ref, 64u),
+          "dense ALU region budget");
+    compare_state();
+    CHECK(bus_jit.io_count == 1u && bus_ref.io_count == 1u, "dense ALU callback count");
+    CHECK(!memcmp(bus_jit.io_regs, bus_ref.io_regs, sizeof(bus_ref.io_regs)),
+          "dense ALU callback lost a register");
+    CHECK(!memcmp(bus_jit.io_cpsr, bus_ref.io_cpsr, sizeof(bus_ref.io_cpsr)),
+          "dense ALU callback lost partial flags");
+    if (ref_reg(0u) != 1u) report("dense ALU r0 oracle", ref_reg(0u), 1u);
+    if (ref_reg(1u) != 0x80000000u) report("dense ALU r1 oracle", ref_reg(1u), 0x80000000u);
+    if (ref_reg(2u) != 2u) report("dense ALU r2 oracle", ref_reg(2u), 2u);
+    if (ref_reg(3u) != 0x80000001u) report("dense ALU r3 oracle", ref_reg(3u), 0x80000001u);
+    if (ref_reg(4u) != 0u) report("dense ALU r4 oracle", ref_reg(4u), 0u);
+    if (ref_reg(5u) != 0x80000001u) report("dense ALU r5 oracle", ref_reg(5u), 0x80000001u);
+    if (ref_reg(6u) != 0x80000003u) report("dense ALU r6 oracle", ref_reg(6u), 0x80000003u);
+    if (ref_reg(7u) != 0x80000005u) report("dense ALU r7 oracle", ref_reg(7u), 0x80000005u);
+    if (ref_reg(11u) != 0x80000006u) report("dense ALU r11 oracle", ref_reg(11u), 0x80000006u);
+    CHECK(arm920t_get_cpsr(cpu_ref) == 0x700000d3u, "dense ALU CPSR oracle");
+    alu_regions_require_native();
+    teardown_pair();
+
+    const uint32_t joined[] = {
+        0xe1a0a00cu, /* MOV r10,r12 */
+        0xe35a0001u, /* CMP r10,#1 */
+        0x1a000003u, /* BNE join at word 7 */
+        0xe3a00003u, /* region start: MOV r0,#3 */
+        0xe2801004u, /* ADD r1,r0,#4 */
+        0xe0212000u, /* EOR r2,r1,r0 */
+        0xe1a03002u, /* MOV r3,r2 */
+        0xe0824003u, /* join: ADD r4,r2,r3 */
+        0xe0845002u, /* ADD r5,r4,r2 */
+        0xe0856003u, /* ADD r6,r5,r3 */
+        0xe5987000u, /* LDR r7,[r8]: callback fence */
+        0xeafffffeu,
+    };
+    current_case = "alu-regions-portable-budget";
+    setup_pair();
+    bus_jit.observe_cpu = cpu_jit;
+    bus_ref.observe_cpu = cpu_ref;
+    load_both(joined, GP32_ARRAY_COUNT(joined));
+    for (unsigned r = 0; r < 4u; ++r) set_reg_both(r, 41u + r);
+    set_reg_both(8u, IO_ADDR);
+    set_reg_both(12u, 1u);
+    CHECK(prepared_native_run(cpu_jit, 6u) == arm920t_run(cpu_ref, 6u),
+          "short ALU region budget");
+    compare_state();
+    gp32_cpu_profile_t profile;
+    arm920t_get_cpu_profile(cpu_jit, &profile);
+    if (profile.supported && profile.native_backend) {
+        CHECK(profile.native_block_calls == 0u, "short ALU budget used native code");
+        CHECK(profile.block_interp_arm_insns >= 6u, "short ALU budget skipped portable ops");
+    }
+    teardown_pair();
+
+    for (unsigned taken = 0; taken < 2u; ++taken) {
+        current_case = taken ? "alu-regions-join-taken" : "alu-regions-join-fallthrough";
+        setup_pair();
+        bus_jit.observe_cpu = cpu_jit;
+        bus_ref.observe_cpu = cpu_ref;
+        load_both(joined, GP32_ARRAY_COUNT(joined));
+        for (unsigned r = 0; r < 4u; ++r) set_reg_both(r, 41u + r);
+        set_reg_both(8u, IO_ADDR);
+        set_reg_both(12u, taken ? 0u : 1u);
+        CHECK(prepared_native_run(cpu_jit, 64u) == arm920t_run(cpu_ref, 64u),
+              "joined ALU region budget");
+        compare_state();
+        CHECK(bus_jit.io_count == 1u && bus_ref.io_count == 1u,
+              "joined ALU callback count");
+        CHECK(!memcmp(bus_jit.io_regs, bus_ref.io_regs, sizeof(bus_ref.io_regs)),
+              "joined ALU callback lost a register");
+        const uint32_t *observed = bus_jit.io_regs[0];
+        if (taken)
+            CHECK(observed[0] == 41u && observed[1] == 42u && observed[2] == 43u &&
+                  observed[3] == 44u && observed[4] == 87u && observed[5] == 130u &&
+                  observed[6] == 174u, "taken join ALU oracle");
+        else
+            CHECK(observed[0] == 3u && observed[1] == 7u && observed[2] == 4u &&
+                  observed[3] == 4u && observed[4] == 8u && observed[5] == 12u &&
+                  observed[6] == 16u, "fallthrough ALU oracle");
+        alu_regions_require_native();
+        teardown_pair();
+    }
+
+    const uint32_t fetch_base = CODE_ADDR + 0x3e8u; /* ends at the 1KiB page edge */
+    const uint32_t boundary[] = {
+        0xe3a00001u, /* MOV r0,#1 */
+        0xe0801000u, /* ADD r1,r0,r0 */
+        0xe2812003u, /* ADD r2,r1,#3 */
+        0xe0823001u, /* ADD r3,r2,r1 */
+        0xe0830002u, /* ADD r0,r3,r2 */
+        0xe0801003u, /* ADD r1,r0,r3 */
+        0xe0814000u, /* 0x800: ADD r4,r1,r0 */
+        0xe5965000u, /* LDR r5,[r6]: callback fence */
+        0xeafffffeu,
+    };
+    current_case = "alu-regions-fetch-boundary";
+    setup_pair();
+    bus_jit.observe_cpu = cpu_jit;
+    bus_ref.observe_cpu = cpu_ref;
+    for (unsigned i = 0; i < GP32_ARRAY_COUNT(boundary); ++i)
+        set_mem_both(fetch_base + i * 4u, boundary[i]);
+    set_reg_both(6u, IO_ADDR);
+    set_reg_both(15u, fetch_base);
+    CHECK(prepared_native_run(cpu_jit, 32u) == arm920t_run(cpu_ref, 32u),
+          "page-boundary ALU region budget");
+    compare_state();
+    CHECK(bus_jit.io_count == 1u && bus_ref.io_count == 1u, "page-boundary callback count");
+    CHECK(!memcmp(bus_jit.io_regs, bus_ref.io_regs, sizeof(bus_ref.io_regs)),
+          "page-boundary callback lost a register");
+    CHECK(ref_reg(0u) == 12u && ref_reg(1u) == 19u && ref_reg(2u) == 5u &&
+          ref_reg(3u) == 7u && ref_reg(4u) == 31u, "page-boundary ALU oracle");
+    alu_regions_require_native();
+    teardown_pair();
+}
+
 /* Register dependencies must survive conditionals and scratch/helper clobbers. */
 static void case_native_forwarding(void) {
     const uint32_t program[] = {
@@ -3007,6 +3686,122 @@ static void case_native_condition_flags(void) {
             CHECK(ref_reg(2) + ref_reg(3) == 1u, "inverse conditions must partition");
             teardown_pair();
         }
+    }
+}
+
+/* An N/Z-only consumer may be optimized away (MOV r2,r2). A later
+ * C/V predicate still needs the complete committed flags, including at MMIO. */
+static int expected_condition(unsigned c, uint32_t f) {
+    int n=(f>>31)&1,z=(f>>30)&1,carry=(f>>29)&1,v=(f>>28)&1;
+    switch(c) {
+    case 0:return z; case 1:return !z; case 2:return carry;case 3:return !carry;
+    case 4:return n;case 5:return !n;case 6:return v;case 7:return !v;
+    case 8:return carry&&!z;case 9:return !carry||z;
+    case 10:return n==v;case 11:return n!=v;
+    case 12:return !z&&n==v;case 13:return z||n!=v;default:return 1;
+    }
+}
+static void case_native_partial_flags(void) {
+    static const uint32_t values[]={0u,1u,0x80000000u};
+    static const unsigned conditions[]={0u,1u,4u,5u};
+    for(unsigned cv=0;cv<4;++cv) for(unsigned vi=0;vi<3;++vi)
+    for(unsigned ci=0;ci<4;++ci) for(unsigned next=0;next<14;++next) {
+        uint32_t program[]={0xe1100000u, /* TST r0,r0: preserves guest C/V */
+            (conditions[ci]<<28)|0x01a02002u, /* conditional MOV r2,r2: no-op */
+            (next<<28)|0x02844001u, /* conditional ADD r4,r4,#1 */
+            0xe5910000u, /* MMIO must observe full architectural flags */
+            0xeafffffeu};
+        current_case="partial-nzcv-followed-by-full-condition";
+        setup_pair();load_both(program,GP32_ARRAY_COUNT(program));
+        arm920t_set_trace(cpu_ref,1,NULL,NULL);
+        set_reg_both(0,values[vi]);set_reg_both(1,IO_ADDR);set_reg_both(4,10u);
+        uint32_t initial=0xd3u|(cv<<28);
+        arm920t_set_cpsr(cpu_jit,initial);arm920t_set_cpsr(cpu_ref,initial);
+        bus_jit.observe_cpu=cpu_jit;bus_ref.observe_cpu=cpu_ref;
+        CHECK(prepared_native_run(cpu_jit,32u)==arm920t_run(cpu_ref,32u),"budget");
+        compare_state();
+        uint32_t expected=initial|(values[vi]&0x80000000u)|(!values[vi]?0x40000000u:0u);
+        CHECK(ref_reg(4)==10u+(unsigned)expected_condition(next,expected),"independent predicate");
+        CHECK(bus_jit.io_count==1u&&bus_ref.io_count==1u,"callback count");
+        CHECK(bus_jit.io_cpsr[0]==expected&&bus_ref.io_cpsr[0]==expected,"callback full flags");
+        gp32_cpu_profile_t profile;arm920t_get_cpu_profile(cpu_jit,&profile);
+        if (profile.supported && profile.native_backend)
+            CHECK(profile.native_arm_insns >= 4u, "native execution required");
+        teardown_pair();
+    }
+}
+
+/* Adjacent ALU flags may be dead, but run cuts, conditional consumers,
+ * CPSR reads, shifter carry and MMIO still expose architectural state. */
+static void case_native_dead_nz(void) {
+    static const uint32_t first[] = {
+        0xe2102001u, /* ANDS r2,r0,#1 */
+        0xe2102001u, 0xe2102001u, 0xe2102001u,
+        0xe2102102u, /* ANDS r2,r0,#0x80000000: rotated immediate sets C */
+        0xe0102080u, /* ANDS r2,r0,r0,LSL #1: shifter sets C */
+        0xe3100001u, /* TST r0,#1: no register result */
+        0xe0102000u, /* ANDS r2,r0,r0: preserves C for ADC */
+        0xe2102001u, /* ANDS r2,r0,#1: preserves C for RRX */
+    };
+    static const uint32_t second[] = {
+        0xe31100ffu, /* TST r1,#0xff */
+        0x031100ffu, /* TSTEQ: observes the first Z */
+        0xe10f3000u, /* MRS r3,CPSR: observes the first flags */
+        0xe5956000u, /* LDR r6,[r5]: callback observes the first flags */
+        0xe2b43000u, /* ADCS r3,r4,#0: consumes the first C */
+        0xe31100ffu, 0xe31100ffu,
+        0xe2b43000u, 0xe1b03060u, /* ADCS; MOVS r3,r0,RRX */
+    };
+    static const uint32_t values[] = {0u, 1u, 0x80000000u};
+    for (unsigned shape = 0; shape < GP32_ARRAY_COUNT(first); ++shape)
+    for (unsigned cv = 0; cv < 4u; ++cv)
+    for (unsigned value = 0; value < GP32_ARRAY_COUNT(values); ++value)
+    for (unsigned boundary = 0; boundary < 2u; ++boundary)
+    for (unsigned split = 0; split < 2u; ++split) {
+        uint32_t pc = CODE_ADDR + (boundary ? 0x3fcu : 0u);
+        uint32_t program[] = {first[shape], second[shape], 0xe5956000u, 0xeafffffeu};
+        current_case = "dead-nz-observation-boundaries";
+        setup_pair();
+        for (unsigned i = 0; i < GP32_ARRAY_COUNT(program); ++i) {
+            gp32_st32le(bus_ptr(&bus_jit, pc + i * 4u, 4u), program[i]);
+            gp32_st32le(bus_ptr(&bus_ref, pc + i * 4u, 4u), program[i]);
+        }
+        arm920t_set_trace(cpu_ref, 1, NULL, NULL);
+        set_reg_both(0u, values[value]); set_reg_both(1u, value == 0u ? 1u : 0u);
+        set_reg_both(2u, 0x12345678u); set_reg_both(4u, UINT32_MAX);
+        set_reg_both(5u, IO_ADDR); set_reg_both(15u, pc);
+        uint32_t initial = 0xc00000d3u | (cv << 28);
+        arm920t_set_cpsr(cpu_jit, initial);
+        arm920t_set_cpsr(cpu_ref, initial);
+        bus_jit.observe_cpu = cpu_jit; bus_ref.observe_cpu = cpu_ref;
+        if (split) {
+            CHECK(prepared_native_run(cpu_jit, 1u) == arm920t_run(cpu_ref, 1u), "first-op cut");
+            compare_state();
+            if (shape != 4u && shape != 5u) {
+                uint32_t result = shape == 7u ? values[value] : values[value] & 1u;
+                uint32_t expected = (initial & 0x3fffffffu) | (result & 0x80000000u) |
+                                    (!result ? 0x40000000u : 0u);
+                CHECK(arm920t_get_cpsr(cpu_jit) == expected, "intermediate logical NZ must remain visible");
+            }
+        }
+        CHECK(prepared_native_run(cpu_jit, 32u) == arm920t_run(cpu_ref, 32u), "remaining budget");
+        compare_state();
+        CHECK(bus_jit.io_count == (shape == 3u ? 2u : 1u), "callback count");
+        CHECK(!memcmp(bus_jit.io_regs, bus_ref.io_regs, sizeof(bus_ref.io_regs)),
+              "callback must observe all registers");
+        CHECK(!memcmp(bus_jit.io_cpsr, bus_ref.io_cpsr, sizeof(bus_ref.io_cpsr)),
+              "callback must observe committed flags");
+        if (shape == 4u) CHECK(ref_reg(3u) == 0u, "rotated immediate carry reaches ADC");
+        if (shape == 6u) CHECK(ref_reg(2u) == 0x12345678u, "TST has no register result");
+        if (shape == 7u) CHECK(ref_reg(3u) == ((cv & 2u) ? 0u : UINT32_MAX),
+                              "unchanged carry reaches ADC");
+        if (shape == 8u) CHECK(ref_reg(3u) == ((values[value] >> 1) | ((cv & 2u) << 30)),
+                              "unchanged carry reaches RRX");
+        gp32_cpu_profile_t profile;
+        arm920t_get_cpu_profile(cpu_jit, &profile);
+        if (!split && profile.supported && profile.native_backend)
+            CHECK(profile.native_arm_insns > 0u, "whole-pair native execution");
+        teardown_pair();
     }
 }
 
@@ -3914,6 +4709,132 @@ static void case_native_literal_addresses(void) {
 }
 static uint32_t cache_branch(uint32_t pc, uint32_t target, int link) {
     return (link ? 0xeb000000u : 0xea000000u) | (((target - pc - 8u) >> 2) & 0x00ffffffu);
+}
+/* A PC-relative literal pool can stay at one virtual address while its live
+ * TLB entry is replaced. Reuse the same translated block, but read the new
+ * page only after the guest invalidates the old data mapping. Keep a skipped
+ * conditional load in the block to prove the loads preserve its condition. */
+static void case_native_literal_remap(void) {
+    const uint32_t code_va = 0x10002000u, data_va = 0x10001000u;
+    const uint32_t literal_va = data_va + 0x101u;
+    const uint32_t ttb = RAM_BASE + 0x4000u, l2 = RAM_BASE + 0x8000u;
+    const uint32_t code_pa = RAM_BASE + 0x10000u;
+    const uint32_t data_pa_a = RAM_BASE + 0x20000u, data_pa_b = RAM_BASE + 0x30000u;
+    const uint32_t l2_data_slot = l2 + ((data_va >> 10) & 0x3fcu);
+    const uint32_t program[] = {
+        0x151f1000u | (code_va + 8u - literal_va),  /* LDRNE r1,[pc,-imm] */
+        0x155f2000u | (code_va + 12u - literal_va), /* LDRBNE r2,[pc,-imm] */
+        0x051f3000u | (code_va + 16u - literal_va), /* LDREQ r3,[pc,-imm] */
+        0xeafffffeu,
+    };
+    current_case = "native-literal-remap";
+    setup_pair();
+    arm920t_set_trace(cpu_ref, 1, NULL, NULL);
+    set_cpsr_both(0x000000d3u);
+
+    set_mem_both(ttb, 2u); /* BIOS identity */
+    set_mem_both(ttb + ((RAM_BASE >> 20) * 4u), RAM_BASE | 2u);
+    set_mem_both(ttb + ((code_va >> 20) * 4u), l2 | 1u);
+    set_mem_both(l2 + ((code_va >> 10) & 0x3fcu), code_pa | 2u);
+    set_mem_both(l2_data_slot, data_pa_a | 2u);
+    for (unsigned i = 0; i < GP32_ARRAY_COUNT(program); ++i)
+        set_mem_both(code_pa + i * 4u, program[i]);
+    set_mem_both(data_pa_a + 0x100u, 0x44332211u);
+    set_mem_both(data_pa_b + 0x100u, 0x88776655u);
+
+    set_mem_both(CODE_ADDR, 0xee02af10u);       /* MCR p15,0,r10,c2,c0,0 */
+    set_mem_both(CODE_ADDR + 4u, 0xee01bf10u);  /* MCR p15,0,r11,c1,c0,0 */
+    set_mem_both(CODE_ADDR + 8u, 0xe12fff1cu); /* BX r12: target is beyond B range */
+    set_mem_both(CODE_ADDR + 0x100u, 0xe5832000u); /* STR r2,[r3] */
+    set_mem_both(CODE_ADDR + 0x104u, 0xee080f36u); /* MCR p15,0,r0,c8,c6,1 */
+    set_mem_both(CODE_ADDR + 0x108u, 0xeafffffeu);
+    set_reg_both(10u, ttb);
+    set_reg_both(11u, 1u);
+    set_reg_both(12u, code_va);
+    run_cache_pair(CODE_ADDR, 3u);
+    CHECK(arm920t_get_pc(cpu_ref) == code_va, "literal remap bootstrap target");
+
+    const unsigned data_slot = (data_va >> 12) & 0xfffu;
+    CHECK(!cpu_jit->tlb_entry[data_slot].valid &&
+          !cpu_ref->tlb_entry[data_slot].valid, "literal remap fixture needs a cold data slot");
+
+    /* First execution walks the table. The second is the same cached block
+     * with the live mapping resident. Allow room for the terminal self-branch's
+     * appended trace copy, so the native entry receives a full-block budget. */
+    set_reg_both(1u, 0x11111111u);
+    set_reg_both(2u, 0x22222222u);
+    set_reg_both(3u, 0xa5a5a5a5u);
+    run_cache_pair(code_va, 20u);
+    CHECK(ref_reg(1u) == 0x11443322u && ref_reg(2u) == 0x22u &&
+          ref_reg(3u) == 0xa5a5a5a5u && arm920t_get_cpsr(cpu_ref) == 0x000000d3u,
+          "cold literal A rotation, byte, condition and flags");
+    CHECK(cpu_jit->tlb_entry[data_slot].valid &&
+          cpu_jit->tlb_entry[data_slot].pa_base == data_pa_a,
+          "literal A live derived TLB slot");
+
+    prepare_native_block(cpu_jit, code_va);
+    set_reg_both(1u, 0x11111111u);
+    set_reg_both(2u, 0x22222222u);
+    set_reg_both(3u, 0xa5a5a5a5u);
+    arm920t_reset_cpu_profile(cpu_jit);
+    run_cache_pair(code_va, 20u);
+    CHECK(ref_reg(1u) == 0x11443322u && ref_reg(2u) == 0x22u &&
+          ref_reg(3u) == 0xa5a5a5a5u && arm920t_get_cpsr(cpu_ref) == 0x000000d3u,
+          "warm literal A preserves condition and flags");
+    gp32_cpu_profile_t profile;
+    arm920t_get_cpu_profile(cpu_jit, &profile);
+    if (profile.supported && profile.native_backend)
+        CHECK(profile.native_block_calls != 0u, "warm mapped literal block did not run natively");
+
+    arm_jit_block_t *retained = NULL;
+    if (cpu_jit->jit_blocks) {
+        unsigned slot = arm_jit_block_index(code_va);
+        for (unsigned way = 0; way < ARM_JIT_BLOCK_WAYS; ++way)
+            if (cpu_jit->jit_blocks[slot + way].valid &&
+                cpu_jit->jit_blocks[slot + way].tag_pc == code_va)
+                retained = &cpu_jit->jit_blocks[slot + way];
+    }
+    arm_jit_native_fn retained_native = retained ? retained->native : NULL;
+    uint32_t retained_generation = cpu_jit->jit_generation;
+    if (profile.supported && profile.native_backend)
+        CHECK(retained_native && retained->count <= 20u,
+              "warm literal run covers its complete native trace");
+
+    /* Guest code installs a fresh second-level descriptor and invalidates only
+     * the old data translation. No API flush stands in for the CP15 remap. */
+    set_reg_both(0u, data_va);
+    set_reg_both(2u, data_pa_b | 2u);
+    set_reg_both(3u, l2_data_slot);
+    run_cache_pair(CODE_ADDR + 0x100u, 2u);
+    CHECK(gp32_ld32le(bus_ptr(&bus_ref, l2_data_slot, 4u)) == (data_pa_b | 2u) &&
+          !cpu_jit->tlb_entry[data_slot].valid &&
+          !cpu_ref->tlb_entry[data_slot].valid,
+          "guest CP15 remap changed the descriptor and live data slot");
+
+    CHECK(cpu_jit->jit_generation == retained_generation &&
+          (!retained_native || (retained->valid && retained->native == retained_native)),
+          "D-TLB remap must retain the compiled literal block");
+    set_reg_both(1u, 0x11111111u);
+    set_reg_both(2u, 0x22222222u);
+    set_reg_both(3u, 0xa5a5a5a5u);
+    run_cache_pair(code_va, 20u);
+    CHECK(ref_reg(1u) == 0x55887766u && ref_reg(2u) == 0x66u &&
+          ref_reg(3u) == 0xa5a5a5a5u && arm920t_get_cpsr(cpu_ref) == 0x000000d3u,
+          "cold remapped literal B rotation, byte, condition and flags");
+    CHECK(cpu_jit->tlb_entry[data_slot].valid &&
+          cpu_jit->tlb_entry[data_slot].pa_base == data_pa_b,
+          "literal B live derived TLB slot");
+
+    set_reg_both(1u, 0x11111111u);
+    set_reg_both(2u, 0x22222222u);
+    set_reg_both(3u, 0xa5a5a5a5u);
+    run_cache_pair(code_va, 20u);
+    CHECK(ref_reg(1u) == 0x55887766u && ref_reg(2u) == 0x66u &&
+          ref_reg(3u) == 0xa5a5a5a5u && arm920t_get_cpsr(cpu_ref) == 0x000000d3u,
+          "warm remapped literal B preserves condition and flags");
+    CHECK(!retained_native || (retained->valid && retained->native == retained_native),
+          "remapped literal must reuse native code with the fresh mapping");
+    teardown_pair();
 }
 /* The caller is translated before its callee has a TLB entry. Once real
  * execution fills that entry, it must gain the same call folding as a warm
@@ -5393,9 +6314,129 @@ static void case_checked_access_translation(void) {
     teardown_pair();
 }
 
-/* Real execution, with callback counts proving the A64 path was exercised.
- * The test-only read counter is not guest-visible; the certified value has
- * no read effects. Writes remain callbacks and change the next live load. */
+/* Callback counts prove the A64 path was exercised. Compare every store,
+ * guest state observation and subsequent read with the ordinary bus. */
+static unsigned leaf_calls, leaf_wrong_state, leaf_rebind_rejected;
+static void tb_leaf_write32(void *u, uint32_t pa, uint32_t value) {
+    test_bus_t *b = u;
+    uint32_t pc = arm920t_get_pc(b->observe_cpu);
+    if (pc != CODE_ADDR + 4u && pc != CODE_ADDR + 8u && pc != CODE_ADDR + 12u)
+        ++leaf_wrong_state;
+    if (arm920t_get_reg(b->observe_cpu, 2) != 0xa1b2c3d4u) ++leaf_wrong_state;
+    if (value != (pc == CODE_ADDR + 12u ? CODE_ADDR + 20u : 0xa1b2c3d4u)) ++leaf_wrong_state;
+    ++leaf_calls;
+    leaf_rebind_rejected += !arm920t_set_leaf_write32(b->observe_cpu, NULL, 0);
+    tb_write32(u, pa, value);
+}
+static void case_leaf_write32(void) {
+    const uint32_t va = 0x10007700u;
+    const uint32_t masks[] = {0u, 0xfffu, 0x3ffu};
+    const uint32_t code[] = {0xe5802000u, 0xe5802000u, 0xe580f000u,
+        0xe5903000u, /* observe STR PC before the following stores */
+        0xe5802001u, /* unaligned word: checked path */
+        0xe5c02000u, /* STRB: checked path */
+        0xe4802000u, /* post-indexed even with offset zero: checked path */
+        0x05802000u, /* STREQ: Z is clear, no write at all */
+        0xeafffffeu};
+    for (unsigned k = 0; k < GP32_ARRAY_COUNT(masks); ++k) {
+      for (unsigned certified = 0; certified < 2u; ++certified) {
+        current_case = "leaf-write-word";
+        setup_pair_with_io_certificate(certified);
+        load_both(code, GP32_ARRAY_COUNT(code));
+        uint32_t addr = k ? va : IO_ADDR;
+        uint32_t pa = IO_ADDR | (k ? va & masks[k] : 0u);
+        if (k) {
+            arm920t_state_image_t *st = calloc(1, sizeof(*st));
+            if (!st) exit(2);
+            st->r[15] = CODE_ADDR; st->cpsr = 0xd3u; st->cp15[1] = 1u;
+            st->tlb_valid[0] = 1; st->tlb_mask[0] = 0xfffu;
+            unsigned idx = (va >> 12) & 0xfffu;
+            st->tlb_valid[idx] = 1; st->tlb_mask[idx] = masks[k];
+            st->tlb_va_base[idx] = va & ~masks[k]; st->tlb_pa_base[idx] = IO_ADDR;
+            apply_io_fixture_state(cpu_ref, st); apply_io_fixture_state(cpu_jit, st);
+            free(st); arm920t_set_jit(cpu_jit, 1);
+        }
+        set_reg_both(0, addr); set_reg_both(2, 0xa1b2c3d4u);
+        bus_ref.live_pa = bus_jit.live_pa = pa;
+        bus_ref.observe_cpu = cpu_ref; bus_jit.observe_cpu = cpu_jit;
+        arm_leaf_write32_t leaf[] = {{pa ^ 0x10u, tb_leaf_write32, &bus_jit},
+            {pa ^ 0x20u, tb_leaf_write32, &bus_jit}, {pa ^ 0x30u, tb_leaf_write32, &bus_jit}};
+        leaf[k].pa = pa; /* exercise each branch in a shared callback group */
+        CHECK(arm920t_set_leaf_write32(cpu_jit, leaf, 3), "register leaf writes");
+        leaf_calls = leaf_wrong_state = leaf_rebind_rejected = 0;
+        prepare_native_block(cpu_jit, CODE_ADDR);
+        run_cache_pair(CODE_ADDR, 64u);
+        CHECK(bus_jit.live_writes == 5u && bus_ref.live_writes == 5u,
+              "repeated, PC, unaligned and writeback stores execute; failed condition does not");
+        CHECK(ref_reg(3) == CODE_ADDR + 20u, "STR PC source is instruction+12");
+#if defined(ARM_JIT_NATIVE_A64)
+        /* STR PC uses the existing whole-op fallback, even with a certificate. */
+        CHECK(leaf_calls == (certified ? 2u : 0u), "two ordinary-register stores use certified leaf path");
+        CHECK(!leaf_wrong_state && leaf_rebind_rejected == leaf_calls,
+              "callback state and in-run registration guard");
+#else
+        CHECK(!leaf_calls, "other backends retain ordinary bus writes");
+#endif
+        if (!k) {
+        unsigned unchanged = leaf_calls;
+        set_reg_both(0, DATA_ADDR);
+        run_cache_pair(CODE_ADDR, 64u);
+        CHECK(leaf_calls == unchanged && gp32_ld32le(bus_jit.ram + 0x1000u) == 0xa1b2c3d4u,
+              "changed base uses current RAM mapping instead of sampled peripheral");
+        set_reg_both(0, addr);
+        }
+        CHECK(arm920t_set_leaf_write32(cpu_jit, NULL, 0), "disable leaf writes");
+        unsigned before = leaf_calls;
+        run_cache_pair(CODE_ADDR, 64u);
+        CHECK(leaf_calls == before && bus_jit.live_writes == 10u,
+              "revocation flushes existing native code");
+        arm_leaf_write32_t bad = {pa | 1u, tb_leaf_write32, &bus_jit};
+        CHECK(!arm920t_set_leaf_write32(cpu_jit, &bad, 1) &&
+              !arm920t_set_leaf_write32(cpu_jit, NULL, 1), "invalid leaf descriptor rejected");
+        teardown_pair();
+      }
+    }
+}
+
+static uint8_t *tb_leaf_fetch(void *u, uint32_t addr, size_t bytes, int write) {
+    test_bus_t *b = u;
+    if (!write && addr >= b->live_pa && addr - b->live_pa <= 4u &&
+        bytes <= 4u - (addr - b->live_pa))
+        return (uint8_t *)&b->live_value + (addr - b->live_pa);
+    return tb_fastmem(u, addr, bytes, write);
+}
+/* The peripheral fetch happens AFTER the ordinary store block is compiled.
+ * Its physical code watch must still force future stores through invalidation. */
+static void case_leaf_write32_code_watch(void) {
+    current_case = "leaf-write-code-watch";
+    setup_pair_with_io_certificate(1);
+    const uint32_t code[] = {0xe5802000u, 0xeafffffeu};
+    load_both(code, GP32_ARRAY_COUNT(code));
+    bus_ref.live_pa = bus_jit.live_pa = IO_ADDR;
+    bus_ref.live_value = bus_jit.live_value = 0xe3a07003u; /* MOV r7,#3 */
+    cpu_ref->bus.fastmem = cpu_jit->bus.fastmem = tb_leaf_fetch;
+    bus_ref.observe_cpu = cpu_ref; bus_jit.observe_cpu = cpu_jit;
+    set_reg_both(0, IO_ADDR); set_reg_both(2, 0xe3a07009u); /* MOV r7,#9 */
+    arm_leaf_write32_t leaf = {IO_ADDR, tb_leaf_write32, &bus_jit};
+    CHECK(arm920t_set_leaf_write32(cpu_jit, &leaf, 1), "register watched endpoint");
+    prepare_native_block(cpu_jit, CODE_ADDR);
+    prepare_native_block(cpu_jit, IO_ADDR);
+#if ARM920T_NATIVE_BACKEND
+    CHECK(cpu_jit->jit_code_nonram & ARM_JIT_NONRAM_OTHER,
+          "peripheral code translation installs its physical watch");
+#endif
+    run_cache_pair(IO_ADDR, 1u);
+    CHECK(ref_reg(7) == 3u, "peripheral fetch establishes code watch");
+    leaf_calls = leaf_wrong_state = leaf_rebind_rejected = 0;
+    run_cache_pair(CODE_ADDR, 64u);
+    CHECK(leaf_calls == 0u, "new peripheral code watch rejects previously compiled leaf path");
+    CHECK(bus_jit.live_writes == 1u && bus_ref.live_writes == 1u,
+          "watched peripheral store still executes once");
+    run_cache_pair(IO_ADDR, 1u);
+    CHECK(ref_reg(7) == 9u, "modified peripheral instruction is fetched afresh");
+    teardown_pair();
+}
+
 static void case_live_read32(void) {
     const uint32_t va = 0x10007700u;
     const uint32_t masks[] = {0u, 0xfffu, 0x3ffu};
@@ -5410,7 +6451,7 @@ static void case_live_read32(void) {
     };
     for (unsigned k = 0; k < GP32_ARRAY_COUNT(masks); ++k) {
         current_case = k == 0 ? "live-word-MMU-off" : k == 1 ? "live-word-mapped" : "live-word-tiny-page";
-        setup_pair();
+        setup_pair_with_io_certificate(1);
         load_both(program, GP32_ARRAY_COUNT(program));
         uint32_t addr = k ? va : IO_ADDR;
         uint32_t pa = IO_ADDR | (k ? va & masks[k] : 0u);
@@ -5430,7 +6471,7 @@ static void case_live_read32(void) {
         bus_ref.live_pa = bus_jit.live_pa = pa;
         bus_ref.live_value = bus_jit.live_value = 0x12345678u;
         bus_ref.observe_cpu = cpu_ref; bus_jit.observe_cpu = cpu_jit;
-        arm_live_read32_t reads[] = {{pa, &bus_jit.live_value}};
+        arm_live_read32_t reads[] = {{pa, 0u, &bus_jit.live_value}};
         CHECK(arm920t_set_live_read32(cpu_jit, reads, 1), "register live word");
         prepare_native_block(cpu_jit, CODE_ADDR);
         run_cache_pair(CODE_ADDR, 64u);
@@ -5455,13 +6496,39 @@ static void case_live_read32(void) {
         unsigned before = bus_jit.live_reads;
         run_cache_pair(CODE_ADDR, 64u);
         CHECK(bus_jit.live_reads - before == 4u, "disabling invalidates compiled pointers");
-        arm_live_read32_t bad = {pa | 1u, &bus_jit.live_value};
+        arm_live_read32_t bad = {pa | 1u, 0u, &bus_jit.live_value};
         CHECK(!arm920t_set_live_read32(cpu_jit, &bad, 1) &&
               !arm920t_set_live_read32(cpu_jit, NULL, 1), "invalid registration rejected");
         teardown_pair();
     }
 }
 
+
+/* A live certificate describes the callback value. Direct memory retains
+ * precedence, including after mapping changes and the required full flush. */
+static void case_live_read32_mapping(void) {
+    const uint32_t program[] = {0xe5901000u, 0xeafffffeu};
+    for (unsigned certificate = 0; certificate < 2u; ++certificate) {
+        current_case = "live-word-direct-mapping";
+        setup_pair_with_io_certificate(certificate);
+        load_both(program, GP32_ARRAY_COUNT(program));
+        bus_jit.live_pa = bus_ref.live_pa = IO_ADDR;
+        bus_jit.live_value = bus_ref.live_value = 0x87654321u;
+        gp32_st32le(bus_jit.ram, 0x12340000u); gp32_st32le(bus_ref.ram, 0x12340000u);
+        arm_live_read32_t read = {IO_ADDR, 0u, &bus_jit.live_value};
+        CHECK(arm920t_set_live_read32(cpu_jit, &read, 1u), "register mapped live word");
+        for (unsigned phase = 0; phase < 3u; ++phase) {
+            bus_jit.live_mapped = bus_ref.live_mapped = phase == 1u;
+            arm920t_flush_jit(cpu_jit); arm920t_flush_jit(cpu_ref);
+            set_reg_both(0u, IO_ADDR);
+            prepare_native_block(cpu_jit, CODE_ADDR);
+            run_cache_pair(CODE_ADDR, 8u);
+            CHECK(ref_reg(1u) == (phase == 1u ? 0x12340000u : 0x87654321u),
+                  "live word follows direct mapping across flush");
+        }
+        teardown_pair();
+    }
+}
 
 /* A stale physical target must not authorize a live read when its TLB entry
  * is invalid. The ordinary unmapped access returns open bus, not the live
@@ -5485,7 +6552,7 @@ static void case_live_read32_cold_tlb(void) {
     set_reg_both(4u, va);
     bus_ref.live_pa = bus_jit.live_pa = IO_ADDR;
     bus_ref.live_value = bus_jit.live_value = 0x12345678u;
-    arm_live_read32_t reads[] = {{IO_ADDR, &bus_jit.live_value}};
+    arm_live_read32_t reads[] = {{IO_ADDR, 0u, &bus_jit.live_value}};
     CHECK(arm920t_set_live_read32(cpu_jit, reads, 1), "register cold-TLB live word");
     prepare_native_block(cpu_jit, CODE_ADDR);
     run_cache_pair(CODE_ADDR, 32u);
@@ -5508,7 +6575,7 @@ static void case_live_read32_cold_tlb(void) {
  * observe exactly one bus access at the proven physical address with the
  * callback-visible PC+4 and the pre-writeback base, run entirely native, and
  * still leave the block when the callback raises an IRQ. */
-static void case_io_direct_word(void) {
+static void case_io_direct_word_mode(int certificate) {
     const struct { uint32_t insn; unsigned wb; unsigned off; } cases[] = {
         {0xe5942000u, 0u, 0u}, /* LDR r2,[r4] */
         {0xe5b42004u, 1u, 4u}, /* LDR r2,[r4,#4]! */
@@ -5520,6 +6587,7 @@ static void case_io_direct_word(void) {
     };
     const uint32_t va = 0x10008000u;
     const uint32_t masks[] = {0xfffu, 0x3ffu}; /* 4 KiB small page and 1 KiB tiny page */
+    const char *mode = certificate ? "certified" : "generic";
     for (unsigned mmu = 0; mmu < 2u; ++mmu) {
         unsigned variants = mmu ? GP32_ARRAY_COUNT(masks) : 1u;
         for (unsigned v = 0; v < variants; ++v) {
@@ -5531,9 +6599,9 @@ static void case_io_direct_word(void) {
                 const char *shape = load ? (cases[i].wb ? "ldr-wb" : "ldr")
                                          : (cases[i].wb ? "str-wb" : "str");
                 char name[64];
-                snprintf(name, sizeof(name), "io-direct-word-%s-%s", map, shape);
+                snprintf(name, sizeof(name), "io-direct-word-%s-%s-%s", mode, map, shape);
                 current_case = name;
-                setup_pair();
+                setup_pair_with_io_certificate(certificate);
                 arm920t_set_trace(cpu_ref, 1, NULL, NULL); /* instruction-at-a-time oracle */
                 const uint32_t program[] = {cases[i].insn, 0xe3a06001u, 0xeafffffeu};
                 load_both(program, GP32_ARRAY_COUNT(program));
@@ -5576,9 +6644,12 @@ static void case_io_direct_word(void) {
                           "io-direct word path bypasses the access helpers");
                     CHECK(profile.slow_bail_single_nonram == 0u && profile.slow_bail_single_tlbmiss == 0u,
                           "io-direct word path is not attributed as a slow bail");
+                    if (certificate)
+                        CHECK(bus_jit.fastmem_excludes_calls[0] && bus_jit.fastmem_excludes_calls[1],
+                              "io-direct exact IO exclusion certificate consulted");
                 }
-                printf("io-direct %s %s insn=%08" PRIx32 " addr=%08" PRIx32 " wb=%08" PRIx32 " r2=%08" PRIx32 "\n",
-                       map, shape, cases[i].insn, bus_jit.mem_addr,
+                printf("io-direct[%s] %s %s insn=%08" PRIx32 " addr=%08" PRIx32 " wb=%08" PRIx32 " r2=%08" PRIx32 "\n",
+                       mode, map, shape, cases[i].insn, bus_jit.mem_addr,
                        arm920t_get_reg(cpu_jit, 4u), arm920t_get_reg(cpu_jit, 2u));
                 teardown_pair();
             }
@@ -5588,8 +6659,8 @@ static void case_io_direct_word(void) {
         /* A cold TLB entry must keep the checked helper for the same shape,
          * with its pre-access attribution intact. */
         const uint32_t program[] = {0xe5942000u, 0xe3a06001u, 0xeafffffeu};
-        current_case = "io-direct-cold-tlb";
-        setup_pair();
+        current_case = certificate ? "io-direct-cold-tlb-certified" : "io-direct-cold-tlb-generic";
+        setup_pair_with_io_certificate(certificate);
         arm920t_set_trace(cpu_ref, 1, NULL, NULL);
         load_both(program, GP32_ARRAY_COUNT(program));
         arm920t_state_image_t *state = calloc(1, sizeof(*state));
@@ -5613,8 +6684,8 @@ static void case_io_direct_word(void) {
                   "cold TLB keeps the checked slow-reason attribution");
             CHECK(profile.helper_ld_word == 1u, "cold TLB keeps the checked access helper");
         }
-        printf("io-direct cold-tlb addr=%08" PRIx32 " r2=%08" PRIx32 "\n",
-               bus_jit.mem_addr, arm920t_get_reg(cpu_jit, 2u));
+        printf("io-direct[%s] cold-tlb addr=%08" PRIx32 " r2=%08" PRIx32 "\n",
+               mode, bus_jit.mem_addr, arm920t_get_reg(cpu_jit, 2u));
         teardown_pair();
     }
     {
@@ -5625,10 +6696,13 @@ static void case_io_direct_word(void) {
          * mapping instead of a cold entry. */
         const uint32_t insns[] = {0xe5942000u, 0xe5842000u}; /* LDR r2,[r4]; STR r2,[r4] */
         const uint32_t va = 0x10008000u, pa = 0x13000000u;
+        char name_buf[64];
         for (unsigned i = 0; i < GP32_ARRAY_COUNT(insns); ++i) {
             const int load = (insns[i] & (1u << 20)) != 0u;
-            current_case = load ? "io-direct-mapped-nonio-ldr" : "io-direct-mapped-nonio-str";
-            setup_pair();
+            snprintf(name_buf, sizeof(name_buf), "io-direct-mapped-nonio-%s-%s",
+                     mode, load ? "ldr" : "str");
+            current_case = name_buf;
+            setup_pair_with_io_certificate(certificate);
             arm920t_set_trace(cpu_ref, 1, NULL, NULL);
             const uint32_t program[] = {insns[i], 0xe3a06001u, 0xeafffffeu};
             load_both(program, GP32_ARRAY_COUNT(program));
@@ -5659,8 +6733,9 @@ static void case_io_direct_word(void) {
                       profile.single_nonram_regions[pa >> 24] == 1u,
                       "non-IO mapped target keeps the non-RAM attribution");
             }
-            printf("io-direct mapped non-IO %s insn=%08" PRIx32 " addr=%08" PRIx32 " r2=%08" PRIx32 "\n",
-                   load ? "ldr" : "str", insns[i], bus_jit.mem_addr, arm920t_get_reg(cpu_jit, 2u));
+            printf("io-direct[%s] mapped non-IO %s insn=%08" PRIx32 " addr=%08" PRIx32 " r2=%08" PRIx32 "\n",
+                   mode, load ? "ldr" : "str", insns[i], bus_jit.mem_addr,
+                   arm920t_get_reg(cpu_jit, 2u));
             teardown_pair();
         }
     }
@@ -5674,8 +6749,8 @@ static void case_io_direct_word(void) {
             0xe25ef004u, /* SUBS pc,lr,#4: resume after the transfer */
         };
         const uint32_t program[] = {0xe4842004u, 0xe3a06001u, 0xeafffffeu};
-        current_case = "io-direct-irq-write";
-        setup_pair();
+        current_case = certificate ? "io-direct-irq-write-certified" : "io-direct-irq-write-generic";
+        setup_pair_with_io_certificate(certificate);
         arm920t_set_trace(cpu_ref, 1, NULL, NULL);
         load_both(program, GP32_ARRAY_COUNT(program));
         for (unsigned i = 0; i < GP32_ARRAY_COUNT(handler); ++i)
@@ -5706,12 +6781,19 @@ static void case_io_direct_word(void) {
         if (profile.supported && profile.native_backend == 2u) {
             CHECK(profile.helper_st_word == 0u && profile.slow_bail_single_nonram == 0u,
                   "direct IRQ write bypasses the checked helper");
+            if (certificate)
+                CHECK(bus_jit.fastmem_excludes_calls[1] != 0u,
+                      "IRQ continuation fence consulted the write certificate");
         }
-        printf("io-direct irq-write pc=%08" PRIx32 " wb=%08" PRIx32 " captured=%08" PRIx32 "\n",
-               bus_jit.io_pc[0], arm920t_get_reg(cpu_jit, 4u),
+        printf("io-direct[%s] irq-write pc=%08" PRIx32 " wb=%08" PRIx32 " captured=%08" PRIx32 "\n",
+               mode, bus_jit.io_pc[0], arm920t_get_reg(cpu_jit, 4u),
                gp32_ld32le(bus_ptr(&bus_jit, DATA_ADDR, 4u)));
         teardown_pair();
     }
+}
+static void case_io_direct_word(void) {
+    case_io_direct_word_mode(0);
+    case_io_direct_word_mode(1);
 }
 
 /* Compile-time constant folding must preserve intermediate values when a
@@ -5901,7 +6983,188 @@ static void case_ldm_predicate(void) {
     printf("predicated-stop cases=%u\n",cases);
 }
 
+/* BX has no bus access: compare raw/cached/native retirement itself with a
+ * one-op budget, including every predicate/NZCV pair and every source register.
+ * Odd targets preserve bit 1 in Thumb; even targets clear both low bits. */
+static void bx_native_one(unsigned cond, unsigned rm, unsigned low, unsigned flags) {
+    const uint32_t pc = CODE_ADDR + 8u * (cond * 16u + rm);
+    const uint32_t target = CODE_ADDR + 0x4000u + low;
+    for (unsigned r = 0; r < 15u; ++r) set_reg_both(r, 0xabc00000u + r * 0x10101u);
+    arm920t_set_cpsr(cpu_jit, (flags << 28) | 0xd3u);
+    arm920t_set_cpsr(cpu_ref, (flags << 28) | 0xd3u);
+    if (rm < 15u) set_reg_both(rm, target);
+    set_reg_both(15u, pc);
+    CHECK(prepared_native_run(cpu_jit, 1u) == arm920t_run(cpu_ref, 1u), "BX one-op budget");
+    compare_state();
+    if (cond == 14u) {
+        uint32_t operand = rm == 15u ? pc + 8u : target;
+        CHECK(arm920t_get_pc(cpu_ref) == (operand & (operand & 1u ? ~1u : ~3u)),
+              "BX target alignment and PC+8 operand");
+        CHECK(arm920t_get_cpsr(cpu_ref) == ((flags << 28) | 0xd3u | ((operand & 1u) << 5)),
+              "BX changes only the Thumb bit");
+    } else if (cond == 15u) {
+        CHECK(arm920t_get_pc(cpu_ref) == pc + 4u &&
+              arm920t_get_cpsr(cpu_ref) == ((flags << 28) | 0xd3u), "NV BX is never executed");
+    }
+}
+
+static void case_native_bx(void) {
+    unsigned cases = 0;
+    for (unsigned native = 0; native < 2u; ++native) {
+        current_case = native ? "bx-native-retirement" : "bx-cached-retirement";
+        setup_pair();
+        arm920t_set_trace(cpu_ref, 1, NULL, NULL); /* raw ARM decoder */
+        arm920t_set_jit(cpu_jit, (int)native);
+        for (unsigned cond = 0; cond < 16u; ++cond)
+            for (unsigned rm = 0; rm < 16u; ++rm)
+                set_mem_both(CODE_ADDR + 8u * (cond * 16u + rm),
+                             (cond << 28) | 0x012fff10u | rm);
+        arm920t_reset_cpu_profile(cpu_jit);
+        for (unsigned cond = 0; cond < 16u; ++cond)
+            for (unsigned flags = 0; flags < 16u; ++flags) {
+                const unsigned regs[] = {0u, 14u, 15u};
+                bx_native_one(cond, regs[cond % 3u], flags & 3u, flags);
+                ++cases;
+            }
+        for (unsigned rm = 0; rm < 16u; ++rm)
+            for (unsigned low = 0; low < 4u; ++low) {
+                bx_native_one(14u, rm, low, (rm + low) & 15u);
+                ++cases;
+            }
+        gp32_cpu_profile_t p;
+        arm920t_get_cpu_profile(cpu_jit, &p);
+        printf("BX retirement mode=%s cases=320 native_calls=%" PRIu64 " helper_interp=%" PRIu64 "\n",
+               native ? "native" : "cached", p.native_block_calls, p.helper_op_kinds[0]);
+        if (native && p.supported && p.native_backend) {
+            CHECK(p.native_block_calls == 320u && p.native_arm_insns == 320u,
+                  "every BX case executes exactly one native instruction");
+#if defined(ARM_JIT_NATIVE_A64)
+            CHECK(p.helper_op_kinds[0] == 0u, "A64 BX must not call the classified helper");
+#endif
+        }
+        teardown_pair();
+    }
+    printf("BX raw/cached/native retirement cases=%u\n", cases);
+}
+
+static void case_a64_cache_ranking(void) {
+#if defined(ARM_JIT_NATIVE_A64)
+    static const unsigned counts[] = {0u, 1u, 2u, 3u, 7u, 31u, 63u, ARM_JIT_MAX_INSNS};
+    uint32_t seed = 0x981327abu;
+    unsigned cases = 0;
+    current_case = "a64-cache-ranking";
+    for (unsigned n = 0; n < GP32_ARRAY_COUNT(counts); ++n) {
+        unsigned count = counts[n];
+        unsigned prefixes[] = {0u, count ? 1u : 0u, count / 2u, count};
+        for (unsigned pattern = 0; pattern < 4u; ++pattern)
+            for (unsigned p = 0; p < GP32_ARRAY_COUNT(prefixes); ++p) {
+                arm_jit_op_t ops[ARM_JIT_MAX_INSNS];
+                unsigned reads[15] = {0}, loop[15] = {0};
+                uint8_t expected[16] = {0};
+                a64_emit_t e = {0};
+                e.loop_done = prefixes[p];
+                for (unsigned i = 0; i < count; ++i) {
+                    uint32_t mask;
+                    seed ^= seed << 13; seed ^= seed >> 17; seed ^= seed << 5;
+                    if (pattern == 0u) mask = 0x7fffu;
+                    else if (pattern == 1u) mask = 1u | (1u << (i % 15u));
+                    else if (pattern == 2u) mask = 1u | (seed & 0x7fffu);
+                    else mask = 1u | (i < e.loop_done ? 0x4210u : 0x2084u);
+                    /* STM r0,{list}: r0 and every listed register are read
+                     * once. Supply the mask independently of a64_op_reads. */
+                    ops[i] = (arm_jit_op_t){.kind = ARM_JIT_OP_BLOCK_DT,
+                                           .insn = 0xe8800000u | mask};
+                    for (unsigned r = 0; r < 15u; ++r)
+                        if (mask & (1u << r)) {
+                            ++reads[r];
+                            if (i < e.loop_done) ++loop[r];
+                        }
+                }
+                for (unsigned k = 0; k < A64_CACHE_REGS; ++k) {
+                    unsigned best = 15u;
+                    for (unsigned r = 0; r < 15u; ++r)
+                        if (!expected[r] && reads[r] >= 2u &&
+                            (best == 15u || loop[r] > loop[best] ||
+                             (loop[r] == loop[best] && reads[r] > reads[best]))) best = r;
+                    if (best == 15u) break;
+                    expected[best] = a64_cache_pool[k];
+                }
+                a64_pick_cache(&e, ops, count);
+                CHECK(!memcmp(expected, e.cache_host, sizeof(expected)),
+                      "packed register counts changed cache ranking");
+                ++cases;
+            }
+    }
+    printf("A64 cache ranking cases=%u\n", cases);
+#endif
+}
+
+/* First definitions, conditional skips and helper continuations must all
+ * preserve the incoming-value contract of the native register cache. */
+static void case_native_cache_entry(void) {
+    for (unsigned shape = 0; shape < 6u; ++shape)
+    for (unsigned split = 0; split < 2u; ++split) {
+        uint32_t program[] = {
+            0xe3a01037u, /* MOV r1,#55 (replaced below for other entries) */
+            0xe2812001u, 0xe2813002u, 0xe2814003u,
+            0xe58a2000u, 0xe58a3004u, 0xe58a4008u, 0xeafffffeu
+        };
+        uint32_t value = 55u;
+        if (shape == 1u) { program[0] = 0xe2811001u; value = 0x1235u; }
+        if (shape == 2u) { program[0] = 0x13a01037u; value = 0x1234u; } /* skipped MOVNE */
+        if (shape == 3u) { program[0] = 0xe5901000u; value = 0x76543210u; }
+        if (shape == 4u) { program[0] = 0xe5901000u; value = CODE_ADDR + 4u; }
+        if (shape == 5u) { program[0] = 0xe1a01001u; value = 0x1234u; } /* MOV r1,r1 */
+        current_case = "native-cache-entry";
+        setup_pair(); load_both(program, GP32_ARRAY_COUNT(program));
+        set_reg_both(0u, shape == 4u ? IO_ADDR : DATA_ADDR + 0x100u);
+        set_reg_both(1u, 0x1234u); set_reg_both(10u, DATA_ADDR);
+        set_cpsr_both(0x400000d3u);
+        set_mem_both(DATA_ADDR + 0x100u, 0x76543210u);
+        bus_jit.observe_cpu = cpu_jit; bus_ref.observe_cpu = cpu_ref;
+#if defined(ARM_JIT_NATIVE_A64)
+        prepare_native_block(cpu_jit, CODE_ADDR);
+        arm_jit_block_t *block = NULL;
+        unsigned slot = arm_jit_block_index(CODE_ADDR);
+        for (unsigned way = 0; way < ARM_JIT_BLOCK_WAYS; ++way)
+            if (cpu_jit->jit_blocks[slot + way].valid &&
+                cpu_jit->jit_blocks[slot + way].tag_pc == CODE_ADDR)
+                block = &cpu_jit->jit_blocks[slot + way];
+        CHECK(block && block->native, "cache-entry fixture has native code");
+        if (block && block->native) {
+            union { arm_jit_native_fn fn; const uint32_t *words; } code;
+            code.fn = block->native;
+            /* r1 has the most reads and takes w26. r10 follows it. These
+             * checks distinguish omitted entry loads from a portable pass. */
+            uint32_t load_r1 = 0xb9400000u |
+                ((uint32_t)(offsetof(arm920t_t, r) + 4u) / 4u << 10) | (19u << 5) | 26u;
+            int needs_old = shape == 1u || shape == 2u || shape == 5u;
+            CHECK((code.words[A64_BODY_WORDS] == load_r1) == needs_old,
+                  "native entry loads only a live incoming r1");
+        }
+#endif
+        if (split) {
+            for (unsigned budget = 1; budget <= 7u; ++budget) {
+                CHECK(arm920t_run(cpu_jit, budget) == arm920t_run(cpu_ref, budget),
+                      "cache-entry partial budget");
+                compare_state();
+            }
+        } else run_native_case();
+        CHECK(ref_reg(1u) == value && ref_reg(2u) == value + 1u &&
+              ref_reg(3u) == value + 2u && ref_reg(4u) == value + 3u,
+              "cache-entry independent result");
+        CHECK(bus_jit.io_count == bus_ref.io_count &&
+              !memcmp(bus_jit.io_regs, bus_ref.io_regs, sizeof(bus_ref.io_regs)),
+              "cache-entry callback observes architectural registers");
+        teardown_pair();
+    }
+}
+
 int main(int argc, char **argv) {
+    if (argc == 1 || (argc == 2 && !strcmp(argv[1], "--a64-cache-ranking"))) {
+        case_a64_cache_ranking();
+        if (argc == 2) return !!failures;
+    }
     /* Native gate triage can isolate this mapped physical-boundary case
      * without rerunning unrelated differential workloads. */
     int ram_end_only = argc == 2 && !strcmp(argv[1], "--ram-end");
@@ -5922,7 +7185,24 @@ int main(int argc, char **argv) {
     int psr_only = argc == 2 && !strcmp(argv[1], "--psr");
     int terminal_coproc_only = argc == 2 && !strcmp(argv[1], "--terminal-coproc");
     int selfmove_only = argc == 2 && !strcmp(argv[1], "--self-move-nop");
-    if (argc == 2 && !strcmp(argv[1], "--predicate-joins")) {
+    int copy_only = argc == 2 && !strcmp(argv[1], "--copy-loop");
+    if (argc == 2 && !strcmp(argv[1], "--cache-entry")) {
+        case_native_cache_entry();
+        case_native_internal_forward();
+        case_native_forward_callback();
+        case_native_forward_joins();
+        case_native_store_forwarding();
+        case_native_const_data();
+        case_loop_callback_flush();
+        case_byte_pair_loop();
+    } else if (argc == 2 && !strcmp(argv[1], "--leaf-write32")) {
+        case_leaf_write32();
+        case_leaf_write32_code_watch();
+    } else if (argc == 2 && !strcmp(argv[1], "--bx-native")) {
+        case_native_bx();
+        case_bx();
+        case_superblock_callback_lr();
+    } else if (argc == 2 && !strcmp(argv[1], "--predicate-joins")) {
         case_native_predicate_joins();
     } else if (argc == 2 && !strcmp(argv[1], "--internal-forward")) {
         case_native_internal_forward();
@@ -5938,6 +7218,7 @@ int main(int argc, char **argv) {
         case_checked_access_translation();
     } else if (argc == 2 && !strcmp(argv[1], "--promotion-fixtures")) {
         case_live_read32();
+        case_live_read32_mapping();
         case_cache_unchanged();
         case_terminal_swi_yield();
         case_native_ldm_pc();
@@ -5959,10 +7240,16 @@ int main(int argc, char **argv) {
     } else if (argc == 2 && !strcmp(argv[1], "--alu-callback-state")) {
         case_alu_callback_state();
         case_loop_callback_state();
+    } else if (argc == 2 && !strcmp(argv[1], "--alu-regions")) {
+        case_native_alu_regions();
     } else if (argc == 2 && !strcmp(argv[1], "--store-forwarding")) {
         case_native_store_forwarding();
     } else if (argc == 2 && !strcmp(argv[1], "--sflag-logic")) {
         case_native_sflag_logic();
+        case_native_partial_flags();
+        case_native_dead_nz();
+    } else if (argc == 2 && !strcmp(argv[1], "--dead-nz")) {
+        case_native_dead_nz();
     } else if (argc == 2 && !strcmp(argv[1], "--stm-base")) {
         case_stm_base();
     } else if (argc == 2 && !strcmp(argv[1], "--store-pc")) {
@@ -5974,9 +7261,13 @@ int main(int argc, char **argv) {
     } else if (argc == 2 && !strcmp(argv[1], "--const-data")) {
         case_native_const_data();
         case_native_const_chain();
+    } else if (argc == 2 && !strcmp(argv[1], "--literal-addresses")) {
+        case_native_literal_addresses();
+        case_native_literal_remap();
     } else if (argc == 2 && !strcmp(argv[1], "--word-probes")) {
         case_native_read_windows();
         case_live_read32();
+        case_live_read32_mapping();
         case_live_read32_cold_tlb();
         case_io_direct_word();
         case_checked_access_translation();
@@ -5984,6 +7275,7 @@ int main(int argc, char **argv) {
         case_native_read_windows();
     } else if (argc == 2 && !strcmp(argv[1], "--live-read32")) {
         case_live_read32();
+        case_live_read32_mapping();
         case_live_read32_cold_tlb();
         case_io_direct_word();
     } else if (argc == 2 && !strcmp(argv[1], "--ram-page-tags")) {
@@ -6012,6 +7304,14 @@ int main(int argc, char **argv) {
         case_native_carry_arith();
     } else if (selfmove_only) {
         case_native_self_move_noop();
+    } else if (argc == 2 && !strcmp(argv[1], "--packed-word-loop")) {
+        case_packed_word_loop();
+    } else if (argc == 2 && !strcmp(argv[1], "--byte-pair")) {
+        case_byte_pair_loop();
+    } else if (copy_only) {
+        case_copy_loop();
+    } else if (argc == 2 && !strcmp(argv[1], "--xor-loop")) {
+        case_xor_loop();
     } else if (argc == 2 && !strcmp(argv[1], "--psr-blocks")) {
         case_native_psr_continuation();
     } else if (argc == 2 && !strcmp(argv[1], "--cpsr")) {
@@ -6089,7 +7389,10 @@ int main(int argc, char **argv) {
     } else {
     case_ldm_predicate();
     case_native_read_windows();
+    case_leaf_write32();
+    case_leaf_write32_code_watch();
     case_live_read32();
+    case_live_read32_mapping();
     case_live_read32_cold_tlb();
     case_io_direct_word();
     case_terminal_swi_yield();
@@ -6100,6 +7403,7 @@ int main(int argc, char **argv) {
     case_poll_progress();
     case_native_mapped_pages();
     case_native_literal_addresses();
+    case_native_literal_remap();
     case_native_mmu_mode_changes();
     case_native_mapped_ram_end();
     case_cache_unchanged();
@@ -6113,15 +7417,19 @@ int main(int argc, char **argv) {
     case_cache_modified(0);
     case_cache_modified(1);
     case_native_alu_region();
+    case_native_alu_regions();
     case_native_const_data();
     case_native_const_chain();
     case_native_forwarding();
     case_native_store_forwarding();
     case_native_self_move_noop();
+    case_native_cache_entry();
     case_native_immediates();
     case_native_immshift();
     case_native_sflag_logic();
     case_native_condition_flags();
+    case_native_partial_flags();
+    case_native_dead_nz();
     case_native_regshift();
     case_native_carry_arith();
     case_native_longmul_psr();
@@ -6156,8 +7464,13 @@ int main(int argc, char **argv) {
     case_branch_chain();
     case_forward_loop();
     case_bx();
+    case_native_bx();
     case_mem();
     case_half_modes();
+    case_packed_word_loop();
+    case_copy_loop();
+    case_byte_pair_loop();
+    case_xor_loop();
     case_block_modes();
     case_block_pairs();
     case_ldm_pc();
@@ -6189,6 +7502,7 @@ int main(int argc, char **argv) {
         return 1;
     }
     printf("PASS: arm jit differential (%s), jit events=%" PRIu64 " fallbacks=%" PRIu64 "\n",
+           (argc == 2 && !strcmp(argv[1], "--bx-native")) ? "bx-native" :
            (argc == 2 && !strcmp(argv[1], "--ldm-predicate")) ? "ldm-predicate" :
            (argc == 2 && !strcmp(argv[1], "--stm-base")) ? "STM-base" :
            (argc == 2 && !strcmp(argv[1], "--store-pc")) ? "store-PC" :
@@ -6196,6 +7510,8 @@ int main(int argc, char **argv) {
            (argc == 2 && !strcmp(argv[1], "--shift-pc")) ? "register-shift-PC" :
            (argc == 2 && !strcmp(argv[1], "--trace-lr")) ? "trace-lr" :
            (argc == 2 && !strcmp(argv[1], "--alu-callback-state")) ? "alu-callback-state" :
+           (argc == 2 && !strcmp(argv[1], "--alu-regions")) ? "alu-regions" :
+           (argc == 2 && !strcmp(argv[1], "--literal-addresses")) ? "literal-addresses" :
            (argc == 2 && !strcmp(argv[1], "--word-probes")) ? "word-probes" :
            (argc == 2 && !strcmp(argv[1], "--read-windows")) ? "read-windows" :
            (argc == 2 && !strcmp(argv[1], "--ram-page-tags")) ? "ram-page-tags" :
@@ -6205,7 +7521,7 @@ int main(int argc, char **argv) {
            (argc == 2 && !strcmp(argv[1], "--ldm-pc-native")) ? "ldm-pc-native" :
            (argc == 2 && !strcmp(argv[1], "--psr-blocks")) ? "psr-blocks" :
            (argc == 2 && !strcmp(argv[1], "--cpsr")) ? "cpsr" :
-           (argc == 2 && !strcmp(argv[1], "--carry-arith")) ? "carry-arith" : selfmove_only ? "self-move-nop" : psr_only ? "spsr" : poll_only ? "poll-progress" : io_only ? "io-direct" : access_only ? "checked-access" : pairs_only ? "block-pairs/fences" : portable_only ? "portable-callback" : block_only ? "block-callback" : irq_only ? "callback-IRQ" : chain_only ? "branch-chain" : forward_only ? "forward-loop" : callback_only ? "callback-PC" : (leaf_only ? "unframed-leaf" : (ram_end_only ? "mapped-page-RAM-end" : (loops_only ? "loop-fences" : "flags/shift/branch/mem/half/block/mul/seeded/budget/loop-fences"))),
+           (argc == 2 && !strcmp(argv[1], "--carry-arith")) ? "carry-arith" : (argc == 2 && !strcmp(argv[1], "--xor-loop")) ? "xor-loop" : copy_only ? "copy-loop" : selfmove_only ? "self-move-nop" : psr_only ? "spsr" : poll_only ? "poll-progress" : io_only ? "io-direct" : access_only ? "checked-access" : pairs_only ? "block-pairs/fences" : portable_only ? "portable-callback" : block_only ? "block-callback" : irq_only ? "callback-IRQ" : chain_only ? "branch-chain" : forward_only ? "forward-loop" : callback_only ? "callback-PC" : (leaf_only ? "unframed-leaf" : (ram_end_only ? "mapped-page-RAM-end" : (loops_only ? "loop-fences" : "flags/shift/branch/mem/half/block/mul/seeded/budget/loop-fences"))),
            jit_events, jit_fallbacks);
     return 0;
 }
@@ -6230,10 +7546,10 @@ static void prepare_native_block(arm920t_t *c, uint32_t pc) {
         }
         if(!b) b=arm_jit_translate(c,pc);
         if(b && !b->poll_backedge && !b->native) {
-            if(b->native_ok==4u) b->native_ok=0u;
+            if(b->native_ok>=4u) b->native_ok=0u;
             if(arm_jit_lazy_compile(c,b)) {
                 b=arm_jit_translate(c,pc);
-                if(b && b->native_ok==4u) b->native_ok=0u;
+                if(b && b->native_ok>=4u) b->native_ok=0u;
                 if(b) CHECK(!arm_jit_lazy_compile(c,b),"fixture repeated native recycle");
             }
             CHECK(b && b->native,"fixture failed to prepare native code");

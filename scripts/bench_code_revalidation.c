@@ -41,20 +41,32 @@ int main(int argc, char **argv) {
         for (unsigned i = 0; i < count; ++i)
             gp32_st32le(bus_jit.ram + base - RAM_BASE + b * 4096u + i * 4u,
                         i + 1u == count ? 0xe1a0f001u : 0xe2800001u);
-    for (unsigned warm = 0; warm < 2u; ++warm)
+    /* Native promotion observes a backend-dependent number of executions.
+     * Begin timing only when the whole working set is actually native; two
+     * warmups no longer suffice on A64. Bound failed promotion explicitly. */
+    unsigned ready_native_blocks = 0u, warmup_rounds = 0u;
+    do {
         for (unsigned b = 0; b < working; ++b) {
             cpu_jit->r[15] = base + b * 4096u;
             if (arm920t_run(cpu_jit, count) != count || cpu_jit->r[15] != sentinel) return 3;
         }
-    unsigned ready_native_blocks = 0u;
-    for (unsigned i = 0; i < ARM_JIT_BLOCK_COUNT; ++i) {
-        const arm_jit_block_t *b = &cpu_jit->jit_blocks[i];
-        if (b->valid && b->generation == cpu_jit->jit_generation &&
-            b->tag_pc >= base && b->tag_pc < base + working * 4096u &&
-            !((b->tag_pc - base) % 4096u) && b->count == count &&
-            b->native_ok == 1u && b->native) ++ready_native_blocks;
+        ++warmup_rounds;
+        ready_native_blocks = 0u;
+        for (unsigned i = 0; i < ARM_JIT_BLOCK_COUNT; ++i) {
+            const arm_jit_block_t *b = &cpu_jit->jit_blocks[i];
+            if (b->valid && b->generation == cpu_jit->jit_generation &&
+                b->tag_pc >= base && b->tag_pc < base + working * 4096u &&
+                !((b->tag_pc - base) % 4096u) && b->count == count &&
+                b->native_ok == 1u && b->native) ++ready_native_blocks;
+        }
+    } while (warmup_rounds < 256u &&
+             (native ? ready_native_blocks != working : warmup_rounds < 2u));
+    if (native && ready_native_blocks != working) {
+        fprintf(stderr, "native warmup incomplete: %u/%u blocks after %u rounds\n",
+                ready_native_blocks, working, warmup_rounds);
+        teardown_pair();
+        return 4;
     }
-    if (native && ready_native_blocks != working) return 4;
     uint32_t initial_r0 = cpu_jit->r[0], generation = cpu_jit->jit_generation;
     size_t compiled_bytes = cpu_jit->jit_code_used;
     arm920t_reset_cpu_profile(cpu_jit);
@@ -73,11 +85,11 @@ int main(int argc, char **argv) {
     if (native) ok &= cpu_jit->prof.native_arm_insns == retired;
     else ok &= cpu_jit->prof.block_interp_arm_insns == retired;
 #endif
-    printf("mode=%u count=%u working=%u maintenance=%u rounds=%u ns_per_block=%.5f retired=%llu native=%llu compiled=%llu profile=%u icache=%u ready_native_blocks=%u ok=%d\n",
+    printf("mode=%u count=%u working=%u maintenance=%u rounds=%u ns_per_block=%.5f retired=%llu native=%llu compiled=%llu profile=%u icache=%u ready_native_blocks=%u warmup_rounds=%u ok=%d\n",
            native, count, working, maintenance, rounds, (double)elapsed / rounds,
            (unsigned long long)retired, (unsigned long long)cpu_jit->prof.native_arm_insns,
            (unsigned long long)cpu_jit->prof.jit_native_compiled,
-           (unsigned)ARM920T_PROFILING, icache, ready_native_blocks, ok);
+           (unsigned)ARM920T_PROFILING, icache, ready_native_blocks, warmup_rounds, ok);
     teardown_pair();
     return !ok;
 }

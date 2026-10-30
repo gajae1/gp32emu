@@ -4,11 +4,28 @@
  * instruction grouping follow MAME's BSD-licensed ARM7/ARM9 core, but this is
  * a compact rewrite for a headless standalone GP32 target.
  */
+#if defined(__linux__) && defined(__aarch64__) && !defined(_GNU_SOURCE)
+#define _GNU_SOURCE 1 /* mremap for private, unpublished chunk donation */
+#endif
 /* Darwin hides anonymous mmap flags under the build's POSIX feature level. */
 #if defined(__APPLE__) && !defined(_DARWIN_C_SOURCE)
 #define _DARWIN_C_SOURCE 1
 #endif
 #include "arm920t.h"
+#ifndef GP32EMU_ENABLE_THREADS
+#define GP32EMU_ENABLE_THREADS 0
+#endif
+/* Other hosts keep the same compact storage with synchronous allocation. */
+#ifndef ARM_JIT_STORAGE_THREADS
+#if GP32EMU_ENABLE_THREADS && !defined(_WIN32) && !defined(__SWITCH__) && !defined(GP32EMU_WASM)
+#define ARM_JIT_STORAGE_THREADS 1
+#else
+#define ARM_JIT_STORAGE_THREADS 0
+#endif
+#endif
+#if ARM_JIT_STORAGE_THREADS && !defined(_WIN32)
+#include <pthread.h>
+#endif
 
 /* Sandboxed frontends can compile out every executable-memory backend. */
 #ifndef GP32EMU_DISABLE_JIT
@@ -20,6 +37,19 @@
 /* Horizon uses libnx dual mappings; other A64 hosts retain their allocator. */
 #if !GP32EMU_DISABLE_JIT && (defined(__aarch64__) || defined(_M_ARM64)) && !defined(__AARCH64EB__)
 #define ARM_JIT_NATIVE_A64 1
+#endif
+
+#ifndef GP32EMU_JIT_PREPARE_CHUNKS
+#define GP32EMU_JIT_PREPARE_CHUNKS 1
+#endif
+/* The internal gates can be overridden by the isolated OS-adapter test. */
+#ifndef ARM_JIT_CHUNK_PREPARE
+#if GP32EMU_JIT_PREPARE_CHUNKS && ARM_JIT_STORAGE_THREADS && \
+    defined(ARM_JIT_NATIVE_A64) && defined(__linux__) && !defined(__ANDROID__)
+#define ARM_JIT_CHUNK_PREPARE 1
+#else
+#define ARM_JIT_CHUNK_PREPARE 0
+#endif
 #endif
 
 /*
@@ -40,6 +70,14 @@
 #define ARM920T_NATIVE_BACKEND 1u
 #else
 #define ARM920T_NATIVE_BACKEND 0u
+#endif
+/* Ordinary A64 blocks first prove reuse on the decoded path. This avoids
+ * paying the emitter cost for short-lived scene/loader code. Keep the x64
+ * policy unchanged until the longer observation window is measured there. */
+#if defined(ARM_JIT_NATIVE_A64)
+#define ARM_JIT_COLD_PORTABLE_OBSERVATIONS 8u
+#else
+#define ARM_JIT_COLD_PORTABLE_OBSERVATIONS 1u
 #endif
 /* Per-block emit budget for the native backends. The live-read and
  * identity-I/O probes cost about 150 bytes per eligible word access, so the
@@ -249,7 +287,7 @@ _Static_assert(sizeof(arm_jit_op_t) == 20, "packed decoded op footprint");
 
 typedef uint32_t (*arm_jit_native_fn)(arm920t_t *cpu, uint32_t cycles);
 
-/* Revalidation proof of one block slot, parallel to jit_ops: the fetched
+/* Revalidation proof of one block slot: the fetched
  * words in op order and the runs of consecutive fetch addresses, so proving a
  * block reads four bytes per instruction instead of a whole decoded op. */
 #define ARM_JIT_PROOF_SPANS 8u
@@ -261,6 +299,22 @@ typedef struct arm_jit_proof {
     uint32_t words[ARM_JIT_MAX_INSNS];
 } arm_jit_proof_t;
 
+/* Each slot is assigned stable storage on its first translation. Packing
+ * used slots together avoids faulting sparse pages in two maximum-size tables.
+ * Reset/revalidation never relocates operands retained by native helpers. */
+typedef struct arm_jit_storage {
+    arm_jit_op_t ops[ARM_JIT_MAX_INSNS];
+    arm_jit_proof_t proof;
+} arm_jit_storage_t;
+#define ARM_JIT_OP_SLAB_SLOTS (ARM_JIT_BLOCK_COUNT < 32u ? ARM_JIT_BLOCK_COUNT : 32u)
+typedef struct arm_jit_op_slab {
+    struct arm_jit_op_slab *next;
+    unsigned used;
+    arm_jit_storage_t slots[ARM_JIT_OP_SLAB_SLOTS];
+} arm_jit_op_slab_t;
+
+#include "arm920t_storage.inc"
+
 typedef struct arm_jit_block {
     uint32_t tag_pc;
     uint32_t valid;
@@ -270,7 +324,7 @@ typedef struct arm_jit_block {
     uint32_t tag_cache_epoch;
     uint8_t count;
     uint8_t native_ok; /* 0: unattempted; 1: compiled; 2: failed lazy attempt;
-                        * 3: host accelerator; 4: first portable encounter pending. */
+                        * 3: host accelerator; >=4: portable encounters left + 3. */
     uint8_t poll_prefix;
     uint8_t poll_backedge; /* bit 0: backedge; bits 1..4: counted register + 1. */
     uint32_t deferred_inline_pc;
@@ -292,12 +346,16 @@ typedef struct arm_jit_block {
  * skipping is only ever decided by the existing fixed-point proof.
  */
 typedef struct arm_jit_poll_state {
-    uint8_t flags; /* ARM_JIT_POLL_* */
-    uint8_t idle;  /* consecutive portable runs of a plain candidate without a skip */
+    uint8_t flags; /* ARM_JIT_POLL_* and ARM_JIT_PROOF_READY */
+    union {
+        uint8_t idle; /* plain poll: consecutive portable runs without a skip */
+        uint8_t cold_extent; /* non-poll: furthest op reached before promotion */
+    };
 } arm_jit_poll_state_t;
 
 #define ARM_JIT_POLL_NATIVE 0x01u /* promoted: run the native block when available */
 #define ARM_JIT_POLL_LOOPS  0x02u /* a real skip proved a fixed point: keep the portable path */
+#define ARM_JIT_PROOF_READY 0x04u /* compact fetch proof matches this slot's decoded ops */
 /*
  * A fixed-point loop reaches its first skip within two consecutive observed
  * repetitions.  Requiring this many consecutive no-skip portable runs before
@@ -385,8 +443,8 @@ struct arm920t {
     size_t accelerator_count;
     void *accelerator_user;
     arm_jit_block_t *jit_blocks;
-    arm_jit_op_t (*jit_ops)[ARM_JIT_MAX_INSNS];
-    arm_jit_proof_t *jit_proof; /* parallel to jit_blocks */
+    arm_jit_storage_t **jit_data;
+    arm_jit_op_slab_t *jit_op_slabs;
     uint8_t *jit_code;
     uint8_t *jit_ram_base;
     uint8_t *jit_bios_base;
@@ -471,6 +529,22 @@ struct arm920t {
      * each other, so ordinary GP32 MMIO/data writes retain the RAM policy.
      * Runtime-only; cleared with a full generation, not a sampling reset. */
     uint8_t jit_code_nonram;
+    arm_jit_storage_worker_t *jit_storage_worker;
+    int jit_storage_started;
+    const arm_leaf_write32_t *leaf_write32;
+    size_t leaf_write32_count;
+#if defined(ARM_JIT_NATIVE_A64)
+    /* Runtime-only encodings of immutable host helper addresses, never guest
+     * code or serialized state. Existing hot offsets stay unchanged. */
+    uint32_t jit_helper_code[10][6];
+    int jit_helpers_ready;
+#endif
+#if ARM_JIT_CHUNK_PREPARE
+    /* Arena-lifetime high-water marks, never cleared by guest invalidation.
+     * Appended so existing native helper offsets do not move. */
+    size_t jit_code_opened, jit_chunk_requested;
+    int jit_chunk_disabled, jit_code_unusable;
+#endif
 };
 _Static_assert(offsetof(arm920t_t, jit_cache_epoch) == offsetof(arm920t_t, jit_generation) + 4u &&
                offsetof(arm_jit_block_t, tag_cache_epoch) == offsetof(arm_jit_block_t, generation) + 4u,
@@ -480,10 +554,14 @@ _Static_assert(offsetof(arm_jit_block_t, count) == 16u && offsetof(arm_jit_block
                offsetof(arm_jit_block_t, deferred_inline_pc) == 20u,
                "dispatcher reads the block's fast-path metadata as one 64-bit word");
 
-/* Native dispatch only needs the compact header. Decoded instructions live
- * in a separate stable allocation so C helpers can retain their addresses. */
+#if ARM_JIT_CHUNK_PREPARE
+#include "arm920t_chunks.inc"
+#endif
+
+/* Native dispatch only needs the compact header. Slot storage stays at its
+ * original address so C helpers can retain decoded instruction pointers. */
 ARM_FORCE_INLINE arm_jit_op_t *arm_jit_ops(const arm920t_t *c, const arm_jit_block_t *b) {
-    return c->jit_ops[b - c->jit_blocks];
+    return c->jit_data[b - c->jit_blocks]->ops;
 }
 
 static uint32_t mode(const arm920t_t *c) { return c->cpsr & MODE_MASK; }
@@ -565,7 +643,7 @@ static void set_cpsr_full(arm920t_t *c, uint32_t value) {
 ARM_FORCE_INLINE uint8_t *fastmem(arm920t_t *c, uint32_t a, size_t bytes, int write) {
     return c->bus.fastmem ? c->bus.fastmem(c->bus.user, a, bytes, write) : NULL;
 }
-ARM_FORCE_INLINE int fastmem_excludes(arm920t_t *c, uint32_t a, size_t bytes, int write) {
+ARM_FORCE_INLINE int fastmem_excludes(const arm920t_t *c, uint32_t a, size_t bytes, int write) {
     return !c->bus.fastmem || (c->bus.fastmem_excludes &&
            c->bus.fastmem_excludes(c->bus.user, a, bytes, write));
 }
@@ -1167,9 +1245,11 @@ static void arm_jit_flush_exec(void *ptr, size_t bytes) {
      * API and MAP_JIT allocation policy remain separately gated above. */
     sys_icache_invalidate(ptr, bytes);
 #elif defined(ARM_JIT_NATIVE_A64)
-    /* Hand-rolled A64 maintenance. The linked __clear_cache (Zig 0.13
-     * compiler-rt and comparable bare implementations) strides by the running
-     * core's own CTR_EL0 line size and omits the completion DSB after IC IVAU.
+    /* Explicit A64 maintenance for toolchain-independent publication. The
+     * Zig 0.13 compiler-rt used by our cross-build omitted the completion DSB
+     * after IC IVAU; current upstream compiler-rt includes it. Both obtain
+     * line sizes from CTR_EL0, so changing toolchains alone does not replace
+     * the conservative stride used here.
      * On big.LITTLE parts different cores report different line sizes, so a
      * range written by one core can leave lines the invalidating core never
      * touches; either hazard yields stale instruction fetches. Stride by the
@@ -1214,10 +1294,15 @@ void arm920t_destroy(arm920t_t *c) {
 #if defined(ARM_JIT_NATIVE_X64) || defined(ARM_JIT_NATIVE_A64)
     arm_jit_free_exec(c, c->jit_code, c->jit_code_size);
 #endif
+    arm_jit_storage_stop(c->jit_storage_worker);
     free(c->jit_blocks);
-    free(c->jit_ops);
+    while (c->jit_op_slabs) {
+        arm_jit_op_slab_t *next = c->jit_op_slabs->next;
+        free(c->jit_op_slabs);
+        c->jit_op_slabs = next;
+    }
+    free(c->jit_data);
     free(c->jit_poll);
-    free(c->jit_proof);
     free(c);
 }
 void arm920t_set_trace(arm920t_t *c, int en, arm_log_fn log, void *user) { if (c) { c->trace = en; c->log = log; c->log_user = user; } }
@@ -1339,6 +1424,17 @@ void arm920t_invalidate_icache_range(arm920t_t *c, uint32_t addr, uint32_t len) 
     }
 invalidate:
     arm920t_jit_invalidate_all(c, ARM_JIT_INV_CP15_CACHE);
+}
+int arm920t_set_leaf_write32(arm920t_t *c, const arm_leaf_write32_t *writes, size_t count) {
+    if (!c || c->running || (!writes && count)) return 0;
+    for (size_t i = 0; i < count; ++i) {
+        if ((writes[i].pa & 3u) || !writes[i].write) return 0;
+        for (size_t j = 0; j < i; ++j) if (writes[i].pa == writes[j].pa) return 0;
+    }
+    arm920t_jit_invalidate_all(c, ARM_JIT_INV_API_FLUSH);
+    c->leaf_write32 = writes;
+    c->leaf_write32_count = count;
+    return 1;
 }
 int arm920t_set_live_read32(arm920t_t *c, const arm_live_read32_t *reads, size_t count) {
     if (!c || c->running || (!reads && count)) return 0;
@@ -2030,11 +2126,84 @@ ARM_FORCE_INLINE int arm_jit_peek_fetch(arm920t_t *c, uint32_t pc, uint32_t *ins
         uint32_t mask;
         if (!arm_jit_peek_translate(c, pc, &pa, &mask)) return 0;
     }
-    const uint8_t *p = fastmem(c, pa, 4u, 0);
+    /* These bases certify the whole physical window, just as for decoded
+     * loads. Partial/callback-backed mappings still need the exact probe. */
+    uint32_t off = pa - ARM_JIT_RAM_BASE_ADDR;
+    const uint8_t *p;
+    if (c->jit_ram_base && off <= ARM_JIT_RAM_SIZE_BYTES - 4u)
+        p = c->jit_ram_base + off;
+    else if (c->jit_bios_base && pa <= ARM_JIT_BIOS_SIZE_BYTES - 4u)
+        p = c->jit_bios_base + pa;
+    else p = fastmem(c, pa, 4u, 0);
     if (!p) return 0;
     *insn = gp32_ld32le(p);
     arm_jit_track_code(c, pa, 4u);
     return 1;
+}
+
+/* A collection owns this proof only until it returns. Every speculative
+ * helper shares it; an ordinary fetch or guest execution must not occur while
+ * it is live. Misses discard it before calling an untrusted bus mapping hook.
+ * No instruction or cached decode is retained: each hit reads the live word
+ * and records the same physical code watches as an individual peek. */
+typedef struct arm_jit_collect_fetch {
+    uint32_t key, generation;
+    uint64_t mutation;
+    const uint8_t *base;
+    uint32_t *watches; /* eight words for this aligned 1 KiB RAM subpage */
+} arm_jit_collect_fetch_t;
+_Static_assert(ARM_JIT_CODE_PAGE_SHIFT >= 10u && ARM_JIT_CODE_WATCH_SHIFT == 2u,
+               "collection subpage fits one code page and uses word watches");
+
+static ARM_NOINLINE int arm_jit_collect_peek_miss(arm920t_t *c,
+        arm_jit_collect_fetch_t *fetch, uint32_t pc, uint32_t *insn) {
+    fetch->key = UINT32_MAX;
+    if (pc & 3u) return 0;
+    uint32_t pa = pc;
+    if (c->cp15[1] & 1u) {
+        const arm_tlb_entry_t *e = &c->itlb_entry[arm_itlb_index(pc)];
+        if (!e->valid || (pc & ~e->mask) != e->va_base) return 0;
+        uint32_t mask = e->mask;
+        /* A canonical mapping covers this 1 KiB lookup subpage linearly.
+         * Retain exact OR-based semantics for unusual restored masks/bases. */
+        if ((mask != 0x3ffu && mask != 0xfffu && mask != 0xffffu && mask != 0xfffffu) ||
+            (e->pa_base & mask)) return arm_jit_peek_fetch(c, pc, insn);
+        pa = e->pa_base | (pc & mask);
+    }
+    uint32_t page_pa = pa & ~0x3ffu;
+    uint32_t off = page_pa - ARM_JIT_RAM_BASE_ADDR;
+    const uint8_t *p;
+    if (c->jit_ram_base && off <= ARM_JIT_RAM_SIZE_BYTES - 0x400u)
+        p = c->jit_ram_base + off;
+    else if (c->jit_bios_base && page_pa <= ARM_JIT_BIOS_SIZE_BYTES - 0x400u)
+        p = c->jit_bios_base + page_pa;
+    else return arm_jit_peek_fetch(c, pc, insn);
+    fetch->base = p;
+    fetch->watches = off < ARM_JIT_RAM_SIZE_BYTES ?
+        &c->jit_code_watches[off >> (ARM_JIT_CODE_WATCH_SHIFT + 5u)] : NULL;
+    fetch->generation = c->jit_generation;
+    fetch->mutation = c->tlb_mutation_serial;
+    fetch->key = (pc >> 10) | ((c->cp15[1] & 1u) << 22);
+    *insn = gp32_ld32le(p + (pc & 0x3ffu));
+    arm_jit_track_code(c, pa, 4u);
+    return 1;
+}
+
+ARM_FORCE_INLINE int arm_jit_collect_peek(arm920t_t *c,
+        arm_jit_collect_fetch_t *fetch, uint32_t pc, uint32_t *insn) {
+    uint32_t key = (pc >> 10) | ((c->cp15[1] & 1u) << 22);
+    if (!(pc & 3u) && fetch->key == key && fetch->generation == c->jit_generation &&
+        fetch->mutation == c->tlb_mutation_serial) {
+        uint32_t offset = pc & 0x3ffu;
+        *insn = gp32_ld32le(fetch->base + offset);
+        /* The miss already recorded this physical page/BIOS region.
+         * Only a new word watch is needed; a flush changes generation and
+         * rebuilds all tracking through the miss path before another hit. */
+        if (fetch->watches)
+            fetch->watches[offset >> 7] |= 1u << ((offset >> 2) & 31u);
+        return 1;
+    }
+    return arm_jit_collect_peek_miss(c, fetch, pc, insn);
 }
 
 /* Prove len consecutive fetches from pc against want (or the decoded ops when
@@ -2080,9 +2249,19 @@ static int arm_jit_prove_run(arm920t_t *c, uint32_t pc, unsigned len,
  * A missing mapping is unprovable, even if identity memory happens to match.
  * Games that invalidate the I-cache every frame revalidate every block they
  * run once per frame, so the slot's compact proof is read when it exists. */
+static void arm_jit_proof_build(arm_jit_proof_t *pf, const arm_jit_op_t *ops, unsigned count);
 static int arm_jit_fetch_unchanged(arm920t_t *c, const arm_jit_block_t *b) {
     if (!b->count || b->count > ARM_JIT_MAX_INSNS) return 0;
-    const arm_jit_proof_t *pf = &c->jit_proof[b - c->jit_blocks];
+    arm_jit_proof_t *pf = &c->jit_data[b - c->jit_blocks]->proof;
+    arm_jit_poll_state_t *ps = &c->jit_poll[b - c->jit_blocks];
+    if (!(ps->flags & ARM_JIT_PROOF_READY)) {
+        /* Build from the recorded decode, never from current guest memory.
+         * Blocks that never need revalidation avoid touching this cold table.
+         * Reusing a block slot clears these flags before publishing its decode.
+         * Keep valid == 1: the A64 link stub compares it with the PC as a pair. */
+        arm_jit_proof_build(pf, arm_jit_ops(c, b), b->count);
+        ps->flags |= ARM_JIT_PROOF_READY;
+    }
     /* Fetching an earlier page would evict a later page's cached mapping.
      * Independent side-effect-free peeks cannot reproduce that sequence:
      * after a table edit they could accept stale words from the later TLB
@@ -2298,6 +2477,25 @@ ARM_JIT_NATIVE_ONLY static int arm_jit_is_side_effect_free_nop(uint32_t insn) {
 }
 
 static arm_jit_kind_t arm_jit_classify(uint32_t insn) {
+    /* Classes 010..111 do not overlap the ARMv4T control/multiply space.
+     * Only register-offset transfers and NV branches have undefined forms
+     * here; avoid decoding the unrelated extension masks for each fetch. */
+    switch ((insn >> 25) & 7u) {
+    case 2: return ARM_JIT_OP_SINGLE_DT;
+    case 3: return (insn & 0x10u) ? ARM_JIT_OP_UNDEFINED : ARM_JIT_OP_SINGLE_DT;
+    case 4: return ARM_JIT_OP_BLOCK_DT;
+    case 5: return (insn >> 28) == 15u ? ARM_JIT_OP_UNDEFINED : ARM_JIT_OP_BRANCH;
+    case 6: return ARM_JIT_OP_COPROC;
+    case 7: return (insn & 0x01000000u) ? ARM_JIT_OP_SWI : ARM_JIT_OP_COPROC;
+    default:
+        /* Only classes 000/001 reach here. Ordinary data processing is
+         * outside both the control-extension slot and multiply/halfword
+         * slot; keep every reserved form on the exact classifier below. */
+        if ((insn & 0x01900000u) != 0x01000000u &&
+            (insn & 0x02000090u) != 0x00000090u)
+            return ARM_JIT_OP_DATA;
+        break;
+    }
     if (arm920t_armv4t_invalid_arm_insn(insn)) return ARM_JIT_OP_UNDEFINED;
     if ((insn & 0x0ffffff0u) == 0x012fff10u) return ARM_JIT_OP_INTERP;
     if ((insn & 0x0fc000f0u) == 0x00000090u || (insn & 0x0f8000f0u) == 0x00800090u) return ARM_JIT_OP_MUL;
@@ -2446,22 +2644,42 @@ static int arm_jit_op_may_write_lr(const arm_jit_op_t *op) {
     }
 }
 
+static int arm_jit_alloc_ops(arm920t_t *c, arm_jit_block_t *b) {
+    size_t slot = (size_t)(b - c->jit_blocks);
+    if (c->jit_data[slot]) return 1;
+    arm_jit_op_slab_t *slab = c->jit_op_slabs;
+    /* Give the producer the remaining half of the first slab as lead time.
+     * Tiny block sets still need no worker, and startup failure is remembered.
+     * This only runs for new slots; execution and reused slots do not poll it. */
+    if (slab && !c->jit_storage_started &&
+        slab->used >= ARM_JIT_OP_SLAB_SLOTS / 2u) {
+        c->jit_storage_started = 1;
+        c->jit_storage_worker = arm_jit_storage_start();
+    }
+    if (!slab || slab->used == ARM_JIT_OP_SLAB_SLOTS) {
+        slab = arm_jit_storage_take(c->jit_storage_worker);
+        if (!slab) return 0;
+        slab->next = c->jit_op_slabs;
+        slab->used = 0;
+        c->jit_op_slabs = slab;
+    }
+    c->jit_data[slot] = &slab->slots[slab->used++];
+    return 1;
+}
+
 static int arm_jit_alloc(arm920t_t *c) {
     if (c->jit_blocks) return 1;
     c->jit_blocks = (arm_jit_block_t *)calloc(ARM_JIT_BLOCK_COUNT, sizeof(c->jit_blocks[0]));
     if (!c->jit_blocks) return 0;
-    c->jit_ops = calloc(ARM_JIT_BLOCK_COUNT, sizeof(c->jit_ops[0]));
+    c->jit_data = calloc(ARM_JIT_BLOCK_COUNT, sizeof(c->jit_data[0]));
     c->jit_poll = (arm_jit_poll_state_t *)calloc(ARM_JIT_BLOCK_COUNT, sizeof(c->jit_poll[0]));
-    c->jit_proof = (arm_jit_proof_t *)calloc(ARM_JIT_BLOCK_COUNT, sizeof(c->jit_proof[0]));
-    if (!c->jit_ops || !c->jit_poll || !c->jit_proof) {
+    if (!c->jit_data || !c->jit_poll) {
         free(c->jit_blocks);
-        free(c->jit_ops);
+        free(c->jit_data);
         free(c->jit_poll);
-        free(c->jit_proof);
         c->jit_blocks = NULL;
-        c->jit_ops = NULL;
+        c->jit_data = NULL;
         c->jit_poll = NULL;
-        c->jit_proof = NULL;
         return 0;
     }
     return 1;
@@ -2489,7 +2707,7 @@ static void arm_jit_compile_native(arm920t_t *c, arm_jit_block_t *b);
  * must check a loaded return against the decoded successor. Translation
  * peeks only mapped code, never speculative MMIO, and each callee stays on
  * its own fetch page. A failed collection publishes no partial trace. */
-static unsigned arm_jit_collect_framed(arm920t_t *c, uint32_t pc,
+static unsigned arm_jit_collect_framed(arm920t_t *c, arm_jit_collect_fetch_t *fetch, uint32_t pc,
                                       arm_jit_op_t *out, unsigned capacity,
                                       unsigned depth) {
     unsigned count = 0;
@@ -2498,7 +2716,7 @@ static unsigned arm_jit_collect_framed(arm920t_t *c, uint32_t pc,
     for (unsigned i = 0; i < (depth ? 8u : 16u); ++i) {
         uint32_t cur = pc + i * 4u, insn;
         if (count == capacity || ((cur ^ pc) & ~ARM_JIT_PAGE_MASK) ||
-            !arm_jit_peek_fetch(c, cur, &insn)) return 0;
+            !arm_jit_collect_peek(c, fetch, cur, &insn)) return 0;
         if (!i && !arm_jit_is_leaf_push_lr(insn)) return 0;
         arm_jit_op_t *op = &out[count++];
         *op = (arm_jit_op_t){.pc = cur, .insn = insn,
@@ -2513,7 +2731,7 @@ static unsigned arm_jit_collect_framed(arm920t_t *c, uint32_t pc,
             return count;
         }
         if (!depth && out[0].insn == 0xe52de004u && arm_jit_is_uncond_bl(insn)) {
-            unsigned nested = arm_jit_collect_framed(c,
+            unsigned nested = arm_jit_collect_framed(c, fetch,
                 arm_jit_branch_target(cur, insn), out + count, capacity - count, 1u);
             if (!nested) return 0;
             op->stop = 0;
@@ -2537,7 +2755,7 @@ static unsigned arm_jit_collect_framed(arm920t_t *c, uint32_t pc,
  * Keep plain loops on their existing path; joining them can create costly
  * portable polling candidates where native execution was already effective.
  * Speculative inspection must neither touch MMIO nor populate a mapping. */
-static int arm_jit_forward_loop(arm920t_t *c, uint32_t entry,
+static int arm_jit_forward_loop(arm920t_t *c, arm_jit_collect_fetch_t *fetch, uint32_t entry,
                                 uint32_t pc, uint32_t insn) {
     if ((insn >> 28) >= 14u || (insn & 0x0f000000u) != 0x0a000000u) return 0;
     uint32_t target = arm_jit_branch_target(pc, insn);
@@ -2547,7 +2765,7 @@ static int arm_jit_forward_loop(arm920t_t *c, uint32_t entry,
     for (unsigned i = 0; i < 8u; ++i) {
         uint32_t cur = target + i * 4u, next;
         if (((cur ^ entry) & ~ARM_JIT_PAGE_MASK) ||
-            !arm_jit_peek_fetch(c, cur, &next)) break;
+            !arm_jit_collect_peek(c, fetch, cur, &next)) break;
         if ((next & 0x0f000000u) == 0x0a000000u) {
             return call && (next >> 28) != 15u &&
                    arm_jit_branch_target(cur, next) == entry;
@@ -2663,6 +2881,25 @@ static int arm_jit_needs_poll(arm920t_t *c, arm_jit_block_t *b) {
            !arm_jit_poll_has_progress(c, b);
 }
 
+/* Only an entry-prefix indirect call asks for a target hint. Keep its
+ * RAM/mapping/eligibility work off the ordinary collector path. This does
+ * not replace the guest load or its loaded-PC continuation guard. */
+static ARM_NOINLINE uint32_t arm_jit_indirect_hint(arm920t_t *c,
+        arm_jit_collect_fetch_t *fetch, arm_jit_block_t *b, const arm_jit_op_t *op) {
+    const uint32_t insn = op->insn;
+    if ((insn & 0xff70f000u) != 0xe510f000u || op->a >= 14u) return 0;
+    uint32_t base = c->r[op->a];
+    uint32_t addr = (insn & (1u << 23)) ? base + op->imm : base - op->imm;
+    const uint8_t *hint = !(addr & 3u) ? arm920t_peek_identity_ram(c, addr, 4u, 0) : NULL;
+    uint32_t target = hint ? gp32_ld32le(hint) & ~3u : 0u, first;
+    if (!target || arm_accel_entry(c, target)) return 0;
+    if (!arm_jit_collect_peek(c, fetch, target, &first)) {
+        b->deferred_inline_pc = target;
+        return 0;
+    }
+    return target;
+}
+
 /* Keep translation (including the native emitter's large scratch buffer) out
  * of the dispatch loop. Inlining it inflates the hot frame and register spills
  * even when every block lookup hits already compiled code. */
@@ -2689,6 +2926,10 @@ static ARM_NOINLINE arm_jit_block_t *arm_jit_translate(arm920t_t *c, uint32_t pc
         else c->prof.jit_block_conflicts++;
 #endif
     }
+    if (!arm_jit_alloc_ops(c, b)) {
+        ARM_PROF_INC(c, jit_translate_failures);
+        return NULL;
+    }
     b->valid = 0;
     b->tag_pc = pc;
     b->tag_cache_epoch = c->jit_cache_epoch;
@@ -2702,6 +2943,7 @@ static ARM_NOINLINE arm_jit_block_t *arm_jit_translate(arm920t_t *c, uint32_t pc
     c->profile_native_variable_count[b - c->jit_blocks] = 0u;
     c->profile_exit_seen[b - c->jit_blocks] = 0u;
 #endif
+    arm_jit_collect_fetch_t fetch = {.key = UINT32_MAX};
     uint32_t cur = pc & ~3u;
     /* Superblock trace extension: an unconditional BL the leaf collectors
      * above cannot flatten still continues this trace inside its callee, and
@@ -2725,7 +2967,7 @@ static ARM_NOINLINE arm_jit_block_t *arm_jit_translate(arm920t_t *c, uint32_t pc
              * re-proves every recorded fetch through the live mapping, so a
              * loop that straddles a page boundary stays one block and keeps
              * its in-place backedge instead of two dispatches per pass. */
-            if (!arm_jit_peek_fetch(c, cur, &insn)) break;
+            if (!arm_jit_collect_peek(c, &fetch, cur, &insn)) break;
             page_anchor = cur;
         } else if (!i) {
             /* Dispatch proved this first word directly readable. Every
@@ -2733,13 +2975,11 @@ static ARM_NOINLINE arm_jit_block_t *arm_jit_translate(arm920t_t *c, uint32_t pc
              * callback belongs to its own instruction, even with MMU off. */
             insn = arm_jit_fetch_word(c, cur);
             if (c->jit_generation != collecting_generation) return NULL;
-        } else if (!arm_jit_peek_fetch(c, cur, &insn)) break;
+        } else if (!arm_jit_collect_peek(c, &fetch, cur, &insn)) break;
         arm_jit_op_t *op = &arm_jit_ops(c, b)[i];
-        op->pc = cur;
-        op->insn = insn;
-        op->cond = (uint8_t)(insn >> 28);
-        op->kind = (uint8_t)arm_jit_classify(insn);
-        op->stop = (uint8_t)arm_jit_may_write_pc(insn);
+        *op = (arm_jit_op_t){.pc = cur, .insn = insn,
+            .cond = (uint8_t)(insn >> 28), .kind = (uint8_t)arm_jit_classify(insn),
+            .stop = (uint8_t)arm_jit_may_write_pc(insn)};
         op->reserved = (op->kind == ARM_JIT_OP_COPROC && arm_jit_is_local_cp15_op(insn)) ? 6u : 0u;
         arm_bc_decode_op(op);
         b->count = (uint8_t)(i + 1u);
@@ -2755,11 +2995,11 @@ static ARM_NOINLINE arm_jit_block_t *arm_jit_translate(arm920t_t *c, uint32_t pc
             /* If the live TLB cannot prove a callee fetch, keep the ordinary
              * call. Execution may supply a mapping that allows a later
              * side-effect-free collection. */
-            if (!arm_jit_peek_fetch(c, tpc, &first) && tpc)
+            if (!arm_jit_collect_peek(c, &fetch, tpc, &first) && tpc)
                 b->deferred_inline_pc = tpc;
             if (arm_jit_is_leaf_push_lr(first)) {
                 arm_jit_op_t leaf[32];
-                unsigned nleaf = arm_jit_collect_framed(c, tpc, leaf,
+                unsigned nleaf = arm_jit_collect_framed(c, &fetch, tpc, leaf,
                     GP32_ARRAY_COUNT(leaf), 0u);
                 if (arm_accel_in_span(c, leaf, nleaf)) nleaf = 0;
                 if (nleaf && i + nleaf < ARM_JIT_MAX_INSNS) {
@@ -2780,7 +3020,7 @@ static ARM_NOINLINE arm_jit_block_t *arm_jit_translate(arm920t_t *c, uint32_t pc
                     uint32_t cpc = tpc + (uint32_t)nleaf * 4u;
                     if (arm_accel_entry(c, cpc)) break;
                     if (((cpc ^ tpc) & ~ARM_JIT_PAGE_MASK) ||
-                        !arm_jit_peek_fetch(c, cpc, &leaf[nleaf])) break;
+                        !arm_jit_collect_peek(c, &fetch, cpc, &leaf[nleaf])) break;
                     if (leaf[nleaf] == 0xe1a0f00eu || leaf[nleaf] == 0xe12fff1eu) {
                         ok = 1; ++nleaf; break; /* unconditional MOV pc,lr / BX lr */
                     }
@@ -2809,6 +3049,26 @@ static ARM_NOINLINE arm_jit_block_t *arm_jit_translate(arm920t_t *c, uint32_t pc
             }
         }
 
+        /* The leading MOV writes only LR. Rn excludes LR/PC, so the hint
+         * uses the same base that the real LDR will see. It remains merely
+         * a hint: the existing loaded-PC guard leaves at any actual mismatch. */
+        if (i == 1u && arm_jit_ops(c, b)[0].insn == 0xe1a0e00fu &&
+            arm_jit_ops(c, b)[0].pc + 4u == cur) {
+            uint32_t target = arm_jit_indirect_hint(c, &fetch, b, op);
+            if (target) {
+                op->stop = 0;
+                op->reserved = 3u; /* real loaded-PC guard, also used by returns */
+                trace_extended = 1u;
+                trace_resume[0] = cur + 4u;
+                trace_anchor[0] = page_anchor;
+                trace_lr[0] = 1u;
+                trace_depth = 1u;
+                page_anchor = target;
+                cur = target;
+                continue;
+            }
+        }
+
         /* Superblock trace extension. The ordinary rules above already stop at
          * every unsupported shape, so an unflattened callee body is decoded
          * exactly like top-level code: conditional branches remain side exits
@@ -2824,7 +3084,7 @@ static ARM_NOINLINE arm_jit_block_t *arm_jit_translate(arm920t_t *c, uint32_t pc
             uint32_t tpc = arm_jit_branch_target(cur, insn);
             uint32_t first;
             if (i + 1u < ARM_JIT_TRACE_MAX_INSNS && tpc && !arm_accel_entry(c, tpc) &&
-                arm_jit_peek_fetch(c, tpc, &first)) {
+                arm_jit_collect_peek(c, &fetch, tpc, &first)) {
                 op->stop = 0;
                 op->reserved = 2u; /* real BL link, then the callee body */
                 trace_extended = 1u;
@@ -2874,7 +3134,7 @@ static ARM_NOINLINE arm_jit_block_t *arm_jit_translate(arm920t_t *c, uint32_t pc
             for (uint8_t k = 0; k < trace_depth; ++k) trace_lr[k] = 0u;
         }
 
-        if (i + 1u < ARM_JIT_MAX_INSNS && arm_jit_forward_loop(c, pc, cur, insn) &&
+        if (i + 1u < ARM_JIT_MAX_INSNS && arm_jit_forward_loop(c, &fetch, pc, cur, insn) &&
             !arm_accel_entry(c, arm_jit_branch_target(cur, insn))) {
             uint32_t target = arm_jit_branch_target(cur, insn);
             int seen = 0;
@@ -2947,7 +3207,6 @@ static ARM_NOINLINE arm_jit_block_t *arm_jit_translate(arm920t_t *c, uint32_t pc
      * recorded for whatever block previously occupied this slot. */
     c->jit_poll[b - c->jit_blocks].flags = 0;
     c->jit_poll[b - c->jit_blocks].idle = 0;
-    arm_jit_proof_build(&c->jit_proof[b - c->jit_blocks], arm_jit_ops(c, b), b->count);
     /* With the MMU off every fetch address is physical, so record its page.
      * Code above the RAM window (an alias) cannot be matched to a RAM page. */
     if (c->cp15[1] & 1u) {
@@ -2975,13 +3234,13 @@ static ARM_NOINLINE arm_jit_block_t *arm_jit_translate(arm920t_t *c, uint32_t pc
     ARM_PROF_INC(c, jit_blocks_compiled);
     /* Counted candidates first observe real portable reads. Do not allocate
      * unused native code for stable loops; rejected observations may compile
-     * once later at dispatch. Ordinary blocks execute once portably before
+     * once later at dispatch. Ordinary blocks first execute portably before
      * spending host time and executable memory on native compilation. */
     if (c->jit_enabled && !(b->poll_backedge >> 1) && !arm_jit_needs_poll(c, b)) {
         if (ARM920T_NATIVE_BACKEND && !b->poll_backedge && !arm_accel_entry(c, b->tag_pc)) {
-            /* First encounter executes existing portable code. A later ordinary
+            /* Cold encounters execute existing portable code. A later ordinary
              * dispatch may compile once; poll and accelerator policy is unchanged. */
-            b->native_ok = 4u;
+            b->native_ok = 3u + ARM_JIT_COLD_PORTABLE_OBSERVATIONS;
         } else {
             arm_jit_compile_native(c, b);
 #if ARM920T_PROFILING && ARM920T_NATIVE_BACKEND
@@ -3618,6 +3877,7 @@ struct x64_cold_op;
 
 typedef struct x64_emit {
     uint8_t *b;
+    const arm920t_t *cpu;
     size_t cap;
     size_t pos;
     int fail, mmu, ram_read, ram_write, check_code_writes;
@@ -4619,6 +4879,10 @@ static void x64_emit_live_read32(x64_emit_t *e, unsigned rd, x64_dt_fixup_t *fx)
         x64_alu_r32_imm(e, 4, X64_EDX, ~3u);
     } else x64_mov_r32_r32(e, X64_EDX, X64_R10D);
     for (size_t i = 0; i < e->live_read32_count && !e->fail; ++i) {
+        /* A live value replaces the callback, never a direct mapping. Without
+         * a negative mapping certificate, the checked load keeps precedence. */
+        if (!(e->io_read_callback && arm_jit_addr_in_identity_io(e->live_read32[i].pa, 4u)) &&
+            !fastmem_excludes(e->cpu, e->live_read32[i].pa, 4u, 0)) continue;
         x64_alu_r32_imm(e, 7, X64_EDX, e->live_read32[i].pa);
         size_t miss = x64_jcc32(e, 0x5);
         x64_mov_r64_imm(e, X64_R11D, (uint64_t)(uintptr_t)e->live_read32[i].word);
@@ -5105,6 +5369,7 @@ static void arm_jit_compile_host(arm920t_t *c, arm_jit_block_t *b) {
     x64_emit_t e;
     memset(&e, 0, sizeof(e));
     e.b = tmp;
+    e.cpu = c;
     e.cap = sizeof(tmp);
     e.cold = cold;
     e.cold_cap = ARM_JIT_MAX_INSNS;
@@ -5267,6 +5532,7 @@ static void arm_jit_compile_host(arm920t_t *c, arm_jit_block_t *b) {
     b->native_ok = 1;
 }
 #elif defined(ARM_JIT_NATIVE_A64)
+static int arm_poll_cached_address(const arm920t_t *c, uint32_t va, uint32_t *phys);
 static int arm_poll_read_stable(arm920t_t *c, const arm_jit_op_t *op);
 #include "arm920t_jit_a64.inc"
 #else
@@ -5341,22 +5607,19 @@ static int arm_poll_read_stable(arm920t_t *c, const arm_jit_op_t *op) {
      * intermediate accesses are side-effect-free. */
     uint32_t base = op->a == 15u ? op->pc + 8u : c->r[op->a];
     uint32_t addr = (op->d & ARM_BC_SD_U) ? base + op->imm : base - op->imm;
-    if (!(op->d & ARM_BC_SD_L)) {
-        if (addr & 3u) return 0;
-        uint32_t phys;
-        /* This proof runs before the guest condition check. Walking here can
-         * refill/evict a TLB entry (or fault) for a store that never executes. */
-        if (!arm_poll_cached_address(c, addr, &phys) || !arm_jit_addr_in_ram(phys, 4u)) return 0;
-        const uint8_t *p = fastmem(c, phys, 4u, 1);
-        /* A stable endpoint alone cannot prove intermediate writes harmless.
-         * Every store in the observed repetition must already be a no-op. */
-        return p && gp32_ld32le(p) == c->r[op->b];
-    }
+    /* Loads and stores need the same non-mutating mapping proof. Share it
+     * before selecting the endpoint check instead of duplicating the TLB
+     * lookup and physical-window branches in this hot observer. */
+    if (addr & 3u) return 0;
     uint32_t phys;
-    /* Reuse this check's proven translation; no callback or guest operation
-     * can replace the mapping between the lookup and its stable-read query. */
-    return !(addr & 3u) && arm_poll_cached_address(c, addr, &phys) && c->bus.is_stable_read32 &&
-           c->bus.is_stable_read32(c->bus.user, phys);
+    if (!arm_poll_cached_address(c, addr, &phys)) return 0;
+    if (op->d & ARM_BC_SD_L)
+        return c->bus.is_stable_read32 && c->bus.is_stable_read32(c->bus.user, phys);
+    /* This runs before the guest condition check; never refill a TLB here.
+     * Every observed store must already be a no-op in ordinary writable RAM. */
+    if (!arm_jit_addr_in_ram(phys, 4u)) return 0;
+    const uint8_t *p = fastmem(c, phys, 4u, 1);
+    return p && gp32_ld32le(p) == c->r[op->b];
 }
 
 /* No native block is active at lazy compilation. Recycle before emitting,
@@ -5364,6 +5627,27 @@ static int arm_poll_read_stable(arm920t_t *c, const arm_jit_op_t *op) {
  * Keep the emitter's large scratch frame out of the hot dispatch function.
  * Failed attempts are derived block state, reset only by retranslation.
  * Returns 1 when dispatch must restart (the table may have been cleared). */
+#if defined(ARM_JIT_NATIVE_A64)
+/* Keep observed loop exits out of unrelated entries' native bodies. This
+ * only changes the collection boundary; the exit path resumes from the same
+ * guest PC through ordinary dispatch. Poll candidates own the other union
+ * member and never use this policy. No native code exists for this slot yet. */
+static void arm_jit_trim_cold_tail(arm920t_t *c, arm_jit_block_t *b) {
+    if (b->poll_backedge || b->deferred_inline_pc) return;
+    arm_jit_poll_state_t *ps = &c->jit_poll[b - c->jit_blocks];
+    unsigned n = ps->cold_extent;
+    if (!n || n + 16u >= b->count) return;
+    const arm_jit_op_t *ops = arm_jit_ops(c, b), *last = &ops[n - 1u];
+    if (last->kind != ARM_JIT_OP_BRANCH || last->cond >= 14u ||
+        (last->insn & (1u << 24))) return;
+    uint32_t target = arm_jit_branch_target(last->pc, last->insn);
+    for (unsigned i = 0; i < b->count; ++i) if (ops[i].pc == target) return;
+    b->count = (uint8_t)n;
+    if (b->poll_prefix > n) b->poll_prefix = (uint8_t)n;
+    ps->flags &= (uint8_t)~ARM_JIT_PROOF_READY;
+}
+#endif
+
 static ARM_NOINLINE int arm_jit_lazy_compile(arm920t_t *c, arm_jit_block_t *b) {
 #if ARM920T_NATIVE_BACKEND
     if (!c->jit_enabled || b->native_ok) return 0;
@@ -5374,6 +5658,10 @@ static ARM_NOINLINE int arm_jit_lazy_compile(arm920t_t *c, arm_jit_block_t *b) {
         arm920t_jit_invalidate_all(c, ARM_JIT_INV_CODE_RECYCLE);
         return 1;
     }
+#if defined(ARM_JIT_NATIVE_A64)
+    /* A64 observes several cold runs. Other backends retain their policy. */
+    arm_jit_trim_cold_tail(c, b);
+#endif
     b->native_ok = 2u;
     arm_jit_compile_native(c, b);
 #if ARM920T_PROFILING
@@ -5408,9 +5696,11 @@ static ARM_NOINLINE uint32_t arm_jit_run_portable(arm920t_t *c,
     /* Decoded ops live in one stable allocation for the CPU's lifetime; the
      * generation/epoch fences below guard in-place reuse of the block. */
     const arm_jit_op_t *ops = arm_jit_ops(c, b);
+    /* The previous iteration's exit check proves the next PC and ARM state.
+     * No callback runs between that check and the next iteration. */
+    if (!b->count || (c->r[15] & ~3u) != ops[0].pc || thumb(c)) return 0;
     for (uint8_t i = 0; i < b->count && done < budget && run_done + done < c->run_limit; ++i) {
         const arm_jit_op_t *op = &ops[i];
-        if ((c->r[15] & ~3u) != op->pc || thumb(c)) break;
         if ((c->cp15[1] & 1u) && c->jit_fetch_page != (op->pc >> 10)) {
             if (arm_jit_prepare_fetch(c, op->pc)) {
                 /* The unusual unmapped fetch already executed one raw op. */
@@ -5422,7 +5712,7 @@ static ARM_NOINLINE uint32_t arm_jit_run_portable(arm920t_t *c,
              * repetition. Changed proofs still leave before any old op. */
             if (c->jit_generation != generation || c->jit_cache_epoch != epoch) break;
         }
-        uint32_t expected_next = (i + 1u < b->count) ? (ops[i + 1u].pc & ~3u) : (op->pc + 4u);
+        uint32_t expected_next = (i + 1u < b->count) ? ops[i + 1u].pc : (op->pc + 4u);
         if (*stable_reads && (i >= b->poll_prefix || !arm_poll_read_stable(c, op))) *stable_reads = 0;
         arm_jit_exec_classified_bc(c, op);
         ARM_PROF_INC(c, block_interp_arm_insns);
@@ -5438,6 +5728,17 @@ static ARM_NOINLINE uint32_t arm_jit_run_portable(arm920t_t *c,
         }
         if (op->stop || thumb(c) || c->halted || (c->r[15] & ~3u) != expected_next) break;
     }
+#if defined(ARM_JIT_NATIVE_A64)
+    /* Only a still-current, uncompiled non-poll block owns cold_extent.
+     * Short budgets contribute only their completed prefix; a later run
+     * through the exit tail grows the maximum and prevents trimming it. */
+    if (ARM920T_NATIVE_BACKEND && c->jit_enabled && !b->native &&
+        !b->poll_backedge && b->native_ok != 2u &&
+        c->jit_generation == generation && c->jit_cache_epoch == epoch) {
+        arm_jit_poll_state_t *ps = &c->jit_poll[b - c->jit_blocks];
+        if (done > ps->cold_extent) ps->cold_extent = (uint8_t)done;
+    }
+#endif
     return done;
 }
 
@@ -5737,8 +6038,11 @@ static uint32_t arm_jit_run(arm920t_t *c, uint32_t run_done) {
         int native_allowed = !counted || !c->bus.is_stable_read32 ||
             (rejected_pc == pc && rejected_generation == generation && rejected_epoch == epoch) ||
             (b->native && c->r[(b->poll_backedge >> 1) - 1u] - 1u >= INT32_MAX);
-        if (ARM920T_NATIVE_BACKEND && b->native_ok == 4u) {
-            b->native_ok = 0u;
+        if (ARM920T_NATIVE_BACKEND && b->native_ok >= 4u) {
+            /* Count nonzero dispatches, including a short remaining budget.
+             * The final observation still runs portably; only a subsequent
+             * full-budget dispatch may enter the emitter. */
+            b->native_ok = b->native_ok == 4u ? 0u : (uint8_t)(b->native_ok - 1u);
         } else if (ARM920T_NATIVE_BACKEND && c->jit_enabled && !b->poll_backedge &&
                    !b->native_ok && (c->run_limit - total) >= b->count) {
             if (arm_jit_lazy_compile(c, b)) {
@@ -5799,7 +6103,10 @@ static uint32_t arm_jit_run(arm920t_t *c, uint32_t run_done) {
         }
 
         if (!done) {
-            stable_reads = c->bus.is_stable_read32 && b->poll_prefix;
+            /* Repetition proofs are useful only for a decoded backedge.
+             * Ordinary cold observations still execute every instruction and
+             * retain the same fetch, callback, budget and interrupt fences. */
+            stable_reads = b->poll_backedge && c->bus.is_stable_read32 && b->poll_prefix;
             /* A real complete repetition may already be a fixed point of
              * its entry state. Seed that comparison once, rather than always
              * requiring a second observed repetition. Per-access stability,

@@ -27,33 +27,39 @@ typedef struct sdl3_video_backend {
     char error[160];
 } sdl3_video_backend_t;
 
+static inline uint32_t opaque_rgb(uint32_t pixel) {
+    return 0xff000000u | (pixel & 0x00ffffffu);
+}
+
 static void copy_frame_rgb(sdl3_video_backend_t *v, const gp32_framebuffer_desc_t *fb, uint32_t out_w, uint32_t out_h) {
     if (!v || !fb || !v->stage_rgb) return;
     const uint32_t *src = fb->pixels_rgba8888;
     uint32_t *dst = v->stage_rgb;
     uint32_t stride = fb->stride_pixels;
+    const uint32_t alpha = gp32_video_effects_active(&v->effects) &&
+        out_w == GP32_LCD_W && out_h == GP32_LCD_H ? 0u : 0xff000000u;
     switch (v->rotate) {
     case 1: /* 90 degrees counter-clockwise */
         for (uint32_t y = 0; y < out_h; ++y) {
             uint32_t sx = fb->width - 1u - y;
-            for (uint32_t x = 0; x < out_w; ++x) dst[y * out_w + x] = src[(size_t)x * stride + sx] & 0x00ffffffu;
+            for (uint32_t x = 0; x < out_w; ++x) dst[y * out_w + x] = alpha | (src[(size_t)x * stride + sx] & 0x00ffffffu);
         }
         break;
     case 2: /* 180 degrees */
         for (uint32_t y = 0; y < out_h; ++y) {
             const uint32_t *row = src + (fb->height - 1u - y) * stride;
-            for (uint32_t x = 0; x < out_w; ++x) dst[y * out_w + x] = row[fb->width - 1u - x] & 0x00ffffffu;
+            for (uint32_t x = 0; x < out_w; ++x) dst[y * out_w + x] = alpha | (row[fb->width - 1u - x] & 0x00ffffffu);
         }
         break;
     case 3: /* 90 degrees clockwise */
         for (uint32_t y = 0; y < out_h; ++y) {
-            for (uint32_t x = 0; x < out_w; ++x) dst[y * out_w + x] = src[(fb->height - 1u - x) * stride + y] & 0x00ffffffu;
+            for (uint32_t x = 0; x < out_w; ++x) dst[y * out_w + x] = alpha | (src[(fb->height - 1u - x) * stride + y] & 0x00ffffffu);
         }
         break;
     default:
         for (uint32_t y = 0; y < out_h; ++y) {
             const uint32_t *row = src + y * stride;
-            for (uint32_t x = 0; x < out_w; ++x) dst[y * out_w + x] = row[x] & 0x00ffffffu;
+            for (uint32_t x = 0; x < out_w; ++x) dst[y * out_w + x] = alpha | (row[x] & 0x00ffffffu);
         }
         break;
     }
@@ -91,11 +97,11 @@ static gp32_status_t sdl3_video_present(gp32_video_backend_t *backend, const gp3
     if (gp32_video_effects_active(&v->effects) && out_w == GP32_LCD_W && out_h == GP32_LCD_H) {
         if (!gp32_video_effects_process_320x240(&v->effects, v->stage_rgb, v->pixels)) return GP32_ERR_IO;
         present = v->pixels;
+        for (uint32_t i = 0, n = out_w * out_h; i < n; ++i) present[i] = opaque_rgb(present[i]);
     } else if (gp32_video_effects_active(&v->effects)) {
         gp32_video_effects_reset(&v->effects);
     }
-    for (uint32_t i = 0, n = out_w * out_h; i < n; ++i) v->pixels[i] = 0xff000000u | (present[i] & 0x00ffffffu);
-    if (!SDL_UpdateTexture(v->texture, NULL, v->pixels, (int)(out_w * sizeof(uint32_t)))) { gp32_platform_set_error(v->error, sizeof(v->error), SDL_GetError()); return GP32_ERR_IO; }
+    if (!SDL_UpdateTexture(v->texture, NULL, present, (int)(out_w * sizeof(uint32_t)))) { gp32_platform_set_error(v->error, sizeof(v->error), SDL_GetError()); return GP32_ERR_IO; }
     if (!SDL_RenderClear(v->renderer)) { gp32_platform_set_error(v->error, sizeof(v->error), SDL_GetError()); return GP32_ERR_IO; }
     SDL_FRect dst;
     dst.x = 0.0f; dst.y = 0.0f; dst.w = (float)(out_w * v->scale); dst.h = (float)(out_h * v->scale);

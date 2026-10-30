@@ -150,6 +150,7 @@ static int video_calls, video_null_calls;
 static const void *video_last_data;
 static unsigned video_last_w, video_last_h;
 static size_t video_last_pitch;
+static uint32_t displayed_pixel;
 
 static void record_video(const void *data, unsigned w, unsigned h, size_t pitch) {
     ++video_calls;
@@ -158,6 +159,7 @@ static void record_video(const void *data, unsigned w, unsigned h, size_t pitch)
     video_last_w = w;
     video_last_h = h;
     video_last_pitch = pitch;
+    if (data && w && h) displayed_pixel = *(const uint32_t *)data;
 }
 
 static bool env_can_dupe;
@@ -214,6 +216,8 @@ static void test_video_dupe(void) {
     retro_run();
     CHECK(video_calls == 2 && video_null_calls == 1,
           "unchanged frame must be a NULL duplicate when CAN_DUPE is true");
+    CHECK(video_last_w == GP32_W && video_last_h == GP32_H && video_last_pitch == GP32_W * sizeof(uint32_t),
+          "NULL duplicates must retain valid frame geometry");
 
     scripted_fb.frame_counter = 101u;
     retro_run();
@@ -259,10 +263,8 @@ static void test_video_dupe(void) {
     retro_set_environment(NULL);
 }
 
-/* Run-ahead and rewind serialize, run ahead, restore and run the same frames
- * again. The replay has to reproduce the duplicate decision, not only the
- * pixels: a state that forgets which frame the frontend already has turns a
- * NULL duplicate back into a fresh push. */
+/* Restoring the guest's frame counter does not restore the frontend's image
+ * or the staging pixels. A replay must upload the restored image first. */
 static void test_state_video_identity(void) {
     video_case(true, 500u);
     retro_run();
@@ -276,10 +278,49 @@ static void test_state_video_identity(void) {
 
     CHECK(retro_unserialize(state, size), "state must load for a video replay");
     retro_run();
-    CHECK(video_calls == 3 && video_null_calls == 2,
-          "the replayed frame must keep the duplicate decision of the saved state");
+    CHECK(video_calls == 3 && video_null_calls == 1 && video_last_data,
+          "the first replayed frame must refresh the frontend");
+    retro_run();
+    CHECK(video_null_calls == 2, "ordinary duplication resumes after the restored upload");
 
     free(state);
+    retro_set_video_refresh(NULL);
+    retro_set_environment(NULL);
+}
+
+static void test_restored_video_pixels(void) {
+    for (unsigned dupe = 0; dupe < 2u; ++dupe) {
+        video_case(dupe != 0u, 600u);
+        video_pixels[0] = 0x00112233u;
+        retro_run();
+        size_t size = retro_serialize_size();
+        uint8_t *state = size ? malloc(size) : NULL;
+        if (!state || !retro_serialize(state, size)) exit(2);
+        video_pixels[0] = 0x00445566u;
+        ++scripted_fb.frame_counter;
+        retro_run();
+        CHECK(displayed_pixel == 0xff445566u, "frontend must display the later frame before rewind");
+        CHECK(retro_unserialize(state, size), "earlier video state must restore");
+        /* The real guest loader restores its LCD pixels; mirror that in the
+         * scripted framebuffer without advancing its restored counter. */
+        video_pixels[0] = 0x00112233u;
+        scripted_fb.frame_counter = 600u;
+        retro_run();
+        CHECK(video_last_data && displayed_pixel == 0xff112233u,
+              "rewind must replace later frontend/staging pixels at the same saved counter");
+        retro_set_video_refresh(record_video);
+        displayed_pixel = 0u;
+        retro_run();
+        CHECK(video_last_data && displayed_pixel == 0xff112233u,
+              "a replacement video callback must receive its first image");
+        unsigned nulls = (unsigned)video_null_calls;
+        state[0] ^= 1u;
+        CHECK(!retro_unserialize(state, size), "invalid state must be rejected");
+        retro_run();
+        CHECK((unsigned)video_null_calls == nulls + dupe,
+              "a failed load must preserve the frontend duplicate eligibility");
+        free(state);
+    }
     retro_set_video_refresh(NULL);
     retro_set_environment(NULL);
 }
@@ -359,6 +400,25 @@ static void test_midframe_delivery_batches(void) {
     CHECK(captured_frames == 400u && !memcmp(captured, expected, 400u * 4u),
           "batching must preserve every PCM frame and its order");
     CHECK(callback_calls <= 10u, "tiny slices should not each invoke the frontend");
+}
+
+static size_t audio_frames_at_video;
+static void observe_audio_at_video(const void *data, unsigned w, unsigned h, size_t pitch) {
+    (void)data; (void)w; (void)h; (void)pitch;
+    /* A frontend may wait for vertical sync here. Already-generated audio
+     * must reach it before that wait, including a short pump remainder. */
+    audio_frames_at_video = captured_frames;
+}
+
+static void test_audio_before_video(void) {
+    start_case();
+    retro_set_video_refresh(observe_audio_at_video);
+    per_call = 7u;
+    audio_frames_at_video = 0u;
+    feed(31u, 44100u, 100);
+    CHECK(audio_frames_at_video == 31u, "frame-tail PCM must precede a blocking video callback");
+    CHECK(captured_frames == 31u, "early delivery must not duplicate the frame tail");
+    retro_set_video_refresh(NULL);
 }
 
 static void test_partial_and_blocked(void) {
@@ -1180,6 +1240,7 @@ int main(int argc, char **argv) {
     test_resampler_peak_clipping();
     test_frontend_audio_clock();
     test_midframe_delivery_batches();
+    test_audio_before_video();
     test_partial_and_blocked();
     test_resampled_and_sample_callback();
     test_mixed_spans();
@@ -1195,6 +1256,7 @@ int main(int argc, char **argv) {
     test_discard_gap_recovery();
     test_video_dupe();
     test_state_video_identity();
+    test_restored_video_pixels();
     test_portrait_video();
     test_lifecycle(argc > 1 ? argv[1] : "libretro_audio_test.tmp");
     test_state_buffers(argc > 1 ? argv[1] : "libretro_audio_test.tmp");

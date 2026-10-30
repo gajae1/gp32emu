@@ -97,7 +97,7 @@ static void set_program(unsigned kind, registers_t regs, unsigned s, unsigned co
             arm_jit_block_t *b=arm_jit_translate(cpus[mode],TEST_CODE);
             check(b != NULL,1u,"native block collected");
             if (b) {
-                if (b->native_ok == 4u) b->native_ok=0u;
+                if (b->native_ok >= 4u) b->native_ok=0u;
                 check((uint32_t)arm_jit_lazy_compile(cpus[mode],b),0u,"native arena retained");
                 check(b->native != NULL,1u,"native entry prepared");
             }
