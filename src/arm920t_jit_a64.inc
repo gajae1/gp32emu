@@ -2946,8 +2946,9 @@ static void a64_evict_chunk(arm920t_t *c, size_t cs, size_t ce) {
     }
 }
 
-/* Guest registers an op reads, from its ARM encoding. This only ranks which
- * registers are worth a cached copy; correctness never depends on it. */
+/* Guest registers an op reads, from its ARM encoding. This ranks which
+ * registers are worth a cached copy. The live-in pass below also uses this
+ * mask, but only after restricting ops to shapes whose reads are complete. */
 ARM_FORCE_INLINE uint32_t a64_op_reads(const arm_jit_op_t *op) {
     uint32_t insn = op->insn, m = 0;
     unsigned rn = (insn >> 16) & 15u, rd = (insn >> 12) & 15u, rs = (insn >> 8) & 15u, rm = insn & 15u;
@@ -3043,6 +3044,46 @@ static ARM_NOINLINE void a64_pick_cache(a64_emit_t *e, const arm_jit_op_t *ops, 
         if (best == 15u) break;
         e->cache_host[best] = a64_cache_pool[k];
     }
+}
+
+/* An entry copy is unnecessary if a straight-line prefix defines it before
+ * reading it. Keep the cache assignment and every write-through commit: this
+ * only removes the old-value load. The ranking read mask is complete for the
+ * restricted shapes below; unknown ops, control flow and fetch boundaries
+ * end the proof. Continuing helpers reload all copies, and exiting helpers
+ * observe c->r[] rather than these callee-saved host registers. */
+static ARM_NOINLINE uint32_t a64_cache_live_in(const a64_emit_t *e,
+                                             const arm_jit_op_t *ops,
+                                             unsigned count) {
+    uint32_t pending = 0, needed = 0;
+    for (unsigned r = 0; r < 15u; ++r)
+        if (e->cache_host[r]) pending |= 1u << r;
+    for (unsigned i = 0; pending && i < count; ++i) {
+        const arm_jit_op_t *op = &ops[i];
+        if (op->stop || op->reserved || op->pc != ops[0].pc + i * 4u ||
+            (op->pc >> 10) != (ops[0].pc >> 10)) break;
+        uint32_t written = 0;
+        if (op->kind == ARM_JIT_OP_DATA) {
+            if ((op->d & ARM_BC_DATA_REGSHIFT) || op->c == 15u) break;
+            if (op->a < 8u || op->a > 11u) written = 1u << op->c;
+        } else if (op->kind == ARM_JIT_OP_SINGLE_DT) {
+            if ((op->d & ARM_BC_SD_REGOFF) || op->b == 15u ||
+                (op->a == 15u && (!(op->d & ARM_BC_SD_P) ||
+                                  (op->d & ARM_BC_SD_W)))) break;
+            if (op->d & ARM_BC_SD_L) written = 1u << op->b;
+        } else if (op->kind == ARM_JIT_OP_HALF) {
+            if ((op->d & ARM_BC_HALF_L) || op->e != 1u ||
+                op->a == 15u || op->b == 15u) break;
+        } else if (op->kind == ARM_JIT_OP_BLOCK_DT) {
+            if ((op->insn & ((1u << 22) | (1u << 20))) ||
+                !(op->insn & 0xffffu) || op->a == 15u) break;
+        } else break;
+        uint32_t reads = a64_op_reads(op);
+        needed |= pending & reads;
+        pending &= ~reads;
+        if (op->cond == 14u) pending &= ~written;
+    }
+    return needed | pending;
 }
 
 static int a64_emit_runtime(arm920t_t *c) {
@@ -3201,11 +3242,12 @@ static ARM_NOINLINE void arm_jit_compile_host(arm920t_t *c, arm_jit_block_t *b) 
     a64_ext(&e, 0x94000000u, A64_EXT_ENTER); /* bl rt_enter */
     if (e.pos != A64_BODY_WORDS) e.fail = 1;
     /* The body starts here for the dispatcher and for linked exits alike.
-     * Load the cached guest registers once; the self backedge re-enters
-     * behind these loads with every copy still equal to c->r[]. */
+     * Load incoming values that survive until their first use. The self
+     * backedge re-enters behind these loads with write-through copies. */
     a64_pick_cache(&e, arm_jit_ops(c, b), b->count);
+    uint32_t live_in = a64_cache_live_in(&e, arm_jit_ops(c, b), b->count);
     for (unsigned r = 0; r < 15u; ++r)
-        if (e.cache_host[r]) a64_load(&e, e.cache_host[r], offsetof(arm920t_t, r) + r * 4u);
+        if (live_in & (1u << r)) a64_load(&e, e.cache_host[r], offsetof(arm920t_t, r) + r * 4u);
     e.loop_head = e.pos;
     int copy_loop = e.loop_done == 5u && a64_copy_loop(&e, arm_jit_ops(c, b));
     if (e.loop_done == 24u) a64_packed_word_loop(&e, arm_jit_ops(c, b));

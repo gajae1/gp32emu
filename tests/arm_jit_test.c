@@ -7099,6 +7099,67 @@ static void case_a64_cache_ranking(void) {
 #endif
 }
 
+/* First definitions, conditional skips and helper continuations must all
+ * preserve the incoming-value contract of the native register cache. */
+static void case_native_cache_entry(void) {
+    for (unsigned shape = 0; shape < 6u; ++shape)
+    for (unsigned split = 0; split < 2u; ++split) {
+        uint32_t program[] = {
+            0xe3a01037u, /* MOV r1,#55 (replaced below for other entries) */
+            0xe2812001u, 0xe2813002u, 0xe2814003u,
+            0xe58a2000u, 0xe58a3004u, 0xe58a4008u, 0xeafffffeu
+        };
+        uint32_t value = 55u;
+        if (shape == 1u) { program[0] = 0xe2811001u; value = 0x1235u; }
+        if (shape == 2u) { program[0] = 0x13a01037u; value = 0x1234u; } /* skipped MOVNE */
+        if (shape == 3u) { program[0] = 0xe5901000u; value = 0x76543210u; }
+        if (shape == 4u) { program[0] = 0xe5901000u; value = CODE_ADDR + 4u; }
+        if (shape == 5u) { program[0] = 0xe1a01001u; value = 0x1234u; } /* MOV r1,r1 */
+        current_case = "native-cache-entry";
+        setup_pair(); load_both(program, GP32_ARRAY_COUNT(program));
+        set_reg_both(0u, shape == 4u ? IO_ADDR : DATA_ADDR + 0x100u);
+        set_reg_both(1u, 0x1234u); set_reg_both(10u, DATA_ADDR);
+        set_cpsr_both(0x400000d3u);
+        set_mem_both(DATA_ADDR + 0x100u, 0x76543210u);
+        bus_jit.observe_cpu = cpu_jit; bus_ref.observe_cpu = cpu_ref;
+#if defined(ARM_JIT_NATIVE_A64)
+        prepare_native_block(cpu_jit, CODE_ADDR);
+        arm_jit_block_t *block = NULL;
+        unsigned slot = arm_jit_block_index(CODE_ADDR);
+        for (unsigned way = 0; way < ARM_JIT_BLOCK_WAYS; ++way)
+            if (cpu_jit->jit_blocks[slot + way].valid &&
+                cpu_jit->jit_blocks[slot + way].tag_pc == CODE_ADDR)
+                block = &cpu_jit->jit_blocks[slot + way];
+        CHECK(block && block->native, "cache-entry fixture has native code");
+        if (block && block->native) {
+            union { arm_jit_native_fn fn; const uint32_t *words; } code;
+            code.fn = block->native;
+            /* r1 has the most reads and takes w26. r10 follows it. These
+             * checks distinguish omitted entry loads from a portable pass. */
+            uint32_t load_r1 = 0xb9400000u |
+                ((uint32_t)(offsetof(arm920t_t, r) + 4u) / 4u << 10) | (19u << 5) | 26u;
+            int needs_old = shape == 1u || shape == 2u || shape == 5u;
+            CHECK((code.words[A64_BODY_WORDS] == load_r1) == needs_old,
+                  "native entry loads only a live incoming r1");
+        }
+#endif
+        if (split) {
+            for (unsigned budget = 1; budget <= 7u; ++budget) {
+                CHECK(arm920t_run(cpu_jit, budget) == arm920t_run(cpu_ref, budget),
+                      "cache-entry partial budget");
+                compare_state();
+            }
+        } else run_native_case();
+        CHECK(ref_reg(1u) == value && ref_reg(2u) == value + 1u &&
+              ref_reg(3u) == value + 2u && ref_reg(4u) == value + 3u,
+              "cache-entry independent result");
+        CHECK(bus_jit.io_count == bus_ref.io_count &&
+              !memcmp(bus_jit.io_regs, bus_ref.io_regs, sizeof(bus_ref.io_regs)),
+              "cache-entry callback observes architectural registers");
+        teardown_pair();
+    }
+}
+
 int main(int argc, char **argv) {
     if (argc == 1 || (argc == 2 && !strcmp(argv[1], "--a64-cache-ranking"))) {
         case_a64_cache_ranking();
@@ -7125,7 +7186,16 @@ int main(int argc, char **argv) {
     int terminal_coproc_only = argc == 2 && !strcmp(argv[1], "--terminal-coproc");
     int selfmove_only = argc == 2 && !strcmp(argv[1], "--self-move-nop");
     int copy_only = argc == 2 && !strcmp(argv[1], "--copy-loop");
-    if (argc == 2 && !strcmp(argv[1], "--leaf-write32")) {
+    if (argc == 2 && !strcmp(argv[1], "--cache-entry")) {
+        case_native_cache_entry();
+        case_native_internal_forward();
+        case_native_forward_callback();
+        case_native_forward_joins();
+        case_native_store_forwarding();
+        case_native_const_data();
+        case_loop_callback_flush();
+        case_byte_pair_loop();
+    } else if (argc == 2 && !strcmp(argv[1], "--leaf-write32")) {
         case_leaf_write32();
         case_leaf_write32_code_watch();
     } else if (argc == 2 && !strcmp(argv[1], "--bx-native")) {
@@ -7353,6 +7423,7 @@ int main(int argc, char **argv) {
     case_native_forwarding();
     case_native_store_forwarding();
     case_native_self_move_noop();
+    case_native_cache_entry();
     case_native_immediates();
     case_native_immshift();
     case_native_sflag_logic();
