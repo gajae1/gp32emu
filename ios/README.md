@@ -1,10 +1,10 @@
 # GP32emu for iPhone and iPad
 
-The experimental iOS app is part of the upcoming **1.1.0** release. It runs on
-ARM64 devices with iOS/iPadOS 15 or later. Supply your own GP32 BIOS and games.
+The experimental iOS app is in the unreleased **1.1.0** development version. It
+runs on ARM64 devices with iOS/iPadOS 15 or later. Supply your own GP32 BIOS and
+games.
 
-While 1.1.0 is in development, use the [iOS build guide](../docs/IOS_BUILD.md)
-to create `gp32emu-1.1.0-ios-unsigned.ipa`. It includes the
+The `gp32emu-1.1.0-ios-unsigned.ipa` package includes the
 interpreter and an experimental AArch64 JIT. Games start with the interpreter;
 installing the IPA does not automatically enable JIT.
 
@@ -18,9 +18,10 @@ iOS version, and signing setup.
 2. Import the GP32emu IPA into SideStore and sign it with your own Apple account.
 3. Open GP32emu and import your BIOS and an extracted `.smc`, `.fxe` or `.fpk` game.
 
-No source build is needed to install an IPA. The package has no publisher
-signature or provisioning profile and includes no BIOS, games or saves.
-Free-account installations need periodic refreshes through the signing tool.
+Installing a packaged IPA does not require a source build. The package has
+no publisher signature or provisioning profile and includes no BIOS, games or
+saves. Free-account installations need periodic refreshes through the signing
+tool.
 
 An unsigned IPA cannot be installed by opening the download alone. SideStore
 requires a computer for initial setup (Windows, macOS or Linux); later installs
@@ -112,6 +113,11 @@ restore retain an active JIT session. Missing tools or failed setup leave the
 interpreter available. Automatic JIT setup is experimental and depends on the
 device, signing setup, and StikDebug configuration. Activation does not
 guarantee full speed in every game.
+
+## Building from source
+
+See the [iOS build guide](../docs/IOS_BUILD.md) to create an IPA from a source
+checkout.
 
 ## Licenses
 

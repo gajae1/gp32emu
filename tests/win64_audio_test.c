@@ -56,6 +56,10 @@ static UINT32 g_requested_frames;
 static UINT32 g_released_frames;
 static int16_t g_render_scratch[8192 * 2];
 static gp32_win64_audio_t g_audio;
+/* A borrowed endpoint buffer must survive until ReleaseBuffer, even when the
+ * producer pauses or changes fast-forward state on another thread. */
+static HANDLE g_buffer_acquired, g_buffer_continue, g_reset_entered, g_reset_finished;
+static volatile LONG g_buffer_outstanding, g_reset_with_buffer, g_gate_failed;
 
 static HRESULT STDMETHODCALLTYPE fake_get_current_padding(IAudioClient *This, UINT32 *pNumPaddingFrames) {
     CHECK(This == &g_client.iface, "padding queried through the fake client");
@@ -67,6 +71,8 @@ static HRESULT STDMETHODCALLTYPE fake_stop(IAudioClient *This) { (void)This; ++g
 static HRESULT STDMETHODCALLTYPE fake_reset(IAudioClient *This) {
     (void)This;
     ++g_reset_calls;
+    if (InterlockedCompareExchange(&g_buffer_outstanding, 0, 0))
+        InterlockedIncrement(&g_reset_with_buffer);
     if (g_client_stopped) g_stop_before_reset = 1;
     return S_OK;
 }
@@ -76,12 +82,19 @@ static HRESULT STDMETHODCALLTYPE fake_get_buffer(IAudioRenderClient *This, UINT3
     g_requested_frames = NumFramesRequested;
     if (!ppData || NumFramesRequested > 8192u) return E_FAIL;
     *ppData = (BYTE *)g_render_scratch;
+    InterlockedExchange(&g_buffer_outstanding, 1);
+    if (g_buffer_acquired) {
+        SetEvent(g_buffer_acquired);
+        if (WaitForSingleObject(g_buffer_continue, 5000) != WAIT_OBJECT_0)
+            InterlockedExchange(&g_gate_failed, 1);
+    }
     return S_OK;
 }
 static HRESULT STDMETHODCALLTYPE fake_release_buffer(IAudioRenderClient *This, UINT32 NumFramesWritten, DWORD dwFlags) {
     (void)This; (void)dwFlags;
     ++g_render_calls;
     g_released_frames += NumFramesWritten;
+    InterlockedExchange(&g_buffer_outstanding, 0);
     return S_OK;
 }
 
@@ -516,6 +529,94 @@ static void test_endpoint_wide_pcm(void) {
     g_audio.read_frame = g_audio.frame_count = g_audio.frame_cap = 0;
 }
 
+static DWORD WINAPI pump_once(void *unused) {
+    (void)unused;
+    return (DWORD)gp32_win64_audio_pump_backend(&g_audio);
+}
+
+static DWORD WINAPI reset_once(void *unused) {
+    (void)unused;
+    SetEvent(g_reset_entered);
+    gp32_win64_audio_reset(&g_audio);
+    SetEvent(g_reset_finished);
+    return 0;
+}
+
+static void test_reset_during_pump(void) {
+    WAVEFORMATEX pcm = {0};
+    pcm.wFormatTag = WAVE_FORMAT_PCM;
+    pcm.nChannels = 2;
+    pcm.nSamplesPerSec = 48000;
+    pcm.wBitsPerSample = 16;
+    pcm.nBlockAlign = 4;
+    pcm.nAvgBytesPerSec = 192000;
+    g_audio.mixfmt = &pcm;
+    g_audio.playback_started = g_audio.wasapi_started = 0;
+    g_audio.underrun = 0;
+    g_audio.delivery_fade_left = g_audio.delivery_fade_total = 0;
+    g_client.padding = 0;
+    g_start_calls = g_stop_calls = g_reset_calls = 0;
+    g_client_stopped = g_stop_before_reset = 0;
+    g_render_calls = 0;
+    g_released_frames = 0;
+    CHECK(ensure_queue(&g_audio, 4096), "reset race queue allocated");
+    if (!g_audio.queue) return;
+    static int16_t seed[4096 * 2];
+    for (unsigned i = 0; i < 4096; ++i) {
+        seed[i * 2] = 12000;
+        seed[i * 2 + 1] = -9000;
+    }
+    ring_write_bulk_unlocked(&g_audio, seed, 4096);
+    g_buffer_acquired = CreateEventA(NULL, TRUE, FALSE, NULL);
+    g_buffer_continue = CreateEventA(NULL, TRUE, FALSE, NULL);
+    g_reset_entered = CreateEventA(NULL, TRUE, FALSE, NULL);
+    g_reset_finished = CreateEventA(NULL, TRUE, FALSE, NULL);
+    CHECK(g_buffer_acquired && g_buffer_continue && g_reset_entered && g_reset_finished,
+          "reset race events allocated");
+    if (!g_buffer_acquired || !g_buffer_continue || !g_reset_entered || !g_reset_finished)
+        exit(2);
+    InterlockedExchange(&g_buffer_outstanding, 0);
+    InterlockedExchange(&g_reset_with_buffer, 0);
+    InterlockedExchange(&g_gate_failed, 0);
+    HANDLE pump = CreateThread(NULL, 0, pump_once, NULL, 0, NULL);
+    CHECK(pump != NULL, "one-shot pump thread created");
+    if (!pump) exit(2);
+    CHECK(WaitForSingleObject(g_buffer_acquired, 5000) == WAIT_OBJECT_0,
+          "pump reached the borrowed-buffer gate");
+    HANDLE reset = CreateThread(NULL, 0, reset_once, NULL, 0, NULL);
+    CHECK(reset != NULL, "reset thread created");
+    if (!reset) { SetEvent(g_buffer_continue); exit(2); }
+    CHECK(WaitForSingleObject(g_reset_entered, 5000) == WAIT_OBJECT_0,
+          "reset attempted while the buffer was borrowed");
+    /* The gate, not a scheduler sleep, holds the endpoint transaction open. */
+    DWORD early_reset = WaitForSingleObject(g_reset_finished, 250);
+    SetEvent(g_buffer_continue);
+    HANDLE threads[2] = {pump, reset};
+    DWORD joined = WaitForMultipleObjects(2, threads, TRUE, 5000);
+    CHECK(joined == WAIT_OBJECT_0, "pump and reset completed without deadlock");
+    if (joined != WAIT_OBJECT_0) exit(2); /* Never free a live thread's fixture. */
+    DWORD pump_result = 1;
+    CHECK(GetExitCodeThread(pump, &pump_result) && pump_result == 0,
+          "the in-flight pump completed successfully");
+    CHECK(early_reset == WAIT_TIMEOUT, "reset waits for the in-flight endpoint transaction");
+    CHECK(!g_gate_failed && !g_reset_with_buffer,
+          "reset never invalidates an outstanding endpoint buffer");
+    CHECK(g_released_frames == 4096 && memcmp(g_render_scratch, seed, sizeof(seed)) == 0,
+          "the pre-reset transaction finishes with real PCM, not fabricated silence");
+    CHECK(g_reset_calls == 1 && g_stop_calls == 1 && g_stop_before_reset,
+          "reset stops the completed stream before resetting it");
+    CHECK(!g_audio.playback_started && !g_audio.wasapi_started && !g_audio.frame_count,
+          "the pump cannot restart playback or retain PCM after reset returns");
+    CloseHandle(pump);
+    CloseHandle(reset);
+    CloseHandle(g_buffer_acquired);
+    CloseHandle(g_buffer_continue);
+    CloseHandle(g_reset_entered);
+    CloseHandle(g_reset_finished);
+    g_buffer_acquired = g_buffer_continue = g_reset_entered = g_reset_finished = NULL;
+    g_audio.mixfmt = NULL;
+}
+
 int main(void) {
     memset(&g_audio, 0, sizeof g_audio);
     memset(&g_client, 0, sizeof g_client);
@@ -779,6 +880,7 @@ int main(void) {
     test_endpoint_channel_conversion();
     test_endpoint_wide_pcm();
     test_waveout_short_read_gap();
+    test_reset_during_pump();
 
     free(g_audio.queue);
     free(g_audio.tmp);
