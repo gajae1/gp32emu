@@ -726,7 +726,7 @@ static void test_delivery_rejection_atomic(void) {
     memcpy(&valid, incoming + guest, sizeof(valid));
     lrst_body_t valid_body;
     memcpy(&valid_body, incoming + guest + sizeof(valid), sizeof(valid_body));
-    for (unsigned which = 0; which < 11u; ++which) {
+    for (unsigned which = 0; which < 14u; ++which) {
         CHECK(retro_unserialize(incoming, size), "restore input for trailer rejection fixture");
         CHECK(gp32_set_buttons(emu, GP32_BUTTON_A) == GP32_OK, "change current guest input");
         reset_audio();
@@ -751,7 +751,16 @@ static void test_delivery_rejection_atomic(void) {
             lrst_body_t body = valid_body;
             body.audio_gap_left = GP32_AUDIO_GAP_FRAMES + 1u;
             memcpy(incoming + guest + sizeof(head), &body, sizeof(body));
-        } else if (which >= 8u) cut = guest + which - 7u;
+        } else if (which >= 8u && which <= 10u) cut = guest + which - 7u;
+        else if (which >= 11u) {
+            lrst_body_t body = valid_body;
+            /* A reversed interval underflows the progress numerator; an
+             * overflowing total makes the fade denominator zero. Reject both
+             * before either guest or delivery state can be committed. */
+            body.resampler.fade_left = which == 11u ? 45u : 1u;
+            body.resampler.fade_total = which == 11u ? 44u : which == 12u ? UINT32_MAX : 0u;
+            memcpy(incoming + guest + sizeof(head), &body, sizeof(body));
+        }
         memcpy(incoming + guest, &head, sizeof(head));
         fail_delivery_allocation = which == 6u;
         CHECK(!retro_unserialize(incoming, cut), "reject malformed or unallocatable delivery section");

@@ -632,6 +632,11 @@ static int lrst_prepare(void *user, const void *data, size_t room) {
     if (body.audio_have_raw_tail != 0 && body.audio_have_raw_tail != 1) return 0;
     /* flush_audio uses this count to index its fixed-size recovery buffer. */
     if (body.audio_gap_left > GP32_AUDIO_GAP_FRAMES) return 0;
+    /* process() computes progress as total - left + 1 and divides by
+     * total + 1. Reject invalid fade arithmetic before the guest commit,
+     * rather than accepting a state that can divide by zero on playback. */
+    if (body.resampler.fade_left > body.resampler.fade_total ||
+        body.resampler.fade_total == UINT32_MAX) return 0;
     if (audio_resample_cap < head.pending_frames) {
         stage->grown = malloc((size_t)head.pending_frames * 2u * sizeof(int16_t));
         if (!stage->grown) {

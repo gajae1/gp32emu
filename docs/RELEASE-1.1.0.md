@@ -1,7 +1,7 @@
 # GP32emu 1.1.0 (unreleased)
 
-This release adds an experimental iPhone/iPad app, ten manual save-state slots
-per game in the standalone apps, and updates to controls, audio and saving.
+This version adds an experimental iPhone/iPad app, ten manual save-state slots
+per game in the standalone apps, and improvements to controls, audio and saving.
 
 ## New and improved
 
@@ -17,12 +17,12 @@ per game in the standalone apps, and updates to controls, audio and saving.
 - **Mobile controls:** a top-aligned landscape picture, separate shoulder and
   Start/Select rows in portrait, a menu button that hides during landscape play,
   and more screen space when touch controls are disabled.
-- **Audio and emulation:** updates to CPU, DMA, timer and audio handling. Save
-  states retain all four PCM channels and their playback positions.
-- **Loading and saving:** damaged or mismatched states are rejected without
-  replacing the running game. Restored states include the saved audio state.
-  Save-state processing uses less work, and loading a state no longer causes
-  unnecessary growth when it is saved again.
+- **Emulation:** shared CPU and card-reading fixes, including support for saving
+  to 128 MiB cards. Compatibility and performance still vary by game and host.
+- **Audio:** fixes Windows audio occasionally restarting after a pause or reset.
+- **Save states:** New states use v17 and retain the playback positions of all
+  four PCM channels. Damaged or mismatched states, including invalid audio
+  transition data, are rejected without replacing the running game.
 
 ## Updating
 
@@ -30,12 +30,12 @@ Install over the existing application or replace the matching RetroArch core.
 Keep your BIOS, games, settings and saves. Do not uninstall a mobile app first.
 On iOS, use the same signing account and app identifier when updating.
 
-New state files use v17. GP32emu 1.1.0 reads supported v2–v12 and v14–v16 states,
-but older cores cannot read v17. Back up old slots before overwriting them if
-you may return to an older version. In-game card saves keep their existing format.
-RetroArch continues to manage its own state slots.
+New state files use v17. The 1.1.0 development build reads supported v2–v12 and
+v14–v16 states, but older cores cannot read v17. Back up old slots before
+overwriting them if you may return to an older version. In-game card saves keep
+their existing format. RetroArch continues to manage its own state slots.
 
-## Downloads
+## Packages
 
 Applications and cores are packaged separately for each platform. iOS and
 Switch support is experimental. BIOS images, games and saves are not included.
