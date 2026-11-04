@@ -1170,8 +1170,8 @@ static void dma_trigger(s3c2400_t *s, int ch) {
     uint32_t dst0 = dst, moved = 0;
     /* Whole-service RAM copies have no per-unit bus side effects. Prove both
      * complete spans and their non-overlap before copying; forward overlap
-     * can reuse bytes written by earlier units, so it must keep the ordered
-     * bus loop below. Fixed addresses, partial RAM and reserved DSZ values
+     * can reuse bytes written by earlier atomic transfers, so it must keep
+     * the ordered bus loop below. Fixed addresses, partial RAM and reserved DSZ values
      * also retain that path. Cursor/reload/IRQ and code invalidation are
      * shared with ordinary transfers after the copy. */
     if (service && tc > 1u && inc_src && inc_dst && dsz < 3u) {
@@ -1188,12 +1188,22 @@ static void dma_trigger(s3c2400_t *s, int ch) {
     }
     while (tc) {
         uint32_t src0 = src, burst_dst = dst;
+        uint32_t values[4];
+        /* Burst 4 performs all four reads before its four writes (manual
+         * p.8-5, Fig.8-3). Latch only this atomic group: overlap and nested
+         * MMIO writes must not replace its inputs, but the next group must
+         * observe them. TSZ=0 remains one read followed by one write. */
+        for (unsigned unit = 0; unit < burst; ++unit) {
+            if (dsz == 0) values[unit] = s3c2400_read8(s, src);
+            else if (dsz == 1) values[unit] = s3c2400_read16(s, src);
+            else values[unit] = s3c2400_read32(s, src);
+            if (inc_src || burst > 1u) src += 1u << dsz;
+        }
         for (unsigned unit = 0; unit < burst; ++unit) {
             moved++;
-            if (dsz == 0) { uint8_t v = s3c2400_read8(s, src); s3c2400_write8(s, dst, v); }
-            else if (dsz == 1) { uint16_t v = s3c2400_read16(s, src); s3c2400_write16(s, dst, v); }
-            else { uint32_t v = s3c2400_read32(s, src); s3c2400_write32(s, dst, v); }
-            if (inc_src || burst > 1u) src += 1u << dsz;
+            if (dsz == 0) s3c2400_write8(s, dst, (uint8_t)values[unit]);
+            else if (dsz == 1) s3c2400_write16(s, dst, (uint16_t)values[unit]);
+            else s3c2400_write32(s, dst, values[unit]);
             if (inc_dst || burst > 1u) dst += 1u << dsz;
         }
         /* Fixed addresses advance within a burst and reset between bursts. */
