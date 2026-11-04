@@ -115,8 +115,10 @@ static int smc_reconstruct_512(const uint8_t *src, size_t len, uint8_t **out_img
     if (((len - off) % 528u) == 0) {
         const size_t page_total = 528u;
         const size_t page_data = 512u;
-        const size_t pages_per_block = 32u;
         size_t pages = (len - off) / page_total;
+        /* Match the mounted 512-byte-page card geometry: 4/8 MiB cards
+         * address 16-page erase blocks, larger cards address 32 pages. */
+        const size_t pages_per_block = pages <= 16384u ? 16u : 32u;
         size_t blocks = pages / pages_per_block;
         if (!blocks || pages != blocks * pages_per_block) { serr(err, err_len, "unsupported SMC page/block count"); return 0; }
         size_t img_size = pages * page_data;
@@ -255,7 +257,9 @@ static const uint8_t *fat_cluster_ptr(const fat_view_t *fv, uint16_t cl) {
 
 static uint8_t *fat_read_chain(const fat_view_t *fv, uint16_t cl, size_t want, size_t *out_size) {
     if (out_size) *out_size = 0;
-    if (!fv || cl < 2u) return NULL;
+    /* Empty files have no allocated FAT cluster. Keep a freeable owned
+     * buffer, but do not relax chain validation for nonempty files. */
+    if (!fv || (want && cl < 2u)) return NULL;
     size_t cap = want ? want : 1u;
     uint8_t *out = (uint8_t *)malloc(cap);
     if (!out) return NULL;
@@ -1104,7 +1108,7 @@ static int smc_direct_load_image_owned(uint8_t *img, size_t img_size, const char
 
     if (gxe) {
         const smc_file_buf_t *gxc = find_matching_gxc(&list, gxe->path);
-        if (!gxc) { file_list_free(&list); serr(err, err_len, "found %s but no matching .GXC payload", gxe->path); return 0; }
+        if (!gxc) { serr(err, err_len, "found %s but no matching .GXC payload", gxe->path); file_list_free(&list); return 0; }
         if (!decrypt_commercial_gxc(gxe, gxc, &exec_data, &exec_size, err, err_len)) {
             file_list_free(&list);
             return 0;
@@ -1114,14 +1118,14 @@ static int smc_direct_load_image_owned(uint8_t *img, size_t img_size, const char
         copy_str_trunc(pkg->title, sizeof(pkg->title), gxe->path);
     } else if (gxb) {
         exec_data = (uint8_t *)malloc(gxb->size ? gxb->size : 1u);
-        if (!exec_data) { file_list_free(&list); serr(err, err_len, "out of memory loading %s", gxb->path); return 0; }
+        if (!exec_data) { serr(err, err_len, "out of memory loading %s", gxb->path); file_list_free(&list); return 0; }
         memcpy(exec_data, gxb->data, gxb->size);
         exec_size = gxb->size;
         exec_label = gxb->path;
         snprintf(pkg->executable_path, sizeof(pkg->executable_path), "%s", gxb->path);
     } else if (fxe) {
         exec_data = (uint8_t *)malloc(fxe->size ? fxe->size : 1u);
-        if (!exec_data) { file_list_free(&list); serr(err, err_len, "out of memory loading %s", fxe->path); return 0; }
+        if (!exec_data) { serr(err, err_len, "out of memory loading %s", fxe->path); file_list_free(&list); return 0; }
         memcpy(exec_data, fxe->data, fxe->size);
         exec_size = fxe->size;
         exec_label = fxe->path;

@@ -201,6 +201,31 @@ static int check_fxp3_bounds(void) {
     return ok;
 }
 
+/* An all-zero FXP2 pre-tree contains no codes. Host decoding must decline
+ * it without consuming a zero-width symbol or replacing the guest loader. */
+static int check_fxp2_empty_tree(void) {
+    uint8_t packed[96] = {0};
+    gp32_st32le(packed, 0xea000006u);
+    gp32_st32le(packed + 4u, GP32_RAM_BASE);
+    gp32_st32le(packed + 8u, GP32_RAM_BASE + 64u);
+    gp32_st32le(packed + 12u, GP32_RAM_BASE + 64u);
+    for (unsigned off = 16u; off <= 24u; off += 4u)
+        gp32_st32le(packed + off, GP32_RAM_BASE + sizeof(packed));
+    memcpy(packed + 64u, "FXP2", 4u);
+    gp32_st32le(packed + 68u, 32u);
+    gp32_st16le(packed + 72u, 16u);
+    /* The following six zero bytes describe sixteen unused pre-tree codes;
+     * the remaining bytes allow the reader's ordinary lookahead. */
+    fxe_image_t img = {0};
+    char err[128] = {0};
+    int ok = fxe_load_buffer(packed, sizeof(packed), "empty FXP2 tree", &img, err, sizeof(err)) &&
+        !img.was_host_decrunched && img.payload_size == sizeof(packed) &&
+        !memcmp(img.payload, packed, sizeof(packed));
+    fxe_image_free(&img);
+    if (!ok) fprintf(stderr, "FAIL: invalid FXP2 tree did not preserve the guest loader: %s\n", err);
+    return ok;
+}
+
 static int check_gxb_zi_header(int has_zi) {
     gp32_t *g = gp32_create(NULL);
     if (!g) return 0;
@@ -430,6 +455,7 @@ int main(int argc, char **argv) {
     if (!check_decrunch_commit()) return 1;
     if (!check_decrunch_scratch()) return 1;
     if (!check_fxp3_bounds()) return 1;
+    if (!check_fxp2_empty_tree()) return 1;
     if (!check_gxb_zi_header(0) || !check_gxb_zi_header(1)) return 1;
     if (!check_raw_image_labels()) return 1;
     /* Overlapping copy in both directions: destination below and above source. */
