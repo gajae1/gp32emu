@@ -1,14 +1,16 @@
 package org.gp32emu.app;
 
+import android.hardware.input.InputManager.InputDeviceListener;
 import android.view.InputDevice;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
 
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.Map;
 
 /** Combines independent input sources into a libretro joypad bit mask. */
-public final class InputState {
+public final class InputState implements InputDeviceListener {
     public static final int A = 1 << 8;
     public static final int B = 1 << 0;
     public static final int L = 1 << 10;
@@ -52,6 +54,19 @@ public final class InputState {
         touch = 0;
         keys.clear();
         axes.clear();
+    }
+
+    @Override public void onInputDeviceAdded(int deviceId) {}
+    @Override public void onInputDeviceChanged(int deviceId) {}
+
+    @Override public synchronized void onInputDeviceRemoved(int deviceId) {
+        // A disconnected controller need not send key-up or neutral-axis events.
+        // Keep touch and every other device's holds, including shared buttons.
+        axes.remove(deviceId);
+        Iterator<Long> held = keys.keySet().iterator();
+        while (held.hasNext()) {
+            if ((int)(held.next() >> 32) == deviceId) held.remove();
+        }
     }
 
     public synchronized boolean key(KeyEvent e) {

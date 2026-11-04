@@ -13,6 +13,7 @@ import android.graphics.Paint;
 import android.graphics.Rect;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
+import android.hardware.input.InputManager;
 import android.media.AudioAttributes;
 import android.media.AudioFormat;
 import android.media.AudioManager;
@@ -94,6 +95,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private volatile int pauseSequence;
     private AlertDialog menu;
     private AudioManager audioManager;
+    private InputManager inputManager;
     private final Runnable hideMenuGlyph = () -> {
         if (getResources().getConfiguration().orientation == Configuration.ORIENTATION_LANDSCAPE
                 && home.getVisibility() != View.VISIBLE && openDialogs == 0)
@@ -121,6 +123,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         if (Build.VERSION.SDK_INT >= 28) getWindow().getAttributes().layoutInDisplayCutoutMode =
                 WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
         audioManager = (AudioManager)getSystemService(AUDIO_SERVICE);
+        inputManager = (InputManager)getSystemService(INPUT_SERVICE);
         prefs = getPreferences(0);
         KeyBindings bindings = new KeyBindings();
         bindings.load(prefs);
@@ -852,7 +855,9 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         return super.dispatchGenericMotionEvent(event);
     }
     @Override protected void onResume() {
-        super.onResume(); paused = false;
+        super.onResume();
+        if (inputManager != null) inputManager.registerInputDeviceListener(input, null);
+        paused = false;
         focusGranted = audioManager.requestAudioFocus(audioFocus, AudioManager.STREAM_MUSIC,
                 AudioManager.AUDIOFOCUS_GAIN) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED;
         if (home.getVisibility() != View.VISIBLE) setFullscreen(true);
@@ -860,6 +865,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         signal();
     }
     @Override protected void onPause() {
+        if (inputManager != null) inputManager.unregisterInputDeviceListener(input);
         menuButton.removeCallbacks(hideMenuGlyph);
         menuGlyph.animate().cancel();
         paused = true; ++pauseSequence; clearInput(); signal();
