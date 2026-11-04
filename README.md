@@ -132,7 +132,9 @@ D-pad, A/B, L/R, Start and Select, and
 move beside the picture in landscape, with Start/Select below it. Controls do
 not cover the picture; hiding them expands the available 4:3 display area.
 Multiple buttons can be held together.
-Rotation, focus loss and backgrounding release held input.
+Rotation, focus loss and backgrounding release held input. Disconnecting a
+controller releases its buttons while preserving input from other controllers
+and the touch controls.
 In landscape, the menu icon appears at the upper center and disappears after
 three seconds. Tap that same area to reopen the menu. Rotation and closing the
 menu briefly reveal the icon again; there is no reserved menu strip at the left.
