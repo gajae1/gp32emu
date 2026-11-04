@@ -1,15 +1,13 @@
 # GP32emu for iPhone and iPad
 
-The experimental iOS app is in the unreleased **1.1.0** development version. It
-runs on ARM64 devices with iOS/iPadOS 15 or later. Supply your own GP32 BIOS and
-games.
+The experimental iOS app is part of the **unpublished 1.1.0 candidate**; the
+current public release is **1.0.1**. It runs on ARM64 devices with iOS/iPadOS 15
+or later. Supply your own GP32 BIOS and games. Compatibility and performance
+vary by device, iOS version and signing setup.
 
 The `gp32emu-1.1.0-ios-unsigned.ipa` package includes the
 interpreter and an experimental AArch64 JIT. Games start with the interpreter;
 installing the IPA does not automatically enable JIT.
-
-The iOS app remains experimental; features and performance may vary by device,
-iOS version, and signing setup.
 
 ## Install and update
 
@@ -18,10 +16,9 @@ iOS version, and signing setup.
 2. Import the GP32emu IPA into SideStore and sign it with your own Apple account.
 3. Open GP32emu and import your BIOS and an extracted `.smc`, `.fxe` or `.fpk` game.
 
-Installing a packaged IPA does not require a source build. The package has
-no publisher signature or provisioning profile and includes no BIOS, games or
-saves. Free-account installations need periodic refreshes through the signing
-tool.
+The IPA has no publisher signature or provisioning profile and includes no BIOS,
+games or saves. Free-account installations need periodic refreshes through the
+signing tool.
 
 An unsigned IPA cannot be installed by opening the download alone. SideStore
 requires a computer for initial setup (Windows, macOS or Linux); later installs
@@ -94,9 +91,8 @@ Resume from the menu when ready. A menu that is already open stays paused.
 
 ## Experimental JIT
 
-JIT translates GP32 instructions into native ARM64 code. The interpreter remains
-available when JIT cannot be enabled; its performance depends on the device and
-game. The menu reports the mode actually in use.
+The menu reports whether JIT is active. If it cannot be enabled, the interpreter
+remains available.
 
 For the experimental automatic setup:
 
@@ -104,15 +100,13 @@ For the experimental automatic setup:
    pairing and VPN requirements. Your signing tool must preserve `get-task-allow`.
 2. Load a game in GP32emu and select **Enable JIT with StikDebug** in the menu.
 3. Complete the StikDebug request and return to GP32emu. Confirm **JIT enabled**
-   in the menu before assuming it is active.
+   in the menu.
 
-Automatic setup requires a supported device with Apple's TXM memory protection;
-the app checks compatibility before starting. Repeat activation after restarting
-the app or changing games. Reset and state
-restore retain an active JIT session. Missing tools or failed setup leave the
-interpreter available. Automatic JIT setup is experimental and depends on the
-device, signing setup, and StikDebug configuration. Activation does not
-guarantee full speed in every game.
+Automatic setup requires a supported device with Apple's TXM memory protection.
+Repeat activation after restarting the app or changing games. Reset and state
+restore retain an active JIT session. Setup depends on the device, signing tool
+and StikDebug configuration; activation does not guarantee full speed in every
+game.
 
 ## Building from source
 
@@ -121,5 +115,6 @@ checkout.
 
 ## Licenses
 
-Third-party notices from `licenses/` and [CREDITS.md](CREDITS.md) are included in
-the app. Project licensing is described in the main README.
+Third-party notices from [licenses/](../licenses/) and [CREDITS.md](CREDITS.md)
+are included in the app. See the main README for
+[project licensing](../README.md#credits-and-licensing).
