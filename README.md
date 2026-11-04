@@ -9,13 +9,12 @@ Supply your own BIOS and game dumps; neither is included.
 
 [Downloads](https://github.com/gajae1/gp32emu/releases) · [한국어 사용설명서](docs/MANUAL.ko.md)
 
-Current public release: **1.0.1**. **1.1.0 is in development**; this README
-describes the development version. Choose an application package to play directly,
-or a core package for your existing RetroArch installation.
+Current public release: **1.0.1**. This guide covers the **unpublished 1.1.0
+candidate**, including the experimental iPhone/iPad app. See the
+[candidate release notes](docs/RELEASE-1.1.0.md) for changes.
 
-The development version also builds an unsigned IPA for iPhone and iPad;
-installation requires a compatible signing tool. See the
-[upcoming release notes](docs/RELEASE-1.1.0.md) and
+Choose an application package to play directly, or a core package for RetroArch.
+The iPhone/iPad app requires signing before installation; see the
 [iPhone/iPad guide](ios/README.md).
 
 ## Features
@@ -28,9 +27,8 @@ installation requires a compatible signing tool. See the
   apps, and in-game SmartMedia saves when a writable card is mounted.
 - Offers optional LCD persistence and frame interpolation. RetroArch also offers
   guest CPU speed settings from 100% to 300%.
-- Shortens silent card-loading pauses such as Blue Angelo's dialogue opening.
-- Fixes the click noise in Astonishia Story R's music. The correction runs in
-  memory while the game plays, and the card image is not changed.
+- Fixes the click noise in Astonishia Story R's music without changing the card
+  image.
 
 ## Package contents
 
@@ -53,8 +51,8 @@ newer and includes ARM64 and ARMv7. ARM64 is recommended.
 It must be signed before installation; downloading it alone does not install it.
 
 The Linux core targets AArch64 with glibc 2.17 or newer. The Android RetroArch
-cores target API 21 or newer. ARMv7 uses the interpreter and is substantially
-slower than ARM64.
+cores target API 21 or newer. ARMv7 uses the interpreter; choose ARM64 when
+your RetroArch installation supports it.
 
 Each binary ZIP also contains this README, release notes, the
 [Korean manual](docs/MANUAL.ko.md), third-party notices in [licenses/](licenses/),
@@ -74,9 +72,8 @@ Source archives cannot be installed as RetroArch cores.
   and saves. Do not uninstall first.
 - RetroArch: close the game and replace the core and `.info` file for the same
   platform and architecture. Keep your BIOS, games, saves and frontend settings.
-- Save states: 1.1.0 reads existing v2-v12 and v14-v16 states. New states use
-  v17 and require a compatible 1.1.0 or later build; older cores cannot load
-  them. Keep copies of valuable state files when upgrading.
+- Save states: back up valuable state files before upgrading. See
+  [Saves](#saves) for format compatibility.
 
 ## Windows application
 
@@ -128,16 +125,15 @@ load state, restart, show or hide touch controls, touch vibration, sharp integer
 scaling, game list, about and quit. Each game has ten state slots. **Load latest
 state** finds the newest saved slot for that game and asks before loading it.
 Loading does not create or overwrite a save state. Touch controls cover the
-D-pad, A/B, L/R, Start and Select, and
-move beside the picture in landscape, with Start/Select below it. Controls do
-not cover the picture; hiding them expands the available 4:3 display area.
+D-pad, A/B, L/R, Start and Select. In landscape, they move beside the picture,
+with Start/Select below it. Hiding them expands the available 4:3 display area.
 Multiple buttons can be held together.
 Rotation, focus loss and backgrounding release held input. Disconnecting a
 controller releases its buttons while preserving input from other controllers
 and the touch controls.
 In landscape, the menu icon appears at the upper center and disappears after
 three seconds. Tap that same area to reopen the menu. Rotation and closing the
-menu briefly reveal the icon again; there is no reserved menu strip at the left.
+menu briefly reveal the icon again.
 
 Keyboard controls match the Windows defaults. Gamepads work with touch controls
 hidden; the D-pad or left stick, A/B, L1/R1 or L2/R2, Start and Select map to the
@@ -178,20 +174,19 @@ your existing RetroArch configuration. Put `gp32166m.bin` in your system
 directory, then select the GP32emu core and a game. Use full-memory application
 mode as described in the RetroArch guide.
 
-Switch support is experimental and has not been tested on a console. When reporting an issue, include the game,
-BIOS version and steps to reproduce.
+Switch support is experimental; compatibility varies by game and setup. When
+reporting an issue, include the game, BIOS version and steps to reproduce.
 
 ## Saves
 
-For an unpacked `.smc` file, the original card image is never modified. Ordinary
-card accesses during play behave normally. Windows and RetroArch automatically
-save only the changed card pages in a compact file. Exit the game normally
-before powering off or removing storage so the latest changes can be saved.
-Windows uses
-`<original filename including .smc>.gp32.sav` next
-to the ROM, for example `game.smc.gp32.sav`. RetroArch uses `<stem>.gp32.sav`
+For an unpacked `.smc` file, the original card image is never modified. Windows
+and RetroArch automatically save card changes in a separate compact file. Exit
+the game normally before powering off or removing storage so the latest changes
+can be saved.
+Windows uses `<original filename including .smc>.gp32.sav` next to the ROM,
+for example `game.smc.gp32.sav`. RetroArch uses `<stem>.gp32.sav`
 in its configured save directory. The save location must be writable, and the
-delta must be loaded atop the exact original `.smc`. Extract ZIP archives
+save must be used with the exact original `.smc`. Extract ZIP archives
 before loading them. If RetroArch supplies no save directory, the system
 directory is used. Games with the same filename stem share a save location;
 keep their saves in separate directories.
@@ -209,8 +204,8 @@ stops loading rather than being silently replaced.
 
 The Windows, Android and iOS apps provide ten manual save-state slots for each
 game. **Load latest state** finds the newest occupied slot for the current game
-and asks before loading it. The iOS app keeps a single state saved by an earlier build in slot 1; the
-other nine slots use separate files. RetroArch uses its own frontend slots.
+and asks before loading it. An earlier iOS app's single state remains available
+in slot 1. RetroArch uses its own frontend slots.
 
 Save states use the common v17 format. GP32emu 1.1.0 imports existing v2-v12
 and v14-v16 states. Older core builds cannot load v17 states, so keep a copy of
@@ -237,14 +232,15 @@ the exact original ROM. Restoring a state also rolls back in-game card progress.
 
 ## Building from source
 
-See [BUILDING.md](https://github.com/gajae1/gp32emu/blob/main/docs/BUILDING.md) for
-build commands, source-only frontends and the source layout.
+See the [general build guide](https://github.com/gajae1/gp32emu/blob/main/docs/BUILDING.md),
+[Android build guide](https://github.com/gajae1/gp32emu/blob/main/docs/ANDROID_BUILD.md) or
+[iOS build guide](docs/IOS_BUILD.md).
 
 ## Credits and licensing
 
-GP32emu was started by [gameblabla](https://github.com/gameblabla/gp32emu). This
-fork keeps the upstream commits in its history. The upstream repository does not
-state a licence for its own code at the time of writing, so this repository does
+GP32emu was started by [gameblabla](https://github.com/gameblabla/gp32emu).
+The upstream repository does not state a licence for its own code at the time of
+writing, so this repository does
 not add one either; ask the upstream author before reusing it outside GitHub's
 fork terms.
 
