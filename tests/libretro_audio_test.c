@@ -860,6 +860,50 @@ static void test_state_replay_continuity(void) {
     free(state);
 }
 
+/* A rejected append must not evict older PCM. If a frontend recovers before
+ * the retry, all input fits by draining the backlog; no gap ever occurred. */
+static void test_queue_allocation_failure_preserves_pcm(void) {
+    static const size_t prefixes[] = {0u, 37u};
+    for (size_t scenario = 0; scenario < GP32_ARRAY_COUNT(prefixes); ++scenario) {
+        start_case();
+        allowance = 0;
+        feed(4000u, 44100u, 1000);
+        feed(4000u, 44100u, 6000);
+        CHECK(audio_pending_frames == 8000u && audio_resample_cap < 11025u,
+              "allocation failure fixture must require queue growth");
+        for (size_t i = 0; i < 12096u; ++i) {
+            int sample = i < 4000u ? 1000 + (int)i :
+                         i < 8000u ? 6000 + (int)(i - 4000u) :
+                                     12000 + (int)(i - 8000u);
+            expected[i * 2u] = (int16_t)sample;
+            expected[i * 2u + 1u] = (int16_t)-sample;
+        }
+        gp32_audio_resampler_t before = audio_resampler;
+        allowance = prefixes[scenario];
+        per_call = 17u;
+        fail_delivery_allocation = 1;
+        feed(4096u, 44100u, 12000);
+        fail_delivery_allocation = 0;
+        size_t retained = 8000u - prefixes[scenario];
+        CHECK(captured_frames == prefixes[scenario] &&
+              !memcmp(captured, expected, captured_frames * 4u),
+              "accepted prefix remains delivered when an append fails");
+        CHECK(audio_pending_frames == retained &&
+              !memcmp(audio_resample_buf, expected + prefixes[scenario] * 2u, retained * 4u),
+              "failed queue growth must preserve every unaccepted old frame");
+        CHECK(!audio_gap_left && !memcmp(&audio_resampler, &before, sizeof(before)),
+              "failed admission must not create a gap or advance resampling");
+        CHECK(scripted_audio.frame_count == 4096u &&
+              !memcmp(input_pcm, expected + 8000u * 2u, 4096u * 4u),
+              "failed admission must retain the borrowed guest PCM for retry");
+        allowance = SIZE_MAX;
+        retro_run();
+        CHECK(captured_frames == 12096u && !audio_pending_frames &&
+              !scripted_audio.frame_count && !memcmp(captured, expected, 12096u * 4u),
+              "recovered retry must deliver the complete stream without loss or a false gap");
+    }
+}
+
 static void test_sustained_backpressure(void) {
     start_case();
     allowance = 0;
@@ -1258,6 +1302,7 @@ int main(int argc, char **argv) {
     test_silence_and_gap();
     test_idle_boundaries();
     test_idle_rate_counts();
+    test_queue_allocation_failure_preserves_pcm();
     test_sustained_backpressure();
     test_partial_overflow_recovery();
     test_resampled_queue_boundary();

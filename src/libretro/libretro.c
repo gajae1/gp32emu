@@ -954,14 +954,12 @@ static int submit_audio_resampled(const gp32_audio_desc_t *aud) {
     /* A recovered frontend may consume the backlog before any PCM needs to
      * be discarded. Keep the normal, non-overflow delivery path unchanged. */
     if (need > GP32_AUDIO_QUEUE_LIMIT - audio_pending_frames) flush_audio();
-    if (need > GP32_AUDIO_QUEUE_LIMIT - audio_pending_frames) {
-        size_t drop = audio_pending_frames + need - GP32_AUDIO_QUEUE_LIMIT;
-        audio_pending_frames -= drop;
-        memmove(audio_resample_buf, audio_resample_buf + drop * 2u,
-                audio_pending_frames * 2u * sizeof(int16_t));
-        mark_audio_output_gap();
-    }
+    /* Plan eviction, but keep the unaccepted backlog intact until allocation
+     * succeeds. A failed append leaves its guest span available for retry;
+     * a recovered frontend may then accept all old PCM without any discard. */
     size_t total = audio_pending_frames + need;
+    size_t drop = total > GP32_AUDIO_QUEUE_LIMIT ? total - GP32_AUDIO_QUEUE_LIMIT : 0u;
+    total -= drop;
     if (total > audio_resample_cap) {
         size_t cap = total;
         if (audio_resample_cap <= max_frames / 2u && cap < audio_resample_cap * 2u) cap = audio_resample_cap * 2u;
@@ -973,6 +971,12 @@ static int submit_audio_resampled(const gp32_audio_desc_t *aud) {
         }
         audio_resample_buf = p;
         audio_resample_cap = cap;
+    }
+    if (drop) {
+        audio_pending_frames -= drop;
+        memmove(audio_resample_buf, audio_resample_buf + drop * 2u,
+                audio_pending_frames * 2u * sizeof(int16_t));
+        mark_audio_output_gap();
     }
     int16_t *out = audio_resample_buf + audio_pending_frames * 2u;
     size_t out_frames = in_frames;
