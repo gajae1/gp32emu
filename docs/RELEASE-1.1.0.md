@@ -17,9 +17,15 @@ per game in the standalone apps, and improvements to controls, audio and saving.
 - **Mobile controls:** a top-aligned landscape picture, separate shoulder and
   Start/Select rows in portrait, a menu button that hides during landscape play,
   and more screen space when touch controls are disabled.
-- **Emulation:** shared CPU and card-reading fixes, including support for saving
-  to 128 MiB cards. Compatibility and performance still vary by game and host.
+- **Emulation:** shared CPU, DMA and card-loading fixes, including support for
+  saving to 128 MiB cards. Compatibility and performance still vary by game and
+  host.
 - **Audio:** fixes Windows audio occasionally restarting after a pause or reset.
+  RetroArch retains queued sound if memory is temporarily unavailable.
+- **Android controllers:** held buttons are released when a controller is
+  disconnected, without releasing other controllers or touch controls.
+- **Browser frontend:** saving, loading and exporting stay tied to the selected
+  game and slot even if the selection changes before storage finishes.
 - **Save states:** New states use v17 and retain the playback positions of all
   four PCM channels. Damaged or mismatched states, including invalid audio
   transition data, are rejected without replacing the running game.
