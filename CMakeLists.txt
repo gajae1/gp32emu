@@ -111,6 +111,20 @@ if (GP32EMU_BUILD_TESTS)
         add_test(NAME ${reloc_test} COMMAND ${reloc_test}_test)
     endforeach()
     set_tests_properties(arm_a64_emit_reloc PROPERTIES SKIP_REGULAR_EXPRESSION "SKIP:")
+    # Inject cache-flush failures at the Windows API boundary. The A64 target
+    # inspects the real emitter/allocator but never executes its output.
+    if (WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL 8)
+        foreach(publication_test arm_jit_publish arm_a64_publish)
+            add_executable(${publication_test}_test tests/arm_jit_publish_test.c)
+            target_include_directories(${publication_test}_test PRIVATE src include)
+            if (NOT MSVC)
+                target_compile_options(${publication_test}_test PRIVATE -Wall -Wextra)
+            endif()
+            add_test(NAME ${publication_test} COMMAND ${publication_test}_test)
+            set_tests_properties(${publication_test} PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77)
+        endforeach()
+        target_compile_definitions(arm_a64_publish_test PRIVATE GP32EMU_TEST_A64_EMITTER=1)
+    endif()
     # The region proof and callback state checks execute real generated A64
     # code. Verify the same architecture with and without profile emission.
     foreach(region_test arm_a64_io_sequence arm_a64_io_sequence_release)
