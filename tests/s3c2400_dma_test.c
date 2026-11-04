@@ -56,8 +56,8 @@ static int trigger_case(s3c2400_t *s, unsigned ch, unsigned dsz,
     s3c2400_write32(s, 0x14400000u, UINT32_MAX);
     for (unsigned request = 0; request < (reload ? 6u : 3u); ++request) {
         const uint32_t unit = request % count;
-        memcpy(expected + dst - BASE + unit * width,
-               initial + src - BASE + unit * width, width);
+        memcpy(expected + (dst - BASE) + unit * width,
+               initial + (src - BASE) + unit * width, width);
         trigger_write(s, dma + 24u, access);
         uint32_t left = count - unit - 1u;
         uint32_t next = unit + 1u;
@@ -317,10 +317,10 @@ static int burst_case(s3c2400_t *s, unsigned ch, unsigned dsz,
         if (bursts > 2u) bursts = reload ? 1u : 2u;
         if (whole || request != 2u || reload) {
             if (whole || request == 0u || request == 2u)
-                memcpy(expected + dst - BASE, initial + src - BASE, span);
+                memcpy(expected + (dst - BASE), initial + (src - BASE), span);
             if (bursts == 2u)
-                memcpy(expected + dst - BASE + (fixed_dst ? 0u : span),
-                       initial + src - BASE + (fixed_src ? 0u : span), span);
+                memcpy(expected + (dst - BASE) + (fixed_dst ? 0u : span),
+                       initial + (src - BASE) + (fixed_src ? 0u : span), span);
         }
         s3c2400_write32(s, dma + 24u, 3u);
         uint32_t tc = 2u - bursts;
@@ -436,6 +436,73 @@ static int burst_iis_case(s3c2400_t *s, unsigned dsz, unsigned hardware,
     return failed;
 }
 
+/* Manual p.8-5 specifies four reads followed by four writes, not four
+ * read/write pairs. With destination one unit ahead, each group must capture
+ * its inputs before overwriting them; the NEXT group must see those writes.
+ * Literal fixtures distinguish this from both unit-at-a-time propagation and
+ * one memmove of the whole service. MEMCON exercises the ordinary MMIO bus,
+ * not the RAM-copy path; it does not test physical memory-controller timing. */
+static int burst_read_ahead_case(s3c2400_t *s, unsigned ch, unsigned dsz,
+                                 unsigned whole, unsigned fixed, unsigned mmio) {
+    static const uint8_t first[9] = {1, 1, 2, 3, 4, 6, 7, 8, 9};
+    static const uint8_t complete[4][9] = {
+        {1, 1, 2, 3, 4, 4, 6, 7, 8}, /* increment both */
+        {1, 1, 2, 3, 4, 1, 1, 2, 3}, /* fixed source */
+        {1, 4, 6, 7, 8, 6, 7, 8, 9}, /* fixed destination */
+        {1, 1, 1, 2, 3, 6, 7, 8, 9}, /* fixed both */
+    };
+    const uint32_t src = mmio ? 0x14000000u : BASE + 0x200u;
+    const uint32_t width = 1u << dsz, dst = src + width;
+    const uint32_t mask = dsz == 0u ? 0xffu : dsz == 1u ? 0xffffu : UINT32_MAX;
+    const uint32_t dma = 0x14600000u + ch * 32u, irq = 1u << (17u + ch);
+    s3c2400_reset(s);
+    for (unsigned i = 0; i < 9u; ++i) {
+        uint32_t value = 0x01010101u * (i + 1u);
+        if (dsz == 0u) s3c2400_write8(s, src + i * width, (uint8_t)value);
+        else if (dsz == 1u) s3c2400_write16(s, src + i * width, (uint16_t)value);
+        else s3c2400_write32(s, src + i * width, value);
+    }
+    s3c2400_write32(s, 0x14400008u, UINT32_MAX);
+    s3c2400_write32(s, dma, src | ((fixed & 1u) << 29));
+    s3c2400_write32(s, dma + 4u, dst | ((fixed >> 1) << 29));
+    s3c2400_write32(s, dma + 8u, (1u << 28) | (1u << 27) |
+                       (whole << 26) | (1u << 22) | (dsz << 20) | 2u);
+    for (unsigned request = 0; request < (whole ? 1u : 2u); ++request) {
+        s3c2400_write32(s, dma + 24u, 3u);
+        unsigned groups = whole ? 2u : request + 1u;
+        const uint8_t *want = groups == 2u ? complete[fixed] : first;
+        unsigned bad = 0u;
+        for (unsigned i = 0; i < 9u; ++i) {
+            uint32_t value = dsz == 0u ? s3c2400_read8(s, src + i * width) :
+                             dsz == 1u ? s3c2400_read16(s, src + i * width) :
+                                         s3c2400_read32(s, src + i * width);
+            uint32_t expected_value = (0x01010101u * want[i]) & mask;
+            if (value != expected_value) {
+                fprintf(stderr, " read-ahead unit %u=%08x expected %08x\n", i, value, expected_value);
+                bad = 1u;
+                break;
+            }
+        }
+        uint32_t advance = groups * 4u * width;
+        const uint32_t registers[] = {
+            s3c2400_read32(s, dma + 12u), s3c2400_read32(s, dma + 16u),
+            s3c2400_read32(s, dma + 20u), s3c2400_read32(s, dma + 24u),
+            s3c2400_read32(s, 0x14400000u)
+        };
+        const uint32_t expected_registers[] = {
+            2u - groups, src + (fixed & 1u ? 0u : advance),
+            dst + (fixed & 2u ? 0u : advance), groups == 2u ? 0u : 2u,
+            groups == 2u ? irq : 0u
+        };
+        if (bad || memcmp(registers, expected_registers, sizeof(registers))) {
+            fprintf(stderr, "FAIL: DMA%u burst read-ahead dsz=%u whole=%u fixed=%u mmio=%u request=%u\n",
+                    ch, dsz, whole, fixed, mmio, request + 1u);
+            return 1;
+        }
+    }
+    return 0;
+}
+
 int main(void) {
     static const layout_t layouts[] = {
         {BASE + 0x200u, BASE + 0x1800u, 0, 0}, /* disjoint */
@@ -517,10 +584,24 @@ int main(void) {
                     ++burst_cases;
                     burst_failures += burst_iis_case(s, dsz, hardware, whole, fixed_src);
                 }
+    unsigned read_ahead_cases = 0u, read_ahead_failures = 0u;
+    for (unsigned ch = 0; ch < 4u; ++ch)
+        for (unsigned dsz = 0; dsz < 3u; ++dsz)
+            for (unsigned whole = 0; whole < 2u; ++whole)
+                for (unsigned fixed = 0; fixed < 4u; ++fixed) {
+                    ++read_ahead_cases;
+                    read_ahead_failures += burst_read_ahead_case(s, ch, dsz, whole, fixed, 0u);
+                }
+    for (unsigned ch = 0; ch <= 2u; ch += 2u)
+        for (unsigned whole = 0; whole < 2u; ++whole) {
+            ++read_ahead_cases;
+            read_ahead_failures += burst_read_ahead_case(s, ch, 2u, whole, 0u, 1u);
+        }
     s3c2400_destroy(s);
     printf("DMA oracle cases=%u failures=%u\n", cases, failures);
     printf("DMA software-trigger scenarios=%u assertion_failures=%u\n", trigger_cases, trigger_failures);
     printf("DMA in-flight STOP scenarios=%u assertion_failures=%u\n", stop_cases, stop_failures);
     printf("DMA four-unit burst scenarios=%u assertion_failures=%u\n", burst_cases, burst_failures);
-    return failures || trigger_failures || stop_failures || burst_failures ? 1 : 0;
+    printf("DMA burst read-before-write scenarios=%u assertion_failures=%u\n", read_ahead_cases, read_ahead_failures);
+    return failures || trigger_failures || stop_failures || burst_failures || read_ahead_failures ? 1 : 0;
 }
