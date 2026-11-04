@@ -2920,8 +2920,8 @@ static int a64_publish(arm920t_t *c, size_t hot, size_t hot_bytes,
 #if defined(ARM_JIT_DARWIN_A64)
     pthread_jit_write_protect_np(1);
 #endif
-    arm_jit_flush_exec(c->jit_code + hot, hot_bytes);
-    if (cold_bytes) arm_jit_flush_exec(c->jit_code + cold, cold_bytes);
+    if (!arm_jit_flush_exec(c->jit_code + hot, hot_bytes)) return 0;
+    if (cold_bytes && !arm_jit_flush_exec(c->jit_code + cold, cold_bytes)) return 0;
 #endif
     return 1;
 }
@@ -3507,8 +3507,12 @@ static ARM_NOINLINE void arm_jit_compile_host(arm920t_t *c, arm_jit_block_t *b) 
         intptr_t d = ((intptr_t)(c->jit_code + stub[e.ext_to[k]]) - (intptr_t)at) / 4;
         *at = (*at & 0xfc000000u) | ((uint32_t)d & 0x03ffffffu);
     }
-    if (!a64_publish(c, start, hot_bytes, cold_at, cold_bytes)) return;
+    /* Keep both allocation frontiers in the same chunk even if cache
+     * publication fails. Otherwise the old hot cursor can re-enter the
+     * previous chunk while its resident cold boundary has been forgotten.
+     * Failed bytes stay reserved, but no callable entry is published. */
     c->jit_code_used = start + hot_bytes;
+    if (!a64_publish(c, start, hot_bytes, cold_at, cold_bytes)) return;
     void *dst = a64_exec_addr(c, start);
     union { void *p; arm_jit_native_fn f; } cvt;
     cvt.p = dst;

@@ -1236,10 +1236,11 @@ static void arm_jit_free_exec(arm920t_t *c, uint8_t *ptr, size_t bytes) {
 }
 
 #if !defined(__SWITCH__)
-static void arm_jit_flush_exec(void *ptr, size_t bytes) {
-    if (!ptr || !bytes) return;
+static int arm_jit_flush_exec(void *ptr, size_t bytes) {
+    if (!ptr || !bytes) return 1;
 #if defined(_WIN32)
-    FlushInstructionCache(GetCurrentProcess(), ptr, bytes);
+    /* A failed cache publication must leave the new entry uncallable. */
+    return FlushInstructionCache(GetCurrentProcess(), ptr, bytes) != 0;
 #elif defined(__APPLE__) && defined(ARM_JIT_NATIVE_A64)
     /* iOS also requires the OS cache API; macOS's per-thread write-protect
      * API and MAP_JIT allocation policy remain separately gated above. */
@@ -1284,6 +1285,7 @@ static void arm_jit_flush_exec(void *ptr, size_t bytes) {
     GP32_UNUSED(ptr);
     GP32_UNUSED(bytes);
 #endif
+    return 1;
 }
 #endif
 
@@ -5525,7 +5527,7 @@ static void arm_jit_compile_host(arm920t_t *c, arm_jit_block_t *b) {
     void *dst = arm_jit_code_reserve(c, e.pos);
     if (!dst) return;
     memcpy(dst, tmp, e.pos);
-    arm_jit_flush_exec(dst, e.pos);
+    if (!arm_jit_flush_exec(dst, e.pos)) return;
     union { void *p; arm_jit_native_fn f; } cvt;
     cvt.p = dst;
     b->native = cvt.f;
