@@ -196,8 +196,10 @@ static int b2_decode_symbol(b2ctx_t *ctx, uint32_t table, uint32_t *sym_out) {
     }
     uint16_t len = b2_rd16(ctx->mem, p - 2u);
     uint16_t base = b2_rd16(ctx->mem, p - 4u);
-    if (len > 31u) return 0;
-    uint32_t top = len ? (ctx->bitbuf >> (32u - len)) : 0u;
+    /* Zero lengths are unused codes. An empty/malformed tree must fall
+     * back to the guest loader, not shift a 32-bit word by 32 in the reader. */
+    if (!len || len > 31u) return 0;
+    uint32_t top = ctx->bitbuf >> (32u - len);
     uint32_t idx = (top + base) & 0xffffu;
     if (!b2_in_ram(symbols + idx * 4u, 4u)) return 0;
     uint32_t sym = b2_rd32(ctx->mem, symbols + idx * 4u);
