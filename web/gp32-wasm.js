@@ -126,6 +126,8 @@ const DB_STATE_PREFIX = 'state:';
 let wasm, memory, exp;
 let db = null;
 let dbReady = false;
+// Invalidate pending storage reads when a newer restore or core session wins.
+let stateLoadRequest = 0;
 let running = false;
 let buttons = 0;
 let keyboardButtons = 0;
@@ -304,7 +306,7 @@ function mediaStateFingerprint() {
   return ['gp32', mode, m.kind, String(m.size), m.hash, (m.name || '').toLowerCase()].join('.');
 }
 function stateKey() { return `${STORAGE_STATE_PREFIX}${mediaStateFingerprint()}.${config.stateSlot}`; }
-function stateDbKey() { return `${DB_STATE_PREFIX}${stateKey()}`; }
+function stateDbKey(key = stateKey()) { return `${DB_STATE_PREFIX}${key}`; }
 function stateExportName() {
   const base = (gameMeta?.name || biosMeta?.name || 'gp32').replace(/\.[^.]+$/, '');
   const clean = base.normalize('NFKD').replace(/[^a-z0-9._-]+/gi, '_').replace(/^_+|_+$/g, '').slice(0, 80) || 'gp32';
@@ -368,22 +370,23 @@ function normalizeStoredBytes(value) {
   if (ArrayBuffer.isView(value)) return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
   return null;
 }
-async function putStateBytes(bytes) {
+async function putStateBytes(bytes, key = stateKey()) {
+  // The slot/media selection may change while IndexedDB is committing.
   if (dbReady && db) {
-    await dbPut(stateDbKey(), bytes);
-    try { localStorage.removeItem(stateKey()); } catch (_) {}
+    await dbPut(stateDbKey(key), bytes);
+    try { localStorage.removeItem(key); } catch (_) {}
     return 'IndexedDB';
   }
-  localStorage.setItem(stateKey(), bytesToBase64(bytes));
+  localStorage.setItem(key, bytesToBase64(bytes));
   return 'localStorage fallback';
 }
-async function getStateBytes() {
+async function getStateBytes(key = stateKey()) {
   if (dbReady && db) {
-    const bytes = normalizeStoredBytes(await dbGet(stateDbKey()));
+    const bytes = normalizeStoredBytes(await dbGet(stateDbKey(key)));
     if (bytes) return bytes;
   }
   try {
-    const raw = localStorage.getItem(stateKey());
+    const raw = localStorage.getItem(key);
     return raw ? base64ToBytes(raw) : null;
   } catch (_) { return null; }
 }
@@ -859,6 +862,7 @@ async function start() {
   if (!gameLoaded && !biosLoaded) { log('Load a BIOS or game first.'); return; }
   await ensureAudio(true);
   resetAudioQueues();
+  ++stateLoadRequest;
   if (!exp.gp32_wasm_start()) { setState('error'); log(errorText()); return; }
   if (!biosLoaded) log('HLE BIOS active: this can fail on some commercial games and is mainly useful for homebrew/direct-load compatible titles.');
   hiddenPauseWasRunning = false;
@@ -960,6 +964,7 @@ async function loadBiosFile(file) {
   } catch (err) {
     setState('error'); log(err.message || String(err)); return;
   }
+  ++stateLoadRequest;
   if (!exp.gp32_wasm_load_bios(ptr, bytes.byteLength)) { setState('error'); log(errorText()); return; }
   biosLoaded = true;
   biosMeta = mediaMeta(file, bytes, 'bios');
@@ -979,6 +984,7 @@ async function loadGameFile(file) {
   }
   const forceHle = hleMode.checked ? 1 : 0;
   currentLaunchUsesHle = !!forceHle || !biosLoaded;
+  ++stateLoadRequest;
   if (!exp.gp32_wasm_load_media(ptr, bytes.byteLength, name.ptr, name.len, forceHle)) { setState('error'); log(errorText()); return; }
   gameLoaded = true;
   gameMeta = mediaMeta(file, bytes, 'game');
@@ -997,9 +1003,10 @@ async function saveStateToStorage() {
   if (!ptr || !size) return setStorageStatus('save failed: empty state buffer', 'bad');
   const bytes = wasmU8().slice(ptr, ptr + size);
   if (!looksLikeGp32State(bytes)) return setStorageStatus('save failed: generated state header was invalid', 'bad');
+  const slot = config.stateSlot;
   try {
     const where = await putStateBytes(bytes);
-    setStorageStatus(`State slot ${config.stateSlot} saved to ${where} (${size.toLocaleString()} bytes).`, 'ok');
+    setStorageStatus(`State slot ${slot} saved to ${where} (${size.toLocaleString()} bytes).`, 'ok');
   } catch (err) {
     setStorageStatus(`save failed: ${err.message || err}`, 'bad');
   }
@@ -1007,11 +1014,17 @@ async function saveStateToStorage() {
 async function loadStateFromStorage() {
   if (!exp) return;
   if (exp.gp32_wasm_get_status?.() !== 2) return setStorageStatus('Start the matching BIOS/game before loading a state.', 'warn');
-  let bytes;
-  try { bytes = await getStateBytes(); }
-  catch (err) { return setStorageStatus(`load failed: ${err.message || err}`, 'bad'); }
-  if (!bytes) return setStorageStatus(`No state in slot ${config.stateSlot} for this BIOS/game.`, 'warn');
-  if (!looksLikeGp32State(bytes)) return setStorageStatus(`State slot ${config.stateSlot} is corrupt or from an older incompatible build; save the slot again.`, 'bad');
+  const request = ++stateLoadRequest, core = exp, key = stateKey(), slot = config.stateSlot;
+  let bytes, readError;
+  try { bytes = await getStateBytes(key); }
+  catch (err) { readError = err; }
+  // A late result belongs to its original selection/session, not whichever
+  // machine is now running. Check before allocation, input or audio changes.
+  if (request !== stateLoadRequest || core !== exp || key !== stateKey() ||
+      core.gp32_wasm_get_status?.() !== 2) return;
+  if (readError) return setStorageStatus(`load failed: ${readError.message || readError}`, 'bad');
+  if (!bytes) return setStorageStatus(`No state in slot ${slot} for this BIOS/game.`, 'warn');
+  if (!looksLikeGp32State(bytes)) return setStorageStatus(`State slot ${slot} is corrupt or from an older incompatible build; save the slot again.`, 'bad');
   let ptr;
   try { ptr = copyToWasm(bytes); }
   catch (err) { return setStorageStatus(`load failed: ${err.message || err}`, 'bad'); }
@@ -1031,7 +1044,7 @@ async function loadStateFromStorage() {
   lastDrawnCoreFrame = -1;
   drawFrame();
   updateStats(0, true);
-  setStorageStatus(`State slot ${config.stateSlot} loaded.`, 'ok');
+  setStorageStatus(`State slot ${slot} loaded.`, 'ok');
   setState(wasRunning ? 'running' : 'paused');
   running = wasRunning;
   document.body.classList.toggle('running', running);
@@ -1039,21 +1052,22 @@ async function loadStateFromStorage() {
   if (running) raf = requestAnimationFrame(loop);
 }
 async function exportStateToFile() {
+  const slot = config.stateSlot, filename = stateExportName();
   let bytes;
   try { bytes = await getStateBytes(); }
   catch (err) { return setStorageStatus(`export failed: ${err.message || err}`, 'bad'); }
-  if (!bytes) return setStorageStatus(`No state in slot ${config.stateSlot} to export.`, 'warn');
+  if (!bytes) return setStorageStatus(`No state in slot ${slot} to export.`, 'warn');
   const blob = new Blob([bytes], { type: 'application/octet-stream' });
   const url = URL.createObjectURL(blob);
   try {
     const a = document.createElement('a');
     a.href = url;
-    a.download = stateExportName();
+    a.download = filename;
     a.rel = 'noopener';
     document.body.appendChild(a);
     a.click();
     a.remove();
-    setStorageStatus(`Exported state slot ${config.stateSlot} (${bytes.byteLength.toLocaleString()} bytes).`, 'ok');
+    setStorageStatus(`Exported state slot ${slot} (${bytes.byteLength.toLocaleString()} bytes).`, 'ok');
   } finally {
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
