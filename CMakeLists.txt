@@ -421,6 +421,9 @@ if (GP32EMU_BUILD_WIN64_FRONTEND)
         target_link_libraries(win64_frontend_test PRIVATE gp32emu SDL3::SDL3 user32 gdi32 comdlg32 winmm ole32 uuid d3d11 dxgi avrt shell32)
         add_test(NAME win64_frontend COMMAND win64_frontend_test)
         set_tests_properties(win64_frontend PROPERTIES TIMEOUT 30)
+        # Pure arithmetic mode: no window, audio endpoint or controller needed.
+        add_test(NAME win64_pacing COMMAND win64_frontend_test --pacing-only)
+        set_tests_properties(win64_pacing PROPERTIES TIMEOUT 10)
     endif()
     # Windows does not search the imported library's directory for DLLs.
     # Keep shared SDL beside the GUI and its device-free lifecycle test.

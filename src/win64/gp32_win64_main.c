@@ -1286,9 +1286,14 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpara
 
 
 static uint64_t qpc_elapsed_us(app_state_t *a, LARGE_INTEGER now) {
-    int64_t diff = now.QuadPart - a->last_qpc.QuadPart;
-    if (diff < 0) diff = 0;
-    return (uint64_t)((diff * 1000000ll) / a->qpf.QuadPart);
+    if (now.QuadPart <= a->last_qpc.QuadPart) return 0;
+    uint64_t diff = (uint64_t)now.QuadPart - (uint64_t)a->last_qpc.QuadPart;
+    uint64_t frequency = (uint64_t)a->qpf.QuadPart;
+    /* Apply app_pump's existing 250 ms cap in ticks, before a long suspended
+     * gap can overflow the microsecond conversion. Round the threshold up so
+     * the tick just below 250 ms keeps its original integer conversion. */
+    if (diff >= frequency / 4u + (frequency % 4u != 0u)) return 250000u;
+    return diff * 1000000u / frequency;
 }
 
 typedef struct frame_audio_context {
