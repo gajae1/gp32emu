@@ -1,15 +1,13 @@
 # GP32emu for iPhone and iPad
 
-The experimental iOS app is part of the upcoming **1.1.0** release. It runs on
-ARM64 devices with iOS/iPadOS 15 or later. Supply your own GP32 BIOS and games.
+The experimental iOS app is part of the **unpublished 1.1.0 candidate**; the
+current public release is **1.0.1**. It runs on ARM64 devices with iOS/iPadOS 15
+or later. Supply your own GP32 BIOS and games. Compatibility and performance
+vary by device, iOS version and signing setup.
 
-While 1.1.0 is in development, use the [iOS build guide](../docs/IOS_BUILD.md)
-to create `gp32emu-1.1.0-ios-unsigned.ipa`. It includes the
+The `gp32emu-1.1.0-ios-unsigned.ipa` package includes the
 interpreter and an experimental AArch64 JIT. Games start with the interpreter;
 installing the IPA does not automatically enable JIT.
-
-The iOS app remains experimental; features and performance may vary by device,
-iOS version, and signing setup.
 
 ## Install and update
 
@@ -18,16 +16,15 @@ iOS version, and signing setup.
 2. Import the GP32emu IPA into SideStore and sign it with your own Apple account.
 3. Open GP32emu and import your BIOS and an extracted `.smc`, `.fxe` or `.fpk` game.
 
-No source build is needed to install an IPA. The package has no publisher
-signature or provisioning profile and includes no BIOS, games or saves.
-Free-account installations need periodic refreshes through the signing tool.
+The IPA has no publisher signature or provisioning profile and includes no BIOS,
+games or saves. Free-account installations need periodic refreshes through the
+signing tool.
 
 An unsigned IPA cannot be installed by opening the download alone. SideStore
 requires a computer for initial setup (Windows, macOS or Linux); later installs
 and refreshes can run on the device with its required Wi-Fi/VPN setup. On iOS 16
 and later, development-signed apps also require
 [Developer Mode](https://developer.apple.com/documentation/xcode/enabling-developer-mode-on-a-device).
-The interpreter does not remove these installation requirements.
 
 To update, install over the existing app using the same signing account and app
 identifier. Do not uninstall first: removing the app also removes its local data.
@@ -39,10 +36,7 @@ identified app may have separate storage.
 Use the app menu to import files and select a game. A BIOS is recommended for
 commercial games; booting without one is limited.
 
-**Game library** lists games already imported into the app. Select a game to
-open it without importing another copy. **Load latest state** finds the newest
-of that game's ten saved slots and asks you to confirm its slot and date. It
-does not create or replace a state automatically.
+Select an imported game from **Game library** to play it again.
 
 The app copies imported files into its own storage and leaves the originals
 unchanged. Save data follows the imported file contents: importing identical
@@ -57,8 +51,10 @@ Resolve the storage error and retry; closing the app can discard unsaved progres
 ## Save states
 
 Each game has ten save-state slots. Save State and Load State show whether each
-slot is empty or occupied; saving replaces the chosen slot. An existing single
-state from an earlier iOS build remains available as slot 1.
+slot is empty or occupied; saving replaces the chosen slot. **Load latest
+state** shows the most recent slot and its date for you to confirm. It does not
+write a new save. An existing single state from an earlier iOS build remains
+available as slot 1.
 
 New states use the common v17 format. This build imports existing v2-v12 and
 v14-v16 states. Older core builds cannot read v17 states, so keep a copy of
@@ -93,9 +89,8 @@ Resume from the menu when ready. A menu that is already open stays paused.
 
 ## Experimental JIT
 
-JIT translates GP32 instructions into native ARM64 code. The interpreter remains
-available when JIT cannot be enabled; its performance depends on the device and
-game. The menu reports the mode actually in use.
+The menu reports whether JIT is active. If it cannot be enabled, the interpreter
+remains available.
 
 For the experimental automatic setup:
 
@@ -103,17 +98,19 @@ For the experimental automatic setup:
    pairing and VPN requirements. Your signing tool must preserve `get-task-allow`.
 2. Load a game in GP32emu and select **Enable JIT with StikDebug** in the menu.
 3. Complete the StikDebug request and return to GP32emu. Confirm **JIT enabled**
-   in the menu before assuming it is active.
+   in the menu.
 
-Automatic setup requires a supported device with Apple's TXM memory protection;
-the app checks compatibility before starting. Repeat activation after restarting
-the app or changing games. Reset and state
-restore retain an active JIT session. Missing tools or failed setup leave the
-interpreter available. Automatic JIT setup is experimental and depends on the
-device, signing setup, and StikDebug configuration. Activation does not
-guarantee full speed in every game.
+Automatic setup requires a supported device with Apple's TXM memory protection.
+Repeat activation after restarting the app or changing games. Reset and state
+restore retain an active JIT session.
+
+## Building from source
+
+To build an IPA from a source checkout, see the
+[iOS build guide](https://github.com/gajae1/gp32emu/blob/main/docs/IOS_BUILD.md).
 
 ## Licenses
 
-Third-party notices from `licenses/` and [CREDITS.md](CREDITS.md) are included in
-the app. Project licensing is described in the main README.
+Third-party notices from [licenses/](../licenses/) and [CREDITS.md](CREDITS.md)
+are included in the app. See the main README for
+[project licensing](../README.md#credits-and-licensing).

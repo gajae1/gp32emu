@@ -1,259 +1,46 @@
 # GP32emu
 
-GP32emu emulates the Game Park GP32, the Korean handheld released in 2001. It
-provides Windows, Android and iOS applications and a libretro core for RetroArch. This fork of
-[gameblabla's gp32emu](https://github.com/gameblabla/gp32emu) is maintained at
-[gajae1/gp32emu](https://github.com/gajae1/gp32emu).
+GP32emu runs Game Park GP32 games on Windows, Android, iPhone/iPad and
+compatible RetroArch frontends. It opens `.smc` card images and `.fxe`/`.fpk`
+homebrew. Bring your own BIOS and games; neither is included.
 
-Supply your own BIOS and game dumps; neither is included.
+[Downloads](https://github.com/gajae1/gp32emu/releases) ·
+[한국어 사용설명서](docs/MANUAL.ko.md) ·
+[1.1.0 update notes](docs/RELEASE-1.1.0.md)
 
-[Downloads](https://github.com/gajae1/gp32emu/releases) · [한국어 사용설명서](docs/MANUAL.ko.md)
+**1.0.1** is the current public release. The iPhone/iPad app is part of the
+unpublished **1.1.0** candidate.
 
-Current public release: **1.0.1**. **1.1.0 is in development**; this README
-describes the development version. Choose an application package to play directly,
-or a core package for your existing RetroArch installation.
+## Get started
 
-The development version also builds an unsigned IPA for iPhone and iPad;
-installation requires a compatible signing tool. See the
-[upcoming release notes](docs/RELEASE-1.1.0.md) and
-[iPhone/iPad guide](ios/README.md).
-
-## Features
-
-- Loads `.smc` SmartMedia images and `.fxe` / `.fpk` homebrew.
-- Supports GP32 BIOS boot and limited booting without a BIOS.
-- Uses a dynamic recompiler (JIT) on x86-64 and little-endian AArch64, with a
-  portable interpreter for other hosts.
-- Supports ten manual per-game save-state slots in the Windows, Android and iOS
-  apps, and in-game SmartMedia saves when a writable card is mounted.
-- Offers optional LCD persistence and frame interpolation. RetroArch also offers
-  guest CPU speed settings from 100% to 300%.
-- Shortens silent card-loading pauses such as Blue Angelo's dialogue opening.
-- Fixes the click noise in Astonishia Story R's music. The correction runs in
-  memory while the game plays, and the card image is not changed.
-
-## Package contents
-
-Replace `VERSION` below with the version of the download you selected.
-
-| ZIP package | Contents |
+| Where to play | What to install |
 | --- | --- |
-| `gp32emu-VERSION-windows-x64.zip` | `gp32emu_win64.exe`, `SDL3.dll`, `SDL3-LICENSE.txt` |
-| `gp32emu-VERSION-libretro-windows-x64.zip` | `gp32emu_libretro.dll`, `gp32emu_libretro.info` |
-| `gp32emu-VERSION-linux-aarch64.zip` | `gp32emu_libretro.so`, `gp32emu_libretro.info` |
-| `gp32emu-VERSION-android-arm64.zip` | `gp32emu_libretro_android.so`, `gp32emu_libretro.info` |
-| `gp32emu-VERSION-android-armv7.zip` | `gp32emu_libretro_android.so`, `gp32emu_libretro.info` |
-| `gp32emu-VERSION-switch-libnx.zip` | Experimental RetroArch NRO core and installation guide |
+| Windows | Extract the Windows app ZIP. Keep `SDL3.dll` beside `gp32emu_win64.exe`, run it and open a game. |
+| Android | Install the APK, then use **Add game** to import an extracted game file. |
+| iPhone/iPad | Sign and install the unsigned IPA using the [iPhone/iPad guide](ios/README.md). |
+| RetroArch | Install the core and its `.info` file for your platform and architecture, then load a game. |
+| Nintendo Switch | Follow the [Switch installation guide](https://github.com/gajae1/gp32emu/blob/main/packaging/switch/README.md). |
 
-The separate `gp32emu-VERSION-android.apk` installs the Android application; it is
-not a ZIP archive and does not require RetroArch. It supports Android 6.0 or
-newer and includes ARM64 and ARMv7. ARM64 is recommended.
+A BIOS is recommended for commercial games. Select it in the app, or put
+`gp32166m.bin` in RetroArch's system directory and leave **Boot mode** on
+`auto`. iOS and Switch support is experimental.
 
-`gp32emu-VERSION-ios-unsigned.ipa` contains the experimental iPhone/iPad app.
-It must be signed before installation; downloading it alone does not install it.
+## Updates and saves
 
-The Linux core targets AArch64 with glibc 2.17 or newer. The Android RetroArch
-cores target API 21 or newer. ARMv7 uses the interpreter and is substantially
-slower than ARM64.
+Back up your in-game saves and save states before updating. Keep the original
+`.smc` alongside any saves that depend on it. Update mobile apps over the
+existing installation using a matching app identifier and signature.
 
-Each binary ZIP also contains this README, release notes, the
-[Korean manual](docs/MANUAL.ko.md), third-party notices in [licenses/](licenses/),
-and `manifest.json` with checksums for the packaged files. BIOS images, games and
-save files are not included.
-
-`gp32emu-VERSION-source.zip` contains source code, not a ready-to-run application.
-The Switch binary is in `gp32emu-VERSION-switch-libnx.zip`; its matching core
-sources and static library are in `gp32emu-VERSION-switch-libnx-source.zip`.
-Source archives cannot be installed as RetroArch cores.
-
-### Upgrading
-
-- Windows: close GP32emu and replace the program files. Keep `GP32emu.ini`,
-  saves and the `states` folder.
-- Android: install the new APK over the existing app to keep imported games
-  and saves. Do not uninstall first.
-- RetroArch: close the game and replace the core and `.info` file for the same
-  platform and architecture. Keep your BIOS, games, saves and frontend settings.
-- Save states: 1.1.0 reads existing v2-v12 and v14-v16 states. New states use
-  v17 and require a compatible 1.1.0 or later build; older cores cannot load
-  them. Keep copies of valuable state files when upgrading.
-
-## Windows application
-
-1. Extract the package and keep `SDL3.dll` beside `gp32emu_win64.exe`.
-2. Run the executable. On first start it offers to select your GP32 BIOS; you can
-   change it later with `Settings > Set BIOS...`.
-3. Open a game with `File > Open Game...`, `File > Game Library...` or
-   `File > Recent Games`, or drop an SMC, FXE or FPK file on the window.
-
-Settings, states, screenshots and recordings are kept beside the executable
-(`GP32emu.ini` and the `states`, `screenshots` and `recordings` folders), so
-use a writable folder. A BIOS is recommended for commercial games. The game
-library lists SMC, FXE and FPK files directly inside one registered folder,
-excluding save files; extract ZIP archives first. Menus follow the Windows display
-language (Korean or English); set `Language=ko` or `Language=en` under `[UI]` in
-`GP32emu.ini` to choose one.
-
-| Key | Action |
-| --- | --- |
-| Arrow keys | D-pad |
-| Z / X | A / B |
-| A / S | L / R |
-| Enter / Shift | Start / Select |
-| F5 / F8 | Save / load the state in the current slot |
-| F6 / F7 | Previous / next state slot (1-10) |
-| F9 | Pause or resume |
-| Tab (hold) | Fast forward, with sound muted |
-| F11 or Alt+Enter | Fullscreen; Esc leaves fullscreen |
-| F12 | Screenshot into the `screenshots` folder |
-
-`Settings > Keyboard Controls...` remaps the GP32 buttons. Esc, Tab, Alt, the
-Windows keys and F5-F12 stay reserved for the shortcuts above. Gamepads are
-detected when plugged in: the D-pad or left stick moves, the bottom and right
-face buttons are A and B, the shoulder buttons or triggers are L and R, and
-Start and Back/View are Start and Select. `Help > Controls and Shortcuts` shows
-the current keys. Esc does not close the application; use `File > Exit`, the
-close button or Alt+F4.
-
-## Android application
-
-Install the APK from the release page. On the start screen, choose your GP32
-BIOS, then **Add game** to import an extracted `.smc`, `.fxe` or `.fpk` file.
-Imported games appear in the game list; the most recent one has a **Continue**
-button. Touch and hold a game to remove its copy and saves. The app follows the
-system language (Korean or English).
-
-During play, Back or the ≡ button pauses and opens the menu: resume, save state,
-load state, restart, show or hide touch controls, touch vibration, sharp integer
-scaling, game list, about and quit. Each game has ten state slots. **Load latest
-state** finds the newest saved slot for that game and asks before loading it.
-Loading does not create or overwrite a save state. Touch controls cover the
-D-pad, A/B, L/R, Start and Select, and
-move beside the picture in landscape, with Start/Select below it. Controls do
-not cover the picture; hiding them expands the available 4:3 display area.
-Multiple buttons can be held together.
-Rotation, focus loss and backgrounding release held input.
-In landscape, the menu icon appears at the upper center and disappears after
-three seconds. Tap that same area to reopen the menu. Rotation and closing the
-menu briefly reveal the icon again; there is no reserved menu strip at the left.
-
-Keyboard controls match the Windows defaults. Gamepads work with touch controls
-hidden; the D-pad or left stick, A/B, L1/R1 or L2/R2, Start and Select map to the
-GP32. **Controls**, on the library screen or pause menu, lets you remap keyboard
-and gamepad buttons separately. Select a control and press a new key; duplicate
-assignments swap places. **OK** saves, **Cancel** discards edits, and **Defaults**
-resets the selected input type. Analog stick directions are unchanged.
-A gamepad's Mode/Menu button, or Start and Select pressed together, opens
-the menu. Imported files, in-game saves and states are kept in
-private app storage; original files are unchanged. Uninstalling the app removes
-these copies and saves. If playback stops with an internal error, the app returns
-to the game list. Install the APK directly; it is not a Play Store release.
-
-## RetroArch
-
-1. Install the core matching your platform and RetroArch architecture. Put its
-   `.info` file in RetroArch's configured core information directory.
-2. Put your GP32 BIOS in RetroArch's system directory, preferably as
-   `gp32166m.bin`. Use an uncompressed GP32 BIOS dump of 512 KiB or less. Names such
-   as `gp32166.bin`, `gp32.bin`, `GP32.BIN`, `bios.bin` and the usual
-   `[BIOS] GamePark GP32 ...` dumps are recognized too. A BIOS is recommended;
-   booting without one is limited.
-3. Load the GP32emu core, then a `.smc`, `.fxe` or `.fpk` file. Use RetroPad port 1.
-
-Leave boot mode on `auto` for normal use. See the [manual](docs/MANUAL.ko.md)
-for controls, options and installation details.
-
-RetroArch controls its own save-state slots. The ten per-game slots described
-in this README apply to the Windows, Android and iOS applications.
-
-## Nintendo Switch
-
-Install the [official Switch RetroArch bundle](https://docs.libretro.com/guides/install-libnx/)
-first. Extract the `retroarch` folder from the Switch ZIP onto the SD card root.
-The NRO belongs in `retroarch/cores/`, and its information file in
-`retroarch/cores/info/` (or your configured core information directory). Keep
-your existing RetroArch configuration. Put `gp32166m.bin` in your system
-directory, then select the GP32emu core and a game. Use full-memory application
-mode as described in the RetroArch guide.
-
-Switch support is experimental and has not been tested on a console. When reporting an issue, include the game,
-BIOS version and steps to reproduce.
-
-## Saves
-
-For an unpacked `.smc` file, the original card image is never modified. Ordinary
-card accesses during play behave normally. Windows and RetroArch automatically
-save only the changed card pages in a compact file. Exit the game normally
-before powering off or removing storage so the latest changes can be saved.
-Windows uses
-`<original filename including .smc>.gp32.sav` next
-to the ROM, for example `game.smc.gp32.sav`. RetroArch uses `<stem>.gp32.sav`
-in its configured save directory. The save location must be writable, and the
-delta must be loaded atop the exact original `.smc`. Extract ZIP archives
-before loading them. If RetroArch supplies no save directory, the system
-directory is used. Games with the same filename stem share a save location;
-keep their saves in separate directories.
-
-Older full-card saves (`.gp32.smc` or `.gp32.sav`) are loaded and converted to
-compact saves after the next successful save. Open the original game file;
-you do not need to select the save file as a game.
-Invalid saves or deltas for a different original stop loading instead of being
-overwritten. Keep backups of valuable progress.
-
-Use a BIOS for in-game saves in commercial SMC games. Where direct boot does not
-preserve card writes, use save states instead.
-If saving fails, check free space and write access. An unreadable saved card
-stops loading rather than being silently replaced.
-
-The Windows, Android and iOS apps provide ten manual save-state slots for each
-game. **Load latest state** finds the newest occupied slot for the current game
-and asks before loading it. The iOS app keeps a single state saved by an earlier build in slot 1; the
-other nine slots use separate files. RetroArch uses its own frontend slots.
-
-Save states use the common v17 format. GP32emu 1.1.0 imports existing v2-v12
-and v14-v16 states. Older core builds cannot load v17 states, so keep a copy of
-state files you may still need with an older build.
-
-In-game card saves keep the same data and filenames; changing save-state slots
-does not alter `.gp32.sav` files. Save states themselves are separate snapshots
-of the running machine. They may contain base-relative card deltas, so preserve
-the exact original ROM. Restoring a state also rolls back in-game card progress.
-
-## Limitations
-
-- Some cards need a BIOS. Direct boot is limited for titles including Astonishia
-  Story R, Hany and Super Plusha.
-- The Astonishia Story R audio-click fix and the Pinball Dreams startup-mute fix
-  are on by default and leave the ROM unchanged. In RetroArch, keep
-  `Fix game code bugs` enabled; the Windows application always applies them.
-- Compatibility and performance vary by game and host.
-- Per-frame rewind can noticeably reduce speed on low-power devices.
-- iOS and Switch support is experimental. On iOS, installing the IPA does not
-  enable JIT; use a compatible signing and JIT activation tool as described in
-  the [iPhone/iPad guide](ios/README.md).
-- Qt and browser frontends are available in source form.
-
-## Building from source
-
-See [BUILDING.md](https://github.com/gajae1/gp32emu/blob/main/docs/BUILDING.md) for
-build commands, source-only frontends and the source layout.
+GP32emu 1.1.0 writes v17 save states, which older builds cannot read. Loading a
+state also restores the in-game card progress from that moment. See
+[saves and backups](docs/MANUAL.ko.md#저장과-백업) for file locations and compatibility.
 
 ## Credits and licensing
 
-GP32emu was started by [gameblabla](https://github.com/gameblabla/gp32emu). This
-fork keeps the upstream commits in its history. The upstream repository does not
-state a licence for its own code at the time of writing, so this repository does
-not add one either; ask the upstream author before reusing it outside GitHub's
-fork terms.
+This fork is based on [gameblabla's gp32emu](https://github.com/gameblabla/gp32emu).
+The upstream repository does not state a licence for its own code; this fork
+does not add one. See [third-party notices](licenses/) for MAME-derived code,
+the ZIP libraries and BDMEmu frontend code. The Windows ZIP includes the SDL3
+licence as `SDL3-LICENSE.txt`.
 
-Parts of the hardware model come from MAME (BSD-3-Clause, Tim Schuerewegen,
-Raphael Nabet and others). The repository also includes the MIT-licensed kuba--
-zip library, the public-domain miniz library (parts of which carry the RAD Game
-Tools, Valve Software and Rich Geldreich notices) and parts of BDMEmu's
-frontend. Their notices are in [licenses/](licenses/).
-
-The Windows package includes SDL3 under the zlib licence, with its notice in
-`SDL3-LICENSE.txt`. In the source tree, SDL3's `LICENSE.txt`
-is inside `third_party/sdl/SDL3-3.4.10.tar.gz`.
-
-Game ROMs and BIOS files are not distributed with the emulator; supply your own dumps.
+[Build from source](https://github.com/gajae1/gp32emu/blob/main/docs/BUILDING.md)

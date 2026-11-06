@@ -78,8 +78,8 @@ it into an `.nro`. RetroArch does not compile or execute C source on the device.
 The Switch port uses libnx JIT memory with separate writable and executable
 aliases. The ARM64 recompiler is shared with other AArch64 hosts. If the
 homebrew loader does not provide JIT permissions, the core uses the interpreter.
-The release includes an experimental NRO linked with RetroArch 1.22.2. Device
-testing remains outstanding. Linux AArch64 packages cannot be used on Switch.
+The Switch package contains an experimental NRO linked with RetroArch 1.22.2.
+Linux AArch64 packages cannot be used on Switch.
 
 The manually dispatched `Switch libnx build` GitHub Actions workflow builds
 the static core and NRO using the official `devkitpro/devkita64` container.

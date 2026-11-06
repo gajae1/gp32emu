@@ -1,5 +1,7 @@
 # GP32emu 1.1.0 Switch core source package
 
+**1.1.0 is an unpublished candidate.** The current public release is **1.0.1**.
+
 This package contains the GP32emu core sources and the compiled static library
 `gp32emu_libretro_libnx.a`. To play, download `gp32emu-1.1.0-switch-libnx.zip`
 instead. A static library cannot be loaded by RetroArch on a console.
@@ -7,7 +9,7 @@ instead. A static library cannot be loaded by RetroArch on a console.
 ## Rebuild
 
 Install devkitPro's devkitA64 and libnx, then use its configured shell in this
-source directory. The release was built with the official
+source directory. This package was built with the official
 `devkitpro/devkita64` container; package versions are in `toolchain-packages.txt`.
 
 ```sh
@@ -20,18 +22,11 @@ checkout as `libretro_libnx.a`, then run `make -f Makefile.libnx`. The result is
 `retroarch_switch.nro`. See `manifest.json` for the exact RetroArch commit and
 the [official build guide](https://docs.libretro.com/development/retroarch/compilation/switch-libnx/)
 for dependencies. `retroarch-source.tar.gz` contains that frontend's source.
-The full project source archive also includes a manually dispatched GitHub
-Actions workflow for rebuilding this target.
 
 This port uses the ARM64 JIT through libnx, with an interpreter fallback when
-JIT permissions are unavailable. It has not been tested on a Switch console.
+JIT permissions are unavailable. Switch support is experimental; compatibility
+varies by game and setup.
 No BIOS images, games or saves are included.
-
-## 한국어 안내
-
-Switch용 코어 소스와 빌드된 정적 라이브러리를 담은 개발용 압축파일입니다.
-실행하려면 별도 `switch-libnx.zip`의 NRO를 사용하세요. `.a`는 RetroArch 소스와
-연결해 NRO를 만들 때 사용하는 파일입니다.
 
 ## Credits
 

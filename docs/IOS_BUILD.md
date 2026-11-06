@@ -2,7 +2,7 @@
 
 For installation and controls, see the [iPhone and iPad guide](../ios/README.md).
 These commands build the shared GP32 core and UIKit frontend. Use **Release**
-for performance checks; an unoptimized Debug build is not representative.
+for an optimized app, or **Debug** for debugging.
 
 Device builds include the experimental AArch64 JIT by default, but start with
 the interpreter. Configure `-DGP32EMU_IOS_DEVELOPER_JIT=OFF` to omit it.
@@ -37,8 +37,7 @@ open build-ios/gp32emu_ios.xcodeproj
 Choose your signing team and an available bundle identifier in the app target's
 Signing & Capabilities settings. Connect and unlock the device, approve its
 computer-trust prompt, and enable Developer Mode when prompted. Select the
-device in Xcode and run the app. These steps require interaction on the Mac and
-device; a source archive does not provide signing credentials.
+device in Xcode and run the app.
 
 With signing configured, a device build can also use:
 
@@ -69,11 +68,10 @@ test ! -e "$output" || { echo "Choose a new output filename; the IPA already exi
 (cd "$stage" && zip -qry "$output" Payload)
 ```
 
-The output check prevents `zip` from updating an old archive and retaining
-obsolete files. Use a new filename if an IPA already exists. Never publish the
-locally signed device bundle: signing and provisioning data belong only in
-private test builds. The staging directory printed by `echo "$stage"` can be
-removed after packaging.
+Use a new output filename to avoid retaining files from an older ZIP. The
+sideloading IPA contains an unsigned app without a provisioning profile; each
+user signs it for their own device. Remove the staging directory in `$stage`
+after packaging.
 
 ## Developer debugger workflow
 
