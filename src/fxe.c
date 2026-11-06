@@ -675,15 +675,17 @@ int fxe_load_buffer(const uint8_t *data, size_t size, const char *label, fxe_ima
         uint32_t payload_size = gp32_ld32le(&file[FXE_FIXED_PREFIX_SIZE]);
         uint32_t key_size = gp32_ld32le(&file[FXE_FIXED_PREFIX_SIZE + 4u]);
         size_t key_off = FXE_FIXED_PREFIX_SIZE + 8u;
-        size_t data_off = key_off + (size_t)key_size;
+        size_t body_size = size - key_off;
         if (info_size != FXE_INFO_SIZE) { ferr(err, err_len, "unsupported FXE info size 0x%08" PRIx32, info_size); free(file); return 0; }
         /* The legacy size field at +4 is not trusted: real tools write it
-           inconsistently, so only the key and payload sizes are checked. */
-        if (key_size == 0u || data_off > size || (size_t)payload_size > size - data_off) {
+           inconsistently. Check remaining bytes before adding the key size. */
+        if (key_size == 0u || (size_t)key_size > body_size ||
+            (size_t)payload_size > body_size - (size_t)key_size) {
             ferr(err, err_len, "invalid FXE key/payload sizes");
             free(file);
             return 0;
         }
+        size_t data_off = key_off + (size_t)key_size;
         uint8_t *payload = (uint8_t *)malloc((size_t)payload_size + (size_t)key_size);
         uint8_t *key = (uint8_t *)malloc((size_t)key_size);
         if (!payload || !key) {

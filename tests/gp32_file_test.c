@@ -332,6 +332,21 @@ static int check_card_query(void) {
     return ok;
 }
 
+static int check_fxe_key_size_bounds(void) {
+    uint8_t file[FXE_FIXED_PREFIX_SIZE + 8u + 32u] = {0};
+    memcpy(file, "fxe ", 4u);
+    gp32_st32le(file + 8u, FXE_INFO_SIZE);
+    gp32_st32le(file + FXE_FIXED_PREFIX_SIZE, 32u);
+    gp32_st32le(file + FXE_FIXED_PREFIX_SIZE + 4u, UINT32_MAX);
+    fxe_image_t img = {0};
+    char err[128] = {0};
+    int loaded = fxe_load_buffer(file, sizeof(file), "invalid FXE", &img, err, sizeof(err));
+    int ok = !loaded && !img.payload && strcmp(err, "invalid FXE key/payload sizes") == 0;
+    if (!ok) fprintf(stderr, "FAIL: oversized FXE key should be rejected as invalid: %s\n", err);
+    fxe_image_free(&img);
+    return ok;
+}
+
 static int check_raw_image_labels(void) {
     uint8_t image[32] = {0};
     gp32_st32le(image, 0xea000000u);
@@ -458,6 +473,7 @@ int main(int argc, char **argv) {
     if (!check_fxp2_empty_tree()) return 1;
     if (!check_gxb_zi_header(0) || !check_gxb_zi_header(1)) return 1;
     if (!check_raw_image_labels()) return 1;
+    if (!check_fxe_key_size_bounds()) return 1;
     /* Overlapping copy in both directions: destination below and above source. */
     if (!check_swi5_place_image(GP32_RAM_BASE + 0x100u, GP32_RAM_BASE + 0x80u)) return 1;
     if (!check_swi5_place_image(GP32_RAM_BASE + 0x100u, GP32_RAM_BASE + 0x140u)) return 1;
