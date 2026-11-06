@@ -230,6 +230,9 @@ def build_native(tools: dict, ndk: Path, output: Path, work: Path, debug: bool) 
             *ALIGN_FLAGS.split(), "-ljnigraphics", "-llog", "-ldl",
         ])
         for library in (core, frontend):
+            if not debug:
+                run(f"Strip packaged debug information: {abi}",
+                    [tools["strip"], "--strip-debug", library])
             verify_elf(tools["objdump"], library)
             libraries.append(library)
     return libraries
@@ -355,6 +358,7 @@ def main() -> int:
         "java": require_file(javac.parent / f"java{suffix}"),
         "clang": require_file(llvm / "bin" / f"clang{suffix}"),
         "objdump": require_file(llvm / "bin" / f"llvm-objdump{suffix}"),
+        "strip": require_file(llvm / "bin" / f"llvm-strip{suffix}"),
         "sysroot": llvm / "sysroot",
         "aapt2": require_file(build_tools / f"aapt2{suffix}"),
         "zipalign": require_file(build_tools / f"zipalign{suffix}"),
