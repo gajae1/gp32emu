@@ -329,6 +329,11 @@ typedef struct gp32_cpu_profile {
     uint64_t native_exit_prediction_second_ready_hits;
     /* AArch64: native exits that entered their successor block directly. */
     uint64_t native_chain_hops;
+    /* A64 certified peripheral regions; counters are never serialized. */
+    uint64_t native_io_sequence_batches;
+    uint64_t native_io_sequence_insns;
+    /* Bounded A64 masked multiply vector batches; runtime only. */
+    uint64_t native_packed_word_batches;
 } gp32_cpu_profile_t;
 
 gp32_status_t gp32_get_cpu_profile(const gp32_t *gp32, gp32_cpu_profile_t *out);

@@ -77,14 +77,13 @@ static int str_eq(const char *a, const char *b) {
     return *a == *b;
 }
 
-static uint32_t force_rgb(uint32_t p) {
-    return p & 0x00ffffffu;
+static uint32_t opaque_rgb(uint32_t p) {
+    return 0xff000000u | (p & 0x00ffffffu);
 }
 
 
 static const uint32_t *finalize_frame(gp32_win64_video_t *v) {
     if (!v || !v->scratch) return NULL;
-    uint32_t *out = v->scratch;
     if (gp32_video_effects_active(&v->effects)) {
         const size_t need = (size_t)GP32_LCD_W * GP32_LCD_H;
         if (v->effect_cap < need) {
@@ -94,10 +93,10 @@ static const uint32_t *finalize_frame(gp32_win64_video_t *v) {
             v->effect_cap = need;
         }
         if (!gp32_video_effects_process_320x240(&v->effects, v->scratch, v->effect_pixels)) return NULL;
-        out = v->effect_pixels;
+        for (unsigned i = 0; i < GP32_LCD_W * GP32_LCD_H; ++i) v->effect_pixels[i] = opaque_rgb(v->effect_pixels[i]);
+        return v->effect_pixels;
     }
-    for (unsigned i = 0; i < GP32_LCD_W * GP32_LCD_H; ++i) out[i] = 0xff000000u | (out[i] & 0x00ffffffu);
-    return out;
+    return v->scratch;
 }
 
 static const uint32_t *stage_frame(gp32_win64_video_t *v, const gp32_framebuffer_desc_t *fb) {
@@ -122,12 +121,13 @@ static const uint32_t *stage_frame(gp32_win64_video_t *v, const gp32_framebuffer
 
     const uint32_t *src = fb->pixels_rgba8888;
     const uint32_t stride = fb->stride_pixels;
+    const uint32_t alpha = gp32_video_effects_active(&v->effects) ? 0u : 0xff000000u;
 
     if (fb->width == GP32_LCD_W && fb->height == GP32_LCD_H) {
         for (unsigned y = 0; y < GP32_LCD_H; ++y) {
             const uint32_t *row = src + (size_t)y * stride;
             uint32_t *dst = v->scratch + (size_t)y * GP32_LCD_W;
-            for (unsigned x = 0; x < GP32_LCD_W; ++x) dst[x] = force_rgb(row[x]);
+            for (unsigned x = 0; x < GP32_LCD_W; ++x) dst[x] = alpha | (row[x] & 0x00ffffffu);
         }
         return finalize_frame(v);
     }
@@ -136,7 +136,7 @@ static const uint32_t *stage_frame(gp32_win64_video_t *v, const gp32_framebuffer
         for (unsigned y = 0; y < GP32_LCD_H; ++y) {
             uint32_t sx = GP32_RAW_LCD_W - 1u - y;
             uint32_t *dst = v->scratch + (size_t)y * GP32_LCD_W;
-            for (unsigned x = 0; x < GP32_LCD_W; ++x) dst[x] = force_rgb(src[(size_t)x * stride + sx]);
+            for (unsigned x = 0; x < GP32_LCD_W; ++x) dst[x] = alpha | (src[(size_t)x * stride + sx] & 0x00ffffffu);
         }
         return finalize_frame(v);
     }
@@ -151,7 +151,7 @@ static const uint32_t *stage_frame(gp32_win64_video_t *v, const gp32_framebuffer
         for (unsigned x = 0; x < GP32_LCD_W; ++x) {
             uint32_t sx = (uint32_t)(((uint64_t)x * fb->width) / GP32_LCD_W);
             if (sx >= fb->width) sx = fb->width - 1u;
-            dst[x] = force_rgb(row[sx]);
+            dst[x] = alpha | (row[sx] & 0x00ffffffu);
         }
     }
     return finalize_frame(v);

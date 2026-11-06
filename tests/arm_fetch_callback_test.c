@@ -25,6 +25,7 @@ typedef struct {
 typedef struct {
     arm920t_t *cpu;
     uint8_t *bios, *ram;
+    uint32_t code_pa;
     enum fetch_policy policy;
     enum fetch_effect effect;
     unsigned reads, effects, dynamic;
@@ -51,9 +52,10 @@ static uint8_t *fetch_storage(fetch_fixture_t *b, uint32_t addr, size_t bytes) {
 }
 static uint8_t *fetch_fastmem(void *user, uint32_t addr, size_t bytes, int write) {
     fetch_fixture_t *b = user;
-    uint32_t first = FETCH_CODE_PA + (b->policy == FETCH_DIRECT_HEAD ? 4u : 0u);
-    if (!write && b->policy != FETCH_DIRECT && bytes && addr < FETCH_CODE_PA + 12u &&
-        (uint64_t)addr + bytes > first) return NULL;
+    uint32_t first = b->code_pa + (b->policy == FETCH_DIRECT_HEAD ? 4u : 0u);
+    uint64_t end = (uint64_t)addr + bytes;
+    if (!write && b->policy != FETCH_DIRECT && bytes && addr < b->code_pa + 12u &&
+        end > b->code_pa && end > first) return NULL;
     return fetch_storage(b, addr, bytes);
 }
 static void fetch_observe(fetch_fixture_t *b, uint32_t addr, unsigned width) {
@@ -85,7 +87,7 @@ static uint32_t fetch_read32(void *user, uint32_t addr) {
     fetch_observe(b, addr, 4u);
     if (current_walk && (addr == FETCH_IO_TABLE || addr == FETCH_IO_TABLE + 0x400u))
         return 2u; /* callback-backed section descriptor maps BIOS */
-    if (b->dynamic && addr == FETCH_CODE_PA + 4u)
+    if (b->dynamic && addr == b->code_pa + 4u)
         return 0xe2811000u | (arm920t_get_reg(b->cpu, 0u) & 0xffu); /* ADD r1,r1,#live r0 */
     uint8_t *p = fetch_storage(b, addr, 4u);
     return p ? gp32_ld32le(p) : 0xeafffffeu;
@@ -117,6 +119,7 @@ static void fetch_write8(void *user, uint32_t addr, uint8_t value) {
 
 static void fetch_setup(fetch_fixture_t *b, int raw) {
     memset(b, 0, sizeof(*b));
+    b->code_pa = FETCH_CODE_PA;
     b->policy = (enum fetch_policy)current_policy;
     b->effect = (enum fetch_effect)current_effect;
     b->dynamic = b->policy != FETCH_DIRECT;
@@ -216,6 +219,145 @@ static void fetch_case(void) {
     fetch_destroy(&want);
 }
 
+static void fetch_reset_entry(fetch_fixture_t *b, uint32_t pc) {
+    for (unsigned r = 0; r < 15u; ++r) arm920t_set_reg(b->cpu, r, 0u);
+    arm920t_set_reg(b->cpu, 15u, pc);
+}
+
+static void fetch_clear_observations(fetch_fixture_t *b) {
+    b->reads = b->effects = 0u;
+    memset(b->events, 0, sizeof(b->events));
+}
+
+static void fetch_set_ram_program(fetch_fixture_t *b, uint32_t immediate) {
+    uint8_t *code = b->ram;
+    gp32_st32le(code, 0xe3a00000u | (immediate & 0xffu)); /* MOV r0,#imm */
+    gp32_st32le(code + 4u, 0xe2800001u);                  /* ADD r0,r0,#1 */
+    gp32_st32le(code + 8u, 0xeafffffeu);                  /* B . */
+}
+
+static uint8_t *fetch_capture_state(const arm920t_t *cpu, size_t *size) {
+    state_io_t count = state_io_counter();
+    if (!arm920t_state_save_io(cpu, &count) || !count.pos) {
+        fetch_fail("state size", 0u, 1u);
+        return NULL;
+    }
+    uint8_t *data = malloc(count.pos);
+    if (!data) exit(2);
+    state_io_t out = state_io_writer(data, count.pos);
+    if (!arm920t_state_save_io(cpu, &out)) {
+        free(data);
+        fetch_fail("state write", 0u, 1u);
+        return NULL;
+    }
+    *size = count.pos;
+    return data;
+}
+
+static void fetch_restore_state(arm920t_t *cpu, const uint8_t *data, size_t size) {
+    state_io_t in = state_io_reader(data, size);
+    if (!arm920t_state_load_io(cpu, &in) || in.pos != size)
+        fetch_fail("state load", (uint32_t)in.pos, (uint32_t)size);
+}
+
+static void fetch_mapping_transition(enum fetch_policy next) {
+    fetch_fixture_t got, want;
+    current_policy = FETCH_DIRECT;
+    current_effect = FETCH_NO_EFFECT;
+    current_budget = 6u;
+    fetch_setup(&got, 0);
+    fetch_setup(&want, 1);
+
+    /* Certify and use the complete direct windows before withdrawing either
+     * all instruction fetches or only the words after the direct head. */
+    fetch_equal("full-window cached retirement", arm920t_run(got.cpu, 6u),
+        arm920t_run(want.cpu, 6u));
+    fetch_compare(&got, &want);
+    fetch_equal("full-window raw result", arm920t_get_reg(want.cpu, 1u), 2u);
+
+    for (unsigned i = 0; i < 2u; ++i) {
+        fetch_fixture_t *b = i ? &want : &got;
+        b->policy = next;
+        b->dynamic = next != FETCH_DIRECT;
+        arm920t_flush_jit(b->cpu);
+        fetch_reset_entry(b, FETCH_CODE_PA);
+        fetch_clear_observations(b);
+    }
+    current_policy = next;
+
+    fetch_equal("remapped cached retirement", arm920t_run(got.cpu, 6u),
+        arm920t_run(want.cpu, 6u));
+    fetch_equal("callback-backed raw r0", arm920t_get_reg(want.cpu, 0u), 2u);
+    fetch_equal("callback-backed raw r1", arm920t_get_reg(want.cpu, 1u), 3u);
+    fetch_equal("callback-backed fetch count", want.reads,
+        next == FETCH_CALLBACK ? 6u : 4u);
+    fetch_compare(&got, &want);
+    fetch_destroy(&got);
+    fetch_destroy(&want);
+}
+
+static void fetch_state_backing_case(void) {
+    fetch_fixture_t got, want;
+    current_policy = FETCH_DIRECT;
+    current_effect = FETCH_NO_EFFECT;
+    current_budget = 2u;
+    fetch_setup(&got, 0);
+    fetch_setup(&want, 1);
+    for (unsigned i = 0; i < 2u; ++i) {
+        fetch_fixture_t *b = i ? &want : &got;
+        b->code_pa = FETCH_RAM_PA;
+        fetch_set_ram_program(b, 0x11u);
+        fetch_reset_entry(b, FETCH_RAM_PA);
+    }
+
+    size_t got_size = 0u, want_size = 0u;
+    uint8_t *got_state = fetch_capture_state(got.cpu, &got_size);
+    uint8_t *want_state = fetch_capture_state(want.cpu, &want_size);
+    fetch_equal("state image sizes", (uint32_t)got_size, (uint32_t)want_size);
+    if (!got_state || !want_state) exit(2);
+
+    fetch_equal("RAM-window cached retirement", arm920t_run(got.cpu, 2u),
+        arm920t_run(want.cpu, 2u));
+    fetch_equal("old RAM backing result", arm920t_get_reg(want.cpu, 0u), 0x12u);
+    fetch_compare(&got, &want);
+
+    uint8_t *old_ram[2] = {got.ram, want.ram};
+    uint8_t *new_ram[2] = {
+        calloc(1u, ARM_JIT_RAM_SIZE_BYTES),
+        calloc(1u, ARM_JIT_RAM_SIZE_BYTES)
+    };
+    if (!new_ram[0] || !new_ram[1]) exit(2);
+    for (unsigned i = 0; i < 2u; ++i) {
+        fetch_fixture_t *b = i ? &want : &got;
+        b->ram = new_ram[i];
+        fetch_set_ram_program(b, 0x22u);
+        /* A full RAM probe no longer maps the instruction span. Exact probes
+         * keep the first word direct and send the following fetch through the
+         * observable callback. */
+        b->policy = FETCH_DIRECT_HEAD;
+        b->dynamic = 0;
+        fetch_clear_observations(b);
+    }
+    current_policy = FETCH_DIRECT_HEAD;
+    fetch_restore_state(got.cpu, got_state, got_size);
+    fetch_restore_state(want.cpu, want_state, want_size);
+
+    fetch_equal("replacement RAM cached retirement", arm920t_run(got.cpu, 2u),
+        arm920t_run(want.cpu, 2u));
+    fetch_equal("replacement RAM raw result", arm920t_get_reg(want.cpu, 0u), 0x23u);
+    fetch_equal("replacement RAM fetch count", want.reads, 1u);
+    fetch_equal("replacement RAM callback address", want.events[0].addr, FETCH_RAM_PA + 4u);
+    fetch_equal("replacement RAM callback width", want.events[0].width, 4u);
+    fetch_compare(&got, &want);
+
+    free(got_state);
+    free(want_state);
+    free(old_ram[0]);
+    free(old_ram[1]);
+    fetch_destroy(&got);
+    fetch_destroy(&want);
+}
+
 int main(int argc, char **argv) {
     int walk_only = argc == 2 && !strcmp(argv[1], "--walk");
     static const unsigned budgets[] = {1u, 2u, 6u, 17u};
@@ -242,10 +384,19 @@ int main(int argc, char **argv) {
     for (current_native = 0; current_native < 2u; ++current_native)
         for (current_effect = FETCH_NO_EFFECT; current_effect <= FETCH_TRACE; ++current_effect)
             fetch_case();
+    if (!walk_only) {
+        current_mmu = 0u;
+        current_walk = 0u;
+        for (current_native = 0; current_native < 2u; ++current_native) {
+            fetch_mapping_transition(FETCH_CALLBACK);
+            fetch_mapping_transition(FETCH_DIRECT_HEAD);
+            fetch_state_backing_case();
+        }
+    }
     if (failures) {
         fprintf(stderr, "arm_fetch_callback: %u failures\n", failures);
         return 1;
     }
-    puts("arm_fetch_callback: dynamic opcodes, fetch order, flush, deadline, interrupts, PC/CPSR transitions passed");
+    puts("arm_fetch_callback: dynamic opcodes, fetch windows, state-loaded RAM backing, flush, deadlines, interrupts, PC/CPSR transitions passed");
     return 0;
 }

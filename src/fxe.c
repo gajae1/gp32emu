@@ -196,8 +196,10 @@ static int b2_decode_symbol(b2ctx_t *ctx, uint32_t table, uint32_t *sym_out) {
     }
     uint16_t len = b2_rd16(ctx->mem, p - 2u);
     uint16_t base = b2_rd16(ctx->mem, p - 4u);
-    if (len > 31u) return 0;
-    uint32_t top = len ? (ctx->bitbuf >> (32u - len)) : 0u;
+    /* Zero lengths are unused codes. An empty/malformed tree must fall
+     * back to the guest loader, not shift a 32-bit word by 32 in the reader. */
+    if (!len || len > 31u) return 0;
+    uint32_t top = ctx->bitbuf >> (32u - len);
     uint32_t idx = (top + base) & 0xffffu;
     if (!b2_in_ram(symbols + idx * 4u, 4u)) return 0;
     uint32_t sym = b2_rd32(ctx->mem, symbols + idx * 4u);
@@ -673,15 +675,17 @@ int fxe_load_buffer(const uint8_t *data, size_t size, const char *label, fxe_ima
         uint32_t payload_size = gp32_ld32le(&file[FXE_FIXED_PREFIX_SIZE]);
         uint32_t key_size = gp32_ld32le(&file[FXE_FIXED_PREFIX_SIZE + 4u]);
         size_t key_off = FXE_FIXED_PREFIX_SIZE + 8u;
-        size_t data_off = key_off + (size_t)key_size;
+        size_t body_size = size - key_off;
         if (info_size != FXE_INFO_SIZE) { ferr(err, err_len, "unsupported FXE info size 0x%08" PRIx32, info_size); free(file); return 0; }
         /* The legacy size field at +4 is not trusted: real tools write it
-           inconsistently, so only the key and payload sizes are checked. */
-        if (key_size == 0u || data_off > size || (size_t)payload_size > size - data_off) {
+           inconsistently. Check remaining bytes before adding the key size. */
+        if (key_size == 0u || (size_t)key_size > body_size ||
+            (size_t)payload_size > body_size - (size_t)key_size) {
             ferr(err, err_len, "invalid FXE key/payload sizes");
             free(file);
             return 0;
         }
+        size_t data_off = key_off + (size_t)key_size;
         uint8_t *payload = (uint8_t *)malloc((size_t)payload_size + (size_t)key_size);
         uint8_t *key = (uint8_t *)malloc((size_t)key_size);
         if (!payload || !key) {

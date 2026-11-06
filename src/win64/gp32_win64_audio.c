@@ -636,8 +636,8 @@ static void wasapi_cleanup_partial(gp32_win64_audio_t *a) {
 }
 
 
-#if GP32EMU_ENABLE_THREADS
 static int gp32_win64_audio_pump_backend(gp32_win64_audio_t *a);
+#if GP32EMU_ENABLE_THREADS
 static DWORD WINAPI audio_pump_thread_proc(LPVOID opaque) {
     gp32_win64_audio_t *a = (gp32_win64_audio_t *)opaque;
     DWORD task_index = 0;
@@ -723,9 +723,15 @@ gp32_win64_audio_t *gp32_win64_audio_create(gp32_win64_audio_mode_t mode, uint32
 
 static int gp32_win64_audio_pump_backend(gp32_win64_audio_t *a) {
     if (!a) return -1;
-    if (a->kind == AUDIO_WAVEOUT) return waveout_pump(a);
-    if (a->kind == AUDIO_WASAPI) return wasapi_pump(a);
-    return 0;
+    /* Reset must not invalidate a borrowed WASAPI buffer or a waveOut header
+     * between preparation and submission. The Windows critical section is
+     * recursive, so the queue helpers keep their existing locking contract. */
+    audio_lock(a);
+    int result = 0;
+    if (a->kind == AUDIO_WAVEOUT) result = waveout_pump(a);
+    else if (a->kind == AUDIO_WASAPI) result = wasapi_pump(a);
+    audio_unlock(a);
+    return result;
 }
 
 void gp32_win64_audio_destroy(gp32_win64_audio_t *a) {
@@ -776,7 +782,8 @@ void gp32_win64_audio_reset(gp32_win64_audio_t *a) {
     a->last_ring_r = 0;
     a->have_last_ring = 0;
     gp32_audio_resampler_reset(&a->resampler);
-    audio_unlock(a);
+    /* Keep the endpoint transaction and the queue reset atomic with respect
+     * to the pump. No pre-reset pump may submit or restart after this returns. */
     if (a->kind == AUDIO_WAVEOUT && a->wave) {
         waveOutReset(a->wave);
         for (unsigned i = 0; i < GP32_AUDIO_BUFFERS; ++i) {
@@ -788,6 +795,7 @@ void gp32_win64_audio_reset(gp32_win64_audio_t *a) {
         IAudioClient_Reset(a->client);
         a->wasapi_started = 0;
     }
+    audio_unlock(a);
 }
 
 uint32_t gp32_win64_audio_buffered_frames(const gp32_win64_audio_t *a) {

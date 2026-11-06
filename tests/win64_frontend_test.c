@@ -68,7 +68,58 @@ static VOID CALLBACK dialog_timer(HWND window, UINT msg, UINT_PTR id, DWORD time
     EnumThreadWindows(GetCurrentThreadId(), drive_dialog, 0);
 }
 
+/* No windows, devices, files or sleeps: exercise the real frontend's elapsed
+ * conversion plus its existing 250 ms cap. Literal expectations are independent
+ * of qpc_elapsed_us; the long-gap case overflowed before the cap. */
+static int pacing_only(void) {
+    static const struct {
+        int64_t frequency, last, now;
+        uint64_t want_us;
+    } cases[] = {
+        {10000000, 1000000, 1166667, 16666},
+        {10000000, 0, 9, 0},
+        {10000000, 0, 10, 1},
+        {10000000, 0, 2499999, 249999},
+        {10000000, 0, 2500000, 250000},
+        {10000000, 0, 2500001, 250000},
+        {3579545, 0, 894886, 249999},
+        {3579545, 0, 894887, 250000},
+        {1000000000, 0, 16666667, 16666},
+        {10000000, 0, INT64_C(18446744073710), 250000},
+        {1000000000, 0, INT64_C(18446744073710), 250000},
+        {10000000, 100, 100, 0},
+        {10000000, 100, 50, 0},
+        {10000000, INT64_MAX - 200, INT64_MAX - 100, 10},
+        {10000000, -10, 20, 3},
+        {10000000, INT64_MIN, INT64_MAX, 250000},
+        {1000000, 0, 16667, 16667}
+    };
+    unsigned failed = 0;
+    for (unsigned i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i) {
+        app_state_t a = {0};
+        LARGE_INTEGER now;
+        a.qpf.QuadPart = cases[i].frequency;
+        a.last_qpc.QuadPart = cases[i].last;
+        now.QuadPart = cases[i].now;
+        printf("pacing case %u: frequency=%lld last=%lld now=%lld\n", i,
+               (long long)cases[i].frequency, (long long)cases[i].last,
+               (long long)cases[i].now);
+        fflush(stdout); /* Keep the failing fixture visible if UB traps. */
+        uint64_t got = qpc_elapsed_us(&a, now);
+        if (got > 250000u) got = 250000u; /* Same consumer cap as app_pump. */
+        if (got != cases[i].want_us) {
+            fprintf(stderr, "FAIL: pacing case %u: got=%llu expected=%llu us\n",
+                    i, (unsigned long long)got, (unsigned long long)cases[i].want_us);
+            ++failed;
+        }
+    }
+    if (failed) return 1;
+    puts("PASS: 17 device-free pacing cases; normal, backward and long-gap elapsed time");
+    return 0;
+}
+
 int main(int argc, char **argv) {
+    if (argc == 2 && !strcmp(argv[1], "--pacing-only")) return pacing_only();
     const char *root = argc > 1 ? argv[1] : "win64_frontend_tmp";
     CHECK(strlen(root) < MAX_PATH - 50u);
     _mkdir(root);

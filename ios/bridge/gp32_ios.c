@@ -205,9 +205,10 @@ size_t gp32_ios_audio_sink_read(gp32_ios_audio_sink_t *s, int16_t *dst, size_t c
     return take;
 }
 
-/* Resample one borrowed guest span into the bounded sink. The span is consumed
- * by the caller only after this returns, so a refused write keeps the samples
- * for the next call. Split into fixed chunks: the resampler keeps its phase and
+/* Resample one borrowed guest span into the bounded sink. A full sink drops
+ * the newest output and marks a gap; the caller consumes the entire guest span
+ * after this returns, so dropped output is not retried. With no sink, the span
+ * is discarded. Split into fixed chunks: the resampler keeps its phase and
  * kernel history across calls, so the split is not audible as a seam. */
 static void push_audio_span(gp32_ios_emulator_t *e, const gp32_audio_desc_t *aud) {
     if (!e->sink || !aud->samples_s16_interleaved || !aud->frame_count) return;
@@ -244,7 +245,8 @@ static void push_audio_span(gp32_ios_emulator_t *e, const gp32_audio_desc_t *aud
 }
 
 /* Release every queued guest PCM span. The core hands out one uniform-rate
- * span at a time; each is consumed only after its output is retained. */
+ * span at a time. Consume it after submission, including any output discarded
+ * by the bounded newest-drop sink; this frontend does not retain retry debt. */
 static void drain_guest_audio(gp32_ios_emulator_t *e) {
     if (!e || !e->core) return;
     gp32_audio_desc_t aud;

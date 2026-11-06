@@ -54,6 +54,30 @@ if ($IosIpa) { $required += $IosIpa }
 foreach ($file in $required) {
     if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { throw "Missing input: $file" }
 }
+foreach ($build in @($WindowsBuild, $LinuxArm64Build, $AndroidArm64Build, $AndroidArmv7Build)) {
+    $cache = Join-Path $build 'CMakeCache.txt'
+    if ((Test-Path -LiteralPath $cache) -and
+        (Select-String -LiteralPath $cache -Quiet -Pattern '^GP32EMU_PGO_MODE:STRING=GENERATE$')) {
+        throw "PGO training binaries must not be packaged: $build"
+    }
+}
+# The measured Linux ARM64 release uses PGO and IPO; do not package an ordinary
+# source build instead. Other targets retain their own validation requirements.
+$linuxPgoPath = Join-Path $LinuxArm64Build 'gp32-pgo-Release.txt'
+$linuxCachePath = Join-Path $LinuxArm64Build 'CMakeCache.txt'
+if (-not (Test-Path -LiteralPath $linuxPgoPath -PathType Leaf) -or
+    -not (Test-Path -LiteralPath $linuxCachePath -PathType Leaf) -or
+    -not (Select-String -LiteralPath $linuxCachePath -Quiet -Pattern '^GP32EMU_PGO_MODE:STRING=USE$') -or
+    -not (Select-String -LiteralPath $linuxCachePath -Quiet -Pattern '^GP32EMU_ENABLE_IPO:BOOL=ON$')) {
+    throw 'Linux ARM64 release packaging requires a validated PGO USE build with IPO enabled.'
+}
+$linuxPgo = Get-Content -LiteralPath $linuxPgoPath -Raw
+$profileHash = [regex]::Match($linuxPgo, '(?m)^profile_sha256=([0-9a-f]{64})\r?$')
+if ($linuxPgo -notmatch '(?m)^mode=USE\r?$' -or
+    $linuxPgo -notmatch '(?m)^ipo=ON\r?$' -or -not $profileHash.Success) {
+    throw 'Missing or invalid Linux ARM64 Release PGO metadata; rebuild before packaging.'
+}
+$linuxOptimization = [ordered]@{pgo='use';ipo=$true;profile_sha256=$profileHash.Groups[1].Value}
 if (-not (Test-Path -LiteralPath $licenses -PathType Container)) { throw "Missing input directory: $licenses" }
 
 # Public iOS downloads must not contain the publisher's device signature or
@@ -122,6 +146,7 @@ foreach ($package in $packages) {
             }
         })
     }
+    if ($package.Platform -eq 'linux-aarch64') { $manifest.optimization = $linuxOptimization }
     $manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $root 'manifest.json') -Encoding utf8
     Compress-Archive -Path (Join-Path $root '*') -DestinationPath (Join-Path $out "$name.zip")
     $sums.Add("$((Get-FileHash -LiteralPath (Join-Path $out "$name.zip") -Algorithm SHA256).Hash.ToLowerInvariant())  $name.zip")

@@ -19,6 +19,10 @@ void mz_free(void *p);
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#if defined(__aarch64__) && defined(__ARM_NEON) && defined(__BYTE_ORDER__) && \
+    defined(__ORDER_LITTLE_ENDIAN__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+#include <arm_neon.h>
+#endif
 
 #ifndef GP32EMU_ENABLE_THREADS
 #if defined(_WIN32) || defined(__unix__) || defined(__APPLE__)
@@ -73,6 +77,34 @@ int gp32_media_frame_to_bgra_320x240(const gp32_framebuffer_desc_t *fb, uint32_t
         return 1;
     }
     if (fb->width == GP32_RAW_LCD_W && fb->height == GP32_RAW_LCD_H) {
+#if defined(__aarch64__) && defined(__ARM_NEON) && defined(__BYTE_ORDER__) && \
+    defined(__ORDER_LITTLE_ENDIAN__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+        /* The scalar API has defined sequential behavior even when source
+         * and output overlap. Preserve it instead of reordering those reads. */
+        uintptr_t input = (uintptr_t)src, output = (uintptr_t)out_bgra;
+        size_t input_bytes = ((size_t)(GP32_RAW_LCD_H - 1u) * stride + GP32_RAW_LCD_W) * sizeof(*src);
+        size_t output_bytes = (size_t)GP32_MEDIA_LCD_W * GP32_MEDIA_LCD_H * sizeof(*out_bgra);
+        if (output >= input ? output - input >= input_bytes : input - output >= output_bytes) {
+            const uint32x4_t alpha_mask = vdupq_n_u32(0xff000000u);
+            for (uint32_t by = 0; by < GP32_MEDIA_LCD_H; by += 4u) {
+                for (uint32_t bx = 0; bx < GP32_MEDIA_LCD_W; bx += 4u) {
+                    const uint32_t *p = src + (size_t)bx * stride + GP32_RAW_LCD_W - 4u - by;
+                    uint32x4_t a = vbicq_u32(vld1q_u32(p), alpha_mask);
+                    uint32x4_t b = vbicq_u32(vld1q_u32(p + stride), alpha_mask);
+                    uint32x4_t c = vbicq_u32(vld1q_u32(p + (size_t)stride * 2u), alpha_mask);
+                    uint32x4_t d = vbicq_u32(vld1q_u32(p + (size_t)stride * 3u), alpha_mask);
+                    uint32x4x2_t ab = vtrnq_u32(a, b);
+                    uint32x4x2_t cd = vtrnq_u32(c, d);
+                    uint32_t *out = out_bgra + (size_t)by * GP32_MEDIA_LCD_W + bx;
+                    vst1q_u32(out, vcombine_u32(vget_high_u32(ab.val[1]), vget_high_u32(cd.val[1])));
+                    vst1q_u32(out + GP32_MEDIA_LCD_W, vcombine_u32(vget_high_u32(ab.val[0]), vget_high_u32(cd.val[0])));
+                    vst1q_u32(out + GP32_MEDIA_LCD_W * 2u, vcombine_u32(vget_low_u32(ab.val[1]), vget_low_u32(cd.val[1])));
+                    vst1q_u32(out + GP32_MEDIA_LCD_W * 3u, vcombine_u32(vget_low_u32(ab.val[0]), vget_low_u32(cd.val[0])));
+                }
+            }
+            return 1;
+        }
+#endif
         for (uint32_t y = 0; y < GP32_MEDIA_LCD_H; ++y) {
             uint32_t sx = GP32_RAW_LCD_W - 1u - y;
             uint32_t *dst = out_bgra + (size_t)y * GP32_MEDIA_LCD_W;

@@ -75,7 +75,7 @@ static arm920t_t *fixture(unsigned native, unsigned instruction_cache,
     gp32_st32le(ram + offset, 0xe3a00011u); /* MOV r0,#0x11 */
     gp32_st32le(ram + offset + 4u, 0xe12fff1cu); /* BX r12 */
     arm920t_set_reg(cpu, 12u, 0x100u);
-    for (unsigned warm = 0; warm < 2u; ++warm) {
+    for (unsigned warm = 0; warm <= ARM_JIT_COLD_PORTABLE_OBSERVATIONS; ++warm) {
         arm920t_set_reg(cpu, 15u, ARM_JIT_RAM_BASE_ADDR + offset + (mmu ? 0x100000u : 0u));
         CHECK(arm920t_run(cpu, 2u) == 2u, "prime translated instruction pair");
         CHECK(arm920t_get_reg(cpu, 0u) == 0x11u && arm920t_get_pc(cpu) == 0x100u,

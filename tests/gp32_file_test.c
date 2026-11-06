@@ -201,6 +201,31 @@ static int check_fxp3_bounds(void) {
     return ok;
 }
 
+/* An all-zero FXP2 pre-tree contains no codes. Host decoding must decline
+ * it without consuming a zero-width symbol or replacing the guest loader. */
+static int check_fxp2_empty_tree(void) {
+    uint8_t packed[96] = {0};
+    gp32_st32le(packed, 0xea000006u);
+    gp32_st32le(packed + 4u, GP32_RAM_BASE);
+    gp32_st32le(packed + 8u, GP32_RAM_BASE + 64u);
+    gp32_st32le(packed + 12u, GP32_RAM_BASE + 64u);
+    for (unsigned off = 16u; off <= 24u; off += 4u)
+        gp32_st32le(packed + off, GP32_RAM_BASE + sizeof(packed));
+    memcpy(packed + 64u, "FXP2", 4u);
+    gp32_st32le(packed + 68u, 32u);
+    gp32_st16le(packed + 72u, 16u);
+    /* The following six zero bytes describe sixteen unused pre-tree codes;
+     * the remaining bytes allow the reader's ordinary lookahead. */
+    fxe_image_t img = {0};
+    char err[128] = {0};
+    int ok = fxe_load_buffer(packed, sizeof(packed), "empty FXP2 tree", &img, err, sizeof(err)) &&
+        !img.was_host_decrunched && img.payload_size == sizeof(packed) &&
+        !memcmp(img.payload, packed, sizeof(packed));
+    fxe_image_free(&img);
+    if (!ok) fprintf(stderr, "FAIL: invalid FXP2 tree did not preserve the guest loader: %s\n", err);
+    return ok;
+}
+
 static int check_gxb_zi_header(int has_zi) {
     gp32_t *g = gp32_create(NULL);
     if (!g) return 0;
@@ -304,6 +329,21 @@ static int check_card_query(void) {
     ok &= g->direct_fxe_fb_addr == direct_default_surface_addr(1) && g->direct_vblank_wait_requested;
     gp32_destroy(g);
     if (!ok) fputs("FAIL: card query aliases display callback\n", stderr);
+    return ok;
+}
+
+static int check_fxe_key_size_bounds(void) {
+    uint8_t file[FXE_FIXED_PREFIX_SIZE + 8u + 32u] = {0};
+    memcpy(file, "fxe ", 4u);
+    gp32_st32le(file + 8u, FXE_INFO_SIZE);
+    gp32_st32le(file + FXE_FIXED_PREFIX_SIZE, 32u);
+    gp32_st32le(file + FXE_FIXED_PREFIX_SIZE + 4u, UINT32_MAX);
+    fxe_image_t img = {0};
+    char err[128] = {0};
+    int loaded = fxe_load_buffer(file, sizeof(file), "invalid FXE", &img, err, sizeof(err));
+    int ok = !loaded && !img.payload && strcmp(err, "invalid FXE key/payload sizes") == 0;
+    if (!ok) fprintf(stderr, "FAIL: oversized FXE key should be rejected as invalid: %s\n", err);
+    fxe_image_free(&img);
     return ok;
 }
 
@@ -430,8 +470,10 @@ int main(int argc, char **argv) {
     if (!check_decrunch_commit()) return 1;
     if (!check_decrunch_scratch()) return 1;
     if (!check_fxp3_bounds()) return 1;
+    if (!check_fxp2_empty_tree()) return 1;
     if (!check_gxb_zi_header(0) || !check_gxb_zi_header(1)) return 1;
     if (!check_raw_image_labels()) return 1;
+    if (!check_fxe_key_size_bounds()) return 1;
     /* Overlapping copy in both directions: destination below and above source. */
     if (!check_swi5_place_image(GP32_RAM_BASE + 0x100u, GP32_RAM_BASE + 0x80u)) return 1;
     if (!check_swi5_place_image(GP32_RAM_BASE + 0x100u, GP32_RAM_BASE + 0x140u)) return 1;
