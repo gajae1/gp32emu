@@ -7,7 +7,7 @@
 
 static unsigned cases;
 
-enum store_shape { WORD, BYTE, HALF, SWAP_WORD, SWAP_BYTE, BLOCK, BLOCK_EDGE, HALF_EDGE,
+enum store_shape { STORE_WORD, STORE_BYTE, HALF, SWAP_WORD, SWAP_BYTE, BLOCK, BLOCK_EDGE, HALF_EDGE,
                    BLOCK_LINE, HALF_LINE, BLOCK_INTERIOR, BLOCK_FRAGMENT0, BLOCK_FRAGMENT1 };
 static const uint32_t stores[] = {
     0xe4871004u, /* STR r1,[r7],#4 */
@@ -81,7 +81,7 @@ static void case_store(unsigned shape, int native, int mmu, int cache, int separ
     prime_target(code, native);
     uint32_t address = data;
     uint32_t value = 0xe3a00022u, next = 0xe12fff1cu;
-    if (shape == BYTE || shape == SWAP_BYTE) value = 0x22u;
+    if (shape == STORE_BYTE || shape == SWAP_BYTE) value = 0x22u;
     if (shape == HALF) value = 0x22u;
     if (shape == BLOCK_EDGE || shape == BLOCK_LINE) { address -= 4u; value = 0xe1a00000u; next = 0xe3a00022u; }
     if (shape == HALF_EDGE || shape == HALF_LINE) { --address; value = 0x22e1u; }
@@ -196,7 +196,7 @@ static void case_remapped_code(int native, int long_span) {
             set_mem_both(p + word * 4u, word == words - 1u ? 0xe12fff1cu : 0xe1a02002u);
         set_mem_both(p, 0xe3a00011u); set_mem_both(p + patch, 0xe3a00011u);
     }
-    const uint32_t program[] = {stores[WORD], 0xe1a0f008u};
+    const uint32_t program[] = {stores[STORE_WORD], 0xe1a0f008u};
     load_both(program, GP32_ARRAY_COUNT(program));
     prime_target_run(code, native, words);
     uint64_t compilations = cpu_jit->prof.jit_blocks_compiled;
@@ -251,7 +251,7 @@ static void case_disable_icache(int native) {
     setup_pair(); arm920t_set_jit(cpu_jit, native); arm920t_set_trace(cpu_ref, 1, NULL, NULL);
     cpu_jit->cp15[1] |= 1u << 12; cpu_ref->cp15[1] |= 1u << 12;
     const uint32_t target = RAM_BASE + 0x9000u;
-    const uint32_t program[] = {stores[WORD], 0xe1a0f008u};
+    const uint32_t program[] = {stores[STORE_WORD], 0xe1a0f008u};
     load_both(program, GP32_ARRAY_COUNT(program));
     set_mem_both(CODE_ADDR + 0x200u, 0xee019f10u); /* MCR p15,0,r9,c1,c0,0 */
     set_mem_both(target, 0xe3a00011u); set_mem_both(target + 4u, 0xe12fff1cu);
@@ -320,12 +320,12 @@ static void case_final_ram_words(int native, int mmu) {
 }
 
 int main(void) {
-    for (unsigned shape = WORD; shape <= BLOCK_FRAGMENT1; ++shape)
+    for (unsigned shape = STORE_WORD; shape <= BLOCK_FRAGMENT1; ++shape)
         for (int native = 0; native < 2; ++native)
             for (int mmu = 0; mmu < 2; ++mmu) case_store(shape, native, mmu, 0, 0);
     for (int native = 0; native < 2; ++native) {
-        case_store(WORD, native, 0, 1, 0);
-        case_store(WORD, native, 1, 1, 0);
+        case_store(STORE_WORD, native, 0, 1, 0);
+        case_store(STORE_WORD, native, 1, 1, 0);
         case_store(BLOCK_FRAGMENT0, native, 1, 0, 1);
         case_store(BLOCK_FRAGMENT1, native, 1, 0, 1);
         case_active_trace(native);
