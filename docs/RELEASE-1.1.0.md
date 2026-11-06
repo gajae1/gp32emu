@@ -1,6 +1,6 @@
 # GP32emu 1.1.0 update notes
 
-Changes since public **1.0.1**. **1.1.0** is an unpublished candidate.
+Changes since **1.0.1**.
 
 ## Apps and controls
 

@@ -1,7 +1,7 @@
 # GP32emu for Nintendo Switch
 
-This experimental RetroArch core is part of the **unpublished 1.1.0 candidate**;
-the current public release is **1.0.1**. Compatibility varies by game and setup.
+This experimental RetroArch core is included in **1.1.0**.
+Compatibility varies by game and setup.
 ARM64 JIT is used when the homebrew loader permits it; otherwise, the core uses
 the interpreter.
 

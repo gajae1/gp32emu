@@ -1,7 +1,5 @@
 # GP32emu 1.1.0 Switch core source package
 
-**1.1.0 is an unpublished candidate.** The current public release is **1.0.1**.
-
 This package contains the GP32emu core sources and the compiled static library
 `gp32emu_libretro_libnx.a`. To play, download `gp32emu-1.1.0-switch-libnx.zip`
 instead. A static library cannot be loaded by RetroArch on a console.

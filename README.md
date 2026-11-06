@@ -8,8 +8,7 @@ homebrew. Bring your own BIOS and games; neither is included.
 [한국어 사용설명서](docs/MANUAL.ko.md) ·
 [1.1.0 update notes](docs/RELEASE-1.1.0.md)
 
-**1.0.1** is the current public release. The iPhone/iPad app is part of the
-unpublished **1.1.0** candidate.
+Current release: **1.1.0**.
 
 ## Get started
 
