@@ -17,14 +17,12 @@ Supported extensions are
 before playing so persistent card saves can be restored against the original file. No games,
 BIOS or saves are included here.
 
-The GP32 item starts in Spruce's Smart CPU mode; the volume is left unchanged.
+The GP32 entry uses Spruce's Smart CPU mode.
 
 ## Optional settings
 
-Start with your existing frontend settings. `h700/gp32emu.cfg` is an optional H700 tuning example,
-not a required installation step. It turns off threaded video and sets the audio rate-control
-bound to 2%. Its effect depends on the frontend and device; it does not guarantee uninterrupted
-audio or correct noise produced by a game.
+`h700/gp32emu.cfg` provides optional H700 settings: threaded video off and an
+audio rate-control bound of 2%.
 
 If you choose to use it, the per-core override location is
 `RetroArch/.retroarch/config/gp32emu/gp32emu.cfg`. Merge the two settings into any existing file

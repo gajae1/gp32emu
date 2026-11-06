@@ -311,7 +311,8 @@ def build_apk(tools: dict, source: Path, work: Path, keystore: Path,
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--sdk", type=Path, default=Path(os.environ.get("ANDROID_SDK_ROOT")
-        or os.environ.get("ANDROID_HOME") or "C:/Users/gp32-user/AppData/Local/Android/Sdk"),
+        or os.environ.get("ANDROID_HOME")
+        or Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local")) / "Android" / "Sdk"),
         help="Installed Android SDK root")
     parser.add_argument("--ndk", type=Path, help="NDK root (default: SDK/ndk/28.2.13676358)")
     parser.add_argument("--keystore", type=Path, default=Path.home() / ".android/debug.keystore",

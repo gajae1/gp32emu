@@ -25,7 +25,6 @@ requires a computer for initial setup (Windows, macOS or Linux); later installs
 and refreshes can run on the device with its required Wi-Fi/VPN setup. On iOS 16
 and later, development-signed apps also require
 [Developer Mode](https://developer.apple.com/documentation/xcode/enabling-developer-mode-on-a-device).
-The interpreter does not remove these installation requirements.
 
 To update, install over the existing app using the same signing account and app
 identifier. Do not uninstall first: removing the app also removes its local data.
@@ -37,10 +36,7 @@ identified app may have separate storage.
 Use the app menu to import files and select a game. A BIOS is recommended for
 commercial games; booting without one is limited.
 
-**Game library** lists games already imported into the app. Select a game to
-open it without importing another copy. **Load latest state** finds the newest
-of that game's ten saved slots and asks you to confirm its slot and date. It
-does not create or replace a state automatically.
+Select an imported game from **Game library** to play it again.
 
 The app copies imported files into its own storage and leaves the originals
 unchanged. Save data follows the imported file contents: importing identical
@@ -55,8 +51,10 @@ Resolve the storage error and retry; closing the app can discard unsaved progres
 ## Save states
 
 Each game has ten save-state slots. Save State and Load State show whether each
-slot is empty or occupied; saving replaces the chosen slot. An existing single
-state from an earlier iOS build remains available as slot 1.
+slot is empty or occupied; saving replaces the chosen slot. **Load latest
+state** shows the most recent slot and its date for you to confirm. It does not
+write a new save. An existing single state from an earlier iOS build remains
+available as slot 1.
 
 New states use the common v17 format. This build imports existing v2-v12 and
 v14-v16 states. Older core builds cannot read v17 states, so keep a copy of
@@ -104,14 +102,12 @@ For the experimental automatic setup:
 
 Automatic setup requires a supported device with Apple's TXM memory protection.
 Repeat activation after restarting the app or changing games. Reset and state
-restore retain an active JIT session. Setup depends on the device, signing tool
-and StikDebug configuration; activation does not guarantee full speed in every
-game.
+restore retain an active JIT session.
 
 ## Building from source
 
-See the [iOS build guide](../docs/IOS_BUILD.md) to create an IPA from a source
-checkout.
+To build an IPA from a source checkout, see the
+[iOS build guide](https://github.com/gajae1/gp32emu/blob/main/docs/IOS_BUILD.md).
 
 ## Licenses
 

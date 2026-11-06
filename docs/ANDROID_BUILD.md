@@ -17,6 +17,9 @@ NDK 28.2.13676358 installed:
 python scripts/build_android_app.py --sdk /path/to/Android/Sdk --keystore /path/to/existing.keystore --output-dir /path/to/artifacts
 ```
 
+Without `--sdk`, the script uses `ANDROID_SDK_ROOT`, then `ANDROID_HOME`, then
+the current Windows user's `AppData/Local/Android/Sdk` directory.
+
 This builds ARM64 and ARMv7 from source and produces
 `gp32emu-1.1.0-android.apk` (min API 23, target API 35). The app is not debuggable.
 The script verifies ELF/ZIP 16 KB alignment and APK signatures. A missing
@@ -27,7 +30,7 @@ Keep signing keys for subsequent updates; do not commit them.
 
 `--test` also builds a same-key instrumentation APK. Install both on a test
 device and run `adb shell am instrument -w org.gp32emu.app.test/org.gp32emu.app.InputTest`.
-`--debug` creates a separate private `-debug.apk`, requiring `adb install -t`.
+`--debug` creates a separate test-only `-debug.apk`, requiring `adb install -t`.
 Build intermediates stay in the chosen artifact directory outside the checkout.
 
 ## Libretro core

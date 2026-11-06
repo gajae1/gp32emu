@@ -1,49 +1,37 @@
-# GP32emu 1.1.0 (unpublished candidate)
+# GP32emu 1.1.0 update notes
 
-The current public release is **1.0.1**. This candidate adds an experimental
-iPhone/iPad app, ten manual save-state slots
-per game in the standalone apps, and improvements to controls, audio and saving.
+Changes since public **1.0.1**. **1.1.0** is an unpublished candidate.
 
-## New and improved
+## Apps and controls
 
-- **iPhone and iPad:** import BIOS and games, use touch controls or a controller,
-  and play in portrait or landscape. The unsigned IPA requires a compatible
-  signing tool. JIT requires separate activation.
-- **Windows, Android and iOS:** ten manual save-state slots for each game. The
-  previous single iOS state appears in slot 1.
-- **Save states:** load the latest state for the current game after
-  confirming its slot and date; no save slot is created or replaced
-  automatically. On iOS, choose previously imported games from the game library
-  without importing them again.
-- **Mobile controls:** a top-aligned landscape picture, separate shoulder and
-  Start/Select rows in portrait, a menu button that hides during landscape play,
-  and more screen space when touch controls are disabled.
-- **In-game saves:** support for saving to 128 MiB cards.
-- **Audio:** fixes Windows audio occasionally restarting after a pause or reset.
-- **Android controllers:** held buttons are released when a controller is
-  disconnected, without releasing other controllers or touch controls.
-- **Browser frontend (source only):** fixes saving, loading and exporting when
-  switching games or state slots.
-- **Save-state compatibility:** new states use v17. Damaged or mismatched states
-  are rejected without replacing the running game.
+- Added an experimental iPhone/iPad app with a game library, touch controls,
+  gamepad support, portrait and landscape layouts, and optional JIT.
+- Added ten save-state slots per game and **Load latest state** to the Windows,
+  Android and iOS apps.
+- Improved mobile landscape layout and touch controls. The menu button hides
+  during play, and hiding touch controls gives the picture more space.
+- Fixed held input after disconnecting an Android controller. Other controllers
+  and touch input stay active.
+- Fixed unintended Windows audio playback after a pause or reset, and timing
+  after a long pause.
 
-## Updating
+## Games and saves
 
-Install over the existing application or replace the matching RetroArch core.
-Keep your BIOS, games, settings and saves. Do not uninstall a mobile app first.
-On iOS, use the same signing account and app identifier when updating.
+- Added v17 save states that retain more of the audio and device state. Older
+  supported states can still be loaded; older builds cannot read v17.
+- Fixed audio and video restoration after loading states. Invalid states are
+  rejected before they replace the running game.
+- Fixed 128 MiB card saves, small SmartMedia card geometry and empty FAT files.
+- Fixed error handling for malformed FXE headers and FXP2 data.
+- Fixed browser save, load and export operations when switching games or slots.
 
-New state files use v17. This candidate reads supported v2–v12 and
-v14–v16 states, but older cores cannot read v17. Back up old slots before
-overwriting them if you may return to an older version. In-game card saves keep
-their existing format. RetroArch continues to manage its own state slots.
+## Emulation
 
-## Packages
-
-Applications and cores are packaged separately for each platform. iOS and
-Switch support is experimental. BIOS images, games and saves are not included.
-Compatibility and performance vary by game and host.
-
-See the [README](../README.md) for package selection, the
-[Korean manual](MANUAL.ko.md) for controls and saves, and the
-[iPhone/iPad guide](../ios/README.md) for IPA installation.
+- Updated ARM and Thumb instruction handling, memory access and interrupt
+  behavior.
+- Fixed interpreter fallback when JIT code cannot be made executable, and
+  handling of changes to emulated program memory.
+- Optimized AArch64 code generation, memory access and SmartMedia transfers;
+  improved x86-64 execution paths and state saving.
+- Corrected DMA transfer order and PWM, LCD and audio timing.
+- Updated audio filtering, frame delivery and output handling across frontends.
