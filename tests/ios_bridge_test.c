@@ -78,6 +78,108 @@ static void audio_underrun_recovery(void) {
     gp32_ios_emulator_destroy(e);
 }
 
+/* The audio thread can observe a resume/restore flush after fresh PCM has
+ * arrived. It must discard the old stream without losing the new one. */
+static void audio_flush_boundary(void) {
+    const int16_t old[] = {10, 10, 20, 20};
+    const int16_t fresh[] = {30, 30, 40, 40};
+    int16_t output[8];
+    for (unsigned wrap = 0; wrap < 2u; ++wrap) {
+        gp32_ios_audio_sink_t sink;
+        gp32_ios_audio_sink_init(&sink);
+        CHECK(atomic_is_lock_free(&sink.flush_request), "flush is lock-free on audio thread");
+        if (wrap) {
+            atomic_store(&sink.head, UINT32_MAX - 1u);
+            atomic_store(&sink.tail, UINT32_MAX - 1u);
+        }
+        gp32_ios_audio_sink_write(&sink, old, 2u, NULL);
+        gp32_ios_audio_sink_request_flush(&sink);
+        gp32_ios_audio_sink_write(&sink, fresh, 2u, NULL);
+        CHECK(gp32_ios_audio_sink_read(&sink, output, 2u) == 2u &&
+              memcmp(output, fresh, sizeof(fresh)) == 0,
+              "delayed flush keeps post-request PCM, including head wrap to zero");
+
+        gp32_ios_audio_sink_write(&sink, old, 2u, NULL);
+        gp32_ios_audio_sink_request_flush(&sink);
+        /* Simulate the consumer finishing a read which began before the
+         * request; applying the late request must not replay consumed data. */
+        atomic_store(&sink.tail, atomic_load(&sink.head));
+        gp32_ios_audio_sink_write(&sink, fresh, 2u, NULL);
+        atomic_fetch_add(&sink.tail, 1u);
+        CHECK(gp32_ios_audio_sink_read(&sink, output, 1u) == 1u &&
+              output[0] == 40 && output[1] == 40,
+              "flush behind the consumer neither replays nor discards fresh PCM");
+
+        gp32_ios_audio_sink_write(&sink, old, 2u, NULL);
+        gp32_ios_audio_sink_request_flush(&sink);
+        gp32_ios_audio_sink_write(&sink, old, 2u, NULL);
+        gp32_ios_audio_sink_request_flush(&sink);
+        gp32_ios_audio_sink_write(&sink, fresh, 2u, NULL);
+        CHECK(gp32_ios_audio_sink_read(&sink, output, 2u) == 2u &&
+              memcmp(output, fresh, sizeof(fresh)) == 0,
+              "overlapping flushes retain the latest boundary");
+    }
+}
+
+static uint32_t clock_drift_shortages(int compensate) {
+    gp32_ios_audio_sink_t sink;
+    gp32_ios_audio_sink_init(&sink);
+    gp32_ios_emulator_t *e = gp32_ios_emulator_create();
+    CHECK(e != NULL, "allocate clock-drift bridge");
+    if (!e) return UINT32_MAX;
+    e->sink = &sink;
+    int16_t samples[735u * 2u], output[736u * 2u];
+    for (size_t i = 0; i < sizeof(samples) / sizeof(samples[0]); ++i) samples[i] = 1000;
+    gp32_ios_audio_sink_write(&sink, samples, 200u, NULL);
+    gp32_audio_desc_t span = {0};
+    span.samples_s16_interleaved = samples;
+    span.frame_count = 735u;
+    span.sample_rate_hz = 44100u;
+    for (unsigned i = 0; i < 1200u; ++i) {
+        e->audio_adjust_ppm = compensate ? audio_rate_adjust(&sink) : 0;
+        push_audio_span(e, &span);
+        /* A separate device clock consumes about 340 ppm faster. */
+        (void)gp32_ios_audio_sink_read(&sink, output, 735u + (i % 4u == 0u));
+    }
+    CHECK(atomic_load(&sink.dropped_frames) == 0u, "clock correction never overflows the ring");
+    uint32_t shortages = atomic_load(&sink.underrun_events);
+    gp32_ios_emulator_destroy(e);
+    return shortages;
+}
+
+static void low_rate_scratch_bound(void) {
+    gp32_ios_audio_sink_t sink;
+    gp32_ios_audio_sink_init(&sink);
+    gp32_ios_emulator_t *e = gp32_ios_emulator_create();
+    CHECK(e != NULL, "allocate low-rate bridge");
+    if (!e) return;
+    e->sink = &sink;
+    e->audio_adjust_ppm = 1000;
+    int16_t input[341u * 2u] = {0}, reference[4200u * 2u], output[4096u * 2u];
+    gp32_audio_resampler_t resampler;
+    gp32_audio_resampler_init(&resampler);
+    gp32_audio_desc_t span = {0};
+    span.samples_s16_interleaved = input;
+    span.frame_count = 341u;
+    span.sample_rate_hz = 3675u;
+    for (unsigned i = 0; i < 16u; ++i) {
+        size_t expected = gp32_audio_resampler_process(&resampler, input, 341u,
+                             3675u, 44100u, 1000, reference, 4200u);
+        uint32_t before = atomic_load(&sink.head) + atomic_load(&sink.dropped_frames);
+        push_audio_span(e, &span);
+        uint32_t after = atomic_load(&sink.head) + atomic_load(&sink.dropped_frames);
+        CHECK(after - before == expected,
+              "low-rate expansion is accounted for, never silently clipped by scratch capacity");
+        if (expected > GP32_IOS_AUDIO_RING_FRAMES)
+            gp32_audio_resampler_mark_gap(&resampler, 44100u);
+        CHECK(e->resampler.phase_q32 == resampler.phase_q32,
+              "scratch splitting preserves phase unless an accounted ring overflow resets it");
+        uint32_t available = atomic_load(&sink.head) - atomic_load(&sink.tail);
+        (void)gp32_ios_audio_sink_read(&sink, output, available);
+    }
+    gp32_ios_emulator_destroy(e);
+}
+
 /* Slot paths are supplied per operation. A rejected path must not redirect the
  * legacy state path or disturb the live core behind it. */
 static void explicit_state_paths(const char *base) {
@@ -206,6 +308,10 @@ int main(int argc, char **argv) {
     for (unsigned action = 0; action < 3u; ++action)
         audio_transition(action, argv[1]);
     audio_underrun_recovery();
+    audio_flush_boundary();
+    CHECK(clock_drift_shortages(0) > 0u, "uncorrected independent clocks reproduce starvation");
+    CHECK(clock_drift_shortages(1) == 0u, "resampling follows device drift without starvation");
+    low_rate_scratch_bound();
     explicit_state_paths(argv[1]);
     failed_card_unload(argv[1]);
     if (failures) return 1;

@@ -27,14 +27,6 @@
 
 #include <stdint.h>
 
-/* The guest clock advances at 60 intervals/second, independently of display
- * callback jitter. At most two owed intervals are submitted per callback. */
-static const NSTimeInterval GP32DisplayInterval = 1.0 / 60.0;
-/* Absorbs callback jitter that lands a hair before the deadline. Because the
- * deadline advances by a full interval per tick, this cannot raise the
- * long-run guest rate above 60 intervals per second. */
-static const NSTimeInterval GP32DisplayIntervalSlack = 1.0 / 300.0;
-
 typedef NS_ENUM(NSInteger, GP32ImportKind) {
     GP32ImportGame = 0,
     GP32ImportBIOS,
@@ -232,7 +224,6 @@ static BOOL GP32IsSupportedGameExtension(NSString *extension) {
     CGRect _lastLayoutArea;
 
     CADisplayLink *_displayLink;
-    NSTimeInterval _lastTickTime;
 
     uint32_t _touchMask;
     uint32_t _keyboardMask;
@@ -854,37 +845,14 @@ static BOOL GP32IsSupportedGameExtension(NSString *extension) {
     _displayLink = [CADisplayLink displayLinkWithTarget:self selector:@selector(displayTick:)];
     /* Ask for exactly one callback per emulated interval on every panel. */
     _displayLink.preferredFrameRateRange = CAFrameRateRangeMake(60.0, 60.0, 60.0);
-    _lastTickTime = 0.0;
     [_displayLink addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSRunLoopCommonModes];
 }
 
-/* Preserve the 60 Hz guest clock across short display delays. Lifecycle and
- * menu transitions reset the clock; ordinary jitter can owe one extra frame. */
+/* Display callbacks only present the newest completed image. Guest time and
+ * PCM production are paced on the emulator owner queue. */
 - (void)displayTick:(CADisplayLink *)link {
-    if (![self shouldRun]) return;
-    if (!_emulator.hasGame) {
-        _lastTickTime = 0.0;
-        return;
-    }
-    NSTimeInterval now = link.timestamp;
-    if (_lastTickTime == 0.0) {
-        _lastTickTime = now;
-        [_emulator tick];
-        return;
-    }
-    if (now + GP32DisplayIntervalSlack < _lastTickTime + GP32DisplayInterval) return;
-    NSUInteger due = (NSUInteger)((now - _lastTickTime + GP32DisplayIntervalSlack) /
-                                  GP32DisplayInterval);
-    if (due > 2) {
-        /* A long suspension must not cause an unbounded fast-forward burst. */
-        due = 2;
-        _lastTickTime = now;
-    } else {
-        /* Retain fractional time: rounding the deadline up to each callback
-         * permanently loses guest time and PCM when the display runs late. */
-        _lastTickTime += due * GP32DisplayInterval;
-    }
-    for (NSUInteger index = 0; index < due; ++index) [_emulator tick];
+    (void)link;
+    if ([self shouldRun]) [_emulator tick];
 }
 
 #pragma mark - Running state
@@ -1040,7 +1008,6 @@ static BOOL GP32IsSupportedGameExtension(NSString *extension) {
                                      forKey:GP32DefaultGameKey];
                           }
                           self->_userPaused = !success;
-                          self->_lastTickTime = 0.0;
                           [self applyRunningState];
                       }];
 }
@@ -1533,7 +1500,6 @@ static BOOL GP32IsSupportedGameExtension(NSString *extension) {
         typeof(self) self = weakSelf;
         if (!self) return;
         self->_userPaused = !self->_userPaused;
-        if (!self->_userPaused) self->_lastTickTime = 0.0;
         [self menuDidClose];
     }]];
     [menu addAction:[UIAlertAction actionWithTitle:@"Close"
@@ -1569,7 +1535,6 @@ static BOOL GP32IsSupportedGameExtension(NSString *extension) {
         if (!self || self->_menuController) return;
         self->_menuOpen = NO;
         [self revealMenuButton];
-        self->_lastTickTime = 0.0;
         self->_displayLink.paused = !self->_foreground;
         [self applyRunningState];
     }];
@@ -1594,7 +1559,6 @@ static BOOL GP32IsSupportedGameExtension(NSString *extension) {
         [UIApplication.sharedApplication endBackgroundTask:_jitBackgroundTask];
         _jitBackgroundTask = UIBackgroundTaskInvalid;
     }
-    _lastTickTime = 0;
     [self applyRunningState];
     [self showStatus:message temporary:_emulator.jitActive];
 }
@@ -1675,7 +1639,6 @@ static BOOL GP32IsSupportedGameExtension(NSString *extension) {
         } else if ([note.name isEqualToString:AVAudioEngineConfigurationChangeNotification]) {
             if (![self->_audio invalidateAfterConfigurationChange:note]) return;
             self->_audioRunning = NO;
-            self->_lastTickTime = 0.0;
             [self applyRunningState];
         } else if ([note.name isEqualToString:AVAudioSessionRouteChangeNotification]) {
             NSNumber *reason = note.userInfo[AVAudioSessionRouteChangeReasonKey];
@@ -1690,7 +1653,6 @@ static BOOL GP32IsSupportedGameExtension(NSString *extension) {
             self->_audioInterrupted = NO;
             [self->_audio resetAfterMediaServicesReset];
             self->_audioRunning = NO;
-            self->_lastTickTime = 0.0;
             [self applyRunningState];
             [self showStatus:@"Audio was reset. Resume from the menu." temporary:NO];
         }
@@ -1700,7 +1662,6 @@ static BOOL GP32IsSupportedGameExtension(NSString *extension) {
 - (void)applicationDidBecomeActive:(NSNotification *)note {
     (void)note;
     _foreground = YES;
-    _lastTickTime = 0.0;
     _displayLink.paused = _menuOpen;
     [self applyRunningState];
 }
@@ -1720,7 +1681,6 @@ static BOOL GP32IsSupportedGameExtension(NSString *extension) {
  * and persist pending card progress before the system suspends the process. */
 - (void)pauseForBackground {
     _foreground = NO;
-    _lastTickTime = 0.0;
     _displayLink.paused = YES;
     [_emulator pause];
     [_emulator releaseInput];
@@ -1751,7 +1711,6 @@ static BOOL GP32IsSupportedGameExtension(NSString *extension) {
     _audioInterrupted = NO;
     NSNumber *options = note.userInfo[AVAudioSessionInterruptionOptionKey];
     if (options.unsignedIntegerValue & AVAudioSessionInterruptionOptionShouldResume) {
-        _lastTickTime = 0.0;
         /* startWithError: flushes the ring and reconfigures the session, so the
          * resume path clears inputs, pacing and stale audio. */
         [self applyRunningState];

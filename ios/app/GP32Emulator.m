@@ -26,8 +26,15 @@ static const void *GP32EmulatorQueueKey = &GP32EmulatorQueueKey;
     GP32Audio *_audioOwner;       /* Retained: the sink must outlive the queue. */
     gp32_ios_audio_sink_t *_sink; /* Borrowed from _audioOwner for the core. */
     dispatch_queue_t _ownerQueue;
-    _Atomic int _frameInFlight;
-    BOOL _framePending; /* Main-thread only: at most one owed display interval. */
+    dispatch_source_t _frameTimer;
+    _Atomic BOOL _clockRunning;
+    _Atomic NSUInteger _runToken;
+    NSUInteger _timerRunToken; /* Owner queue: generation which armed the timer. */
+    /* Protected by @synchronized(self). Presentation never gates execution. */
+    NSData *_pendingFrame;
+    BOOL _presentationQueued;
+    uint64_t _pendingFrameCounter;
+    NSUInteger _pendingFrameLoadToken, _pendingFrameRunToken;
     _Atomic NSUInteger _loadToken; /* Main thread bumps; owner queue observes. */
     NSString *_loadedPath;  /* Owner-queue identity, including superseded loads. */
     NSString *_loadedLabel;
@@ -44,11 +51,17 @@ static const void *GP32EmulatorQueueKey = &GP32EmulatorQueueKey;
     _sink = audio.sink;
     _ownerQueue = dispatch_queue_create("org.gp32emu.ios.emulator", DISPATCH_QUEUE_SERIAL);
     dispatch_queue_set_specific(_ownerQueue, GP32EmulatorQueueKey, (void *)GP32EmulatorQueueKey, NULL);
+    _frameTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, _ownerQueue);
+    dispatch_source_set_timer(_frameTimer, DISPATCH_TIME_FOREVER, DISPATCH_TIME_FOREVER, 0);
+    __weak typeof(self) weakSelf = self;
+    dispatch_source_set_event_handler(_frameTimer, ^{ [weakSelf runScheduledFrames]; });
+    dispatch_resume(_frameTimer);
     _paused = YES;
     return self;
 }
 
 - (void)dealloc {
+    if (_frameTimer) dispatch_source_cancel(_frameTimer);
     /* The sync drains every block already queued on the owner queue, then
      * releases the core on that same queue, so every gp32_* call keeps the
      * single-owner rule. Only after this body returns does ARC release
@@ -98,10 +111,10 @@ static const void *GP32EmulatorQueueKey = &GP32EmulatorQueueKey;
      * earlier completion can never mark a later selection as loaded. */
     NSUInteger token = atomic_fetch_add_explicit(&_loadToken, 1u, memory_order_acq_rel) + 1u;
 
-    /* Stop ticking before the swap. Ticks start only from the main thread, so
-     * no new run_frame is queued behind the unload/load below. */
+    /* Invalidate the owner clock before queuing the content swap. Pending
+     * timer events cannot execute the superseded generation. */
     self.paused = YES;
-    _framePending = NO;
+    [self stopClock];
     self.hasGame = NO;
     self.contentLabel = nil;
 #if GP32EMU_IOS_DEVELOPER_JIT
@@ -246,72 +259,106 @@ static const void *GP32EmulatorQueueKey = &GP32EmulatorQueueKey;
         return;
     }
     self.paused = NO;
+    if (!atomic_load_explicit(&_clockRunning, memory_order_acquire)) {
+        NSUInteger run = atomic_fetch_add_explicit(&_runToken, 1u, memory_order_acq_rel) + 1u;
+        atomic_store_explicit(&_clockRunning, YES, memory_order_release);
+        dispatch_async(_ownerQueue, ^{
+            if (run != atomic_load_explicit(&self->_runToken, memory_order_acquire) ||
+                !atomic_load_explicit(&self->_clockRunning, memory_order_acquire)) return;
+            self->_timerRunToken = run;
+            dispatch_source_set_timer(self->_frameTimer, DISPATCH_TIME_NOW, NSEC_PER_SEC / 60,
+                                      NSEC_PER_MSEC / 2);
+        });
+    }
     [self publishStatus:[NSString stringWithFormat:@"Running %@", self.contentLabel ?: @"content"]];
 }
 
 - (void)pause {
     BOOL wasRunning = !self.paused;
     self.paused = YES;
-    _framePending = NO;
+    [self stopClock];
     [self releaseInput];
     /* A lifecycle pause must not hide the initial import hint or a load error. */
     if (wasRunning) [self publishStatus:@"Paused."];
 }
 
+- (void)stopClock {
+    atomic_store_explicit(&_clockRunning, NO, memory_order_release);
+    atomic_fetch_add_explicit(&_runToken, 1u, memory_order_acq_rel);
+    dispatch_async(_ownerQueue, ^{
+        dispatch_source_set_timer(self->_frameTimer, DISPATCH_TIME_FOREVER, DISPATCH_TIME_FOREVER, 0);
+    });
+    @synchronized(self) { _pendingFrame = nil; }
+}
+
+/* The serial owner queue advances guest time independently of display refresh
+ * and main-thread work. Missed timer events can owe one extra interval, as
+ * before; a long suspension cannot create an unbounded fast-forward burst. */
+- (void)runScheduledFrames {
+    if (!atomic_load_explicit(&_clockRunning, memory_order_acquire)) return;
+    NSUInteger token = atomic_load_explicit(&_loadToken, memory_order_acquire);
+    NSUInteger run = atomic_load_explicit(&_runToken, memory_order_acquire);
+    if (run != _timerRunToken) return;
+    unsigned long due = dispatch_source_get_data(_frameTimer);
+    if (due > 2) due = 2;
+    for (unsigned long i = 0; i < due; ++i) {
+        if (!atomic_load_explicit(&_clockRunning, memory_order_acquire) ||
+            run != atomic_load_explicit(&_runToken, memory_order_acquire) ||
+            token != atomic_load_explicit(&_loadToken, memory_order_acquire)) return;
+        gp32_ios_emulator_t *emulator = _emulator;
+        int ran = gp32_ios_emulator_run_frame(emulator) != 0;
+        if (!ran) {
+            atomic_store_explicit(&_clockRunning, NO, memory_order_release);
+            NSString *message = [self coreError];
+            dispatch_async(dispatch_get_main_queue(), ^{
+                if (token != atomic_load_explicit(&self->_loadToken, memory_order_acquire) ||
+                    run != atomic_load_explicit(&self->_runToken, memory_order_acquire)) return;
+                [self pause];
+                [self publishStatus:message.length ? message : @"The emulated CPU stopped."];
+            });
+            return;
+        }
+        const uint32_t *pixels = gp32_ios_emulator_frame_pixels(emulator);
+        NSData *snapshot = pixels ? [[NSData alloc] initWithBytes:pixels
+                                     length:GP32_IOS_FRAME_PIXELS * sizeof(uint32_t)] : nil;
+        uint64_t counter = gp32_ios_emulator_frame_counter(emulator);
+        /* Keep only the newest completed image while UIKit is busy. The core
+         * and PCM still advance; no mutable core memory reaches the UI. */
+        BOOL notify;
+        @synchronized(self) {
+            _pendingFrame = snapshot;
+            _pendingFrameCounter = counter;
+            _pendingFrameLoadToken = token;
+            _pendingFrameRunToken = run;
+            notify = !_presentationQueued;
+            _presentationQueued = YES;
+        }
+        if (notify) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                @synchronized(self) { self->_presentationQueued = NO; }
+                [self tick];
+            });
+        }
+    }
+}
+
 - (void)tick {
     if (self.paused || !self.hasGame) return;
-
-    int expected = 0;
-    if (!atomic_compare_exchange_strong_explicit(&_frameInFlight, &expected, 1,
-                                                 memory_order_acq_rel, memory_order_relaxed)) {
-        _framePending = YES;
-        return; /* Keep one owed interval, never an unbounded work queue. */
+    NSData *snapshot;
+    uint64_t counter;
+    NSUInteger token, run;
+    @synchronized(self) {
+        snapshot = _pendingFrame;
+        _pendingFrame = nil;
+        counter = _pendingFrameCounter;
+        token = _pendingFrameLoadToken;
+        run = _pendingFrameRunToken;
     }
-
-    NSUInteger token = atomic_load_explicit(&_loadToken, memory_order_acquire);
-    dispatch_async(_ownerQueue, ^{
-        if (token != atomic_load_explicit(&self->_loadToken, memory_order_acquire)) {
-            dispatch_async(dispatch_get_main_queue(), ^{
-                atomic_store_explicit(&self->_frameInFlight, 0, memory_order_release);
-            });
-            return; /* The session was replaced; the staged buffer is not ours. */
-        }
-
-        gp32_ios_emulator_t *emulator = self->_emulator;
-        int ran = gp32_ios_emulator_run_frame(emulator) != 0;
-        NSString *message = ran ? nil : [self coreError];
-        uint64_t counter = gp32_ios_emulator_frame_counter(emulator);
-
-        /* The staging buffer is only valid until the next core call, and the
-         * owner queue may accept reset/load/persistence work before the main
-         * thread runs. Copy it here so the UI block owns immutable pixels. */
-        NSData *snapshot = nil;
-        if (ran) {
-            const uint32_t *pixels = gp32_ios_emulator_frame_pixels(emulator);
-            if (pixels) {
-                snapshot = [[NSData alloc] initWithBytes:pixels
-                                                  length:GP32_IOS_FRAME_PIXELS * sizeof(uint32_t)];
-            }
-        }
-
-        dispatch_async(dispatch_get_main_queue(), ^{
-            if (token == atomic_load_explicit(&self->_loadToken, memory_order_acquire)) {
-                if (ran && snapshot) {
-                    GP32FrameHandler handler = self.frameHandler;
-                    if (handler) handler(snapshot, counter);
-                } else if (!ran) {
-                    self.paused = YES;
-                    [self publishStatus:message.length ? message : @"The emulated CPU stopped."];
-                }
-            }
-            atomic_store_explicit(&self->_frameInFlight, 0, memory_order_release);
-            BOOL pending = self->_framePending;
-            self->_framePending = NO;
-            if (pending && token == atomic_load_explicit(&self->_loadToken, memory_order_acquire)) {
-                [self tick]; /* Rechecks pause/load state before starting. */
-            }
-        });
-    });
+    if (snapshot && token == atomic_load_explicit(&_loadToken, memory_order_acquire) &&
+        run == atomic_load_explicit(&_runToken, memory_order_acquire)) {
+        GP32FrameHandler handler = self.frameHandler;
+        if (handler) handler(snapshot, counter);
+    }
 }
 
 - (void)setButtonMask:(uint32_t)mask {

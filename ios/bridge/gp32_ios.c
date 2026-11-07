@@ -22,10 +22,8 @@
 #include "audio/gp32_audio_resampler.h"
 #include "smc_direct.h"
 
-/* Source frames handed to the resampler per call. The worst case output for a
- * chunk at the slowest guest IIS rate (11025 Hz) is 4x + a couple of carry
- * frames, so the fixed scratch below always fits the kernel's bound and the
- * delivery path never allocates. */
+/* Limit input chunks further for low guest rates so resampled output fits the
+ * fixed scratch buffer. The delivery path never allocates. */
 #define GP32_IOS_AUDIO_IN_CHUNK 512u
 #define GP32_IOS_AUDIO_SCRATCH_FRAMES 4096u
 
@@ -61,6 +59,7 @@ struct gp32_ios_emulator {
     uint32_t buttons;
     uint64_t frame_counter;
     uint32_t last_underruns;
+    int32_t audio_adjust_ppm;
 
     gp32_audio_resampler_t resampler;
     int16_t scratch[GP32_IOS_AUDIO_SCRATCH_FRAMES * 2u];
@@ -134,9 +133,19 @@ void gp32_ios_audio_sink_init(gp32_ios_audio_sink_t *s) {
 
 void gp32_ios_audio_sink_request_flush(gp32_ios_audio_sink_t *s) {
     if (!s) return;
-    /* Only a request: tail belongs to the consumer, which applies the discard
-     * at its next read, so this stays correct while a callback is running. */
-    atomic_store_explicit(&s->flush_request, 1u, memory_order_release);
+    /* Retire only samples published before the request. The consumer may not
+     * run until a new frame has already supplied audio after resume/restore. */
+    uint32_t head = atomic_load_explicit(&s->head, memory_order_acquire);
+    uint64_t request = (UINT64_C(1) << 32) | head;
+    uint64_t pending = atomic_load_explicit(&s->flush_request, memory_order_relaxed);
+    do {
+        /* Lifecycle and owner-queue requests can overlap. Do not replace a
+         * newer pending boundary with an older snapshot (including wrap). */
+        if (pending && (uint32_t)(head - (uint32_t)pending) >= UINT32_C(0x80000000))
+            return;
+    } while (!atomic_compare_exchange_weak_explicit(&s->flush_request, &pending,
+                                                    request, memory_order_release,
+                                                    memory_order_relaxed));
 }
 
 void gp32_ios_audio_sink_write(gp32_ios_audio_sink_t *s, const int16_t *frames,
@@ -176,16 +185,18 @@ void gp32_ios_audio_sink_write(gp32_ios_audio_sink_t *s, const int16_t *frames,
 size_t gp32_ios_audio_sink_read(gp32_ios_audio_sink_t *s, int16_t *dst, size_t count) {
     if (!s || !dst || !count) return 0;
 
-    /* Consumer-owned flush: the producer only raises the request, so the tail
-     * index is never written by two threads. Anything produced after the head
-     * observed here is kept. */
-    if (atomic_exchange_explicit(&s->flush_request, 0u, memory_order_acq_rel)) {
-        uint32_t flushed_head = atomic_load_explicit(&s->head, memory_order_acquire);
-        atomic_store_explicit(&s->tail, flushed_head, memory_order_release);
-    }
-
+    uint64_t flush = atomic_exchange_explicit(&s->flush_request, 0u, memory_order_acq_rel);
     uint32_t tail = atomic_load_explicit(&s->tail, memory_order_relaxed);
     uint32_t head = atomic_load_explicit(&s->head, memory_order_acquire);
+    if (flush) {
+        uint32_t boundary = (uint32_t)flush;
+        /* A delayed request may refer to samples already consumed. It must
+         * never rewind tail, nor discard PCM published after its boundary. */
+        if ((uint32_t)(boundary - tail) <= (uint32_t)(head - tail)) {
+            tail = boundary;
+            atomic_store_explicit(&s->tail, tail, memory_order_release);
+        }
+    }
     size_t available = (size_t)(head - tail);
     size_t take = (count < available) ? count : available;
 
@@ -213,7 +224,9 @@ size_t gp32_ios_audio_sink_read(gp32_ios_audio_sink_t *s, int16_t *dst, size_t c
 static void push_audio_span(gp32_ios_emulator_t *e, const gp32_audio_desc_t *aud) {
     if (!e->sink || !aud->samples_s16_interleaved || !aud->frame_count) return;
     uint32_t src_rate = aud->sample_rate_hz ? aud->sample_rate_hz : GP32_IOS_AUDIO_RATE;
-    size_t chunk_cap = (size_t)(GP32_IOS_AUDIO_SCRATCH_FRAMES - 4u) * src_rate / GP32_IOS_AUDIO_RATE;
+    /* Include the maximum +0.1% expansion in the scratch bound. */
+    size_t chunk_cap = (size_t)((uint64_t)(GP32_IOS_AUDIO_SCRATCH_FRAMES - 4u) *
+                               src_rate * 1000u / ((uint64_t)GP32_IOS_AUDIO_RATE * 1001u));
     if (chunk_cap > GP32_IOS_AUDIO_IN_CHUNK) chunk_cap = GP32_IOS_AUDIO_IN_CHUNK;
     if (!chunk_cap) chunk_cap = 1u;
 
@@ -231,7 +244,7 @@ static void push_audio_span(gp32_ios_emulator_t *e, const gp32_audio_desc_t *aud
         }
         size_t got = gp32_audio_resampler_process(&e->resampler,
                                                   aud->samples_s16_interleaved + offset * 2u,
-                                                  chunk, src_rate, GP32_IOS_AUDIO_RATE, 0,
+                                                  chunk, src_rate, GP32_IOS_AUDIO_RATE, e->audio_adjust_ppm,
                                                   e->scratch, GP32_IOS_AUDIO_SCRATCH_FRAMES);
         if (got) {
             int dropped = 0;
@@ -564,8 +577,24 @@ int gp32_ios_emulator_load(gp32_ios_emulator_t *e, const gp32_ios_config_t *cfg)
 
 /* ---- Execution ---- */
 
+/* The display/guest clock and the output device are independent oscillators.
+ * Correct their small drift through the existing continuous resampler, not
+ * guest CPU speed, extra silence or a growing queue. One guest interval of
+ * PCM before each run leaves room for the device's block-sized reads. */
+static int32_t audio_rate_adjust(const gp32_ios_audio_sink_t *sink) {
+    if (!sink) return 0;
+    uint32_t head = atomic_load_explicit(&sink->head, memory_order_relaxed);
+    uint32_t tail = atomic_load_explicit(&sink->tail, memory_order_acquire);
+    const int32_t target = GP32_IOS_AUDIO_RATE / 60u;
+    int32_t error = target - (int32_t)(head - tail);
+    if (error > target) error = target;
+    if (error < -target) error = -target;
+    return error * 1000 / target; /* At most 0.1%; no kernel rebuild or phase reset. */
+}
+
 int gp32_ios_emulator_run_frame(gp32_ios_emulator_t *e) {
     if (!e || !e->core || !e->have_game) return 0;
+    e->audio_adjust_ppm = audio_rate_adjust(e->sink);
     if (gp32_run_frame(e->core) != GP32_OK) {
         set_core_error(e);
         return 0;
@@ -726,6 +755,7 @@ size_t gp32_ios_emulator_state_size(const gp32_ios_emulator_t *e) {
 void gp32_ios_emulator_clear_audio(gp32_ios_emulator_t *e) {
     if (!e || !e->core) return;
     gp32_clear_audio(e->core);
+    e->audio_adjust_ppm = 0;
     /* The consumer discards queued audio and outputs silence. The new stream
      * must start from that level, not a sample from before the transition. */
     gp32_audio_resampler_mark_gap_from_silence(&e->resampler, GP32_IOS_AUDIO_RATE);

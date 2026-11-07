@@ -14,6 +14,7 @@ Changes since **1.0.1**.
   and touch input stay active.
 - Fixed unintended Windows audio playback after a pause or reset, and timing
   after a long pause.
+- Improved iOS audio continuity during playback and after resuming a game.
 
 ## Games and saves
 

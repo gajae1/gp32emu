@@ -101,7 +101,8 @@ For the experimental automatic setup:
 
 Automatic setup requires a supported device with Apple's TXM memory protection.
 Repeat activation after restarting the app or changing games. Reset and state
-restore retain an active JIT session.
+restore retain an active JIT session. Opening the menu or pausing and resuming
+the same game does not require reactivation while the app remains running.
 
 ## Building from source
 

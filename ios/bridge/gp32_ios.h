@@ -8,10 +8,11 @@
  * main thread and never on the audio render thread.
  *
  * Threading contract
- *   - Every function takes gp32_ios_emulator_t * and is owner-queue-only,
- *     except gp32_ios_audio_sink_read(), which the real-time audio callback
- *     calls. The sink is a fixed-size single-producer/single-consumer ring
- *     with atomic indices and no allocation, lock or core call.
+ *   - Functions taking gp32_ios_emulator_t * are owner-queue-only. The sink
+ *     has one producer (owner queue) and one consumer (audio callback).
+ *     Discard requests may also come from the app's audio lifecycle thread.
+ *     The fixed-size ring uses atomic indices, with no allocation, lock or
+ *     core call on its read path.
  *   - gp32_ios_emulator_frame_pixels() stays valid until the next
  *     gp32_ios_emulator_run_frame() call, so a frontend copies or uploads it
  *     before starting the next frame.
@@ -59,7 +60,7 @@ typedef struct gp32_ios_audio_sink {
     int16_t samples[GP32_IOS_AUDIO_RING_FRAMES * 2u];
     _Atomic uint32_t head;                /* producer frames written: owner queue */
     _Atomic uint32_t tail;                /* consumer frames played: audio thread */
-    _Atomic uint32_t flush_request;       /* owner queue sets, audio thread applies */
+    _Atomic uint64_t flush_request;       /* valid bit + head at the discard request */
     _Atomic uint32_t underrun_events;     /* audio thread: ring ran dry */
     _Atomic uint32_t dropped_frames;      /* owner queue: new frames that did not fit */
     _Atomic uint32_t layout_mismatch_events; /* audio thread: unexpected buffer layout */

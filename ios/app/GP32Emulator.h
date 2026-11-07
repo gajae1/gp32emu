@@ -4,12 +4,11 @@
  * Concurrency contract
  *   - Every gp32_ios_emulator_* call runs on one serial owner queue, so two
  *     core calls can never overlap and the main thread never enters the core.
- *   - -tick is main-thread only and starts at most one frame at a time. Ticks
- *     that arrive while a frame is in flight retain at most one owed interval.
- *     Completion can catch that interval up without a growing backlog; pause
- *     or content replacement clears it.
+ *   - An owner-queue timer advances the guest at 60 intervals per second,
+ *     catching up at most one missed interval. -tick is main-thread only and
+ *     presents the latest completed image; UIKit cannot stall PCM production.
  *   - The frame handler receives an immutable NSData snapshot taken on the
- *     owner queue before the UI dispatch, so later reset/load/persistence work
+ *     owner queue, so later reset/load/persistence work
  *     on the owner queue can never mutate pixels the UI is about to read.
  *   - Each load request takes a generation token. A newer request makes an
  *     older, unfinished one a no-op, including its completion.

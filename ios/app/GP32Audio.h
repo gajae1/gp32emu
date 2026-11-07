@@ -29,7 +29,7 @@ NS_ASSUME_NONNULL_BEGIN
 /* YES only while playback is requested and the engine is actually running. */
 @property (nonatomic, readonly, getter=isRunning) BOOL running;
 
-/* Frames the device asked for and the ring could not supply. */
+/* Render requests which the ring could not supply in full. */
 @property (nonatomic, readonly) uint32_t underrunEvents;
 
 /* Render callbacks that did not receive the requested mono-per-channel stereo
