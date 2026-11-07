@@ -8,9 +8,15 @@
     <key>CFBundleName</key><string>GP32emu</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleShortVersionString</key><string>1.1.0</string>
-    <key>CFBundleVersion</key><string>11</string>
+    <key>CFBundleVersion</key><string>12</string>
     <key>LSRequiresIPhoneOS</key><true/>
-    <key>LSApplicationQueriesSchemes</key><array><string>stikdebug</string></array>
+    <key>LSApplicationQueriesSchemes</key><array><string>stikdebug</string><string>localdevvpn</string></array>
+    <key>CFBundleURLTypes</key><array><dict>
+        <key>CFBundleURLName</key><string>org.gp32emu.jit</string>
+        <key>CFBundleURLSchemes</key><array><string>gp32emu</string></array>
+    </dict></array>
+    <key>NSLocalNetworkUsageDescription</key><string>Connect to this device to prepare JIT execution.</string>
+    <key>NSBonjourServices</key><array><string>_remotepairing._tcp</string></array>
     <key>UIApplicationSceneManifest</key><dict>
         <key>UIApplicationSupportsMultipleScenes</key><false/>
         <key>UISceneConfigurations</key><dict>

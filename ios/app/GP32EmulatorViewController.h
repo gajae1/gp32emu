@@ -18,6 +18,7 @@
 NS_ASSUME_NONNULL_BEGIN
 
 @interface GP32EmulatorViewController : UIViewController
+- (void)handleJITSetupReturn;
 @end
 
 NS_ASSUME_NONNULL_END

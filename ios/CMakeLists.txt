@@ -85,6 +85,7 @@ else()
         app/GP32Emulator.m
         app/GP32Audio.m
         app/GP32JIT.m
+        app/GP32JITService.m
         app/GP32PadControls.m
         app/GP32EmulatorViewController.m
     )
@@ -145,6 +146,57 @@ else()
     set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/CREDITS.md" PROPERTIES
         MACOSX_PACKAGE_LOCATION "Resources")
     target_sources(gp32emu_ios PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/CREDITS.md")
+
+    option(GP32EMU_IOS_BUILTIN_JIT "Embed the StikJIT activation helper" ON)
+    if(GP32EMU_IOS_BUILTIN_JIT AND GP32EMU_IOS_DEVELOPER_JIT
+       AND NOT CMAKE_OSX_SYSROOT MATCHES "simulator")
+        enable_language(Swift)
+        set(GP32EMU_STIKJIT_ROOT "" CACHE PATH "Existing StikJIT 2.0.1 XCFramework directory")
+        if(NOT GP32EMU_STIKJIT_ROOT)
+            set(stik_archive "${CMAKE_CURRENT_BINARY_DIR}/_deps/StikJIT-2.0.1.zip")
+            if(EXISTS "${stik_archive}")
+                file(SHA256 "${stik_archive}" stik_digest)
+            endif()
+            if(NOT stik_digest STREQUAL "c376687326a785f5ed1da8caca08adc709b56919019dd751bca059b92b175d95")
+                file(DOWNLOAD
+                "https://github.com/StikDebug/StikJIT/releases/download/2.0.1/StikJIT.xcframework.zip"
+                "${stik_archive}"
+                EXPECTED_HASH SHA256=c376687326a785f5ed1da8caca08adc709b56919019dd751bca059b92b175d95
+                TLS_VERIFY ON)
+            endif()
+            file(ARCHIVE_EXTRACT INPUT "${stik_archive}" DESTINATION "${CMAKE_CURRENT_BINARY_DIR}/_deps")
+            set(GP32EMU_STIKJIT_ROOT "${CMAKE_CURRENT_BINARY_DIR}/_deps/StikJIT.xcframework")
+        endif()
+        set(stik_framework "${GP32EMU_STIKJIT_ROOT}/ios-arm64/StikJIT.framework")
+        if(NOT EXISTS "${stik_framework}/StikJIT")
+            message(FATAL_ERROR "StikJIT 2.0.1 device framework is missing")
+        endif()
+        add_executable(gp32emu_jit_helper MACOSX_BUNDLE helper/GP32JITHelper.swift)
+        target_link_libraries(gp32emu_jit_helper PRIVATE "${stik_framework}" "-framework Foundation")
+        target_link_options(gp32emu_jit_helper PRIVATE "-e" "_NSExtensionMain")
+        set_target_properties(gp32emu_jit_helper PROPERTIES
+            XCODE_PRODUCT_TYPE "com.apple.product-type.app-extension"
+            BUNDLE_EXTENSION appex
+            MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/helper/Info.plist"
+            MACOSX_BUNDLE_GUI_IDENTIFIER "org.gp32emu.ios.JITHelper"
+            XCODE_ATTRIBUTE_PRODUCT_NAME "GP32JITHelper"
+            XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER "org.gp32emu.ios.JITHelper"
+            XCODE_ATTRIBUTE_IPHONEOS_DEPLOYMENT_TARGET "17.4"
+            XCODE_ATTRIBUTE_TARGETED_DEVICE_FAMILY "1,2"
+            XCODE_ATTRIBUTE_APPLICATION_EXTENSION_API_ONLY "YES"
+            XCODE_ATTRIBUTE_SKIP_INSTALL "YES"
+            XCODE_ATTRIBUTE_SWIFT_VERSION "5.0"
+            XCODE_ATTRIBUTE_CODE_SIGN_STYLE "Automatic"
+            XCODE_ATTRIBUTE_LD_RUNPATH_SEARCH_PATHS "@executable_path/../../Frameworks")
+        add_dependencies(gp32emu_ios gp32emu_jit_helper)
+        set_property(TARGET gp32emu_ios PROPERTY XCODE_EMBED_APP_EXTENSIONS gp32emu_jit_helper)
+        set_property(TARGET gp32emu_ios PROPERTY XCODE_EMBED_FRAMEWORKS "${stik_framework}")
+        set_property(TARGET gp32emu_ios PROPERTY XCODE_EMBED_FRAMEWORKS_CODE_SIGN_ON_COPY YES)
+        target_compile_definitions(gp32emu_ios PRIVATE GP32EMU_IOS_BUILTIN_JIT=1)
+        set_source_files_properties("${GP32EMU_SOURCE_ROOT}/licenses/MPL-2.0-StikJIT.txt"
+            PROPERTIES MACOSX_PACKAGE_LOCATION "Resources")
+        target_sources(gp32emu_ios PRIVATE "${GP32EMU_SOURCE_ROOT}/licenses/MPL-2.0-StikJIT.txt")
+    endif()
 
     message(STATUS "gp32emu ios: iPhone/iPad app target gp32emu_ios (deployment target ${CMAKE_OSX_DEPLOYMENT_TARGET})")
     message(STATUS "gp32emu ios: automatic device JIT=${GP32EMU_IOS_DEVELOPER_JIT}; no BIOS or games in bundle")

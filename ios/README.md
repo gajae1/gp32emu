@@ -7,7 +7,7 @@ vary by device, iOS version and signing setup.
 The `gp32emu-1.1.0-ios-unsigned.ipa` package includes the
 interpreter and an experimental AArch64 JIT. JIT is the default execution mode:
 the app requests activation when you load a game and waits until JIT is ready.
-iOS requires the one-time StikDebug setup described below.
+iOS requires the initial pairing and VPN setup described below.
 
 ## Install and update
 
@@ -93,13 +93,27 @@ The app automatically requests JIT when a game loads. The menu reports whether
 JIT is active. If setup fails, the game stays paused: choose **Retry JIT setup**,
 or explicitly choose **Play without JIT** to use the interpreter for that game.
 
-For the experimental automatic setup:
+For the built-in setup (iOS 17.4 or later on supported devices):
 
-1. Set up [StikDebug](https://github.com/StikDebug/StikDebug), including its
-   pairing and VPN requirements. Your signing tool must preserve `get-task-allow`.
-2. Load a game in GP32emu. The app opens StikDebug automatically.
-3. Complete any StikDebug prompts and return to GP32emu. The game starts after
-   activation succeeds; the menu shows **JIT enabled**.
+1. Install GP32emu with its app extensions included. Your signing tool must
+   preserve `get-task-allow` and sign the app, helper and framework together.
+2. Create a remote pairing file for this device using a current
+   [iloader](https://iloader.app), following the
+   [pairing guide](https://github.com/StikDebug/StikDebug-Guide/blob/main/pairing_file.md).
+   In GP32emu, open **JIT setup → Import pairing file**. Older USB pairing
+   records are not interchangeable with remote pairing files.
+3. Choose **Connect LocalDevVPN** and approve its initial setup if needed.
+   Allow local network access when prompted. Keep the VPN connected during JIT setup.
+4. Choose **Check setup**, or load a game. The app prepares JIT through its
+   embedded helper and starts the game when ready. The menu shows **JIT enabled**.
+
+After this setup, starting a game does not switch to another JIT app. The first
+preparation may download device support files. If setup fails after an iOS update,
+use **Reset JIT support files** and retry. Recreate the pairing file if the device
+no longer accepts it. The pairing file is device-sensitive; do not share it.
+
+**Use StikDebug** remains available in JIT setup for installations that need an
+external activation method. Built-in JIT is unavailable inside LiveContainer.
 
 Automatic setup requires a supported device with Apple's TXM memory protection.
 The app requests activation again after a restart or game change. Reset and state

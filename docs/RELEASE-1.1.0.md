@@ -5,7 +5,8 @@ Changes since **1.0.1**.
 ## Apps and controls
 
 - Added an experimental iPhone/iPad app with a game library, touch controls,
-  gamepad support, portrait and landscape layouts, and automatic JIT requests.
+  gamepad support, portrait and landscape layouts, and a built-in JIT activation helper.
+  After pairing and VPN setup, games prepare JIT without switching to another app.
   Games wait for JIT by default; playing without JIT is a separate menu choice.
 - Added ten save-state slots per game and **Load latest state** to the Windows,
   Android and iOS apps.

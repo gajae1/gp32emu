@@ -21,6 +21,14 @@
 
 @implementation GP32SceneDelegate
 
+- (void)scene:(UIScene *)scene openURLContexts:(NSSet<UIOpenURLContext *> *)contexts {
+    (void)scene;
+    for (UIOpenURLContext *context in contexts) {
+        if ([context.URL.scheme isEqualToString:@"gp32emu"])
+            [(GP32EmulatorViewController *)self.window.rootViewController handleJITSetupReturn];
+    }
+}
+
 - (void)scene:(UIScene *)scene willConnectToSession:(UISceneSession *)session
       options:(UISceneConnectionOptions *)connectionOptions {
     (void)session;

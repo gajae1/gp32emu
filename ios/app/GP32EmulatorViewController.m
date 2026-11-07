@@ -17,6 +17,7 @@
 #import "GP32Emulator.h"
 #import "GP32PadControls.h"
 #import "GP32JIT.h"
+#import "GP32JITService.h"
 
 #import <AVFoundation/AVFoundation.h>
 #import <CoreGraphics/CoreGraphics.h>
@@ -30,6 +31,7 @@
 typedef NS_ENUM(NSInteger, GP32ImportKind) {
     GP32ImportGame = 0,
     GP32ImportBIOS,
+    GP32ImportJITPairing,
 };
 
 static NSString *const GP32DefaultBIOSKey = @"GP32SelectedBIOS";
@@ -199,7 +201,10 @@ static BOOL GP32IsSupportedGameExtension(NSString *extension) {
 - (void)applicationWillResignActive:(NSNotification *)note;
 - (void)applicationDidEnterBackground:(NSNotification *)note;
 #if GP32EMU_IOS_DEVELOPER_JIT
+- (void)requestJIT;
 - (void)requestExternalJIT;
+- (void)requestJITUsingBuiltIn:(BOOL)builtIn;
+- (void)presentJITSetup;
 - (void)pollExternalJIT;
 - (void)finishExternalJIT:(NSString *)message;
 #endif
@@ -239,6 +244,8 @@ static BOOL GP32IsSupportedGameExtension(NSString *extension) {
 #if GP32EMU_IOS_DEVELOPER_JIT
     BOOL _jitPending, _jitTransitioning;
     BOOL _jitAutoAttempted, _interpreterAllowed;
+    BOOL _jitUsingBuiltIn;
+    GP32JITService *_jitService;
     NSUInteger _jitRequest;
     NSTimer *_jitWaitTimer;
     CFTimeInterval _jitDeadline;
@@ -341,6 +348,7 @@ static BOOL GP32IsSupportedGameExtension(NSString *extension) {
     _audio = [[GP32Audio alloc] init];
 #if GP32EMU_IOS_DEVELOPER_JIT
     _jitBackgroundTask = UIBackgroundTaskInvalid;
+    _jitService = [[GP32JITService alloc] init];
 #endif
     /* The emulator retains the audio object: queued owner-queue blocks may
      * still write the sink after this controller is gone. */
@@ -901,7 +909,7 @@ static BOOL GP32IsSupportedGameExtension(NSString *extension) {
         !_audioInterrupted && _emulator.hasGame && !_emulator.jitActive &&
         !_interpreterAllowed && !_jitAutoAttempted && !_jitPending &&
         !_jitTransitioning) {
-        [self requestExternalJIT];
+        [self requestJIT];
     }
 #endif
 }
@@ -979,6 +987,12 @@ static BOOL GP32IsSupportedGameExtension(NSString *extension) {
 }
 
 - (void)loadContentAtPath:(NSString *)gamePath {
+#if GP32EMU_IOS_DEVELOPER_JIT
+    if (_jitTransitioning || (_jitPending && GP32JITDebuggerAttached())) {
+        [self showStatus:@"JIT setup is finishing. Choose the game again in a moment." temporary:NO];
+        return;
+    }
+#endif
     NSFileManager *files = [NSFileManager defaultManager];
     if (![files fileExistsAtPath:gamePath]) {
         [self showStatus:[NSString stringWithFormat:@"%@ is no longer available.",
@@ -1139,7 +1153,13 @@ static BOOL GP32IsSupportedGameExtension(NSString *extension) {
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
         BOOL scoped = [source startAccessingSecurityScopedResource];
         NSError *error = nil;
-        NSString *destination = [GP32EmulatorViewController importURL:source into:directory error:&error];
+        NSString *destination;
+        if (kind == GP32ImportJITPairing) {
+            destination = [GP32JITService importPairingURL:source error:&error]
+                ? GP32JITService.pairingURL.path : nil;
+        } else {
+            destination = [GP32EmulatorViewController importURL:source into:directory error:&error];
+        }
         if (scoped) [source stopAccessingSecurityScopedResource];
         dispatch_async(dispatch_get_main_queue(), ^{
             typeof(self) self = weakSelf;
@@ -1147,6 +1167,11 @@ static BOOL GP32IsSupportedGameExtension(NSString *extension) {
             self->_importing = NO;
             if (!destination) {
                 [self showStatus:[NSString stringWithFormat:@"Import failed: %@", error.localizedDescription ?: @"Cannot store the file."] temporary:NO];
+            } else if (kind == GP32ImportJITPairing) {
+                [self showStatus:@"Pairing file imported. Connect LocalDevVPN, then retry JIT setup." temporary:NO];
+#if GP32EMU_IOS_DEVELOPER_JIT
+                self->_jitAutoAttempted = NO;
+#endif
             } else if (kind == GP32ImportBIOS) {
                 self->_biosPath = destination;
                 [[NSUserDefaults standardUserDefaults] setObject:[GP32EmulatorViewController storedContentPath:destination] forKey:GP32DefaultBIOSKey];
@@ -1383,11 +1408,20 @@ static BOOL GP32IsSupportedGameExtension(NSString *extension) {
             typeof(self) self = weakSelf;
             if (!self) return;
             [self menuDidClose];
-            if (self->_jitPending) [self finishExternalJIT:@"JIT request cancelled. Game paused."];
-            else [self requestExternalJIT];
+            if (self->_jitPending && GP32JITDebuggerAttached()) {
+                [self pollExternalJIT];
+            } else if (self->_jitPending) [self finishExternalJIT:@"JIT request cancelled. Game paused."];
+            else [self requestJIT];
         }];
     jitAction.enabled = _emulator.hasGame && !_emulator.jitActive && !_jitTransitioning;
     [menu addAction:jitAction];
+    UIAlertAction *setupAction = [UIAlertAction actionWithTitle:@"JIT setup"
+        style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+            (void)action;
+            [weakSelf presentJITSetup];
+        }];
+    setupAction.enabled = !_jitPending && !_jitTransitioning && !_jitService.busy;
+    [menu addAction:setupAction];
     if (_emulator.hasGame && !_emulator.jitActive && !_interpreterAllowed &&
         !_jitPending && !_jitTransitioning) {
         [menu addAction:[UIAlertAction actionWithTitle:@"Play without JIT"
@@ -1582,8 +1616,66 @@ static BOOL GP32IsSupportedGameExtension(NSString *extension) {
 
 #pragma mark - Focus and interruption
 
+- (void)handleJITSetupReturn {
 #if GP32EMU_IOS_DEVELOPER_JIT
+    if (_emulator.hasGame && !_emulator.jitActive && !_jitPending && !_jitTransitioning)
+        [self requestJIT];
+#endif
+}
+
+#if GP32EMU_IOS_DEVELOPER_JIT
+- (void)presentJITSetup {
+    _menuOpen = YES;
+    [self applyRunningState];
+    NSString *availability = GP32JITService.availabilityError;
+    NSString *message = availability ?: [NSString stringWithFormat:
+        @"Pairing file: %@\n\nImport this device's pairing file and connect LocalDevVPN. After setup, games enable JIT here automatically.",
+        GP32JITService.hasPairingFile ? @"Imported" : @"Not imported"];
+    UIAlertController *setup = [UIAlertController alertControllerWithTitle:@"JIT setup" message:message
+        preferredStyle:UIAlertControllerStyleAlert];
+    __weak typeof(self) weakSelf = self;
+    [setup addAction:[UIAlertAction actionWithTitle:@"Import pairing file" style:UIAlertActionStyleDefault
+        handler:^(UIAlertAction *action) { (void)action; [weakSelf presentPickerForImport:GP32ImportJITPairing]; }]];
+    [setup addAction:[UIAlertAction actionWithTitle:@"Connect LocalDevVPN" style:UIAlertActionStyleDefault
+        handler:^(UIAlertAction *action) {
+            (void)action;
+            [weakSelf menuDidClose];
+            NSURL *url = [NSURL URLWithString:@"localdevvpn://enable?scheme=gp32emu"];
+            [UIApplication.sharedApplication openURL:url options:@{} completionHandler:^(BOOL opened) {
+                if (!opened) dispatch_async(dispatch_get_main_queue(), ^{
+                    [weakSelf showStatus:@"Install LocalDevVPN and connect it before starting JIT setup." temporary:NO];
+                });
+            }];
+        }]];
+    for (NSString *operation in @[@"prepare", @"reset"]) {
+        NSString *title = [operation isEqualToString:@"prepare"] ? @"Check setup" : @"Reset JIT support files";
+        UIAlertAction *item = [UIAlertAction actionWithTitle:title style:UIAlertActionStyleDefault
+            handler:^(UIAlertAction *action) {
+                (void)action;
+                typeof(self) self = weakSelf;
+                if (!self) return;
+                self->_jitAutoAttempted = YES;
+                [self menuDidClose];
+                [self showStatus:@"Preparing JIT support. The first setup may download additional files…" temporary:NO];
+                [self->_jitService performOperation:operation completion:^(BOOL success, NSString *result) {
+                    (void)success;
+                    [weakSelf showStatus:result temporary:NO];
+                }];
+            }];
+        item.enabled = !availability && !_jitService.busy;
+        [setup addAction:item];
+    }
+    UIAlertAction *external = [UIAlertAction actionWithTitle:@"Use StikDebug" style:UIAlertActionStyleDefault
+        handler:^(UIAlertAction *action) { (void)action; [weakSelf menuDidClose]; [weakSelf requestExternalJIT]; }];
+    external.enabled = _emulator.hasGame && !_emulator.jitActive;
+    [setup addAction:external];
+    [setup addAction:[UIAlertAction actionWithTitle:@"Done" style:UIAlertActionStyleCancel
+        handler:^(UIAlertAction *action) { (void)action; [weakSelf menuDidClose]; }]];
+    [self presentSoon:setup];
+}
+
 - (void)finishExternalJIT:(NSString *)message {
+    if (_jitUsingBuiltIn && _jitService.busy) [_jitService cancel];
     ++_jitRequest; /* Invalidates a late URL callback or owner completion. */
     [_jitWaitTimer invalidate];
     _jitWaitTimer = nil;
@@ -1598,15 +1690,28 @@ static BOOL GP32IsSupportedGameExtension(NSString *extension) {
 }
 
 - (void)requestExternalJIT {
+    [self requestJITUsingBuiltIn:NO];
+}
+
+- (void)requestJIT {
+    [self requestJITUsingBuiltIn:YES];
+}
+
+- (void)requestJITUsingBuiltIn:(BOOL)builtIn {
     if (_jitPending || _jitTransitioning || !_emulator.hasGame || _emulator.jitActive) return;
     _jitAutoAttempted = YES;
     _interpreterAllowed = NO;
     [self applyRunningState];
     NSString *error = GP32JITExternalError();
     if (!error && GP32JITDebuggerAttached())
-        error = @"Disconnect the current debugger before requesting StikDebug.";
-    NSURL *url = GP32JITExternalURL();
-    if (!error && (!url || ![UIApplication.sharedApplication canOpenURL:url]))
+        error = @"Disconnect the current debugger before starting JIT setup.";
+    NSURL *url = builtIn ? nil : GP32JITExternalURL();
+    if (!error && builtIn) error = GP32JITService.availabilityError;
+    if (!error && builtIn && _jitService.busy)
+        error = @"The previous JIT request is still finishing. Try again shortly.";
+    if (!error && builtIn && !GP32JITService.hasPairingFile)
+        error = @"Open JIT setup and import this iPhone's pairing file. Keep LocalDevVPN connected.";
+    if (!error && !builtIn && (!url || ![UIApplication.sharedApplication canOpenURL:url]))
         error = @"Set up StikDebug once to enable automatic JIT, then choose Retry JIT setup.";
     if (error) {
         [self showStatus:[error stringByAppendingString:@" Game paused. To continue without JIT, choose Play without JIT in the menu."] temporary:NO];
@@ -1614,16 +1719,22 @@ static BOOL GP32IsSupportedGameExtension(NSString *extension) {
     }
 
     _jitPending = YES;
+    _jitUsingBuiltIn = builtIn;
     NSUInteger request = ++_jitRequest;
-    _jitDeadline = CACurrentMediaTime() + 30.0;
+    _jitDeadline = CACurrentMediaTime() + (builtIn ? 300.0 : 30.0);
     [self applyRunningState];
     __weak typeof(self) weakSelf = self;
     _jitBackgroundTask = [UIApplication.sharedApplication beginBackgroundTaskWithName:@"Prepare JIT"
         expirationHandler:^{
             dispatch_async(dispatch_get_main_queue(), ^{
                 typeof(self) self = weakSelf;
-                if (self && request == self->_jitRequest)
-                    [self finishExternalJIT:@"JIT setup expired. Game paused; retry from the menu when StikDebug is ready."];
+                if (!self || request != self->_jitRequest) return;
+                if (!self->_jitTransitioning && !GP32JITDebuggerAttached()) {
+                    [self finishExternalJIT:@"JIT setup expired. Game paused; retry from the menu when setup is ready."];
+                } else if (self->_jitBackgroundTask != UIBackgroundTaskInvalid) {
+                    [UIApplication.sharedApplication endBackgroundTask:self->_jitBackgroundTask];
+                    self->_jitBackgroundTask = UIBackgroundTaskInvalid;
+                }
             });
         }];
     if (_jitBackgroundTask == UIBackgroundTaskInvalid) {
@@ -1635,6 +1746,17 @@ static BOOL GP32IsSupportedGameExtension(NSString *extension) {
         [weakSelf pollExternalJIT];
     }];
     [[NSRunLoop mainRunLoop] addTimer:_jitWaitTimer forMode:NSRunLoopCommonModes];
+    if (builtIn) {
+        [self showStatus:@"Preparing JIT. The first setup may download additional files…" temporary:NO];
+        [_jitService performOperation:@"enable" completion:^(BOOL success, NSString *message) {
+            typeof(self) self = weakSelf;
+            if (!self || request != self->_jitRequest) return;
+            /* UniversalDetach releases the helper before the owner publishes
+             * jitActive. Its successful reply alone is not execution proof. */
+            if (!success && !self->_jitTransitioning) [self finishExternalJIT:message];
+        }];
+        return;
+    }
     [self showStatus:@"Waiting for StikDebug…" temporary:NO];
     [UIApplication.sharedApplication openURL:url options:@{} completionHandler:^(BOOL opened) {
         dispatch_async(dispatch_get_main_queue(), ^{
@@ -1647,8 +1769,8 @@ static BOOL GP32IsSupportedGameExtension(NSString *extension) {
 
 - (void)pollExternalJIT {
     if (!_jitPending || _jitTransitioning) return;
-    if (CACurrentMediaTime() >= _jitDeadline) {
-        [self finishExternalJIT:@"JIT setup timed out. Game paused; check StikDebug and retry from the menu."];
+    if (CACurrentMediaTime() >= _jitDeadline && !GP32JITDebuggerAttached()) {
+        [self finishExternalJIT:@"JIT setup timed out. Game paused; check the VPN and pairing file, then retry from the menu."];
         return;
     }
     /* This is a current attachment and follows an explicit universal.js

@@ -8,6 +8,12 @@ Device builds include the experimental AArch64 JIT by default and request
 activation when a game loads. Configure `-DGP32EMU_IOS_DEVELOPER_JIT=OFF` to omit it.
 Simulator and portable host builds use the interpreter.
 
+Device builds also include the built-in activation helper by default. CMake
+downloads the pinned StikJIT 2.0.1 XCFramework and verifies its SHA-256. An offline
+build can set `GP32EMU_STIKJIT_ROOT` to an extracted `StikJIT.xcframework` directory.
+The framework is embedded in the app and linked only by its iOS 17.4+ helper.
+Set `GP32EMU_IOS_BUILTIN_JIT=OFF` to build without the helper.
+
 ## Build on a Mac
 
 Install Xcode with an iOS SDK and CMake 3.21 or later. Open Xcode once to finish
@@ -39,6 +45,11 @@ Signing & Capabilities settings. Connect and unlock the device, approve its
 computer-trust prompt, and enable Developer Mode when prompted. Select the
 device in Xcode and run the app.
 
+Sign `gp32emu_jit_helper` with the same team and a bundle identifier prefixed by
+the app's identifier. The app reads the installed helper's identifier at runtime,
+so sideloaders may rename both identifiers. Keep the `PlugIns` and `Frameworks`
+directories when packaging or signing. Do not place a pairing file in the bundle.
+
 With signing configured, a device build can also use:
 
 ```sh
@@ -59,10 +70,15 @@ stage=$(mktemp -d)
 mkdir -p "$stage/Payload"
 ditto build-ios-sideload/Release-iphoneos/GP32emu.app "$stage/Payload/GP32emu.app"
 test "$(plutil -extract CFBundleIdentifier raw "$stage/Payload/GP32emu.app/Info.plist")" = org.gp32emu.ios || exit 1
-if codesign -d "$stage/Payload/GP32emu.app" >/dev/null 2>&1; then
-    codesign --remove-signature "$stage/Payload/GP32emu.app"
-fi
-rm -f "$stage/Payload/GP32emu.app/embedded.mobileprovision"
+for bundle in "$stage/Payload/GP32emu.app/Frameworks/"*.framework \
+              "$stage/Payload/GP32emu.app/PlugIns/"*.appex \
+              "$stage/Payload/GP32emu.app"; do
+    test -d "$bundle" || continue
+    if codesign -d "$bundle" >/dev/null 2>&1; then
+        codesign --remove-signature "$bundle"
+    fi
+    rm -f "$bundle/embedded.mobileprovision"
+done
 output="$PWD/gp32emu-1.1.0-ios-unsigned.ipa"
 test ! -e "$output" || { echo "Choose a new output filename; the IPA already exists."; exit 1; }
 (cd "$stage" && zip -qry "$output" Payload)
