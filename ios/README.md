@@ -5,8 +5,9 @@ or later. Supply your own GP32 BIOS and games. Compatibility and performance
 vary by device, iOS version and signing setup.
 
 The `gp32emu-1.1.0-ios-unsigned.ipa` package includes the
-interpreter and an experimental AArch64 JIT. Games start with the interpreter;
-installing the IPA does not automatically enable JIT.
+interpreter and an experimental AArch64 JIT. JIT is the default execution mode:
+the app requests activation when you load a game and waits until JIT is ready.
+iOS requires the one-time StikDebug setup described below.
 
 ## Install and update
 
@@ -88,19 +89,20 @@ Resume from the menu when ready. A menu that is already open stays paused.
 
 ## Experimental JIT
 
-The menu reports whether JIT is active. If it cannot be enabled, the interpreter
-remains available.
+The app automatically requests JIT when a game loads. The menu reports whether
+JIT is active. If setup fails, the game stays paused: choose **Retry JIT setup**,
+or explicitly choose **Play without JIT** to use the interpreter for that game.
 
 For the experimental automatic setup:
 
 1. Set up [StikDebug](https://github.com/StikDebug/StikDebug), including its
    pairing and VPN requirements. Your signing tool must preserve `get-task-allow`.
-2. Load a game in GP32emu and select **Enable JIT with StikDebug** in the menu.
-3. Complete the StikDebug request and return to GP32emu. Confirm **JIT enabled**
-   in the menu.
+2. Load a game in GP32emu. The app opens StikDebug automatically.
+3. Complete any StikDebug prompts and return to GP32emu. The game starts after
+   activation succeeds; the menu shows **JIT enabled**.
 
 Automatic setup requires a supported device with Apple's TXM memory protection.
-Repeat activation after restarting the app or changing games. Reset and state
+The app requests activation again after a restart or game change. Reset and state
 restore retain an active JIT session. Opening the menu or pausing and resuming
 the same game does not require reactivation while the app remains running.
 

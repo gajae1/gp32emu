@@ -238,6 +238,7 @@ static BOOL GP32IsSupportedGameExtension(NSString *extension) {
     BOOL _audioInterrupted;
 #if GP32EMU_IOS_DEVELOPER_JIT
     BOOL _jitPending, _jitTransitioning;
+    BOOL _jitAutoAttempted, _interpreterAllowed;
     NSUInteger _jitRequest;
     NSTimer *_jitWaitTimer;
     CFTimeInterval _jitDeadline;
@@ -469,6 +470,9 @@ static BOOL GP32IsSupportedGameExtension(NSString *extension) {
     [_menuGlyph.layer removeAllAnimations];
     _menuGlyph.alpha = 1.0;
     if (!_landscapeLayout || !_emulator.hasGame || _menuOpen) return;
+#if GP32EMU_IOS_DEVELOPER_JIT
+    if (!_emulator.jitActive && !_interpreterAllowed) return;
+#endif
     __weak typeof(self) weakSelf = self;
     _menuHideTimer = [NSTimer timerWithTimeInterval:3.0 repeats:NO block:^(NSTimer *timer) {
         (void)timer;
@@ -859,7 +863,8 @@ static BOOL GP32IsSupportedGameExtension(NSString *extension) {
 
 - (BOOL)shouldRun {
 #if GP32EMU_IOS_DEVELOPER_JIT
-    if (_jitPending) return NO;
+    if (_jitPending || _jitTransitioning ||
+        (!_emulator.jitActive && !_interpreterAllowed)) return NO;
 #endif
     return _foreground && !_userPaused && !_menuOpen && !_importing &&
            !_audioInterrupted && _emulator.hasGame;
@@ -889,6 +894,16 @@ static BOOL GP32IsSupportedGameExtension(NSString *extension) {
         [_audio stop];
         _audioRunning = NO;
     }
+#if GP32EMU_IOS_DEVELOPER_JIT
+    /* Request once per loaded game. Returning from StikDebug, dismissing an
+     * error or resuming the app must not start another redirect loop. */
+    if (_foreground && !_userPaused && !_menuOpen && !_importing &&
+        !_audioInterrupted && _emulator.hasGame && !_emulator.jitActive &&
+        !_interpreterAllowed && !_jitAutoAttempted && !_jitPending &&
+        !_jitTransitioning) {
+        [self requestExternalJIT];
+    }
+#endif
 }
 
 #pragma mark - Content
@@ -971,10 +986,10 @@ static BOOL GP32IsSupportedGameExtension(NSString *extension) {
         return;
     }
 
+    _userPaused = YES;
 #if GP32EMU_IOS_DEVELOPER_JIT
     if (_jitPending) [self finishExternalJIT:@"JIT request cancelled because the game changed."];
 #endif
-    _userPaused = NO;
 
     NSString *name = gamePath.lastPathComponent;
     NSString *identity = gamePath.stringByDeletingLastPathComponent.lastPathComponent;
@@ -1008,6 +1023,12 @@ static BOOL GP32IsSupportedGameExtension(NSString *extension) {
                                      forKey:GP32DefaultGameKey];
                           }
                           self->_userPaused = !success;
+#if GP32EMU_IOS_DEVELOPER_JIT
+                          if (success) {
+                              self->_jitAutoAttempted = NO;
+                              self->_interpreterAllowed = NO;
+                          }
+#endif
                           [self applyRunningState];
                       }];
 }
@@ -1345,7 +1366,9 @@ static BOOL GP32IsSupportedGameExtension(NSString *extension) {
 #if GP32EMU_IOS_DEVELOPER_JIT
     if (_emulator.hasGame) {
         menuMessage = [NSString stringWithFormat:@"%@\n%@", menuMessage ?: @"",
-                       _emulator.jitActive ? @"JIT enabled" : @"Interpreter"];
+                       _emulator.jitActive ? @"JIT enabled" :
+                       _jitPending ? @"Preparing JIT" :
+                       _interpreterAllowed ? @"Interpreter" : @"JIT required — game paused"];
     }
 #endif
     UIAlertController *menu = [UIAlertController alertControllerWithTitle:@"GP32emu"
@@ -1354,17 +1377,28 @@ static BOOL GP32IsSupportedGameExtension(NSString *extension) {
     __weak typeof(self) weakSelf = self;
 
 #if GP32EMU_IOS_DEVELOPER_JIT
-    UIAlertAction *jitAction = [UIAlertAction actionWithTitle:(_jitPending ? @"Cancel JIT request" : @"Enable JIT with StikDebug")
+    UIAlertAction *jitAction = [UIAlertAction actionWithTitle:(_jitPending ? @"Cancel JIT request" : @"Retry JIT setup")
         style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
             (void)action;
             typeof(self) self = weakSelf;
             if (!self) return;
             [self menuDidClose];
-            if (self->_jitPending) [self finishExternalJIT:@"JIT request cancelled. Interpreter retained."];
+            if (self->_jitPending) [self finishExternalJIT:@"JIT request cancelled. Game paused."];
             else [self requestExternalJIT];
         }];
     jitAction.enabled = _emulator.hasGame && !_emulator.jitActive && !_jitTransitioning;
     [menu addAction:jitAction];
+    if (_emulator.hasGame && !_emulator.jitActive && !_interpreterAllowed &&
+        !_jitPending && !_jitTransitioning) {
+        [menu addAction:[UIAlertAction actionWithTitle:@"Play without JIT"
+            style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+                (void)action;
+                typeof(self) self = weakSelf;
+                if (!self) return;
+                self->_interpreterAllowed = YES;
+                [self menuDidClose];
+            }]];
+    }
 #endif
 
     [menu addAction:[UIAlertAction actionWithTitle:@"Game library"
@@ -1564,14 +1598,20 @@ static BOOL GP32IsSupportedGameExtension(NSString *extension) {
 }
 
 - (void)requestExternalJIT {
-    if (_jitPending || !_emulator.hasGame || _emulator.jitActive) return;
+    if (_jitPending || _jitTransitioning || !_emulator.hasGame || _emulator.jitActive) return;
+    _jitAutoAttempted = YES;
+    _interpreterAllowed = NO;
+    [self applyRunningState];
     NSString *error = GP32JITExternalError();
     if (!error && GP32JITDebuggerAttached())
         error = @"Disconnect the current debugger before requesting StikDebug.";
     NSURL *url = GP32JITExternalURL();
     if (!error && (!url || ![UIApplication.sharedApplication canOpenURL:url]))
-        error = @"Install and set up StikDebug first, then choose Enable JIT again. The game can run with the interpreter.";
-    if (error) { [self showStatus:error temporary:NO]; return; }
+        error = @"Set up StikDebug once to enable automatic JIT, then choose Retry JIT setup.";
+    if (error) {
+        [self showStatus:[error stringByAppendingString:@" Game paused. To continue without JIT, choose Play without JIT in the menu."] temporary:NO];
+        return;
+    }
 
     _jitPending = YES;
     NSUInteger request = ++_jitRequest;
@@ -1583,11 +1623,11 @@ static BOOL GP32IsSupportedGameExtension(NSString *extension) {
             dispatch_async(dispatch_get_main_queue(), ^{
                 typeof(self) self = weakSelf;
                 if (self && request == self->_jitRequest)
-                    [self finishExternalJIT:@"JIT setup expired. Interpreter retained; try again when StikDebug is ready."];
+                    [self finishExternalJIT:@"JIT setup expired. Game paused; retry from the menu when StikDebug is ready."];
             });
         }];
     if (_jitBackgroundTask == UIBackgroundTaskInvalid) {
-        [self finishExternalJIT:@"iOS could not keep JIT setup running. Interpreter retained."];
+        [self finishExternalJIT:@"iOS could not keep JIT setup running. Game paused; retry from the menu."];
         return;
     }
     _jitWaitTimer = [NSTimer timerWithTimeInterval:0.1 repeats:YES block:^(NSTimer *timer) {
@@ -1600,7 +1640,7 @@ static BOOL GP32IsSupportedGameExtension(NSString *extension) {
         dispatch_async(dispatch_get_main_queue(), ^{
             typeof(self) self = weakSelf;
             if (self && request == self->_jitRequest && !opened)
-                [self finishExternalJIT:@"Could not open StikDebug. Interpreter retained."];
+                [self finishExternalJIT:@"Could not open StikDebug. Game paused; retry from the menu."];
         });
     }];
 }
@@ -1608,7 +1648,7 @@ static BOOL GP32IsSupportedGameExtension(NSString *extension) {
 - (void)pollExternalJIT {
     if (!_jitPending || _jitTransitioning) return;
     if (CACurrentMediaTime() >= _jitDeadline) {
-        [self finishExternalJIT:@"JIT setup timed out. Interpreter retained; check StikDebug and try again."];
+        [self finishExternalJIT:@"JIT setup timed out. Game paused; check StikDebug and retry from the menu."];
         return;
     }
     /* This is a current attachment and follows an explicit universal.js

@@ -4,8 +4,8 @@ For installation and controls, see the [iPhone and iPad guide](../ios/README.md)
 These commands build the shared GP32 core and UIKit frontend. Use **Release**
 for an optimized app, or **Debug** for debugging.
 
-Device builds include the experimental AArch64 JIT by default, but start with
-the interpreter. Configure `-DGP32EMU_IOS_DEVELOPER_JIT=OFF` to omit it.
+Device builds include the experimental AArch64 JIT by default and request
+activation when a game loads. Configure `-DGP32EMU_IOS_DEVELOPER_JIT=OFF` to omit it.
 Simulator and portable host builds use the interpreter.
 
 ## Build on a Mac
@@ -87,7 +87,7 @@ The process resumes. After the app reports that memory is prepared, interrupt
 it, then run `gp32-jit-enable`. The helper initializes the complete code region
 through the debugger and resumes the app to activate JIT on the core's owner
 queue. Interrupt it again and run `gp32-jit-status` to confirm “JIT enabled.”,
-then use `process detach` to resume without the debugger. The game menu also
+then use `process detach` and resume the game from its menu. The game menu also
 shows the current execution mode in developer JIT builds.
 
 Preparation or activation failure keeps the interpreter available. Run

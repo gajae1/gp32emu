@@ -4,7 +4,7 @@
 # duplicates a core source. All host services the frontend needs (display,
 # audio, input, persistence paths) are implemented in the app itself, so every
 # optional core frontend and the worker threads stay off and the core is built
-# exactly once. Interpreter execution remains the default.
+# exactly once. Device JIT activation is coordinated by the app.
 #
 # The Xcode generator is the supported path; see ios/README.md for the exact
 # command, the pending signing steps and the pending validation gates.
@@ -46,8 +46,8 @@ set(GP32EMU_ENABLE_THREADS OFF CACHE BOOL "" FORCE)
 # predates c_std_23 builds the same sources as C11.
 add_subdirectory("${GP32EMU_SOURCE_ROOT}" gp32emu-core)
 
-# The developer option includes A64 code generation, but still starts with the
-# interpreter. It requires the explicit split-mapping debugger handshake.
+# The developer option includes A64 code generation. The app requests the
+# split-mapping handshake before starting a game, including in Release builds.
 # Simulator builds keep executable-memory backends out. Device builds include
 # the backend but never activate it without an explicit debugger handshake.
 option(GP32EMU_IOS_DEVELOPER_JIT "Include experimental debugger-assisted device JIT" ON)
@@ -147,5 +147,5 @@ else()
     target_sources(gp32emu_ios PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/CREDITS.md")
 
     message(STATUS "gp32emu ios: iPhone/iPad app target gp32emu_ios (deployment target ${CMAKE_OSX_DEPLOYMENT_TARGET})")
-    message(STATUS "gp32emu ios: interpreter by default; developer JIT=${GP32EMU_IOS_DEVELOPER_JIT}; no BIOS or games in bundle")
+    message(STATUS "gp32emu ios: automatic device JIT=${GP32EMU_IOS_DEVELOPER_JIT}; no BIOS or games in bundle")
 endif()
