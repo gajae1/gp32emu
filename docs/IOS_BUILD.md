@@ -91,8 +91,9 @@ after packaging.
 
 ## Developer debugger workflow
 
-For a locally signed, debuggable device build, load a game and attach Xcode's
-LLDB to GP32emu. At the stopped debugger prompt:
+For LLDB activation, build with `GP32EMU_IOS_BUILTIN_JIT=OFF` and leave
+`GP32EMU_IOS_DEVELOPER_JIT=ON`. Sign the app for development, load a game and
+attach Xcode's LLDB to GP32emu. At the stopped debugger prompt:
 
 ```text
 command script import /absolute/path/to/gp32emu/ios/tools/jit.py
@@ -109,8 +110,8 @@ shows the current execution mode in developer JIT builds.
 Preparation or activation failure keeps the interpreter available. Run
 `gp32-jit-prepare` again before retrying activation; an old prepared address
 must not be reused. Repeating either command when JIT is already active leaves
-its code memory unchanged. Repeat the handshake
-after restarting the app or changing games; reset and state restore retain the
+its code memory unchanged. Repeat the handshake after restarting the app or
+changing games; reset and state restore retain the
 current grant while invalidating translated guest code.
 
 ## Host checks without an iOS SDK

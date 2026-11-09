@@ -4,11 +4,9 @@ GP32emu runs Game Park GP32 games on Windows, Android, iPhone/iPad and
 compatible RetroArch frontends. It opens `.smc` card images and `.fxe`/`.fpk`
 homebrew. Bring your own BIOS and games; neither is included.
 
-[Downloads](https://github.com/gajae1/gp32emu/releases) ·
+[Download 1.1.0](https://github.com/gajae1/gp32emu/releases/tag/v1.1.0) ·
 [한국어 사용설명서](docs/MANUAL.ko.md) ·
 [1.1.0 update notes](docs/RELEASE-1.1.0.md)
-
-Current release: **1.1.0**.
 
 ## Get started
 
@@ -39,7 +37,7 @@ state also restores the in-game card progress from that moment. See
 This fork is based on [gameblabla's gp32emu](https://github.com/gameblabla/gp32emu).
 The upstream repository does not state a licence for its own code; this fork
 does not add one. See [third-party notices](licenses/) for MAME-derived code,
-the ZIP libraries and BDMEmu frontend code. The Windows ZIP includes the SDL3
+the ZIP libraries, BDMEmu frontend code and StikJIT. The Windows ZIP includes the SDL3
 licence as `SDL3-LICENSE.txt`.
 
 [Build from source](https://github.com/gajae1/gp32emu/blob/main/docs/BUILDING.md)

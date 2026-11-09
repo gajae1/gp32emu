@@ -1,35 +1,48 @@
 # GP32emu for iPhone and iPad
 
-The experimental iOS app is included in **1.1.0**. It runs on ARM64 devices with iOS/iPadOS 15
-or later. Supply your own GP32 BIOS and games. Compatibility and performance
-vary by device, iOS version and signing setup.
-
-The `gp32emu-1.1.0-ios-unsigned.ipa` package includes the
-interpreter and an experimental AArch64 JIT. JIT is the default execution mode:
-the app requests activation when you load a game and waits until JIT is ready.
-iOS requires the initial pairing and VPN setup described below.
+The experimental iPhone/iPad app runs on ARM64 devices with iOS/iPadOS 15 or
+later. Bring your own GP32 BIOS and games.
 
 ## Install and update
 
-1. Set up [SideStore](https://docs.sidestore.io/docs/installation/prerequisites)
-   using its current installation guide.
-2. Import the GP32emu IPA into SideStore and sign it with your own Apple account.
-3. Open GP32emu and import your BIOS and an extracted `.smc`, `.fxe` or `.fpk` game.
+1. Download `gp32emu-1.1.0-ios-unsigned.ipa` from the
+   [release page](https://github.com/gajae1/gp32emu/releases/tag/v1.1.0).
+2. Sign and install it with a sideloading tool. For SideStore setup, follow its
+   [installation guide](https://docs.sidestore.io/docs/installation/prerequisites).
+   On iOS 16 or later, enable [Developer Mode](https://developer.apple.com/documentation/xcode/enabling-developer-mode-on-a-device).
+3. Open GP32emu and import your BIOS and an extracted `.smc`, `.fxe` or `.fpk` file.
 
-The IPA has no publisher signature or provisioning profile and includes no BIOS,
-games or saves. Free-account installations need periodic refreshes through the
-signing tool.
+The IPA contains no signing credentials, pairing file, BIOS, games or saves.
+SideStore needs a computer for its initial setup. Refresh free-account
+installations through the tool that signed the app.
+For updates, install over the existing app with the same signing identity and
+app identifier. Back up your saves first; uninstalling removes the app's data.
 
-An unsigned IPA cannot be installed by opening the download alone. SideStore
-requires a computer for initial setup (Windows, macOS or Linux); later installs
-and refreshes can run on the device with its required Wi-Fi/VPN setup. On iOS 16
-and later, development-signed apps also require
-[Developer Mode](https://developer.apple.com/documentation/xcode/enabling-developer-mode-on-a-device).
+## Set up JIT
 
-To update, install over the existing app using the same signing account and app
-identifier. Do not uninstall first: removing the app also removes its local data.
-Back up progress before changing signing tools or identifiers; a differently
-identified app may have separate storage.
+Built-in JIT requires iOS/iPadOS 17.4 or later and compatible hardware.
+After setup, games activate JIT in GP32emu without switching to another JIT app.
+
+1. Keep the app extension when signing and installing GP32emu. The signer must
+   sign the app, extension and framework together and preserve `get-task-allow`.
+2. On a computer, connect the device and open **Manage Pairing File** in a current
+   [iloader](https://iloader.app). Export a remote pairing file for that device;
+   a legacy USB pairing record will not work. In GP32emu, choose
+   **JIT setup → Import pairing file** and select the exported file.
+3. Install [LocalDevVPN](https://github.com/jkcoxson/LocalDevVPN), then choose
+   **Connect LocalDevVPN** in **JIT setup**. Approve VPN and local network access
+   if prompted. Leave the VPN connected for automatic activation when loading games.
+4. Open a game. The menu shows **JIT enabled** when ready. **Check setup** can
+   prepare and check the connection before you play.
+
+If activation fails, the game stays paused. Choose **Retry JIT setup**, or
+**Play without JIT** to use the interpreter for that game. After an iOS update,
+try **Reset JIT support files** if preparation fails. Replace a pairing file the
+device no longer accepts. Keep the pairing file private.
+
+The app requests JIT again after a restart or game change. Pausing, resetting
+or loading a state keeps the current JIT session. **Use StikDebug** is available
+as an external alternative; the built-in helper cannot run inside LiveContainer.
 
 ## Games and saves
 
@@ -86,39 +99,6 @@ two seconds; errors stay visible.
 
 If an audio device disconnects or system audio resets, the game pauses. Choose
 Resume from the menu when ready. A menu that is already open stays paused.
-
-## Experimental JIT
-
-The app automatically requests JIT when a game loads. The menu reports whether
-JIT is active. If setup fails, the game stays paused: choose **Retry JIT setup**,
-or explicitly choose **Play without JIT** to use the interpreter for that game.
-
-For the built-in setup (iOS 17.4 or later on supported devices):
-
-1. Install GP32emu with its app extensions included. Your signing tool must
-   preserve `get-task-allow` and sign the app, helper and framework together.
-2. Create a remote pairing file for this device using a current
-   [iloader](https://iloader.app), following the
-   [pairing guide](https://github.com/StikDebug/StikDebug-Guide/blob/main/pairing_file.md).
-   In GP32emu, open **JIT setup → Import pairing file**. Older USB pairing
-   records are not interchangeable with remote pairing files.
-3. Choose **Connect LocalDevVPN** and approve its initial setup if needed.
-   Allow local network access when prompted. Keep the VPN connected during JIT setup.
-4. Choose **Check setup**, or load a game. The app prepares JIT through its
-   embedded helper and starts the game when ready. The menu shows **JIT enabled**.
-
-After this setup, starting a game does not switch to another JIT app. The first
-preparation may download device support files. If setup fails after an iOS update,
-use **Reset JIT support files** and retry. Recreate the pairing file if the device
-no longer accepts it. The pairing file is device-sensitive; do not share it.
-
-**Use StikDebug** remains available in JIT setup for installations that need an
-external activation method. Built-in JIT is unavailable inside LiveContainer.
-
-Automatic setup requires a supported device with Apple's TXM memory protection.
-The app requests activation again after a restart or game change. Reset and state
-restore retain an active JIT session. Opening the menu or pausing and resuming
-the same game does not require reactivation while the app remains running.
 
 ## Building from source
 

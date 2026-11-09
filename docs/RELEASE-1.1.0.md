@@ -4,10 +4,9 @@ Changes since **1.0.1**.
 
 ## Apps and controls
 
-- Added an experimental iPhone/iPad app with a game library, touch controls,
-  gamepad support, portrait and landscape layouts, and a built-in JIT activation helper.
-  After pairing and VPN setup, games prepare JIT without switching to another app.
-  Games wait for JIT by default; playing without JIT is a separate menu choice.
+- Added an experimental iPhone/iPad app with a game library, touch controls and
+  gamepad support. After [pairing and VPN setup](https://github.com/gajae1/gp32emu/blob/v1.1.0/ios/README.md#set-up-jit),
+  games prepare JIT in the app. The menu also offers **Play without JIT**.
 - Added ten save-state slots per game and **Load latest state** to the Windows,
   Android and iOS apps.
 - Improved mobile landscape layout and touch controls. The menu button hides
@@ -34,7 +33,6 @@ Changes since **1.0.1**.
   behavior.
 - Fixed interpreter fallback when JIT code cannot be made executable, and
   handling of changes to emulated program memory.
-- Optimized AArch64 code generation, memory access and SmartMedia transfers;
-  improved x86-64 execution paths and state saving.
+- Improved ARM64 and x86-64 execution, SmartMedia reads and state saving.
 - Corrected DMA transfer order and PWM, LCD and audio timing.
 - Updated audio filtering, frame delivery and output handling across frontends.

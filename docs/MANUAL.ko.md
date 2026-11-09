@@ -51,42 +51,27 @@ RetroArch가 지원한다면 ARM64 코어를 선택하세요.
 
 ## iPhone/iPad
 
-iOS/iPadOS 15 이상의 ARM64 기기에서는 `gp32emu-1.1.0-ios-unsigned.ipa`를
-별도로 서명해 설치합니다. iOS 지원은 실험적이며,
-서명 방식·기기·iOS 버전에 따라 기능과 성능이 달라질 수 있습니다.
+iOS/iPadOS 15 이상의 ARM64 기기용 실험적 앱입니다. `gp32emu-1.1.0-ios-unsigned.ipa`를
+받아 [iPhone/iPad 설치 안내](../ios/README.md#install-and-update)에 따라 서명해 설치하세요.
+업데이트할 때는 같은 서명과 앱 식별자로 덮어 설치합니다. GP32emu 메뉴에서 BIOS와
+압축을 푼 게임 파일을 가져오세요.
 
-서명 없는 IPA는 다운로드만으로 설치·실행되지 않습니다. SideStore 최초 설정에는
-Windows·Mac·Linux 컴퓨터가 필요하며, 이후에는 필요한 Wi-Fi·VPN 설정을 갖춘 기기에서
-설치·갱신할 수 있습니다. iOS 16 이상에서 개발 서명 앱을 실행하려면 개발자 모드도
-켜야 합니다. 인터프리터로 실행하더라도 이 설치 조건은 동일합니다.
+내장 JIT는 iOS/iPadOS 17.4 이상의 지원 기기에서 사용할 수 있습니다. 서명할 때 앱 확장과
+`get-task-allow`를 유지하세요. 처음에는 다음 순서로 설정합니다.
 
-1. [SideStore 공식 안내](https://docs.sidestore.io/docs/installation/prerequisites)에 따라
-   SideStore를 준비하고, IPA를 가져와 본인 계정으로 서명·설치합니다.
-2. GP32emu 메뉴에서 BIOS와 압축을 푼 SMC·FXE·FPK 게임을 가져옵니다.
-3. 업데이트는 같은 서명 계정과 앱 식별자로 덮어 설치하세요. 앱을 지우면 로컬 데이터도
-   지워지므로 먼저 삭제하지 마세요.
+1. 최신 [iloader](https://iloader.app)에서 해당 기기의 원격 페어링 파일을 내보냅니다.
+   GP32emu의 **JIT setup → Import pairing file**에서 가져오세요.
+2. LocalDevVPN을 설치한 뒤 **Connect LocalDevVPN**을 누릅니다.
+3. 게임을 불러오면 GP32emu 안에서 자동으로 JIT를 준비합니다. 메뉴에 **JIT enabled**가
+   표시됩니다. 게임을 다시 열 때도 자동으로 준비하려면 VPN 연결을 유지하세요.
 
-기본 실행 방식은 JIT입니다. 지원되는 기기에서는 **JIT setup → Import pairing file**로
-최신 iloader에서 만든 원격 페어링 파일을 가져오고 **Connect LocalDevVPN**으로 연결합니다.
-서명 도구는 앱 확장과 `get-task-allow`를 유지해야 합니다. 이후 게임을 불러오면
-내장 도우미가 JIT를 준비하고 성공 후 게임을 시작합니다. 별도 JIT 앱으로 전환하지 않습니다.
-메뉴의 **JIT enabled** 표시로 확인할 수 있습니다. 기기·서명 조건 때문에 실패하면
-게임은 대기하며, **Retry JIT setup**으로 재시도할 수 있습니다.
-인터프리터로 실행하려면 **Play without JIT**를 직접 선택하세요.
-최초 준비에는 기기 지원 파일을 내려받을 수 있습니다. iOS 업데이트 후 문제가 생기면
-**Reset JIT support files**로 지원 파일을 초기화하고 재시도하세요.
-기기별 페어링 파일은 다른 사람과 공유하지 마세요.
+실패하면 **Retry JIT setup**으로 재시도하거나 **Play without JIT**로 실행하세요.
+지원 파일 초기화와 페어링 안내는 [JIT 설정](../ios/README.md#set-up-jit)을 참고하세요.
 
-가로 화면에서는 메뉴 아이콘이 잠시 후 사라집니다. 게임 화면 위쪽 가운데의 같은 위치를
-누르면 메뉴가 열립니다. 상태 저장과 게임 내 저장은 별개이며, 게임마다 상태 슬롯이
-10개 있습니다. 예전 iOS 앱의 단일 상태 저장은 슬롯 1로 그대로 이어집니다.
-**Game library**에서 이미 가져온 게임을 다시 고를 수 있습니다. **Load latest state**는
-현재 게임의 가장 최근 상태 슬롯과 날짜를 보여 주고, 확인하면 그 상태를 불러옵니다.
-상태를 자동으로 저장하거나 기존 슬롯을 덮어쓰지 않습니다.
-메뉴의 **Hide touch controls**를 선택하면 Start·Select와 양옆 조작부의 여백까지
-게임 화면에 사용합니다. 화면은 4:3 비율을 유지하며, 키보드와 게임패드는 계속 사용할 수
-있습니다. **Show touch controls**로 버튼을 다시 표시합니다.
-자세한 조작·저장 위치·JIT 조건은 [iPhone/iPad 안내](../ios/README.md)를 참고하세요.
+가로 화면에서 메뉴 아이콘이 사라지면 화면 위쪽 가운데를 누르세요. **Game library**에서
+가져온 게임을 고를 수 있습니다. 게임마다 상태 저장 슬롯이 10개 있으며 **Load latest
+state**는 가장 최근 상태를 확인 후 불러옵니다. **Hide touch controls**를 선택하면
+조작부 자리를 화면에 사용하고 키보드와 게임패드는 계속 쓸 수 있습니다.
 
 ## Nintendo Switch
 
