@@ -3,6 +3,7 @@
  * LCD DMA palette format and memory map are derived from MAME gp32.cpp.
  * Original license: BSD-3-Clause, copyright Tim Schuerewegen.
  */
+#include "host_file.h"
 #include "s3c2400.h"
 #include "gp32emu/gp32.h"
 #include "zip.h"
@@ -491,7 +492,7 @@ static int load_file_exact_or_less(uint8_t *dst, size_t cap, const char *path, c
         free(buf);
         return 1;
     }
-    FILE *f = fopen(path, "rb");
+    FILE *f = gp32_open_read(path);
     if (!f) { if (err && err_len) snprintf(err, err_len, "open %s: %s", path, strerror(errno)); return 0; }
     if (fseek(f, 0, SEEK_END) != 0) { fclose(f); return 0; }
     long n = ftell(f); rewind(f);

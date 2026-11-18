@@ -8,6 +8,7 @@
 #if !defined(_WIN32) && !defined(GP32EMU_WASM) && !defined(_POSIX_C_SOURCE) && !defined(_XOPEN_SOURCE)
 #define _POSIX_C_SOURCE 200809L
 #endif
+#include "host_file.h"
 #include "smartmedia.h"
 #include "zip.h"
 #include "save_atomic.h"
@@ -580,7 +581,7 @@ static int smc_read_file_image(const char *path, uint8_t **out, size_t *out_len,
         if (!gp32_zip_read_first_matching(path, exts, GP32_ARRAY_COUNT(exts), &buf, &len, entry_name, sizeof(entry_name), err, err_len)) return 0;
         GP32_UNUSED(entry_name);
     } else {
-        FILE *f = fopen(path, "rb");
+        FILE *f = gp32_open_read(path);
         if (!f) {
             if (err && err_len) snprintf(err, err_len, "open %s: %s", path, strerror(errno));
             return 0;
@@ -909,7 +910,7 @@ failed:
 
 int smc_load_changes(smc_t *s, const char *path, char *err, size_t err_len) {
     if (!s || !path) return 0;
-    FILE *f = fopen(path, "rb");
+    FILE *f = gp32_open_read(path);
     if (!f) { if (err && err_len) snprintf(err, err_len, "cannot open card save: %s", path); return 0; }
     uint8_t head[SMC_SAVE_HEAD], digest[16];
     size_t got = fread(head, 1, sizeof(head), f);

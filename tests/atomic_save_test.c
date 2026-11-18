@@ -8,6 +8,7 @@
 #include "gp32emu/gp32.h"
 #include "smartmedia.h"
 #include "save_atomic.h"
+#include "host_file.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -17,6 +18,7 @@
 
 #if defined(_WIN32)
 #include <direct.h>
+#include <windows.h>
 #define TEST_STAT(p, st) stat((p), (st))
 #define TEST_MKDIR(p) _mkdir(p)
 #define TEST_RMDIR(p) _rmdir(p)
@@ -219,8 +221,34 @@ static void check_smc_atomic(const char *base) {
     smc_destroy(s);
 }
 
+#ifdef _WIN32
+static void check_utf8_save(const char *base) {
+    char path[SAVE_ATOMIC_MAX_PATH];
+    wchar_t wide[SAVE_ATOMIC_MAX_PATH];
+    snprintf(path, sizeof(path), "%s-\xea\xb0\x80.sav", base);
+    int decoded = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, path, -1, wide, SAVE_ATOMIC_MAX_PATH);
+    CHECK(decoded, "decode reference filename");
+    if (!decoded) return;
+    save_atomic_t stage = {0};
+    CHECK(save_atomic_begin(&stage, path, NULL, 0), "stage a UTF-8 filename");
+    if (!stage.file) return;
+    fputc(42, stage.file);
+    CHECK(save_atomic_commit(&stage, path, NULL, 0), "commit the staged UTF-8 filename");
+    FILE *reference = _wfopen(wide, L"rb");
+    CHECK(reference && fgetc(reference) == 42, "published name matches the Unicode filename on disk");
+    if (reference) fclose(reference);
+    FILE *f = gp32_open_read(path);
+    CHECK(f && fgetc(f) == 42, "reopen saved content from its frontend path");
+    if (f) fclose(f);
+    CHECK(gp32_remove_file(path) == 0, "remove the UTF-8 file");
+}
+#endif
+
 int main(int argc, char **argv) {
     const char *base = argc > 1 ? argv[1] : "atomic-save";
+#ifdef _WIN32
+    check_utf8_save(base);
+#endif
     check_stage_isolation(base);
     check_commit_failure(base);
     check_gp32_state_atomic(base);

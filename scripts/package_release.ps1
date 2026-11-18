@@ -26,8 +26,9 @@ $licenses = Join-Path $repo 'licenses'
 # Preserve document paths: moving release notes to the root breaks their links.
 $documentPaths = @(
     'README.md', 'docs/MANUAL.ko.md', "docs/RELEASE-$version.md",
-    'ios/README.md', 'ios/CREDITS.md'
+    'ios/README.md', 'ios/CREDITS.md', 'docs/es-de/README.md'
 )
+$documentPaths += 'windows','linux','android','macos' | ForEach-Object { "docs/es-de/$_/es_systems.xml" }
 $commonCopies = @($documentPaths | Select-Object -Unique | ForEach-Object {
     @{From=(Join-Path $repo $_);To=$_}
 })
@@ -162,6 +163,9 @@ foreach ($mobile in @(
     Copy-Item -LiteralPath $mobile.Source -Destination $destination
     $sums.Add("$((Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash.ToLowerInvariant())  $($mobile.Name)")
 }
+$launcherName = "gp32emu-$version-es-de.zip"
+Compress-Archive -Path (Join-Path $repo 'docs/es-de/*') -DestinationPath (Join-Path $out $launcherName)
+$sums.Add("$((Get-FileHash -LiteralPath (Join-Path $out $launcherName) -Algorithm SHA256).Hash.ToLowerInvariant())  $launcherName")
 $sourceName = "gp32emu-$version-source.zip"
 & git -C $repo archive --format=zip "--prefix=gp32emu-$version/" "--output=$(Join-Path $out $sourceName)" HEAD
 if ($LASTEXITCODE -ne 0) { throw 'Cannot package committed source.' }

@@ -1,3 +1,4 @@
+#include "host_file.h"
 #include "zip.h"
 #include "third_party/zip/zip.h"
 
@@ -11,7 +12,7 @@ static void zerr(char *err, size_t err_len, const char *fmt, ...) {
 
 int gp32_zip_path_maybe(const char *path) {
     if (!path) return 0;
-    FILE *f = fopen(path, "rb");
+    FILE *f = gp32_open_read(path);
     if (!f) return 0;
     uint8_t sig[4] = {0, 0, 0, 0};
     size_t n = fread(sig, 1, sizeof(sig), f);

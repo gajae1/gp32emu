@@ -1,3 +1,4 @@
+#include "host_file.h"
 #include "gp32emu/gp32.h"
 #include "gp32emu/platform.h"
 #include "gp32_win64_audio.h"
@@ -353,7 +354,7 @@ static void app_destroy_machine(app_state_t *a) {
             snprintf(error, sizeof(error), GP32_TR("Saving the game failed: %s\nThe latest progress was not saved.",
                                                    "게임 저장에 실패했습니다: %s\n마지막 진행 상황이 저장되지 않았습니다."), gp32_get_error(a->emu));
             app_show_status_error(a, error);
-        } else if (a->smc_legacy[0] && remove(a->smc_legacy) != 0) {
+        } else if (a->smc_legacy[0] && gp32_remove_file(a->smc_legacy) != 0) {
             app_show_status_error(a, GP32_TR("Progress was saved as .gp32.sav. The unused older .gp32.smc file could not be removed.",
                                              "진행 상황은 .gp32.sav로 저장했지만, 더 이상 쓰지 않는 예전 .gp32.smc 파일을 지우지 못했습니다."));
         }

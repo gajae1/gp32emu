@@ -49,6 +49,14 @@ RetroArch가 지원한다면 ARM64 코어를 선택하세요.
 - **상태 저장:** 중요한 상태 파일은 업데이트 전에 백업하세요.
   형식 호환성은 [세이브 스테이트](#세이브-스테이트)를 참고하세요.
 
+## ES-DE
+
+RetroArch에서 GP32 게임이 열리는지 먼저 확인하세요. [플랫폼별 설정 파일](es-de/README.md)에서
+사용 중인 ES-DE에 맞는 `es_systems.xml`을 골라 ES-DE 데이터 폴더의 `custom_systems`에
+넣습니다. 이미 같은 이름의 파일이 있으면 기존 `<systemList>` 안에 GP32 `<system>` 항목만
+추가하거나 교체하세요. ES-DE의 ROM 폴더 아래 `gp32`에 압축을 푼 게임을 넣고 재시작하면
+**Game Park GP32**에서 실행할 수 있습니다. BIOS·조작·저장은 RetroArch 설정을 따릅니다.
+
 ## iPhone/iPad
 
 iOS/iPadOS 15 이상의 ARM64 기기용 실험적 앱입니다. `gp32emu-1.1.0-ios-unsigned.ipa`를

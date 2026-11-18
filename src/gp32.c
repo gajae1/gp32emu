@@ -1,3 +1,4 @@
+#include "host_file.h"
 #include "gp32emu/gp32.h"
 #include "common.h"
 #include "arm920t.h"
@@ -6174,7 +6175,7 @@ gp32_status_t gp32_save_state(gp32_t *g, const char *path) {
 
 gp32_status_t gp32_load_state(gp32_t *g, const char *path) {
     if (!g || !path) return GP32_ERR_INVALID_ARGUMENT;
-    FILE *f = fopen(path, "rb");
+    FILE *f = gp32_open_read(path);
     if (!f) { seterr(g, "open savestate %s: %s", path, strerror(errno)); return GP32_ERR_IO; }
     state_io_t io = state_io_file(f);
     gp32_state_image_t direct;

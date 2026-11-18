@@ -5,12 +5,11 @@
 
 static void *index_allocation;
 static size_t index_bytes;
-static int index_retired, fail_exec_copy, copy_allocations, injected;
+static int index_retired, fail_exec_copy, injected;
 
 static void *fixture_malloc(size_t size) {
-    /* A 64-byte executable is read from FAT, copied into the file list, then
-     * copied for the executable loader. Fail only that last owned copy. */
-    if (fail_exec_copy && size == 64u && ++copy_allocations == 3) {
+    /* Fail the executable copy after the single file has been indexed. */
+    if (fail_exec_copy && index_allocation && size == 64u) {
         injected = 1;
         return NULL;
     }
@@ -55,7 +54,7 @@ static void release_index(void) {
     free(index_allocation);
     index_allocation = NULL;
     index_bytes = 0;
-    index_retired = fail_exec_copy = copy_allocations = injected = 0;
+    index_retired = fail_exec_copy = injected = 0;
 }
 
 static void make_executable(uint8_t out[EXEC_BYTES]) {
@@ -138,6 +137,32 @@ static void check_empty_file(void) {
     release_index();
 }
 
+static void check_fragmented_directory(void) {
+    current_case = "fragmented GAME directory";
+    uint8_t image[FAT_BYTES];
+    make_fat(image, "GXB", 0);
+    uint8_t *root = image + 2u * 512u;
+    uint8_t *first = image + 3u * 512u;
+    uint8_t *second = image + 8u * 512u;
+    memcpy(second, root, 32u);
+    memset(root, 0, 32u);
+    memcpy(root, "GAME       ", 11u);
+    root[11] = 0x10u;
+    gp32_st16le(root + 26u, 2u);
+    image[512u + 3u] = 7u; /* FAT12 cluster 2 -> 7, across a gap. */
+    memset(first, 0xe5, 512u);
+    char path[260], err[256];
+    CHECK(smc_direct_classify_buffer(image, sizeof(image), "fragmented", path, sizeof(path),
+                                     err, sizeof(err)) == SMC_CARD_LAYOUT_BIOS_GAME &&
+          !strcmp(path, "GAME/TEST.GXB"), "find the executable in the second cluster");
+    release_index();
+    first[0] = 0; /* A directory terminator also covers later clusters. */
+    CHECK(smc_direct_classify_buffer(image, sizeof(image), "terminated", path, sizeof(path),
+                                     err, sizeof(err)) == SMC_CARD_LAYOUT_NONE,
+          "ignore entries beyond the directory terminator");
+    release_index();
+}
+
 static void check_error_ownership(const char ext[3], int oom) {
     current_case = oom ? "executable copy allocation failure" : "missing GXC companion";
     uint8_t image[FAT_BYTES], before[FAT_BYTES];
@@ -191,12 +216,48 @@ static void check_nand_geometry(unsigned pages, unsigned block_pages, uint8_t id
     free(image);
 }
 
+/* FAT12 cluster 341 straddles two sectors. The intervening NAND spare
+ * bytes are 0xff and must not become part of the next cluster number. */
+static void check_split_fat_entry(void) {
+    current_case = "split FAT12 entry";
+    const unsigned pages = 384u;
+    uint8_t *nand = calloc(pages, 528u);
+    CHECK(nand != NULL, "allocate split-entry fixture");
+    if (!nand) return;
+    uint8_t plain[FAT_BYTES];
+    make_fat(plain, "GXB", 0);
+    memcpy(nand, plain, 512u);
+    gp32_st16le(nand + 19u, pages);
+    gp32_st16le(nand + 22u, 2u);
+    for (unsigned i = 0; i < pages; i++) {
+        uint8_t *spare = nand + i * 528u + 512u;
+        memset(spare, 0xff, 16u);
+        spare[6] = 0x10u;
+        spare[7] = (uint8_t)((i / 16u) << 1);
+    }
+    uint8_t *root = nand + 3u * 528u;
+    memcpy(root, "GAME       ", 11u);
+    root[11] = 0x10u;
+    gp32_st16le(root + 26u, 341u);
+    memset(nand + 343u * 528u, 0xe5, 512u);
+    nand[528u + 511u] = 0x20u; /* cluster 341 -> cluster 2 */
+    memcpy(nand + 4u * 528u, plain + 1024u, 32u);
+    char path[260], err[256];
+    CHECK(smc_direct_classify_buffer(nand, (size_t)pages * 528u, "split", path, sizeof(path),
+                                     err, sizeof(err)) == SMC_CARD_LAYOUT_BIOS_GAME &&
+          !strcmp(path, "GAME/TEST.GXB"), "directory continues across the split FAT entry");
+    release_index();
+    free(nand);
+}
+
 int main(void) {
     current_case = "plain FAT control";
     uint8_t image[FAT_BYTES];
     make_fat(image, "GXB", 0);
     check_loaded(image, sizeof(image), 0);
     check_empty_file();
+    check_fragmented_directory();
+    check_split_fat_entry();
     check_error_ownership("GXE", 0);
     check_error_ownership("GXB", 1);
     check_error_ownership("FXE", 1);

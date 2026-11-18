@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<systemList>
+    <system>
+        <name>gp32</name>
+        <fullname>Game Park GP32</fullname>
+        <path>%ROMPATH%/gp32</path>
+        <extension>.smc .SMC .fxe .FXE .fpk .FPK</extension>
+        <command label="GP32emu">%EMULATOR_RETROARCH% -L %CORE_RETROARCH%/gp32emu_libretro.dylib %ROM%</command>
+        <platform>ignore</platform>
+        <theme>gp32</theme>
+    </system>
+</systemList>

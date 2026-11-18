@@ -1,3 +1,4 @@
+#include "host_file.h"
 #include "smc_direct.h"
 #include "zip.h"
 
@@ -15,9 +16,16 @@ typedef struct smc_file_list {
     size_t cap;
 } smc_file_list_t;
 
+typedef struct smc_sectors {
+    const uint8_t *flat;
+    const uint8_t **blocks;
+    size_t count;
+    size_t pages_per_block;
+    uint8_t erased[512];
+} smc_sectors_t;
+
 typedef struct fat_view {
-    const uint8_t *img;
-    size_t img_size;
+    const smc_sectors_t *image;
     uint32_t part_sec;
     uint32_t bytes_per_sec;
     uint32_t sec_per_clus;
@@ -81,7 +89,7 @@ static uint8_t *read_file_or_zip(const char *path, size_t *out_size, char *err, 
         *out_size = len;
         return buf;
     }
-    FILE *f = fopen(path, "rb");
+    FILE *f = gp32_open_read(path);
     if (!f) { serr(err, err_len, "open %s: %s", path, strerror(errno)); return NULL; }
     if (fseek(f, 0, SEEK_END) != 0) { serr(err, err_len, "seek %s failed", path); fclose(f); return NULL; }
     long n = ftell(f);
@@ -105,83 +113,55 @@ static uint16_t smc_spare_lba(const uint8_t *spare) {
     return (uint16_t)((v & 0x0ffeu) >> 1);
 }
 
-static int smc_reconstruct_512(const uint8_t *src, size_t len, uint8_t **out_img, size_t *out_size, char *err, size_t err_len) {
-    if (!src || !out_img || !out_size) return 0;
-    *out_img = NULL;
-    *out_size = 0;
-
-    size_t off = 0;
-    if ((len > 1024u) && ((len - 1024u) % 528u) == 0) off = 1024u;
-    if (((len - off) % 528u) == 0) {
-        const size_t page_total = 528u;
-        const size_t page_data = 512u;
-        size_t pages = (len - off) / page_total;
-        /* Match the mounted 512-byte-page card geometry: 4/8 MiB cards
-         * address 16-page erase blocks, larger cards address 32 pages. */
-        const size_t pages_per_block = pages <= 16384u ? 16u : 32u;
-        size_t blocks = pages / pages_per_block;
-        if (!blocks || pages != blocks * pages_per_block) { serr(err, err_len, "unsupported SMC page/block count"); return 0; }
-        size_t img_size = pages * page_data;
-        uint8_t *img = (uint8_t *)malloc(img_size ? img_size : 1u);
-        uint8_t *seen = (uint8_t *)calloc(blocks ? blocks : 1u, 1u);
-        if (!img || !seen) {
-            free(img);
-            free(seen);
-            serr(err, err_len, "out of memory reconstructing SMC FAT image");
+/* Direct boot only needs the FAT and the files it opens. Keep the raw image
+ * borrowed and index each logical NAND block once, without rebuilding a disk. */
+static int smc_index_sectors(smc_sectors_t *image, const uint8_t *src, size_t len,
+                             char *err, size_t err_len) {
+    size_t off = len > 1024u && (len - 1024u) % 528u == 0 ? 1024u : 0u;
+    if ((len - off) % 528u != 0) {
+        if (len % 512u != 0) {
+            serr(err, err_len, "unsupported BIOSless SMC image size %zu", len);
             return 0;
         }
-        memset(img, 0xff, img_size);
-        for (size_t pb = 0; pb < blocks; ++pb) {
-            const uint8_t *first = src + off + pb * pages_per_block * page_total;
-            const uint8_t *sp = first + page_data;
-            if (sp[6] == 0xffu && sp[7] == 0xffu) continue;
-            uint16_t lb = smc_spare_lba(sp);
-            if ((size_t)lb >= blocks) continue;
-
-            /*
-             * SmartMedia logical block numbers are local to 1024-physical-block
-             * zones.  32 MiB cards have two zones, so local LBA 0..999 in
-             * physical zone 1 maps to logical block 1000..1999.  Without this,
-             * BIOSless FAT extraction sees only the first half of larger retail
-             * SMC images and reads late .GXE/.GXC files as erased 0xff pages.
-             *
-             * Some dumps also contain stale duplicate physical blocks inside a
-             * zone.  Preserve the first valid translation entry for each
-             * zone-adjusted logical block, matching firmware scan order, instead
-             * of overwriting live FAT/root sectors with later stale copies.
-             */
-            size_t logical = (pb / 1024u) * 1000u + (size_t)lb;
-            if (logical >= blocks) continue;
-            if (seen[logical]) continue;
-            seen[logical] = 1u;
-            for (size_t p = 0; p < pages_per_block; ++p) {
-                memcpy(img + (logical * pages_per_block + p) * page_data,
-                       src + off + (pb * pages_per_block + p) * page_total,
-                       page_data);
-            }
-        }
-        free(seen);
-        *out_img = img;
-        *out_size = img_size;
+        image->flat = src;
+        image->count = len / 512u;
         return 1;
     }
 
-    if ((len % 512u) == 0) {
-        uint8_t *img = (uint8_t *)malloc(len ? len : 1u);
-        if (!img) { serr(err, err_len, "out of memory copying SMC FAT image"); return 0; }
-        memcpy(img, src, len);
-        *out_img = img;
-        *out_size = len;
-        return 1;
+    image->count = (len - off) / 528u;
+    size_t pages = image->count <= 16384u ? 16u : 32u;
+    size_t blocks = image->count / pages;
+    if (!blocks || image->count % pages) {
+        serr(err, err_len, "unsupported SMC page/block count");
+        return 0;
     }
-
-    serr(err, err_len, "unsupported BIOSless SMC image size %zu", len);
-    return 0;
+    image->pages_per_block = pages;
+    image->blocks = calloc(blocks, sizeof(*image->blocks));
+    if (!image->blocks) {
+        serr(err, err_len, "out of memory indexing SMC blocks");
+        return 0;
+    }
+    memset(image->erased, 0xff, sizeof(image->erased));
+    for (size_t pb = 0; pb < blocks; ++pb) {
+        const uint8_t *first = src + off + pb * pages * 528u;
+        const uint8_t *spare = first + 512u;
+        if (spare[6] == 0xffu && spare[7] == 0xffu) continue;
+        /* LBAs are zone-local. Firmware takes the first valid duplicate. */
+        size_t logical = (pb / 1024u) * 1000u + smc_spare_lba(spare);
+        if (logical < blocks && !image->blocks[logical]) image->blocks[logical] = first;
+    }
+    return 1;
 }
 
-static int fat_parse_at(const uint8_t *img, size_t size, uint32_t sec, fat_view_t *fv) {
-    if (!img || !fv || (uint64_t)(sec + 1u) * 512u > size) return 0;
-    const uint8_t *b = img + (size_t)sec * 512u;
+/* Callers validate their full sector range before accessing it. */
+static const uint8_t *smc_sector(const smc_sectors_t *image, size_t sector) {
+    if (image->flat) return image->flat + sector * 512u;
+    const uint8_t *block = image->blocks[sector / image->pages_per_block];
+    return block ? block + (sector % image->pages_per_block) * 528u : image->erased;
+}
+
+static int fat_parse_at(const smc_sectors_t *image, uint32_t sec, fat_view_t *fv) {
+    const uint8_t *b = smc_sector(image, sec);
     if (b[510] != 0x55u || b[511] != 0xaau) return 0;
     uint16_t bps = gp32_ld16le(b + 11u);
     uint8_t spc = b[13];
@@ -198,13 +178,12 @@ static int fat_parse_at(const uint8_t *img, size_t size, uint32_t sec, fat_view_
     if (!total) return 0;
     uint32_t part = hidden == sec ? hidden : sec;
     uint32_t root_secs = ((uint32_t)root_entries * 32u + bps - 1u) / bps;
-    uint32_t root_sec = part + res + (uint32_t)fats * (uint32_t)spf16;
-    uint32_t data_sec = root_sec + root_secs;
-    if ((uint64_t)(part + total) * 512u > size || data_sec >= part + total) return 0;
-    uint32_t clusters = (total - (data_sec - part)) / spc;
+    uint64_t root_sec = (uint64_t)part + res + (uint32_t)fats * (uint32_t)spf16;
+    uint64_t data_sec = root_sec + root_secs;
+    if ((uint64_t)part + total > image->count || data_sec > UINT32_MAX || data_sec - part >= total) return 0;
+    uint32_t clusters = (total - (uint32_t)(data_sec - part)) / spc;
     memset(fv, 0, sizeof(*fv));
-    fv->img = img;
-    fv->img_size = size;
+    fv->image = image;
     fv->part_sec = part;
     fv->bytes_per_sec = bps;
     fv->sec_per_clus = spc;
@@ -213,46 +192,42 @@ static int fat_parse_at(const uint8_t *img, size_t size, uint32_t sec, fat_view_
     fv->root_entries = root_entries;
     fv->total_sec = total;
     fv->sec_per_fat = spf16;
-    fv->root_sec = root_sec;
+    fv->root_sec = (uint32_t)root_sec;
     fv->root_sec_count = root_secs;
-    fv->data_sec = data_sec;
+    fv->data_sec = (uint32_t)data_sec;
     fv->cluster_count = clusters;
     fv->fat_bits = (clusters < 4085u) ? 12 : 16;
     return 1;
 }
 
-static int fat_find(const uint8_t *img, size_t size, fat_view_t *fv) {
-    if (!img || !fv || size < 512u) return 0;
-    size_t sectors = size / 512u;
-    for (size_t s = 0; s < sectors; ++s) {
-        if (fat_parse_at(img, size, (uint32_t)s, fv)) return 1;
+static int fat_find(const smc_sectors_t *image, fat_view_t *fv) {
+    for (size_t s = 0; s < image->count && s <= UINT32_MAX; ++s) {
+        if (fat_parse_at(image, (uint32_t)s, fv)) return 1;
     }
     return 0;
 }
 
 static uint16_t fat_next_cluster(const fat_view_t *fv, uint16_t cl) {
-    const uint8_t *fat = fv->img + (size_t)(fv->part_sec + fv->reserved_sec) * 512u;
-    size_t fat_size = (size_t)fv->sec_per_fat * 512u;
-    if (fv->fat_bits == 12) {
-        size_t off = (size_t)cl + ((size_t)cl >> 1);
-        if (off + 1u >= fat_size) return 0xfffu;
-        uint16_t v = (uint16_t)(fat[off] | ((uint16_t)fat[off + 1u] << 8));
-        return (cl & 1u) ? (uint16_t)(v >> 4) : (uint16_t)(v & 0x0fffu);
-    }
-    size_t off = (size_t)cl * 2u;
-    if (off + 1u >= fat_size) return 0xffffu;
-    return gp32_ld16le(fat + off);
+    size_t off = fv->fat_bits == 12 ? (size_t)cl + cl / 2u : (size_t)cl * 2u;
+    if (off + 1u >= (size_t)fv->sec_per_fat * 512u) return 0xffffu;
+    size_t sec = (size_t)fv->part_sec + fv->reserved_sec + off / 512u;
+    size_t pos = off % 512u;
+    const uint8_t *p = smc_sector(fv->image, sec);
+    uint16_t value = pos == 511u
+        ? (uint16_t)(p[pos] | ((uint16_t)smc_sector(fv->image, sec + 1u)[0] << 8))
+        : gp32_ld16le(p + pos);
+    if (fv->fat_bits == 16) return value;
+    return (cl & 1u) ? (uint16_t)(value >> 4) : (uint16_t)(value & 0x0fffu);
 }
 
 static int fat_cluster_is_eoc(const fat_view_t *fv, uint16_t cl) {
     return fv->fat_bits == 12 ? cl >= 0x0ff8u : cl >= 0xfff8u;
 }
 
-static const uint8_t *fat_cluster_ptr(const fat_view_t *fv, uint16_t cl) {
-    if (cl < 2u) return NULL;
-    uint32_t sec = fv->data_sec + ((uint32_t)cl - 2u) * fv->sec_per_clus;
-    if ((uint64_t)(sec + fv->sec_per_clus) * 512u > fv->img_size) return NULL;
-    return fv->img + (size_t)sec * 512u;
+static size_t fat_cluster_sector(const fat_view_t *fv, uint16_t cl) {
+    if (cl < 2u) return SIZE_MAX;
+    uint64_t sec = (uint64_t)fv->data_sec + ((uint32_t)cl - 2u) * fv->sec_per_clus;
+    return sec + fv->sec_per_clus <= fv->image->count ? (size_t)sec : SIZE_MAX;
 }
 
 static uint8_t *fat_read_chain(const fat_view_t *fv, uint16_t cl, size_t want, size_t *out_size) {
@@ -267,11 +242,18 @@ static uint8_t *fat_read_chain(const fat_view_t *fv, uint16_t cl, size_t want, s
     uint32_t guard = 0;
     size_t cluster_bytes = (size_t)fv->sec_per_clus * 512u;
     while (cl >= 2u && !fat_cluster_is_eoc(fv, cl) && guard++ <= fv->cluster_count + 2u && len < want) {
-        const uint8_t *p = fat_cluster_ptr(fv, cl);
-        if (!p) break;
+        size_t sec = fat_cluster_sector(fv, cl);
+        if (sec == SIZE_MAX) break;
         size_t n = cluster_bytes;
         if (n > want - len) n = want - len;
-        memcpy(out + len, p, n);
+        if (fv->image->flat) {
+            memcpy(out + len, smc_sector(fv->image, sec), n);
+        } else {
+            for (size_t pos = 0; pos < n; pos += 512u) {
+                size_t bytes = n - pos < 512u ? n - pos : 512u;
+                memcpy(out + len + pos, smc_sector(fv->image, sec++), bytes);
+            }
+        }
         len += n;
         if (len >= want) break;
         cl = fat_next_cluster(fv, cl);
@@ -292,8 +274,8 @@ static void fat_83_name(const uint8_t *e, char *out, size_t out_len) {
     else snprintf(out, out_len, "%s", name);
 }
 
-static int file_list_add(smc_file_list_t *list, const char *path, const uint8_t *data, size_t size, uint8_t attr, uint16_t cl, char *err, size_t err_len) {
-    if (!list || !path || !data) return 0;
+/* Takes ownership of data on success. A metadata-only entry has no buffer. */
+static int file_list_add(smc_file_list_t *list, const char *path, uint8_t *data, size_t size, uint8_t attr, uint16_t cl, char *err, size_t err_len) {
     if (list->count == list->cap) {
         size_t nc = list->cap ? list->cap * 2u : 32u;
         smc_file_buf_t *ni = (smc_file_buf_t *)realloc(list->items, nc * sizeof(list->items[0]));
@@ -304,9 +286,7 @@ static int file_list_add(smc_file_list_t *list, const char *path, const uint8_t 
     smc_file_buf_t *it = &list->items[list->count++];
     memset(it, 0, sizeof(*it));
     snprintf(it->path, sizeof(it->path), "%s", path);
-    it->data = (uint8_t *)malloc(size ? size : 1u);
-    if (!it->data) { serr(err, err_len, "out of memory extracting %s", path); return 0; }
-    if (size) memcpy(it->data, data, size);
+    it->data = data;
     it->size = size;
     it->attr = attr;
     it->first_cluster = cl;
@@ -321,54 +301,69 @@ static void file_list_free(smc_file_list_t *list) {
 }
 
 /* names_only lists paths without reading file data (layout classification). */
-static int fat_walk_dir(const fat_view_t *fv, const uint8_t *dir, size_t dir_size, const char *prefix, smc_file_list_t *list, unsigned depth, int names_only, char *err, size_t err_len) {
-    if (!fv || !dir || !list || depth > 12u) return 1;
-    for (size_t off = 0; off + 32u <= dir_size; off += 32u) {
-        const uint8_t *e = dir + off;
-        if (e[0] == 0x00u) break;
-        if (e[0] == 0xe5u || e[0] == 0xffu) continue;
-        uint8_t attr = e[11];
-        if (attr == 0x0fu || (attr & 0x08u)) continue;
-        char name[32];
-        fat_83_name(e, name, sizeof(name));
-        if (!name[0] || !strcmp(name, ".") || !strcmp(name, "..")) continue;
-        uint16_t cl = gp32_ld16le(e + 26u);
-        uint32_t size = gp32_ld32le(e + 28u);
-        char path[260];
-        if (prefix && prefix[0]) snprintf(path, sizeof(path), "%s/%s", prefix, name);
-        else snprintf(path, sizeof(path), "%s", name);
-        if (attr & 0x10u) {
-            size_t sub_size = 0;
-            uint32_t max_dir = (fv->cluster_count + 2u) * fv->sec_per_clus * 512u;
-            uint8_t *sub = fat_read_chain(fv, cl, max_dir, &sub_size);
-            if (sub) {
-                int ok = fat_walk_dir(fv, sub, sub_size, path, list, depth + 1u, names_only, err, err_len);
-                free(sub);
-                if (!ok) return 0;
+static int fat_walk_dir(const fat_view_t *fv, size_t dir_sec, size_t dir_size, uint16_t cluster,
+                        const char *prefix, smc_file_list_t *list, unsigned depth, int names_only,
+                        char *err, size_t err_len) {
+    if (depth > 12u) return 1;
+    size_t cluster_bytes = (size_t)fv->sec_per_clus * 512u;
+    /* The root is contiguous. Subdirectories can span noncontiguous clusters. */
+    for (uint32_t visited = 0; dir_sec != SIZE_MAX && visited <= fv->cluster_count + 1u; ++visited) {
+        const uint8_t *sector = NULL;
+        for (size_t off = 0; off + 32u <= dir_size; off += 32u) {
+            if (off % 512u == 0) sector = smc_sector(fv->image, dir_sec + off / 512u);
+            const uint8_t *e = sector + off % 512u;
+            if (e[0] == 0x00u) return 1;
+            if (e[0] == 0xe5u || e[0] == 0xffu) continue;
+            uint8_t attr = e[11];
+            if (attr == 0x0fu || (attr & 0x08u)) continue;
+            char name[32];
+            fat_83_name(e, name, sizeof(name));
+            if (!name[0] || !strcmp(name, ".") || !strcmp(name, "..")) continue;
+            uint16_t cl = gp32_ld16le(e + 26u);
+            uint32_t size = gp32_ld32le(e + 28u);
+            char path[260];
+            if (prefix && prefix[0]) snprintf(path, sizeof(path), "%s/%s", prefix, name);
+            else snprintf(path, sizeof(path), "%s", name);
+            if (attr & 0x10u) {
+                if (cl >= 2u && !fat_cluster_is_eoc(fv, cl) &&
+                    !fat_walk_dir(fv, fat_cluster_sector(fv, cl), cluster_bytes, cl,
+                                  path, list, depth + 1u, names_only, err, err_len)) return 0;
+            } else {
+                uint8_t *buf = NULL;
+                if (!names_only) {
+                    size_t got = 0;
+                    buf = fat_read_chain(fv, cl, size, &got);
+                    if (!buf || got < size) { free(buf); serr(err, err_len, "failed extracting %s from SMC FAT", path); return 0; }
+                }
+                if (!file_list_add(list, path, buf, size, attr, cl, err, err_len)) {
+                    free(buf);
+                    return 0;
+                }
             }
-        } else if (names_only) {
-            static const uint8_t none[1];
-            if (!file_list_add(list, path, none, 0, attr, cl, err, err_len)) return 0;
-        } else {
-            size_t got = 0;
-            uint8_t *buf = fat_read_chain(fv, cl, size, &got);
-            if (!buf || got < size) { free(buf); serr(err, err_len, "failed extracting %s from SMC FAT", path); return 0; }
-            int ok = file_list_add(list, path, buf, size, attr, cl, err, err_len);
-            free(buf);
-            if (!ok) return 0;
         }
+        if (cluster == 0u) break;
+        cluster = fat_next_cluster(fv, cluster);
+        if (cluster < 2u || fat_cluster_is_eoc(fv, cluster)) break;
+        dir_sec = fat_cluster_sector(fv, cluster);
     }
     return 1;
 }
 
 static int fat_walk_root(const fat_view_t *fv, smc_file_list_t *list, int names_only, char *err, size_t err_len) {
     size_t root_size = (size_t)fv->root_sec_count * 512u;
-    if ((uint64_t)fv->root_sec * 512u + root_size > fv->img_size) return 0;
-    return fat_walk_dir(fv, fv->img + (size_t)fv->root_sec * 512u, root_size, "", list, 0u, names_only, err, err_len);
+    return fat_walk_dir(fv, fv->root_sec, root_size, 0u, "", list, 0u, names_only, err, err_len);
 }
 
-static int fat_extract_all(const fat_view_t *fv, smc_file_list_t *list, char *err, size_t err_len) {
-    return fat_walk_root(fv, list, 0, err, err_len);
+static int smc_list_files(const uint8_t *data, size_t size, smc_file_list_t *list, int names_only,
+                          char *err, size_t err_len) {
+    smc_sectors_t image = {0};
+    if (!smc_index_sectors(&image, data, size, err, err_len)) return 0;
+    fat_view_t fv;
+    int ok = fat_find(&image, &fv);
+    if (ok) ok = fat_walk_root(&fv, list, names_only, err, err_len);
+    else serr(err, err_len, "no FAT12/FAT16 filesystem found in SMC image");
+    free(image.blocks);
+    return ok;
 }
 
 static const smc_file_buf_t *find_first_ext(const smc_file_list_t *list, const char *ext) {
@@ -1087,16 +1082,7 @@ void smc_direct_package_free(smc_direct_package_t *pkg) {
     memset(pkg, 0, sizeof(*pkg));
 }
 
-static int smc_direct_load_image_owned(uint8_t *img, size_t img_size, const char *source_label, smc_direct_package_t *pkg, char *err, size_t err_len) {
-    if (!img || !pkg) { free(img); serr(err, err_len, "invalid SMC direct-load image"); return 0; }
-    memset(pkg, 0, sizeof(*pkg));
-
-    fat_view_t fv;
-    if (!fat_find(img, img_size, &fv)) { free(img); serr(err, err_len, "no FAT12/FAT16 filesystem found in SMC image"); return 0; }
-    smc_file_list_t list;
-    memset(&list, 0, sizeof(list));
-    if (!fat_extract_all(&fv, &list, err, err_len)) { file_list_free(&list); free(img); return 0; }
-    free(img);
+static int smc_load_files(smc_file_list_t list, const char *source_label, smc_direct_package_t *pkg, char *err, size_t err_len) {
     if (!list.count) { file_list_free(&list); serr(err, err_len, "SMC filesystem contains no files"); return 0; }
 
     const smc_file_buf_t *gxe = find_first_ext(&list, ".gxe");
@@ -1154,25 +1140,20 @@ static int smc_direct_load_image_owned(uint8_t *img, size_t img_size, const char
 
 int smc_direct_load_file(const char *path, smc_direct_package_t *pkg, char *err, size_t err_len) {
     if (!path || !pkg) { serr(err, err_len, "invalid SMC direct-load arguments"); return 0; }
-    size_t raw_size = 0, img_size = 0;
+    size_t raw_size = 0;
     uint8_t *raw = read_file_or_zip(path, &raw_size, err, err_len);
     if (!raw) return 0;
-    uint8_t *img = NULL;
-    if (!smc_reconstruct_512(raw, raw_size, &img, &img_size, err, err_len)) { free(raw); return 0; }
+    int ok = smc_direct_load_buffer(raw, raw_size, path, pkg, err, err_len);
     free(raw);
-    return smc_direct_load_image_owned(img, img_size, path, pkg, err, err_len);
+    return ok;
 }
 
 int smc_direct_load_buffer(const uint8_t *data, size_t size, const char *label, smc_direct_package_t *pkg, char *err, size_t err_len) {
     if (!data || !size || !pkg) { serr(err, err_len, "invalid SMC direct-load buffer arguments"); return 0; }
-    uint8_t *raw = (uint8_t *)malloc(size);
-    if (!raw) { serr(err, err_len, "out of memory reading %s", label ? label : "buffer"); return 0; }
-    memcpy(raw, data, size);
-    uint8_t *img = NULL;
-    size_t img_size = 0;
-    if (!smc_reconstruct_512(raw, size, &img, &img_size, err, err_len)) { free(raw); return 0; }
-    free(raw);
-    return smc_direct_load_image_owned(img, img_size, label ? label : "buffer", pkg, err, err_len);
+    memset(pkg, 0, sizeof(*pkg));
+    smc_file_list_t list = {0};
+    if (!smc_list_files(data, size, &list, 0, err, err_len)) { file_list_free(&list); return 0; }
+    return smc_load_files(list, label ? label : "buffer", pkg, err, err_len);
 }
 
 /* True when path is an entry of the card's top-level directory dir. The retail
@@ -1210,48 +1191,29 @@ static smc_card_launch_layout_t classify_file_list(const smc_file_list_t *list, 
     return direct_only ? SMC_CARD_LAYOUT_DIRECT_ONLY : SMC_CARD_LAYOUT_NONE;
 }
 
-static smc_card_launch_layout_t classify_image_owned(uint8_t *img, size_t img_size, char *exe_out, size_t exe_out_len, char *err, size_t err_len) {
-    fat_view_t fv;
-    if (!img) { serr(err, err_len, "invalid SMC layout image"); return SMC_CARD_LAYOUT_NONE; }
-    if (!fat_find(img, img_size, &fv)) {
-        free(img);
-        serr(err, err_len, "no FAT12/FAT16 filesystem found in SMC image");
-        return SMC_CARD_LAYOUT_NONE;
-    }
-    smc_file_list_t list;
-    memset(&list, 0, sizeof(list));
-    if (!fat_walk_root(&fv, &list, 1, err, err_len)) { file_list_free(&list); free(img); return SMC_CARD_LAYOUT_NONE; }
-    free(img);
-    smc_card_launch_layout_t layout = classify_file_list(&list, exe_out, exe_out_len);
-    if (layout == SMC_CARD_LAYOUT_NONE) serr(err, err_len, "SMC filesystem contains no .GXE/.GXB/.FXE executable");
-    file_list_free(&list);
-    return layout;
-}
-
 smc_card_launch_layout_t smc_direct_classify_file(const char *path, char *exe_out, size_t exe_out_len, char *err, size_t err_len) {
     if (err && err_len) err[0] = '\0';
     if (exe_out && exe_out_len) exe_out[0] = '\0';
     if (!path) { serr(err, err_len, "invalid SMC layout arguments"); return SMC_CARD_LAYOUT_NONE; }
-    size_t raw_size = 0, img_size = 0;
+    size_t raw_size = 0;
     uint8_t *raw = read_file_or_zip(path, &raw_size, err, err_len);
     if (!raw) return SMC_CARD_LAYOUT_NONE;
-    uint8_t *img = NULL;
-    if (!smc_reconstruct_512(raw, raw_size, &img, &img_size, err, err_len)) { free(raw); return SMC_CARD_LAYOUT_NONE; }
+    smc_card_launch_layout_t layout = smc_direct_classify_buffer(raw, raw_size, path, exe_out, exe_out_len, err, err_len);
     free(raw);
-    return classify_image_owned(img, img_size, exe_out, exe_out_len, err, err_len);
+    return layout;
 }
 
 smc_card_launch_layout_t smc_direct_classify_buffer(const uint8_t *data, size_t size, const char *label, char *exe_out, size_t exe_out_len, char *err, size_t err_len) {
+    GP32_UNUSED(label);
     if (err && err_len) err[0] = '\0';
     if (exe_out && exe_out_len) exe_out[0] = '\0';
     if (!data || !size) { serr(err, err_len, "invalid SMC layout buffer arguments"); return SMC_CARD_LAYOUT_NONE; }
-    uint8_t *raw = (uint8_t *)malloc(size);
-    if (!raw) { serr(err, err_len, "out of memory reading %s", label ? label : "buffer"); return SMC_CARD_LAYOUT_NONE; }
-    memcpy(raw, data, size);
-    uint8_t *img = NULL;
-    size_t img_size = 0;
-    if (!smc_reconstruct_512(raw, size, &img, &img_size, err, err_len)) { free(raw); return SMC_CARD_LAYOUT_NONE; }
-    free(raw);
-    return classify_image_owned(img, img_size, exe_out, exe_out_len, err, err_len);
+    smc_file_list_t list = {0};
+    smc_card_launch_layout_t layout = SMC_CARD_LAYOUT_NONE;
+    if (smc_list_files(data, size, &list, 1, err, err_len)) {
+        layout = classify_file_list(&list, exe_out, exe_out_len);
+        if (layout == SMC_CARD_LAYOUT_NONE) serr(err, err_len, "SMC filesystem contains no .GXE/.GXB/.FXE executable");
+    }
+    file_list_free(&list);
+    return layout;
 }
-

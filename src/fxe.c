@@ -1,3 +1,4 @@
+#include "host_file.h"
 #include "fxe.h"
 #include "zip.h"
 
@@ -18,7 +19,7 @@ static void ferr(char *err, size_t err_len, const char *fmt, ...) {
 }
 
 static uint8_t *read_whole_file(const char *path, size_t *out_size, char *err, size_t err_len) {
-    FILE *f = fopen(path, "rb");
+    FILE *f = gp32_open_read(path);
     if (!f) { ferr(err, err_len, "open %s: %s", path, strerror(errno)); return NULL; }
     if (fseek(f, 0, SEEK_END) != 0) { ferr(err, err_len, "seek %s failed", path); fclose(f); return NULL; }
     long n = ftell(f);

@@ -16,6 +16,7 @@ homebrew. Bring your own BIOS and games; neither is included.
 | Android | Install the APK, then use **Add game** to import an extracted game file. |
 | iPhone/iPad | Sign and install the unsigned IPA using the [iPhone/iPad guide](ios/README.md). |
 | RetroArch | Install the core and its `.info` file for your platform and architecture, then load a game. |
+| ES-DE | Install the RetroArch core and add the [GP32 system entry](docs/es-de/README.md). |
 | Nintendo Switch | Follow the [Switch installation guide](https://github.com/gajae1/gp32emu/blob/main/packaging/switch/README.md). |
 
 A BIOS is recommended for commercial games. Select it in the app, or put

@@ -1,3 +1,4 @@
+#include "host_file.h"
 #include "libretro.h"
 #include "gp32emu/gp32.h"
 #include "gp32emu/video_effects.h"
@@ -104,7 +105,7 @@ static void strip_ext(char *s) {
 
 static int file_exists(const char *path) {
     if (!path || !path[0]) return 0;
-    FILE *f = fopen(path, "rb");
+    FILE *f = gp32_open_read(path);
     if (!f) return 0;
     fclose(f);
     return 1;
@@ -257,7 +258,7 @@ static void destroy_emu_with_save(void) {
         lr_log(RETRO_LOG_ERROR, "[gp32emu] Cannot save SmartMedia to %s: %s\n",
                smartmedia_save_path, gp32_get_error(emu));
         lr_message("GP32 save failed. Check free space and write access; latest progress was not saved.");
-    } else if (smartmedia_save_path[0] && smartmedia_legacy_loaded && remove(smartmedia_legacy_path) != 0) {
+    } else if (smartmedia_save_path[0] && smartmedia_legacy_loaded && gp32_remove_file(smartmedia_legacy_path) != 0) {
         lr_log(RETRO_LOG_WARN, "[gp32emu] Saved progress; could not remove unused old card %s\n", smartmedia_legacy_path);
     }
     gp32_destroy(emu);
@@ -283,10 +284,10 @@ typedef enum content_boot {
 static int mount_saved_smartmedia(gp32_t *g) {
     const char *path = smartmedia_save_path;
     if (!path[0]) return 0;
-    FILE *f = fopen(path, "rb");
+    FILE *f = gp32_open_read(path);
     if (!f && errno == ENOENT) {
         path = smartmedia_legacy_path;
-        f = fopen(path, "rb");
+        f = gp32_open_read(path);
         if (!f && errno == ENOENT) return 0;
     }
     if (!f) {

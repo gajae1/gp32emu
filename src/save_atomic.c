@@ -4,6 +4,7 @@
 #endif
 
 #include "save_atomic.h"
+#include "host_file.h"
 
 #include <errno.h>
 #include <stdlib.h>
@@ -46,6 +47,33 @@ static void save_atomic_sync_parent(const char *path) {
 #endif
 
 #if defined(_WIN32)
+/* Retain local-code-page filenames from older native callers when the byte
+ * string is not UTF-8. Never retry a failed open using a different name. */
+static int wide_path(const char *path, wchar_t *out, int capacity) {
+    int n = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, path, -1, out, capacity);
+    if (!n && GetLastError() == ERROR_NO_UNICODE_TRANSLATION)
+        n = MultiByteToWideChar(CP_ACP, 0, path, -1, out, capacity);
+    if (!n) errno = GetLastError() == ERROR_INSUFFICIENT_BUFFER ? ENAMETOOLONG : EINVAL;
+    return n;
+}
+
+FILE *gp32_open_read(const char *path) {
+    int length = wide_path(path, NULL, 0);
+    if (!length) return NULL;
+    wchar_t *wide = malloc((size_t)length * sizeof(*wide));
+    if (!wide) { errno = ENOMEM; return NULL; }
+    FILE *file = wide_path(path, wide, length) ? _wfopen(wide, L"rb") : NULL;
+    int saved_errno = errno;
+    free(wide);
+    errno = saved_errno;
+    return file;
+}
+
+int gp32_remove_file(const char *path) {
+    wchar_t wide[SAVE_ATOMIC_MAX_PATH];
+    return wide_path(path, wide, SAVE_ATOMIC_MAX_PATH) ? _wremove(wide) : -1;
+}
+
 /* Exclusively create "<path>.tmp.<serial>" next to path. The token only needs
  * to make collisions unlikely; _O_EXCL is what makes creation exclusive. */
 static FILE *save_atomic_open_win32(char *out, size_t out_size, const char *path, char *err, size_t err_len) {
@@ -59,13 +87,18 @@ static FILE *save_atomic_open_win32(char *out, size_t out_size, const char *path
             if (err && err_len) snprintf(err, err_len, "save path too long: %s", path);
             return NULL;
         }
-        int fd = _open(out, _O_CREAT | _O_EXCL | _O_WRONLY | _O_BINARY, _S_IREAD | _S_IWRITE);
+        wchar_t wide[SAVE_ATOMIC_MAX_PATH];
+        if (!wide_path(out, wide, SAVE_ATOMIC_MAX_PATH)) {
+            if (err && err_len) snprintf(err, err_len, "create %s: %s", out, strerror(errno));
+            return NULL;
+        }
+        int fd = _wopen(wide, _O_CREAT | _O_EXCL | _O_WRONLY | _O_BINARY, _S_IREAD | _S_IWRITE);
         if (fd >= 0) {
             FILE *f = _fdopen(fd, "wb");
             if (!f) {
                 int e = errno;
                 _close(fd);
-                _unlink(out);
+                _wunlink(wide);
                 if (err && err_len) snprintf(err, err_len, "open %s: %s", out, strerror(e));
                 return NULL;
             }
@@ -176,7 +209,7 @@ int save_atomic_commit(save_atomic_t *st, const char *path, char *err, size_t er
     if (fclose(st->file) != 0) {
         int e = errno;
         st->file = NULL;
-        remove(tmp);
+        gp32_remove_file(tmp);
         save_atomic_reset(st);
         if (err && err_len) snprintf(err, err_len, "close %s: %s", path, strerror(e));
         return 0;
@@ -184,9 +217,11 @@ int save_atomic_commit(save_atomic_t *st, const char *path, char *err, size_t er
     st->file = NULL;
 
 #if defined(_WIN32)
-    if (!MoveFileExA(tmp, path, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+    wchar_t src[SAVE_ATOMIC_MAX_PATH], dst[SAVE_ATOMIC_MAX_PATH];
+    if (!wide_path(tmp, src, SAVE_ATOMIC_MAX_PATH) || !wide_path(path, dst, SAVE_ATOMIC_MAX_PATH) ||
+        !MoveFileExW(src, dst, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
         unsigned long code = (unsigned long)GetLastError();
-        remove(tmp);
+        gp32_remove_file(tmp);
         save_atomic_reset(st);
         if (err && err_len) snprintf(err, err_len, "replace %s failed (error %lu)", path, code);
         return 0;
@@ -228,6 +263,6 @@ void save_atomic_abort(save_atomic_t *st) {
     if (st->file) fclose(st->file);
     /* The WASM VFS closes onto the destination path, so it must not be removed
      * here; hosted builds only ever delete the stage this helper created. */
-    if (!st->direct && st->active && st->tmp_path[0]) remove(st->tmp_path);
+    if (!st->direct && st->active && st->tmp_path[0]) gp32_remove_file(st->tmp_path);
     save_atomic_reset(st);
 }

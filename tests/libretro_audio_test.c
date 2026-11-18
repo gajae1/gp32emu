@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
+#include "host_file.h"
 static unsigned state_file_opens;
 static int fail_delivery_allocation;
 static void *delivery_malloc(size_t bytes) {
@@ -18,7 +19,13 @@ static FILE *counted_fopen(const char *path, const char *mode) {
     ++state_file_opens;
     return fopen(path, mode);
 }
+static FILE *counted_open_read(const char *path) {
+    ++state_file_opens;
+    return gp32_open_read(path);
+}
 #define fopen counted_fopen
+#undef gp32_open_read
+#define gp32_open_read counted_open_read
 #define malloc delivery_malloc
 #define realloc delivery_realloc
 #define gp32_run_frame test_run_frame
@@ -31,6 +38,7 @@ static FILE *counted_fopen(const char *path, const char *mode) {
 #define LIBRETRO_SOURCE "../src/libretro/libretro.c"
 #endif
 #include LIBRETRO_SOURCE
+#undef gp32_open_read
 #undef fopen
 #undef malloc
 #undef realloc

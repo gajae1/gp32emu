@@ -4,6 +4,7 @@ Changes since **1.0.1**.
 
 ## Apps and controls
 
+- Added [ES-DE launcher configurations](https://github.com/gajae1/gp32emu/blob/v1.1.0/docs/es-de/README.md) for Windows, Linux, macOS and Android.
 - Added an experimental iPhone/iPad app with a game library, touch controls and
   gamepad support. After [pairing and VPN setup](https://github.com/gajae1/gp32emu/blob/v1.1.0/ios/README.md#set-up-jit),
   games prepare JIT in the app. The menu also offers **Play without JIT**.
@@ -19,6 +20,10 @@ Changes since **1.0.1**.
 
 ## Games and saves
 
+- Games on SmartMedia cards open faster. The loader reads the directories and
+  files it needs directly from the card image.
+- Fixed loading games and BIOS files and writing saves in Windows folders
+  with Korean and other non-ASCII names.
 - Added v17 save states that retain more of the audio and device state. Older
   supported states can still be loaded; older builds cannot read v17.
 - Fixed audio and video restoration after loading states. Invalid states are
